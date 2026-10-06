@@ -1,0 +1,23 @@
+[Unit]
+Description=Liquidation wall probability service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=liquidation
+Group=liquidation
+WorkingDirectory=/opt/Price-Prediction-Using-Liquidation-Levels
+EnvironmentFile=/etc/liquidation-predictor.env
+ExecStart=/opt/Price-Prediction-Using-Liquidation-Levels/liquidation-predictor
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/liquidation-predictor
+
+[Install]
+WantedBy=multi-user.target

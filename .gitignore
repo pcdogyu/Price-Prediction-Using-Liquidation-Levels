@@ -1,0 +1,16 @@
+*.db
+*.db-shm
+*.db-wal
+data/
+models/
+.env
+*.pem
+*.key
+pem/
+.chrome*
+chrome-data/
+coverage.out
+liquidation-predictor
+liquidation-predictor.exe
+/server
+/server.exe
