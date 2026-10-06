@@ -15,6 +15,7 @@ type Config struct {
 	LogPath                          string
 	Symbols                          []string
 	BackfillDays                     int
+	TrainingDays                     int
 	LogRetentionDays                 int
 	SnapshotInterval, StaleAfter     time.Duration
 }
@@ -26,7 +27,7 @@ func Load() Config {
 		BasePath: env("APP_BASE_PATH", "/"), AuthUsername: strings.TrimSpace(os.Getenv("APP_AUTH_USERNAME")),
 		AuthPasswordHash: strings.TrimSpace(os.Getenv("APP_AUTH_PASSWORD_HASH")), LogPath: strings.TrimSpace(os.Getenv("APP_LOG_PATH")),
 		LogRetentionDays: envInt("APP_LOG_RETENTION_DAYS", 7),
-		BackfillDays:     envInt("APP_BACKFILL_DAYS", 30), SnapshotInterval: envDuration("APP_SNAPSHOT_INTERVAL", 5*time.Minute),
+		BackfillDays:     envInt("APP_BACKFILL_DAYS", 180), TrainingDays: envInt("APP_TRAINING_DAYS", 30), SnapshotInterval: envDuration("APP_SNAPSHOT_INTERVAL", 5*time.Minute),
 		StaleAfter: envDuration("APP_STALE_AFTER", 90*time.Second),
 	}
 }

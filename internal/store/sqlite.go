@@ -89,6 +89,49 @@ func (s *Store) Candles(ctx context.Context, symbol string, since time.Time) ([]
 	return out, rows.Err()
 }
 
+func (s *Store) CandlesRange(ctx context.Context, symbol string, from, before time.Time) ([]domain.Candle, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT exchange,symbol,ts,open,high,low,close,volume_usd,taker_buy_usd,open_interest_usd,funding_rate,long_short_ratio FROM candles WHERE symbol=? AND ts>=? AND ts<? ORDER BY ts,exchange`, symbol, from.UTC().UnixMilli(), before.UTC().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Candle
+	for rows.Next() {
+		var c domain.Candle
+		var ms int64
+		if err = rows.Scan(&c.Exchange, &c.Symbol, &ms, &c.Open, &c.High, &c.Low, &c.Close, &c.VolumeUSD, &c.TakerBuyUSD, &c.OpenInterestUSD, &c.FundingRate, &c.LongShortRatio); err != nil {
+			return nil, err
+		}
+		c.Time = time.UnixMilli(ms).UTC()
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CandleBounds(ctx context.Context, exchange, symbol string) (time.Time, time.Time, bool, error) {
+	var first, last sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT MIN(ts),MAX(ts) FROM candles WHERE exchange=? AND symbol=?`, exchange, symbol).Scan(&first, &last)
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	if !first.Valid || !last.Valid {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	return time.UnixMilli(first.Int64).UTC(), time.UnixMilli(last.Int64).UTC(), true, nil
+}
+
+func (s *Store) SymbolBounds(ctx context.Context, symbol string) (time.Time, time.Time, bool, error) {
+	var first, last sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT MIN(ts),MAX(ts) FROM candles WHERE symbol=?`, symbol).Scan(&first, &last)
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	if !first.Valid || !last.Valid {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	return time.UnixMilli(first.Int64).UTC(), time.UnixMilli(last.Int64).UTC(), true, nil
+}
+
 func (s *Store) InsertLiquidation(ctx context.Context, e domain.LiquidationEvent) error {
 	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO liquidations(id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage) VALUES(?,?,?,?,?,?,?,?,?,?)`, e.ID, e.Exchange, e.Symbol, e.PositionSide, e.EventTime.UnixMilli(), e.ReceivedAt.UnixMilli(), e.Price, e.Quantity, e.NotionalUSD, e.Coverage)
 	return err
@@ -132,6 +175,45 @@ func (s *Store) LatestPrediction(ctx context.Context, symbol string) (domain.Pre
 	var p domain.Prediction
 	e = json.Unmarshal(b, &p)
 	return p, e
+}
+func (s *Store) Predictions(ctx context.Context, symbol string, from, before time.Time) ([]domain.Prediction, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM predictions WHERE symbol=? AND ts>=? AND ts<? ORDER BY ts`, symbol, from.UTC().UnixMilli(), before.UTC().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Prediction
+	for rows.Next() {
+		var b []byte
+		if err = rows.Scan(&b); err != nil {
+			return nil, err
+		}
+		var p domain.Prediction
+		if err = json.Unmarshal(b, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) PruneBefore(ctx context.Context, before time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	cutoff := before.UTC().UnixMilli()
+	for _, q := range []string{
+		`DELETE FROM candles WHERE ts<?`,
+		`DELETE FROM predictions WHERE ts<?`,
+		`DELETE FROM liquidations WHERE event_ts<?`,
+	} {
+		if _, err = tx.ExecContext(ctx, q, cutoff); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 func (s *Store) SaveBacktest(ctx context.Context, r domain.BacktestReport) error {
 	b, e := json.Marshal(r)

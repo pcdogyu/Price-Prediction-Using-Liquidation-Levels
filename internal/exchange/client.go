@@ -19,7 +19,7 @@ import (
 
 type Client interface {
 	Name() string
-	History(context.Context, string, time.Time) ([]domain.Candle, error)
+	History(context.Context, string, time.Time, time.Time) ([]domain.Candle, error)
 	Current(context.Context, string) (domain.Candle, error)
 }
 
@@ -110,12 +110,12 @@ type Binance struct{ httpClient }
 
 func NewBinance() Client      { return &Binance{newHTTP()} }
 func (*Binance) Name() string { return "binance" }
-func (b *Binance) History(ctx context.Context, symbol string, since time.Time) ([]domain.Candle, error) {
+func (b *Binance) History(ctx context.Context, symbol string, since, until time.Time) ([]domain.Candle, error) {
 	var out []domain.Candle
 	start := since.UnixMilli()
 	for {
 		var rows [][]any
-		u := "https://fapi.binance.com/fapi/v1/klines?symbol=" + url.QueryEscape(symbol) + "&interval=1m&limit=1500&startTime=" + strconv.FormatInt(start, 10)
+		u := "https://fapi.binance.com/fapi/v1/klines?symbol=" + url.QueryEscape(symbol) + "&interval=1m&limit=1500&startTime=" + strconv.FormatInt(start, 10) + "&endTime=" + strconv.FormatInt(until.Add(-time.Millisecond).UnixMilli(), 10)
 		if e := b.get(ctx, u, &rows); e != nil {
 			return out, e
 		}
@@ -130,7 +130,7 @@ func (b *Binance) History(ctx context.Context, symbol string, since time.Time) (
 			out = append(out, c)
 		}
 		next := out[len(out)-1].Time.Add(time.Minute).UnixMilli()
-		if next <= start || len(rows) < 1500 || next >= time.Now().UnixMilli() {
+		if next <= start || len(rows) < 1500 || next >= until.UnixMilli() {
 			break
 		}
 		start = next
@@ -140,11 +140,18 @@ func (b *Binance) History(ctx context.Context, symbol string, since time.Time) (
 		case <-time.After(80 * time.Millisecond):
 		}
 	}
-	// Binance exposes 5m OI history for approximately the latest month. Merge it into minute bars.
+	// Binance exposes 5m derivatives metrics for approximately the latest month.
+	metricSince := since
+	if cutoff := time.Now().UTC().AddDate(0, 0, -30); metricSince.Before(cutoff) {
+		metricSince = cutoff
+	}
+	if !metricSince.Before(until) {
+		return out, nil
+	}
 	var oi []oiRow
-	for st := since.UnixMilli(); st < time.Now().UnixMilli(); {
+	for st := metricSince.UnixMilli(); st < until.UnixMilli(); {
 		var rows []oiRow
-		end := st + 500*5*60*1000
+		end := minInt64(st+500*5*60*1000, until.UnixMilli())
 		u := "https://fapi.binance.com/futures/data/openInterestHist?symbol=" + symbol + "&period=5m&limit=500&startTime=" + strconv.FormatInt(st, 10) + "&endTime=" + strconv.FormatInt(end, 10)
 		if e := b.get(ctx, u, &rows); e != nil {
 			break
@@ -161,7 +168,7 @@ func (b *Binance) History(ctx context.Context, symbol string, since time.Time) (
 		Rate      string `json:"fundingRate"`
 		Timestamp int64  `json:"fundingTime"`
 	}
-	if e := b.get(ctx, "https://fapi.binance.com/fapi/v1/fundingRate?symbol="+symbol+"&limit=1000&startTime="+strconv.FormatInt(since.UnixMilli(), 10), &funding); e == nil {
+	if e := b.get(ctx, "https://fapi.binance.com/fapi/v1/fundingRate?symbol="+symbol+"&limit=1000&startTime="+strconv.FormatInt(metricSince.UnixMilli(), 10)+"&endTime="+strconv.FormatInt(until.UnixMilli(), 10), &funding); e == nil {
 		points := make([]metricPoint, 0, len(funding))
 		for _, p := range funding {
 			points = append(points, metricPoint{p.Timestamp, f(p.Rate)})
@@ -169,12 +176,12 @@ func (b *Binance) History(ctx context.Context, symbol string, since time.Time) (
 		mergeMetric(out, points, func(c *domain.Candle, v float64) { c.FundingRate = v })
 	}
 	var ratios []metricPoint
-	for st := since.UnixMilli(); st < time.Now().UnixMilli(); {
+	for st := metricSince.UnixMilli(); st < until.UnixMilli(); {
 		var rows []struct {
 			Ratio     string `json:"longShortRatio"`
 			Timestamp int64  `json:"timestamp"`
 		}
-		end := st + 500*5*60*1000
+		end := minInt64(st+500*5*60*1000, until.UnixMilli())
 		u := "https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=" + symbol + "&period=5m&limit=500&startTime=" + strconv.FormatInt(st, 10) + "&endTime=" + strconv.FormatInt(end, 10)
 		if e := b.get(ctx, u, &rows); e != nil || len(rows) == 0 {
 			break
@@ -224,9 +231,9 @@ type Bybit struct{ httpClient }
 
 func NewBybit() Client      { return &Bybit{newHTTP()} }
 func (*Bybit) Name() string { return "bybit" }
-func (b *Bybit) History(ctx context.Context, symbol string, since time.Time) ([]domain.Candle, error) {
+func (b *Bybit) History(ctx context.Context, symbol string, since, until time.Time) ([]domain.Candle, error) {
 	var out []domain.Candle
-	end := time.Now().UnixMilli()
+	end := until.UnixMilli()
 	for end > since.UnixMilli() {
 		var res struct {
 			RetCode int `json:"retCode"`
@@ -247,7 +254,7 @@ func (b *Bybit) History(ctx context.Context, symbol string, since time.Time) ([]
 				continue
 			}
 			t := ms(r[0])
-			if t.Before(since) {
+			if t.Before(since) || !t.Before(until) {
 				continue
 			}
 			close := f(r[4])
@@ -263,12 +270,19 @@ func (b *Bybit) History(ctx context.Context, symbol string, since time.Time) ([]
 		time.Sleep(80 * time.Millisecond)
 	}
 	reverseCandles(out)
+	metricSince := since
+	if cutoff := time.Now().UTC().AddDate(0, 0, -30); metricSince.Before(cutoff) {
+		metricSince = cutoff
+	}
+	if !metricSince.Before(until) {
+		return out, nil
+	}
 	type bybitOI struct {
 		OI        string `json:"openInterest"`
 		Timestamp string `json:"timestamp"`
 	}
 	var points []bybitOI
-	for end := time.Now().UnixMilli(); end > since.UnixMilli(); {
+	for end := until.UnixMilli(); end > metricSince.UnixMilli(); {
 		var res struct {
 			Result struct {
 				List []bybitOI `json:"list"`
@@ -286,7 +300,7 @@ func (b *Bybit) History(ctx context.Context, symbol string, since time.Time) ([]
 				oldest = ts
 			}
 		}
-		if oldest >= end || oldest <= since.UnixMilli() {
+		if oldest >= end || oldest <= metricSince.UnixMilli() {
 			break
 		}
 		end = oldest - 1
@@ -314,14 +328,14 @@ func (b *Bybit) History(ctx context.Context, symbol string, since time.Time) ([]
 		var ps []metricPoint
 		for _, p := range funding.Result.List {
 			ts, _ := strconv.ParseInt(p.Timestamp, 10, 64)
-			if ts >= since.UnixMilli() {
+			if ts >= metricSince.UnixMilli() && ts < until.UnixMilli() {
 				ps = append(ps, metricPoint{ts, f(p.Rate)})
 			}
 		}
 		mergeMetric(out, ps, func(c *domain.Candle, v float64) { c.FundingRate = v })
 	}
 	var ratioPoints []metricPoint
-	for end := time.Now().UnixMilli(); end > since.UnixMilli(); {
+	for end := until.UnixMilli(); end > metricSince.UnixMilli(); {
 		var res struct {
 			Result struct {
 				List []struct {
@@ -346,7 +360,7 @@ func (b *Bybit) History(ctx context.Context, symbol string, since time.Time) ([]
 				oldest = ts
 			}
 		}
-		if oldest >= end || oldest <= since.UnixMilli() {
+		if oldest >= end || oldest <= metricSince.UnixMilli() {
 			break
 		}
 		end = oldest - 1
@@ -399,18 +413,16 @@ type OKX struct{ httpClient }
 func NewOKX() Client            { return &OKX{newHTTP()} }
 func (*OKX) Name() string       { return "okx" }
 func okxSymbol(s string) string { return strings.TrimSuffix(s, "USDT") + "-USDT-SWAP" }
-func (o *OKX) History(ctx context.Context, symbol string, since time.Time) ([]domain.Candle, error) {
+func (o *OKX) History(ctx context.Context, symbol string, since, until time.Time) ([]domain.Candle, error) {
 	var out []domain.Candle
-	after := ""
+	after := strconv.FormatInt(until.UnixMilli(), 10)
 	for {
 		var r struct {
 			Code string     `json:"code"`
 			Data [][]string `json:"data"`
 		}
 		u := "https://www.okx.com/api/v5/market/history-candles?instId=" + okxSymbol(symbol) + "&bar=1m&limit=300"
-		if after != "" {
-			u += "&after=" + after
-		}
+		u += "&after=" + after
 		if e := o.get(ctx, u, &r); e != nil {
 			return out, e
 		}
@@ -423,7 +435,7 @@ func (o *OKX) History(ctx context.Context, symbol string, since time.Time) ([]do
 				continue
 			}
 			t := ms(x[0])
-			if t.Before(since) {
+			if t.Before(since) || !t.Before(until) {
 				continue
 			}
 			out = append(out, domain.Candle{Exchange: o.Name(), Symbol: symbol, Time: t, Open: f(x[1]), High: f(x[2]), Low: f(x[3]), Close: f(x[4]), VolumeUSD: f(x[7])})
@@ -445,7 +457,7 @@ func (o *OKX) History(ctx context.Context, symbol string, since time.Time) ([]do
 		var ps []metricPoint
 		for _, p := range funding.Data {
 			ts, _ := strconv.ParseInt(p["fundingTime"], 10, 64)
-			if ts >= since.UnixMilli() {
+			if ts >= since.UnixMilli() && ts < until.UnixMilli() {
 				ps = append(ps, metricPoint{ts, f(p["fundingRate"])})
 			}
 		}
@@ -486,6 +498,13 @@ func (o *OKX) Current(ctx context.Context, symbol string) (domain.Candle, error)
 }
 
 const mathMaxInt = int64(^uint64(0) >> 1)
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 func anyString(v any) string {
 	if v == nil {

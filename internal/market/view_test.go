@@ -41,12 +41,90 @@ func TestAggregate15mCompletenessAndUTC(t *testing.T) {
 }
 
 func TestDetectPatterns(t *testing.T) {
-	cs := []domain.MarketCandle{{Open: 102, High: 103, Low: 99, Close: 100}, {Open: 99.5, High: 104, Low: 99, Close: 103}, {Open: 101, High: 101.6, Low: 99, Close: 101.5}, {Open: 100, High: 103, Low: 99.9, Close: 100.5}, {Open: 100, High: 101, Low: 99, Close: 100.05}}
+	cs := []domain.MarketCandle{{Open: 102, High: 103, Low: 99, Close: 100, Complete: true}, {Open: 99.5, High: 104, Low: 99, Close: 103, Complete: true}, {Open: 101, High: 101.6, Low: 99, Close: 101.5, Complete: true}, {Open: 100, High: 103, Low: 99.9, Close: 100.5, Complete: true}, {Open: 100, High: 101, Low: 99, Close: 100.05, Complete: true}}
 	DetectPatterns(cs)
 	assertPattern(t, cs[1], "bullish_engulfing")
 	assertPattern(t, cs[2], "hammer")
 	assertPattern(t, cs[3], "shooting_star")
 	assertPattern(t, cs[4], "doji")
+}
+
+func TestAggregateSupportedIntervalsAndCompleteness(t *testing.T) {
+	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	for name, wantStart := range map[string]time.Time{
+		"1m": start.Add(17*time.Hour + 7*time.Minute), "2m": start.Add(17*time.Hour + 6*time.Minute), "3m": start.Add(17*time.Hour + 6*time.Minute),
+		"5m": start.Add(17*time.Hour + 5*time.Minute), "10m": start.Add(17 * time.Hour), "15m": start.Add(17 * time.Hour),
+		"30m": start.Add(17 * time.Hour), "1h": start.Add(17 * time.Hour), "4h": start.Add(16 * time.Hour),
+		"8h": start.Add(16 * time.Hour), "12h": start.Add(12 * time.Hour), "24h": start,
+	} {
+		d, ok := ParseInterval(name)
+		if !ok {
+			t.Fatalf("interval %s unavailable", name)
+		}
+		point := start.Add(17*time.Hour + 7*time.Minute)
+		out := Aggregate([]domain.MarketCandle{{Time: point, Open: 1, High: 2, Low: .5, Close: 1.5}}, d, point.Add(time.Minute))
+		if len(out) != 1 || !out[0].Time.Equal(wantStart) {
+			t.Fatalf("interval=%s got=%v want=%v", name, out, wantStart)
+		}
+	}
+	var minutes []domain.MarketCandle
+	for i := 0; i < 8; i++ {
+		minutes = append(minutes, domain.MarketCandle{Time: start.Add(time.Duration(i) * time.Minute), Open: 1, High: 2, Low: .5, Close: 1.5})
+	}
+	if got := Aggregate(minutes, 10*time.Minute, start.Add(11*time.Minute)); len(got) != 1 || !got[0].Complete {
+		t.Fatalf("80 percent candle=%#v", got)
+	}
+	if got := Aggregate(minutes[:7], 10*time.Minute, start.Add(11*time.Minute)); len(got) != 1 || got[0].Complete {
+		t.Fatalf("70 percent candle=%#v", got)
+	}
+}
+
+func TestDirectionalSignalsThresholdAndDedup(t *testing.T) {
+	at := time.Date(2026, 1, 1, 0, 1, 0, 0, time.UTC)
+	prediction := func(offset time.Duration, class string, probability float64) domain.Prediction {
+		return domain.Prediction{Time: at.Add(offset), State: "ok", MarkPrice: 100, LeadingClass: class, ModelVersion: "v1", Probabilities: map[string]float64{class: probability}}
+	}
+	got := DirectionalSignals([]domain.Prediction{
+		prediction(0, domain.UpperFirst, .44), prediction(time.Minute, domain.UpperFirst, .46),
+		prediction(2*time.Minute, domain.UpperFirst, .61), prediction(3*time.Minute, domain.LowerFirst, .52),
+		prediction(4*time.Minute, domain.Neither, .9),
+	}, 15*time.Minute)
+	if len(got) != 2 {
+		t.Fatalf("signals=%#v", got)
+	}
+	if got[0].Side != "long" || math.Abs(got[0].Probability-.61) > 1e-9 || got[1].Side != "short" {
+		t.Fatalf("signals=%#v", got)
+	}
+	if !got[0].CandleTime.Equal(at.Truncate(15 * time.Minute)) {
+		t.Fatalf("bucket=%v", got[0].CandleTime)
+	}
+}
+
+func TestBuildPagedViewUsesExclusiveCursor(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var raw []domain.Candle
+	for i := 0; i < 10; i++ {
+		raw = append(raw, domain.Candle{Exchange: "binance", Symbol: "BTCUSDT", Time: start.Add(time.Duration(i) * time.Minute), Open: float64(i + 1), High: float64(i + 2), Low: float64(i), Close: float64(i + 1)})
+	}
+	first, err := BuildPagedView("BTCUSDT", raw, raw, nil, "1m", start.Add(10*time.Minute), 3, start.Add(11*time.Minute), start, true)
+	if err != nil || len(first.Candles) != 3 || !first.Candles[0].Time.Equal(start.Add(7*time.Minute)) || first.NextBefore == nil {
+		t.Fatalf("first=%#v err=%v", first, err)
+	}
+	second, err := BuildPagedView("BTCUSDT", raw, raw, nil, "1m", *first.NextBefore, 3, start.Add(11*time.Minute), start, true)
+	if err != nil || len(second.Candles) != 3 || !second.Candles[2].Time.Equal(start.Add(6*time.Minute)) {
+		t.Fatalf("second=%#v err=%v", second, err)
+	}
+	if first.Candles[0].Time.Equal(second.Candles[len(second.Candles)-1].Time) {
+		t.Fatal("cursor pages overlap")
+	}
+}
+
+func TestDetectPatternsSkipsIncompleteCandle(t *testing.T) {
+	cs := []domain.MarketCandle{{Open: 100, High: 101, Low: 99, Close: 100.01, Complete: false}}
+	DetectPatterns(cs)
+	if len(cs[0].Patterns) != 0 {
+		t.Fatalf("patterns=%#v", cs[0].Patterns)
+	}
 }
 func assertPattern(t *testing.T, c domain.MarketCandle, name string) {
 	t.Helper()

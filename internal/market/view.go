@@ -14,6 +14,18 @@ const (
 	Interval15m = 15 * time.Minute
 )
 
+var intervals = map[string]time.Duration{
+	"1m": time.Minute, "2m": 2 * time.Minute, "3m": 3 * time.Minute,
+	"5m": 5 * time.Minute, "10m": 10 * time.Minute, "15m": 15 * time.Minute,
+	"30m": 30 * time.Minute, "1h": time.Hour, "4h": 4 * time.Hour,
+	"8h": 8 * time.Hour, "12h": 12 * time.Hour, "24h": 24 * time.Hour,
+}
+
+func ParseInterval(value string) (time.Duration, bool) {
+	d, ok := intervals[value]
+	return d, ok
+}
+
 // CompositeMinutes takes the median OHLC across available exchanges for each
 // UTC minute. Venue USD volume is additive and is intentionally not averaged.
 func CompositeMinutes(raw []domain.Candle) []domain.MarketCandle {
@@ -53,30 +65,14 @@ func CompositeMinutes(raw []domain.Candle) []domain.MarketCandle {
 }
 
 func BuildView(symbol string, raw []domain.Candle, now time.Time) (domain.MarketView, error) {
-	now = now.UTC()
-	minutes := CompositeMinutes(raw)
-	if len(minutes) == 0 {
-		return domain.MarketView{}, errors.New("market data unavailable")
-	}
-	cutoff := now.Add(-24 * time.Hour)
-	start := sort.Search(len(minutes), func(i int) bool { return !minutes[i].Time.Before(cutoff) })
-	if start > 0 {
-		start--
-	}
-	minutes = minutes[start:]
-	candles := Aggregate15m(minutes, now)
-	if len(candles) > 96 {
-		candles = candles[len(candles)-96:]
-	}
-	if len(candles) == 0 {
-		return domain.MarketView{}, errors.New("15 minute candles unavailable")
-	}
-	DetectPatterns(candles)
-	summary := summarize(minutes, now)
-	return domain.MarketView{Symbol: symbol, Interval: "15m", Source: SourceName, Summary: summary, Candles: candles}, nil
+	return BuildPagedView(symbol, raw, raw, nil, "15m", now.Add(time.Minute), 120, now, time.Time{}, false)
 }
 
 func Aggregate15m(minutes []domain.MarketCandle, now time.Time) []domain.MarketCandle {
+	return Aggregate(minutes, Interval15m, now)
+}
+
+func Aggregate(minutes []domain.MarketCandle, interval time.Duration, now time.Time) []domain.MarketCandle {
 	type bucket struct {
 		c        domain.MarketCandle
 		points   int
@@ -85,7 +81,7 @@ func Aggregate15m(minutes []domain.MarketCandle, now time.Time) []domain.MarketC
 	m := map[int64]*bucket{}
 	var keys []int64
 	for _, c := range minutes {
-		k := c.Time.UTC().Truncate(Interval15m).Unix()
+		k := bucketTime(c.Time, interval).Unix()
 		b := m[k]
 		if b == nil {
 			b = &bucket{c: domain.MarketCandle{Time: time.Unix(k, 0).UTC(), Open: c.Open, High: c.High, Low: c.Low}}
@@ -105,18 +101,119 @@ func Aggregate15m(minutes []domain.MarketCandle, now time.Time) []domain.MarketC
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	out := make([]domain.MarketCandle, 0, len(keys))
+	expected := int(interval / time.Minute)
+	required := int(math.Ceil(float64(expected) * .8))
 	for _, k := range keys {
 		b := m[k]
 		b.c.ExchangeCount = b.venueMax
-		b.c.Complete = b.points >= 12 && !b.c.Time.Add(Interval15m).After(now.UTC())
+		b.c.Complete = b.points >= required && !b.c.Time.Add(interval).After(now.UTC())
 		out = append(out, b.c)
 	}
 	return out
 }
 
+func BuildPagedView(symbol string, raw, summaryRaw []domain.Candle, predictions []domain.Prediction, intervalName string, before time.Time, limit int, now, availableFrom time.Time, backfillComplete bool) (domain.MarketView, error) {
+	interval, ok := ParseInterval(intervalName)
+	if !ok {
+		return domain.MarketView{}, errors.New("unsupported market interval")
+	}
+	now, before = now.UTC(), before.UTC()
+	minutes := CompositeMinutes(raw)
+	if len(minutes) == 0 {
+		return domain.MarketView{}, errors.New("market data unavailable")
+	}
+	candles := Aggregate(minutes, interval, now)
+	end := sort.Search(len(candles), func(i int) bool { return !candles[i].Time.Before(before) })
+	candles = candles[:end]
+	if len(candles) == 0 {
+		return domain.MarketView{}, errors.New("market candles unavailable")
+	}
+	DetectPatterns(candles)
+	if limit < 1 {
+		limit = 120
+	}
+	if len(candles) > limit {
+		candles = candles[len(candles)-limit:]
+	}
+	summaryMinutes := CompositeMinutes(summaryRaw)
+	if len(summaryMinutes) == 0 {
+		summaryMinutes = minutes
+	}
+	first := candles[0].Time
+	hasMore := !availableFrom.IsZero() && availableFrom.Before(first)
+	var next *time.Time
+	if hasMore {
+		cursor := first
+		next = &cursor
+	}
+	view := domain.MarketView{
+		Symbol: symbol, Interval: intervalName, Source: SourceName,
+		Summary: summarize(summaryMinutes, now), Candles: candles,
+		HasMore: hasMore, NextBefore: next, AvailableFrom: availableFrom,
+		BackfillComplete: backfillComplete, ModelSignals: DirectionalSignals(predictions, interval),
+	}
+	return view, nil
+}
+
+func DirectionalSignals(predictions []domain.Prediction, interval time.Duration) []domain.DirectionalSignal {
+	type key struct {
+		bucket int64
+		side   string
+	}
+	best := make(map[key]domain.DirectionalSignal)
+	for _, p := range predictions {
+		if p.State != "ok" {
+			continue
+		}
+		class := p.LeadingClass
+		if class == "" {
+			class = leading(p.Probabilities)
+		}
+		var side string
+		switch class {
+		case domain.UpperFirst:
+			side = "long"
+		case domain.LowerFirst:
+			side = "short"
+		default:
+			continue
+		}
+		probability := p.Probabilities[class]
+		if probability < .45 {
+			continue
+		}
+		candleTime := bucketTime(p.Time, interval)
+		signal := domain.DirectionalSignal{Time: p.Time, CandleTime: candleTime, Side: side, Probability: probability, Price: p.MarkPrice, ModelVersion: p.ModelVersion}
+		k := key{bucket: candleTime.Unix(), side: side}
+		if previous, ok := best[k]; !ok || signal.Probability > previous.Probability {
+			best[k] = signal
+		}
+	}
+	out := make([]domain.DirectionalSignal, 0, len(best))
+	for _, signal := range best {
+		out = append(out, signal)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CandleTime.Equal(out[j].CandleTime) {
+			return out[i].Side < out[j].Side
+		}
+		return out[i].CandleTime.Before(out[j].CandleTime)
+	})
+	return out
+}
+
+func bucketTime(value time.Time, interval time.Duration) time.Time {
+	seconds := int64(interval / time.Second)
+	unix := value.UTC().Unix()
+	return time.Unix(unix-unix%seconds, 0).UTC()
+}
+
 func DetectPatterns(cs []domain.MarketCandle) {
 	for i := range cs {
 		c := cs[i]
+		if !c.Complete {
+			continue
+		}
 		span := c.High - c.Low
 		if span <= 0 {
 			continue
@@ -134,7 +231,7 @@ func DetectPatterns(cs []domain.MarketCandle) {
 		if upper >= 2*body && lower <= body && math.Max(c.Open, c.Close) <= c.Low+span/3 {
 			patterns = append(patterns, domain.CandlePattern{Name: "shooting_star", Bias: "bearish"})
 		}
-		if i > 0 {
+		if i > 0 && cs[i-1].Complete {
 			p := cs[i-1]
 			if p.Close < p.Open && c.Close > c.Open && c.Open <= p.Close && c.Close >= p.Open {
 				patterns = append(patterns, domain.CandlePattern{Name: "bullish_engulfing", Bias: "bullish"})

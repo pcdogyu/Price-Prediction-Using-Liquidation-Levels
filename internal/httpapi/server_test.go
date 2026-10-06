@@ -70,11 +70,22 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if err = st.UpsertCandles(context.Background(), []domain.Candle{{Exchange: "binance", Symbol: "BTCUSDT", Time: now, Open: 100, High: 102, Low: 99, Close: 101, VolumeUSD: 10}, {Exchange: "okx", Symbol: "BTCUSDT", Time: now, Open: 101, High: 103, Low: 100, Close: 102, VolumeUSD: 20}}); err != nil {
 		t.Fatal(err)
 	}
+	if err = st.SavePrediction(context.Background(), domain.Prediction{Symbol: "BTCUSDT", Time: now, State: "ok", MarkPrice: 101, LeadingClass: domain.UpperFirst, ModelVersion: "test-v1", Probabilities: map[string]float64{domain.UpperFirst: .6}}); err != nil {
+		t.Fatal(err)
+	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=BTCUSDT", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"median_composite"`) {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"median_composite"`) || !strings.Contains(w.Body.String(), `"side":"long"`) {
 		t.Fatalf("market status=%d body=%s", w.Code, w.Body.String())
+	}
+	for _, interval := range []string{"1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "4h", "8h", "12h", "24h"} {
+		r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=BTCUSDT&limit=120&interval="+interval, nil)
+		w = httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(w, r)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"interval":"`+interval+`"`) {
+			t.Fatalf("interval=%s status=%d body=%s", interval, w.Code, w.Body.String())
+		}
 	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=SOLUSDT", nil)
 	w = httptest.NewRecorder()
@@ -82,16 +93,28 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid symbol status=%d", w.Code)
 	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=BTCUSDT&interval=7m", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid interval status=%d body=%s", w.Code, w.Body.String())
+	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=BTCUSDT&interval=1m&limit=501", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid limit status=%d body=%s", w.Code, w.Body.String())
+	}
 	r = httptest.NewRequest(http.MethodGet, "/", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || strings.Contains(w.Body.String(), "async function refresh") {
+	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || !strings.Contains(w.Body.String(), `data-interval="24h"`) || strings.Contains(w.Body.String(), "async function refresh") {
 		t.Fatal("dashboard script was not externalized")
 	}
 	r = httptest.NewRequest(http.MethodGet, "/assets/dashboard.js", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "svg.appendChild(svgNode('text'") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") {
 		t.Fatalf("dashboard asset status=%d", w.Code)
 	}
 

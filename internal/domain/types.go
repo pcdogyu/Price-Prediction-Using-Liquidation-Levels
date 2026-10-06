@@ -77,12 +77,26 @@ type PriceSummary struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+type DirectionalSignal struct {
+	Time         time.Time `json:"time"`
+	CandleTime   time.Time `json:"candle_time"`
+	Side         string    `json:"side"`
+	Probability  float64   `json:"probability"`
+	Price        float64   `json:"price"`
+	ModelVersion string    `json:"model_version,omitempty"`
+}
+
 type MarketView struct {
-	Symbol   string         `json:"symbol"`
-	Interval string         `json:"interval"`
-	Source   string         `json:"source"`
-	Summary  PriceSummary   `json:"summary"`
-	Candles  []MarketCandle `json:"candles"`
+	Symbol           string              `json:"symbol"`
+	Interval         string              `json:"interval"`
+	Source           string              `json:"source"`
+	Summary          PriceSummary        `json:"summary"`
+	Candles          []MarketCandle      `json:"candles"`
+	HasMore          bool                `json:"has_more"`
+	NextBefore       *time.Time          `json:"next_before,omitempty"`
+	AvailableFrom    time.Time           `json:"available_from,omitempty"`
+	BackfillComplete bool                `json:"backfill_complete"`
+	ModelSignals     []DirectionalSignal `json:"model_signals"`
 }
 
 type TriggerInfo struct {

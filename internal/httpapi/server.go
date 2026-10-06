@@ -153,7 +153,32 @@ func (s *Server) market(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, e)
 		return
 	}
-	v, e := s.svc.Market(r.Context(), sym)
+	interval := strings.TrimSpace(r.URL.Query().Get("interval"))
+	if interval == "" {
+		interval = "15m"
+	}
+	allowed := map[string]bool{"1m": true, "2m": true, "3m": true, "5m": true, "10m": true, "15m": true, "30m": true, "1h": true, "4h": true, "8h": true, "12h": true, "24h": true}
+	if !allowed[interval] {
+		problem(w, http.StatusBadRequest, errors.New("interval must be one of 1m,2m,3m,5m,10m,15m,30m,1h,4h,8h,12h,24h"))
+		return
+	}
+	limit := 120
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		limit, e = strconv.Atoi(raw)
+		if e != nil || limit < 1 || limit > 500 {
+			problem(w, http.StatusBadRequest, errors.New("limit must be between 1 and 500"))
+			return
+		}
+	}
+	var before time.Time
+	if raw := strings.TrimSpace(r.URL.Query().Get("before")); raw != "" {
+		before, e = time.Parse(time.RFC3339Nano, raw)
+		if e != nil {
+			problem(w, http.StatusBadRequest, errors.New("before must be RFC3339Nano"))
+			return
+		}
+	}
+	v, e := s.svc.Market(r.Context(), sym, interval, before, limit)
 	if e != nil {
 		problem(w, http.StatusServiceUnavailable, e)
 		return

@@ -14,7 +14,7 @@
 - 4 组扩展窗口回测、60 分钟隔离区、类别先验基线、Log Loss、Brier Score 和 ECE。
 - JSON API、SSE、Prometheus 文本指标、健康检查和内嵌网页仪表盘。
 
-历史交易所 API 不提供完整的逐笔强平回放。因此首次 30 天回测中的真实强平特征为缺失/零值；实时强平只从服务启动后积累。OKX 不提供与 Binance/Bybit 等价的逐合约历史 OI，本系统仍保存其实时 OI，但不会伪造历史值。
+历史交易所 API 不提供完整的逐笔强平回放。因此首次 30 天回测中的真实强平特征为缺失/零值；实时强平只从服务启动后积累。行情 OHLCV 保留 180 天，但模型训练窗口仍固定为最近 30 天。OKX 不提供与 Binance/Bybit 等价的逐合约历史 OI，本系统仍保存其实时 OI，但不会伪造历史值。
 
 ## 本地运行
 
@@ -25,7 +25,7 @@ go test ./...
 go run ./cmd/server
 ```
 
-打开 `http://localhost:9090`。仪表盘显示三所中位合成价、最近24小时的15分钟K线、K线形态、垂直价格清算强度和上下墙触发状态。首次启动会在后台回填数据；在完成建图和训练前，API 会明确返回 `data_insufficient`。未配置 `APP_AUTH_USERNAME` 与 `APP_AUTH_PASSWORD_HASH` 时，本地开发默认不启用登录。
+打开 `http://localhost:9090`。仪表盘显示三所中位合成价、多周期交互式K线、K线形态、历史模型方向信号、垂直价格清算强度和上下墙触发状态。首次启动会在后台增量回填 180 天行情；在完成建图和训练前，API 会明确返回 `data_insufficient`。未配置 `APP_AUTH_USERNAME` 与 `APP_AUTH_PASSWORD_HASH` 时，本地开发默认不启用登录。
 
 常用配置见 [.env.example](.env.example)。服务本身不会读取 `.env` 文件；可由 systemd、Docker 或 shell 注入环境变量。
 
@@ -34,7 +34,7 @@ go run ./cmd/server
 ```text
 GET /api/v1/signals/latest?symbol=BTCUSDT
 GET /api/v1/map?symbol=BTCUSDT
-GET /api/v1/market?symbol=BTCUSDT
+GET /api/v1/market?symbol=BTCUSDT&interval=15m&limit=120&before=<RFC3339>
 GET /api/v1/backtest?symbol=BTCUSDT
 GET /api/v1/logs?limit=200&level=INFO
 GET /api/v1/stream

@@ -19,16 +19,17 @@ import (
 )
 
 type Service struct {
-	cfg         config.Config
-	store       *store.Store
-	clients     []exchange.Client
-	health      *exchange.HealthRegistry
-	log         *slog.Logger
-	mu          sync.RWMutex
-	maps        map[string]engine.MapResult
-	predictions map[string]domain.Prediction
-	model       domain.ModelArtifact
-	subs        map[chan domain.Prediction]struct{}
+	cfg          config.Config
+	store        *store.Store
+	clients      []exchange.Client
+	health       *exchange.HealthRegistry
+	log          *slog.Logger
+	mu           sync.RWMutex
+	maps         map[string]engine.MapResult
+	predictions  map[string]domain.Prediction
+	model        domain.ModelArtifact
+	subs         map[chan domain.Prediction]struct{}
+	backfillDone bool
 }
 
 func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
@@ -45,6 +46,7 @@ func (s *Service) Start(ctx context.Context) {
 	go s.predictionLoop(ctx)
 	go s.bootstrap(ctx)
 	go s.retrainLoop(ctx)
+	go s.retentionLoop(ctx)
 }
 
 func (s *Service) predictionLoop(ctx context.Context) {
@@ -101,27 +103,82 @@ func (s *Service) poll(ctx context.Context) {
 }
 
 func (s *Service) bootstrap(ctx context.Context) {
-	since := time.Now().UTC().AddDate(0, 0, -s.cfg.BackfillDays)
+	now := time.Now().UTC()
+	target := now.AddDate(0, 0, -s.cfg.BackfillDays)
+	complete := true
 	for _, c := range s.clients {
 		for _, sym := range s.cfg.Symbols {
 			if ctx.Err() != nil {
 				return
 			}
-			s.log.Info("backfill started", "exchange", c.Name(), "symbol", sym)
-			rows, e := c.History(ctx, sym, since)
+			first, last, exists, e := s.store.CandleBounds(ctx, c.Name(), sym)
 			if e != nil {
-				s.log.Warn("backfill failed", "exchange", c.Name(), "symbol", sym, "error", e)
+				complete = false
+				s.log.Warn("backfill bounds failed", "exchange", c.Name(), "symbol", sym, "error", e)
 				continue
 			}
-			if e = s.store.UpsertCandles(ctx, rows); e != nil {
-				s.log.Error("backfill store failed", "error", e)
+			type backfillRange struct{ from, until time.Time }
+			var ranges []backfillRange
+			if !exists {
+				ranges = append(ranges, backfillRange{target, now.Add(time.Minute)})
 			} else {
-				s.log.Info("backfill complete", "exchange", c.Name(), "symbol", sym, "candles", len(rows))
+				if first.After(target.Add(2 * time.Minute)) {
+					ranges = append(ranges, backfillRange{target, first})
+				}
+				if last.Before(now.Add(-2 * time.Minute)) {
+					ranges = append(ranges, backfillRange{last.Add(time.Minute), now.Add(time.Minute)})
+				}
+			}
+			for _, window := range ranges {
+				s.log.Info("backfill started", "exchange", c.Name(), "symbol", sym, "from", window.from, "until", window.until)
+				rows, historyErr := s.historyWithRetry(ctx, c, sym, window.from, window.until)
+				if historyErr != nil {
+					complete = false
+					s.log.Warn("backfill failed", "exchange", c.Name(), "symbol", sym, "from", window.from, "until", window.until, "error", historyErr)
+					continue
+				}
+				expected := int(window.until.Sub(window.from) / time.Minute)
+				if expected > 0 && len(rows)*5 < expected*4 {
+					complete = false
+					s.log.Warn("backfill range has insufficient coverage", "exchange", c.Name(), "symbol", sym, "from", window.from, "until", window.until, "candles", len(rows), "expected", expected)
+				}
+				if historyErr = s.store.UpsertCandles(ctx, rows); historyErr != nil {
+					complete = false
+					s.log.Error("backfill store failed", "exchange", c.Name(), "symbol", sym, "error", historyErr)
+				} else {
+					s.log.Info("backfill range complete", "exchange", c.Name(), "symbol", sym, "from", window.from, "until", window.until, "candles", len(rows))
+				}
 			}
 		}
 	}
+	s.mu.Lock()
+	s.backfillDone = complete
+	s.mu.Unlock()
 	s.rebuild(ctx)
 	s.train(ctx)
+}
+
+func (s *Service) historyWithRetry(ctx context.Context, client exchange.Client, symbol string, from, until time.Time) ([]domain.Candle, error) {
+	var rows []domain.Candle
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		rows, err = client.History(ctx, symbol, from, until)
+		if err == nil {
+			return rows, nil
+		}
+		if attempt == 3 {
+			break
+		}
+		s.log.Warn("backfill retry scheduled", "exchange", client.Name(), "symbol", symbol, "attempt", attempt, "error", err)
+		timer := time.NewTimer(time.Duration(1<<(attempt-1)) * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return rows, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return rows, err
 }
 
 func (s *Service) rebuild(ctx context.Context) {
@@ -175,8 +232,12 @@ func (s *Service) rebuild(ctx context.Context) {
 
 func (s *Service) train(ctx context.Context) {
 	var samples []ml.Sample
+	trainingDays := s.cfg.TrainingDays
+	if trainingDays <= 0 {
+		trainingDays = 30
+	}
 	for _, sym := range s.cfg.Symbols {
-		cs, e := s.store.Candles(ctx, sym, time.Now().AddDate(0, 0, -s.cfg.BackfillDays))
+		cs, e := s.store.Candles(ctx, sym, time.Now().AddDate(0, 0, -trainingDays))
 		if e != nil {
 			continue
 		}
@@ -201,6 +262,24 @@ func (s *Service) train(ctx context.Context) {
 	}
 	s.log.Info("model trained", "samples", report.Samples, "log_loss", report.LogLoss, "eligible", report.PromotionEligible)
 	s.rebuild(ctx)
+}
+func (s *Service) retentionLoop(ctx context.Context) {
+	prune := func() {
+		if err := s.store.PruneBefore(ctx, time.Now().UTC().AddDate(0, 0, -s.cfg.BackfillDays)); err != nil && ctx.Err() == nil {
+			s.log.Warn("market retention cleanup failed", "error", err)
+		}
+	}
+	prune()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
 }
 func (s *Service) retrainLoop(ctx context.Context) {
 	for {
@@ -242,13 +321,48 @@ func (s *Service) Latest(ctx context.Context, symbol string) (domain.Prediction,
 	return p, e
 }
 
-func (s *Service) Market(ctx context.Context, symbol string) (domain.MarketView, error) {
+func (s *Service) Market(ctx context.Context, symbol, intervalName string, before time.Time, limit int) (domain.MarketView, error) {
 	now := time.Now().UTC()
-	cs, err := s.store.Candles(ctx, symbol, now.Add(-25*time.Hour))
+	interval, ok := marketview.ParseInterval(intervalName)
+	if !ok {
+		return domain.MarketView{}, errors.New("unsupported market interval")
+	}
+	if before.IsZero() {
+		before = now.Add(time.Minute)
+	}
+	from := before.Add(-time.Duration(limit+3) * interval)
+	cs, err := s.store.CandlesRange(ctx, symbol, from, before)
 	if err != nil {
 		return domain.MarketView{}, err
 	}
-	return marketview.BuildView(symbol, cs, now)
+	summary, err := s.store.CandlesRange(ctx, symbol, now.Add(-25*time.Hour), now.Add(time.Minute))
+	if err != nil {
+		return domain.MarketView{}, err
+	}
+	availableFrom, _, exists, err := s.store.SymbolBounds(ctx, symbol)
+	if err != nil {
+		return domain.MarketView{}, err
+	}
+	if !exists {
+		availableFrom = time.Time{}
+	}
+	s.mu.RLock()
+	backfillDone := s.backfillDone
+	s.mu.RUnlock()
+	view, err := marketview.BuildPagedView(symbol, cs, summary, nil, intervalName, before, limit, now, availableFrom, backfillDone)
+	if err != nil {
+		return domain.MarketView{}, err
+	}
+	if len(view.Candles) > 0 {
+		start := view.Candles[0].Time
+		end := view.Candles[len(view.Candles)-1].Time.Add(interval)
+		predictions, predictionErr := s.store.Predictions(ctx, symbol, start, end)
+		if predictionErr != nil {
+			return domain.MarketView{}, predictionErr
+		}
+		view.ModelSignals = marketview.DirectionalSignals(predictions, interval)
+	}
+	return view, nil
 }
 func (s *Service) Map(symbol string) (engine.MapResult, bool) {
 	s.mu.RLock()
