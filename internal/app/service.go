@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
-	"os"
 	"sort"
 	"sync"
 	"time"
@@ -41,7 +40,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 }
 
 func (s *Service) Start(ctx context.Context) {
-	exchange.StartLiquidationStreams(ctx, s.cfg.Symbols, s.store.InsertLiquidation, s.health)
+	exchange.StartLiquidationStreams(ctx, s.cfg.Symbols, s.store.InsertLiquidation, s.health, s.log)
 	go s.pollLoop(ctx)
 	go s.predictionLoop(ctx)
 	go s.bootstrap(ctx)
@@ -311,4 +310,3 @@ func topContributions(in map[string]float64, n int) map[string]float64 {
 	}
 	return out
 }
-func DefaultLogger() *slog.Logger { return slog.New(slog.NewJSONHandler(os.Stdout, nil)) }

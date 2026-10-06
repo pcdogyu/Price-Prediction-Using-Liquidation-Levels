@@ -25,7 +25,7 @@ go test ./...
 go run ./cmd/server
 ```
 
-打开 `http://localhost:9090`。仪表盘显示三所中位合成价、最近24小时的15分钟K线、K线形态、垂直价格清算强度和上下墙触发状态。首次启动会在后台回填数据；在完成建图和训练前，API 会明确返回 `data_insufficient`。
+打开 `http://localhost:9090`。仪表盘显示三所中位合成价、最近24小时的15分钟K线、K线形态、垂直价格清算强度和上下墙触发状态。首次启动会在后台回填数据；在完成建图和训练前，API 会明确返回 `data_insufficient`。未配置 `APP_AUTH_USERNAME` 与 `APP_AUTH_PASSWORD_HASH` 时，本地开发默认不启用登录。
 
 常用配置见 [.env.example](.env.example)。服务本身不会读取 `.env` 文件；可由 systemd、Docker 或 shell 注入环境变量。
 
@@ -36,13 +36,18 @@ GET /api/v1/signals/latest?symbol=BTCUSDT
 GET /api/v1/map?symbol=BTCUSDT
 GET /api/v1/market?symbol=BTCUSDT
 GET /api/v1/backtest?symbol=BTCUSDT
+GET /api/v1/logs?limit=200&level=INFO
 GET /api/v1/stream
+POST /auth/login
+POST /auth/logout
 GET /healthz
 GET /readyz
 GET /metrics
 ```
 
 `state=ok` 才表示数据、双侧清算墙和模型均可用。`experimental=true` 表示模型尚未满足晋级门槛，不能解释为已证明有交易优势。
+
+生产环境可用 `liquidation-predictor hash-password` 从标准输入生成 Argon2id PHC 哈希，并通过 `APP_AUTH_PASSWORD_HASH` 注入。会话 Cookie 使用 Secure、HttpOnly 和 SameSite=Strict；程序日志以 JSON Lines 写入 `APP_LOG_PATH`，日志接口只允许已登录会话访问。
 
 ## 模型规则
 

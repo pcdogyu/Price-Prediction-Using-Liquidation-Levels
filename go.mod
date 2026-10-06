@@ -4,7 +4,9 @@ go 1.21
 
 require (
 	github.com/gorilla/websocket v1.5.3
+	golang.org/x/crypto v0.24.0
 	gonum.org/v1/gonum v0.14.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	modernc.org/sqlite v1.29.10
 )
 

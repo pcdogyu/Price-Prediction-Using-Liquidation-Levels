@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/rand"
 	"strconv"
@@ -18,21 +19,23 @@ import (
 
 type LiquidationSink func(context.Context, domain.LiquidationEvent) error
 
-func StartLiquidationStreams(ctx context.Context, symbols []string, sink LiquidationSink, health *HealthRegistry) {
-	go reconnect(ctx, "binance_liquidations", .65, health, func(ctx context.Context) error { return runBinance(ctx, symbols, sink, health) })
-	go reconnect(ctx, "bybit_liquidations", 1, health, func(ctx context.Context) error { return runBybit(ctx, symbols, sink, health) })
-	go reconnect(ctx, "okx_liquidations", .9, health, func(ctx context.Context) error { return runOKX(ctx, symbols, sink, health) })
+func StartLiquidationStreams(ctx context.Context, symbols []string, sink LiquidationSink, health *HealthRegistry, log *slog.Logger) {
+	go reconnect(ctx, "binance_liquidations", .65, health, log, func(ctx context.Context) error { return runBinance(ctx, symbols, sink, health) })
+	go reconnect(ctx, "bybit_liquidations", 1, health, log, func(ctx context.Context) error { return runBybit(ctx, symbols, sink, health) })
+	go reconnect(ctx, "okx_liquidations", .9, health, log, func(ctx context.Context) error { return runOKX(ctx, symbols, sink, health) })
 }
 
-func reconnect(ctx context.Context, name string, coverage float64, h *HealthRegistry, run func(context.Context) error) {
+func reconnect(ctx context.Context, name string, coverage float64, h *HealthRegistry, log *slog.Logger, run func(context.Context) error) {
 	backoff := time.Second
 	for ctx.Err() == nil {
+		log.Info("liquidation stream connecting", "source", name)
 		err := run(ctx)
 		if ctx.Err() != nil {
 			return
 		}
 		h.Fail(name, err)
 		wait := backoff + time.Duration(rand.Int63n(int64(backoff/2+1)))
+		log.Warn("liquidation stream disconnected", "source", name, "error", err, "retry_after", wait)
 		select {
 		case <-ctx.Done():
 			return
