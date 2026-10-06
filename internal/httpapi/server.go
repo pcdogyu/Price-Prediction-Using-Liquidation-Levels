@@ -135,6 +135,30 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	writeEvent := func(name string, value any) bool {
+		b, err := json.Marshal(value)
+		if err != nil {
+			s.log.Error("encode SSE event", "event", name, "error", err)
+			return false
+		}
+		if _, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, b); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+	writeHealth := func() bool {
+		return writeEvent("health", map[string]any{
+			"status":  "alive",
+			"time":    time.Now().UTC(),
+			"sources": s.svc.Health(),
+		})
+	}
+	// Write immediately so browsers and reverse proxies establish the stream
+	// without waiting for the next five-minute prediction update.
+	if !writeHealth() {
+		return
+	}
 	ch, cancel := s.svc.Subscribe()
 	defer cancel()
 	ping := time.NewTicker(20 * time.Second)
@@ -143,13 +167,14 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case p := <-ch:
-			b, _ := json.Marshal(p)
-			fmt.Fprintf(w, "event: prediction\ndata: %s\n\n", b)
-			flusher.Flush()
+		case p, open := <-ch:
+			if !open || !writeEvent("prediction", p) {
+				return
+			}
 		case <-ping.C:
-			fmt.Fprint(w, ": keepalive\n\n")
-			flusher.Flush()
+			if !writeHealth() {
+				return
+			}
 		}
 	}
 }

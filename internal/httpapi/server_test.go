@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"context"
 	"io"
 	"log/slog"
@@ -60,5 +61,20 @@ func TestGo121CompatibleRoutes(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "new URL('api/v1/'") || strings.Contains(body, "fetch('/api/") {
 		t.Fatalf("dashboard API paths are not subpath-safe")
+	}
+	ts := httptest.NewServer(srv.http.Handler)
+	defer ts.Close()
+	streamResponse, err := ts.Client().Get(ts.URL + "/api/v1/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer streamResponse.Body.Close()
+	if got := streamResponse.Header.Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("SSE content type=%q", got)
+	}
+	reader := bufio.NewReader(streamResponse.Body)
+	line, err := reader.ReadString('\n')
+	if err != nil || line != "event: health\n" {
+		t.Fatalf("initial SSE event=%q error=%v", line, err)
 	}
 }
