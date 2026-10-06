@@ -44,6 +44,7 @@ func (s *Service) Start(ctx context.Context) {
 	exchange.StartLiquidationStreams(ctx, s.cfg.Symbols, s.store.InsertLiquidation, s.health, s.log)
 	go s.pollLoop(ctx)
 	go s.predictionLoop(ctx)
+	go s.rebuild(ctx)
 	go s.bootstrap(ctx)
 	go s.retrainLoop(ctx)
 	go s.retentionLoop(ctx)
