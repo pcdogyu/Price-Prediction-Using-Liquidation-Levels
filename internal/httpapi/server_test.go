@@ -207,6 +207,9 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	if session == nil || !session.Secure || !session.HttpOnly || session.SameSite != http.SameSiteStrictMode || session.Path != "/liquidation/" {
 		t.Fatalf("session cookie=%+v", session)
 	}
+	if session.MaxAge < int((7*24*time.Hour-time.Minute).Seconds()) || session.MaxAge > int((7*24*time.Hour).Seconds()) {
+		t.Fatalf("session cookie max age=%d", session.MaxAge)
+	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/logs?limit=50&level=INFO", nil)
 	r.AddCookie(session)
 	w = httptest.NewRecorder()

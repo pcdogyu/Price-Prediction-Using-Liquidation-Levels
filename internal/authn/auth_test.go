@@ -24,18 +24,18 @@ func TestPasswordSessionAndLockout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.Authenticated(token) || expires.Sub(now) != 8*time.Hour {
+	if !m.Authenticated(token) || expires.Sub(now) != sessionTTL {
 		t.Fatal("valid session was not created")
 	}
 	restarted, err := New("pcdog", hash, "/liquidation/")
 	if err != nil || restarted.Authenticated(token) {
 		t.Fatal("session survived a manager restart")
 	}
-	now = now.Add(8*time.Hour + time.Second)
+	now = now.Add(sessionTTL + time.Second)
 	if m.Authenticated(token) {
 		t.Fatal("expired session is still valid")
 	}
-	now = now.Add(-8*time.Hour - time.Second)
+	now = now.Add(-sessionTTL - time.Second)
 	token, _, err = m.Login("2.3.4.5", "pcdog", "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)

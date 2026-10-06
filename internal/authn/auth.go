@@ -21,6 +21,7 @@ const (
 	parallel   = 2
 	saltBytes  = 16
 	keyBytes   = 32
+	sessionTTL = 7 * 24 * time.Hour
 )
 
 var (
@@ -57,7 +58,7 @@ func New(username, passwordHash, basePath string) (*Manager, error) {
 		passwordHash: strings.TrimSpace(passwordHash),
 		basePath:     basePath,
 		now:          time.Now,
-		ttl:          8 * time.Hour,
+		ttl:          sessionTTL,
 		sessions:     make(map[string]session),
 		attempts:     make(map[string]attempt),
 		hashSlots:    make(chan struct{}, 2),
