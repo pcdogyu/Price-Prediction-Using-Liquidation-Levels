@@ -23,6 +23,9 @@ func TestBuildMapFindsBothWalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if m.DataSource != domain.DataSourceBinanceUSDM {
+		t.Fatalf("data source=%q", m.DataSource)
+	}
 	if m.Upper == nil || m.Lower == nil {
 		t.Fatalf("expected both walls: %#v", m)
 	}

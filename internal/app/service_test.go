@@ -25,6 +25,19 @@ func (*historyClient) Current(context.Context, string) (domain.Candle, error) {
 	return domain.Candle{}, nil
 }
 
+func TestNewRegistersOnlyBinance(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := New(config.Config{Symbols: []string{"BTCUSDT"}, ModelPath: filepath.Join(t.TempDir(), "model.json")}, st, logger)
+	if len(svc.clients) != 1 || svc.clients[0].Name() != "binance" {
+		t.Fatalf("registered clients=%v", svc.clients)
+	}
+}
+
 func TestBootstrapRequestsOnlyMissingOlderRange(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

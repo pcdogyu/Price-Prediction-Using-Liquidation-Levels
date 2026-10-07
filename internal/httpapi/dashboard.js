@@ -2,7 +2,7 @@
 
 const NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
-const cache = { signal: null, map: null, market: null };
+const cache = { signal: null, map: null, market: null, volume: null };
 const chart = {
   interval: localStorage.getItem('liquidation.interval') || '15m',
   candles: [], signals: [], windowEnd: 0, visibleCount: 120,
@@ -27,7 +27,7 @@ const when = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: 
 const patternName = { doji: '十字星', hammer: '锤头', shooting_star: '流星', bullish_engulfing: '看涨吞没', bearish_engulfing: '看跌吞没' };
 const statusName = { unavailable: '不可用', armed: '等待触发', approaching: '接近触发', triggered: '已触发', expired: '已过期' };
 const intervalName = { '1m': '1分钟', '2m': '2分钟', '3m': '3分钟', '5m': '5分钟', '10m': '10分钟', '15m': '15分钟', '30m': '30分钟', '1h': '1小时', '4h': '4小时', '8h': '8小时', '12h': '12小时', '24h': '24小时' };
-const dims = { height: 560, left: 72, top: 24, bottom: 42, candleRight: 850, profileLeft: 895, profileRight: 1165 };
+const dims = { height: 560, width: 1600, left: 72, top: 24, bottom: 42, candleRight: 1025, volumeLeft: 1060, volumeRight: 1280, liquidationLeft: 1315, profileRight: 1565 };
 if (!intervalName[chart.interval]) chart.interval = '15m';
 
 function svgNode(tag, attrs = {}, text = '') {
@@ -58,7 +58,7 @@ function marketPath(before = '') {
 function updateTicker(view) {
   const summary = view?.summary;
   if (!summary) return;
-  $('ticker-symbol').textContent = (view.symbol || symbol) + ' · 三所中位合成价';
+  $('ticker-symbol').textContent = (view.symbol || symbol) + ' · Binance 永续价格';
   $('ticker-price').textContent = money(summary.last_price);
   $('ticker-updated').textContent = '更新 ' + when(summary.updated_at) + (view.backfill_complete ? '' : ' · 180天历史回填中');
   const change = finite(summary.change_pct_24h) ? summary.change_pct_24h : 0;
@@ -69,7 +69,7 @@ function updateTicker(view) {
   $('ticker-high').textContent = money(summary.high_24h);
   $('ticker-low').textContent = money(summary.low_24h);
   $('ticker-volume').textContent = '$' + compact(summary.volume_24h_usd);
-  $('ticker-coverage').textContent = summary.exchange_count + ' 个交易所覆盖';
+  $('ticker-coverage').textContent = 'Binance USDⓈ-M · 单一数据源';
 }
 
 function updateProbabilities(probabilities) {
@@ -143,11 +143,13 @@ function visibleCandles() {
   return chart.candles.slice(Math.max(0, end - chart.visibleCount), end);
 }
 
-function currentRange(candles, bins, signal) {
+function currentRange(candles, bins, signal, volume) {
   if (chart.yManual && finite(chart.yLow) && finite(chart.yHigh) && chart.yHigh > chart.yLow) return [chart.yLow, chart.yHigh];
   const values = [];
   candles.forEach(item => values.push(item.low, item.high));
   bins.forEach(item => values.push(item.price));
+  (volume?.bins || []).forEach(item => values.push(item.price_low, item.price_high));
+  [volume?.val, volume?.vah].forEach(value => { if (finite(value) && value > 0) values.push(value); });
   [signal?.mark_price, signal?.upper_wall?.price, signal?.lower_wall?.price].forEach(value => { if (finite(value) && value > 0) values.push(value); });
   if (!values.length) return [0, 1];
   let low = Math.min(...values), high = Math.max(...values);
@@ -166,19 +168,21 @@ function arrowPath(x, cy, side, size) {
     : 'M ' + x + ' ' + (cy + size) + ' L ' + (x - size) + ' ' + (cy - size) + ' L ' + (x + size) + ' ' + (cy - size) + ' Z';
 }
 
-function draw(view, map, signal) {
+function draw(view, map, signal, volume) {
   const svg = $('market-chart');
   svg.replaceChildren();
   const candles = visibleCandles();
   const bins = map?.bins || [];
-  $('chart-title').textContent = (intervalName[chart.interval] || chart.interval) + ' K线 · 垂直清算价格梯形图';
-  $('chart-context').textContent = (chart.atLatest ? '最新K线' : '历史K线') + ' · 当前清算墙' + (map?.mark_price ? ' · ' + when(signal?.time) : '') + ' · 共用价格纵轴';
-  if (!candles.length && !bins.length) {
-    svg.appendChild(svgNode('text', { x: 600, y: 280, 'text-anchor': 'middle', fill: '#83a0b2' }, '等待 K 线与清算地图数据'));
+  $('chart-title').textContent = (intervalName[chart.interval] || chart.interval) + ' K线 · 成交量分布 · 清算墙';
+  const sessionRange = volume?.session_start ? ' (' + when(volume.session_start) + ' → ' + when(volume.session_end) + ')' : '';
+  const profileState = volume?.state === 'ok' ? '当前时段成交量' + sessionRange : volume?.state === 'backfilling' ? '成交量回填 ' + ((volume.backfill_progress || 0) * 100).toFixed(0) + '%' + sessionRange : volume?.state === 'stale' ? '成交量已过期' + sessionRange : '成交量不可用';
+  $('chart-context').textContent = (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / 当前清算墙 · 共用价格纵轴';
+  if (!candles.length && !bins.length && !(volume?.bins || []).length) {
+    svg.appendChild(svgNode('text', { x: 800, y: 280, 'text-anchor': 'middle', fill: '#83a0b2' }, '等待 K 线、成交量分布与清算地图数据'));
     return;
   }
-  const { height, left, top, bottom, candleRight, profileLeft, profileRight } = dims;
-  const [low, high] = currentRange(candles, bins, signal);
+  const { height, left, top, bottom, candleRight, volumeLeft, volumeRight, liquidationLeft, profileRight } = dims;
+  const [low, high] = currentRange(candles, bins, signal, volume);
   const plotBottom = height - bottom;
   const y = price => top + (high - price) / (high - low) * (plotBottom - top);
   const defs = svgNode('defs');
@@ -192,7 +196,8 @@ function draw(view, map, signal) {
     svg.appendChild(svgNode('line', { x1: left, y1: yy, x2: profileRight, y2: yy, stroke: '#18313f', 'stroke-width': 1 }));
     svg.appendChild(svgNode('text', { x: left - 8, y: yy + 4, 'text-anchor': 'end', fill: '#7895a7', 'font-size': 11 }, money(price)));
   }
-  svg.appendChild(svgNode('line', { x1: profileLeft - 18, y1: top, x2: profileLeft - 18, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
+  svg.appendChild(svgNode('line', { x1: volumeLeft - 18, y1: top, x2: volumeLeft - 18, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
+  svg.appendChild(svgNode('line', { x1: liquidationLeft - 18, y1: top, x2: liquidationLeft - 18, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
   const plot = svgNode('g', { 'clip-path': 'url(#plot-clip)' });
   if (candles.length) {
     const step = (candleRight - left) / chart.visibleCount;
@@ -245,12 +250,25 @@ function draw(view, map, signal) {
     const barHeight = Math.max(2, Math.abs(y(low + binWidth) - y(low)) * .9);
     bins.forEach(bin => {
       if (bin.price < low - binWidth || bin.price > high + binWidth) return;
-      const width = Math.sqrt(bin.total_usd / maximum) * (profileRight - profileLeft);
+      const width = Math.sqrt(bin.total_usd / maximum) * (profileRight - liquidationLeft);
       const color = bin.price < (map.mark_price || signal?.mark_price) ? '#fb7185' : '#2dd4bf';
-      plot.appendChild(svgNode('rect', { x: profileLeft, y: y(bin.price) - barHeight / 2, width, height: barHeight, fill: color, opacity: .35 + .6 * bin.total_usd / maximum, 'data-tip': '当前清算墙快照\n价格 ' + money(bin.price) + '\n总清算强度 $' + compact(bin.total_usd) + '\n多仓 $' + compact(bin.long_usd) + '\n空仓 $' + compact(bin.short_usd) }));
+      plot.appendChild(svgNode('rect', { x: liquidationLeft, y: y(bin.price) - barHeight / 2, width, height: barHeight, fill: color, opacity: .35 + .6 * bin.total_usd / maximum, 'data-tip': '当前清算墙快照\n价格 ' + money(bin.price) + '\n总清算强度 $' + compact(bin.total_usd) + '\n多仓 $' + compact(bin.long_usd) + '\n空仓 $' + compact(bin.short_usd) }));
+    });
+  }
+  const volumeBins = volume?.bins || [];
+  if (volumeBins.length) {
+    const maximum = Math.max(...volumeBins.map(item => item.volume_usd), 1);
+    volumeBins.forEach(bin => {
+      const center = (bin.price_low + bin.price_high) / 2;
+      if (bin.price_high < low || bin.price_low > high) return;
+      const width = Math.sqrt(bin.volume_usd / maximum) * (volumeRight - volumeLeft);
+      const barHeight = Math.max(2, Math.abs(y(bin.price_low) - y(bin.price_high)) * .9);
+      plot.appendChild(svgNode('rect', { x: volumeRight - width, y: y(center) - barHeight / 2, width, height: barHeight, fill: '#60a5fa', opacity: bin.in_value_area ? .88 : .28, 'data-tip': 'Binance 当前时段成交量\n价格 ' + money(bin.price_low) + ' – ' + money(bin.price_high) + '\n成交额 $' + compact(bin.volume_usd) + '\n占比 ' + (bin.volume_percent || 0).toFixed(2) + '%' + (bin.in_value_area ? '\n70%价值区域内' : '\n价值区域外') }));
     });
   }
   svg.appendChild(plot);
+  svg.appendChild(svgNode('text', { x: (volumeLeft + volumeRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#7dd3fc', 'font-size': 11, 'font-weight': 650 }, '当前时段成交量'));
+  svg.appendChild(svgNode('text', { x: (liquidationLeft + profileRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#83a0b2', 'font-size': 11, 'font-weight': 650 }, '当前清算墙'));
   const levels = [['现价', view?.summary?.last_price || signal?.mark_price, '#f8fafc', '4 5'], ['上墙', signal?.upper_wall?.price, '#2dd4bf', ''], ['下墙', signal?.lower_wall?.price, '#fb7185', '']];
   levels.forEach(([name, price, color, dash]) => {
     if (!price || price < low || price > high) return;
@@ -258,6 +276,13 @@ function draw(view, map, signal) {
     svg.appendChild(svgNode('line', { x1: left, y1: yy, x2: profileRight, y2: yy, stroke: color, 'stroke-width': name === '现价' ? 1.2 : 1.8, 'stroke-dasharray': dash, opacity: .95 }));
     svg.appendChild(svgNode('rect', { x: profileRight - 112, y: yy - 12, width: 112, height: 22, fill: '#071019', stroke: color, rx: 5 }));
     svg.appendChild(svgNode('text', { x: profileRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11 }, name + ' ' + money(price)));
+  });
+  [['VAL', volume?.val, '#22c55e'], ['VAH', volume?.vah, '#ef4444']].forEach(([name, price, color]) => {
+    if (!finite(price) || price < low || price > high) return;
+    const yy = y(price);
+    svg.appendChild(svgNode('line', { x1: left, y1: yy, x2: profileRight, y2: yy, stroke: color, 'stroke-width': 1.7, opacity: .95 }));
+    svg.appendChild(svgNode('rect', { x: volumeRight - 112, y: yy - 12, width: 112, height: 22, fill: '#071019', stroke: color, rx: 5 }));
+    svg.appendChild(svgNode('text', { x: volumeRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11 }, name + ' ' + money(price)));
   });
   bindTips(svg);
 }
@@ -292,7 +317,7 @@ async function loadOlder() {
     const view = await json(marketPath(chart.nextBefore));
     if (requestedSymbol !== symbol || requestedInterval !== chart.interval) return;
     mergeMarket(view, true, false);
-    draw(cache.market, cache.map, cache.signal);
+    draw(cache.market, cache.map, cache.signal, cache.volume);
   } catch (error) {
     lastFailures = lastFailures.filter(item => !item.startsWith('历史行情'));
     lastFailures.push('历史行情 · ' + error.message);
@@ -308,7 +333,7 @@ async function refresh(resetMarket = false) {
   const requestedInterval = chart.interval;
   refreshing = true;
   try {
-    const specs = [['signal', '预测', 'signals/latest?symbol=' + symbol], ['map', '清算地图', 'map?symbol=' + symbol], ['market', '市场行情', marketPath()]];
+    const specs = [['signal', '预测', 'signals/latest?symbol=' + symbol], ['map', '清算地图', 'map?symbol=' + symbol], ['volume', '成交量分布', 'volume-profile?symbol=' + symbol], ['market', '市场行情', marketPath()]];
     const results = await Promise.allSettled(specs.map(item => json(item[2])));
     if (requestedSymbol !== symbol || requestedInterval !== chart.interval || sequence !== refreshSequence) return;
     lastFailures = [];
@@ -327,7 +352,7 @@ async function refresh(resetMarket = false) {
       $('reason').textContent = cache.signal.state === 'ok' ? '当前领先类别：' + (cache.signal.leading_class || '—') + '；触发顺序：' + (cache.signal.trigger_order || 'pending') + '。' : (cache.signal.reason || '清算墙或历史数据不足');
       $('model-info').textContent = '模型：' + (cache.signal.model_version || '尚未训练') + ' · 数据年龄 ' + (finite(cache.signal.data_age_seconds) ? Math.max(0, cache.signal.data_age_seconds).toFixed(0) + ' 秒' : '—');
     }
-    draw(cache.market, cache.map, cache.signal);
+    draw(cache.market, cache.map, cache.signal, cache.volume);
     showFailures(lastFailures);
   } finally {
     if (sequence === refreshSequence) refreshing = false;
@@ -336,7 +361,7 @@ async function refresh(resetMarket = false) {
 
 function svgPoint(event) {
   const rect = $('market-chart').getBoundingClientRect();
-  return { x: (event.clientX - rect.left) * 1200 / rect.width, y: (event.clientY - rect.top) * 560 / rect.height };
+  return { x: (event.clientX - rect.left) * dims.width / rect.width, y: (event.clientY - rect.top) * dims.height / rect.height };
 }
 
 function installChartInteractions() {
@@ -359,13 +384,13 @@ function installChartInteractions() {
     chart.yLow = anchor - span * ratio;
     chart.yHigh = chart.yLow + span;
     chart.yManual = true;
-    draw(cache.market, cache.map, cache.signal);
+    draw(cache.market, cache.map, cache.signal, cache.volume);
   }, { passive: false });
   svg.addEventListener('pointerdown', event => {
     const point = svgPoint(event);
     let mode = '';
     if (point.x >= dims.left && point.x <= dims.candleRight) mode = 'time';
-    else if (point.x >= dims.profileLeft - 18 && point.x <= dims.profileRight) mode = 'price';
+    else if (point.x >= dims.volumeLeft - 18 && point.x <= dims.profileRight) mode = 'price';
     if (!mode) return;
     chart.drag = { mode, pointerId: event.pointerId, x: point.x, y: point.y, end: chart.windowEnd, low: chart.yLow, high: chart.yHigh };
     svg.setPointerCapture(event.pointerId);
@@ -383,14 +408,14 @@ function installChartInteractions() {
       if (!chart.atLatest) chart.newData = false;
       $('new-data').classList.toggle('hidden', !chart.newData);
       if (!chart.yManual) chart.yLow = chart.yHigh = null;
-      draw(cache.market, cache.map, cache.signal);
+      draw(cache.market, cache.map, cache.signal, cache.volume);
     } else {
       const span = chart.drag.high - chart.drag.low;
       const delta = (point.y - chart.drag.y) / (dims.height - dims.top - dims.bottom) * span;
       chart.yLow = chart.drag.low + delta;
       chart.yHigh = chart.drag.high + delta;
       chart.yManual = true;
-      draw(cache.market, cache.map, cache.signal);
+      draw(cache.market, cache.map, cache.signal, cache.volume);
     }
   });
   const endDrag = event => {
@@ -462,7 +487,7 @@ document.querySelectorAll('button[data-symbol]').forEach(button => {
     document.querySelectorAll('button[data-symbol]').forEach(item => item.classList.remove('active'));
     button.classList.add('active');
     symbol = button.dataset.symbol;
-    cache.signal = cache.map = cache.market = null;
+    cache.signal = cache.map = cache.market = cache.volume = null;
     resetChartState();
     refresh(true);
   });
@@ -487,7 +512,7 @@ $('chart-latest').addEventListener('click', () => {
 $('chart-reset').addEventListener('click', () => {
   chart.yManual = false;
   chart.yLow = chart.yHigh = chart.autoSpan = null;
-  draw(cache.market, cache.map, cache.signal);
+  draw(cache.market, cache.map, cache.signal, cache.volume);
 });
 $('log-button').addEventListener('click', openLogs);
 $('log-close').addEventListener('click', closeLogs);

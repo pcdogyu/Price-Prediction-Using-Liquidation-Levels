@@ -34,6 +34,53 @@ type LiquidationEvent struct {
 	Coverage                           string
 }
 
+const DataSourceBinanceUSDM = "binance_usdm"
+
+type AggregateTrade struct {
+	ID        int64     `json:"id"`
+	Symbol    string    `json:"symbol"`
+	Time      time.Time `json:"time"`
+	Price     float64   `json:"price"`
+	Quantity  float64   `json:"quantity"`
+	PriceText string    `json:"-"`
+}
+
+type VolumeProfileBin struct {
+	PriceLow    float64 `json:"price_low"`
+	PriceHigh   float64 `json:"price_high"`
+	VolumeUSD   float64 `json:"volume_usd"`
+	VolumeShare float64 `json:"volume_percent"`
+	InValueArea bool    `json:"in_value_area"`
+}
+
+type VolumeProfile struct {
+	Symbol            string             `json:"symbol"`
+	Source            string             `json:"source"`
+	State             string             `json:"state"`
+	SessionStart      time.Time          `json:"session_start"`
+	SessionEnd        time.Time          `json:"session_end"`
+	NextReset         time.Time          `json:"next_reset"`
+	ResetKind         string             `json:"reset_kind"`
+	ValueAreaFraction float64            `json:"value_area_fraction"`
+	VAL               *float64           `json:"val,omitempty"`
+	VAH               *float64           `json:"vah,omitempty"`
+	TotalVolumeUSD    float64            `json:"total_volume_usd"`
+	Bins              []VolumeProfileBin `json:"bins"`
+	DataThrough       time.Time          `json:"data_through,omitempty"`
+	BackfillProgress  float64            `json:"backfill_progress"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+}
+
+type VolumeProfileSnapshot struct {
+	Symbol         string
+	Time           time.Time
+	SessionStart   time.Time
+	VAL            float64
+	VAH            float64
+	TotalVolumeUSD float64
+	Complete       bool
+}
+
 type MapBin struct {
 	Price    float64 `json:"price"`
 	LongUSD  float64 `json:"long_usd"`
@@ -129,6 +176,7 @@ type Label struct {
 
 type ModelArtifact struct {
 	Version      string      `json:"version"`
+	DataSource   string      `json:"data_source"`
 	FeatureNames []string    `json:"feature_names"`
 	Means        []float64   `json:"means"`
 	StdDevs      []float64   `json:"std_devs"`
@@ -142,6 +190,7 @@ type ModelArtifact struct {
 
 type Prediction struct {
 	Symbol         string             `json:"symbol"`
+	DataSource     string             `json:"data_source"`
 	Time           time.Time          `json:"time"`
 	HorizonMinutes int                `json:"horizon_minutes"`
 	State          string             `json:"state"`
@@ -164,6 +213,7 @@ type Prediction struct {
 
 type BacktestReport struct {
 	Symbol            string             `json:"symbol"`
+	DataSource        string             `json:"data_source"`
 	GeneratedAt       time.Time          `json:"generated_at"`
 	Samples           int                `json:"samples"`
 	LogLoss           float64            `json:"log_loss"`

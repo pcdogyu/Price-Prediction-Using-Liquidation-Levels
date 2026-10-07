@@ -52,6 +52,7 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.HandleFunc("/api/v1/signals/latest", getOnly(s.signal))
 	mux.HandleFunc("/api/v1/map", getOnly(s.liquidationMap))
 	mux.HandleFunc("/api/v1/market", getOnly(s.market))
+	mux.HandleFunc("/api/v1/volume-profile", getOnly(s.volumeProfile))
 	mux.HandleFunc("/api/v1/backtest", getOnly(s.backtest))
 	mux.HandleFunc("/api/v1/logs", getOnly(s.applicationLogs))
 	mux.HandleFunc("/api/v1/stream", getOnly(s.stream))
@@ -184,6 +185,20 @@ func (s *Server) market(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
+}
+
+func (s *Server) volumeProfile(w http.ResponseWriter, r *http.Request) {
+	sym, err := symbol(r)
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	profile, err := s.svc.VolumeProfile(r.Context(), sym)
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
 }
 func (s *Server) backtest(w http.ResponseWriter, r *http.Request) {
 	sym, e := symbol(r)

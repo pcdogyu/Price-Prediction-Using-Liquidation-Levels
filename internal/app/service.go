@@ -19,23 +19,29 @@ import (
 )
 
 type Service struct {
-	cfg          config.Config
-	store        *store.Store
-	clients      []exchange.Client
-	health       *exchange.HealthRegistry
-	log          *slog.Logger
-	mu           sync.RWMutex
-	maps         map[string]engine.MapResult
-	predictions  map[string]domain.Prediction
-	model        domain.ModelArtifact
-	subs         map[chan domain.Prediction]struct{}
-	backfillDone bool
+	cfg                config.Config
+	store              *store.Store
+	clients            []exchange.Client
+	health             *exchange.HealthRegistry
+	log                *slog.Logger
+	mu                 sync.RWMutex
+	trainMu            sync.Mutex
+	maps               map[string]engine.MapResult
+	predictions        map[string]domain.Prediction
+	model              domain.ModelArtifact
+	subs               map[chan domain.Prediction]struct{}
+	backfillDone       bool
+	volumeHistoryReady bool
 }
 
 func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance(), exchange.NewBybit(), exchange.NewOKX()}, health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}}
 	if a, e := ml.Load(cfg.ModelPath); e == nil {
-		s.model = a
+		if a.DataSource == domain.DataSourceBinanceUSDM && sameStrings(a.FeatureNames, engine.FeatureNames) {
+			s.model = a
+		} else {
+			log.Warn("legacy or incompatible model ignored", "version", a.Version, "data_source", a.DataSource)
+		}
 	}
 	return s
 }
@@ -48,6 +54,8 @@ func (s *Service) Start(ctx context.Context) {
 	go s.bootstrap(ctx)
 	go s.retrainLoop(ctx)
 	go s.retentionLoop(ctx)
+	s.startVolumeProfiles(ctx)
+	go s.volumeArchiveLoop(ctx)
 }
 
 func (s *Service) predictionLoop(ctx context.Context) {
@@ -189,17 +197,26 @@ func (s *Service) rebuild(ctx context.Context) {
 			continue
 		}
 		m, e := engine.BuildMap(cs, engine.DefaultMapConfig())
-		p := domain.Prediction{Symbol: sym, Time: time.Now().UTC(), HorizonMinutes: 60, State: "data_insufficient", Experimental: true, SourceCoverage: s.coverage(), Reason: "清算墙或历史数据不足"}
+		m.DataSource = domain.DataSourceBinanceUSDM
+		p := domain.Prediction{Symbol: sym, DataSource: domain.DataSourceBinanceUSDM, Time: time.Now().UTC(), HorizonMinutes: 60, State: "data_insufficient", Experimental: true, SourceCoverage: s.coverage(), Reason: "清算墙或历史数据不足"}
 		if e == nil {
 			p.MarkPrice, p.ATR, p.UpperWall, p.LowerWall = m.MarkPrice, m.ATR, m.Upper, m.Lower
 			p.DataAgeSeconds = time.Since(cs[len(cs)-1].Time).Seconds()
 			if m.Upper != nil && m.Lower != nil && p.DataAgeSeconds <= s.cfg.StaleAfter.Seconds() {
 				ll, sl, _ := s.store.LiquidationTotals(ctx, sym, time.Now().Add(-15*time.Minute))
-				fv, fe := engine.BuildFeatures(sym, cs, m, ll, sl)
+				profile, profileErr := s.VolumeProfile(ctx, sym)
+				var profileSnapshot *domain.VolumeProfileSnapshot
+				if profileErr == nil && profile.State == "ok" && profile.VAL != nil && profile.VAH != nil {
+					profileSnapshot = &domain.VolumeProfileSnapshot{Symbol: sym, Time: profile.DataThrough, SessionStart: profile.SessionStart, VAL: *profile.VAL, VAH: *profile.VAH, TotalVolumeUSD: profile.TotalVolumeUSD, Complete: true}
+				} else {
+					p.Reason = "成交量价值区尚未完整同步"
+				}
+				fv, fe := engine.BuildFeaturesWithProfile(sym, cs, m, ll, sl, profileSnapshot)
 				s.mu.RLock()
 				model := s.model
+				volumeHistoryReady := s.volumeHistoryReady
 				s.mu.RUnlock()
-				if fe == nil && len(model.Weights) > 0 {
+				if fe == nil && profileSnapshot != nil && volumeHistoryReady && len(model.Weights) > 0 {
 					probs, pe := ml.Predict(model, fv.Values)
 					if pe == nil {
 						p.State = "ok"
@@ -211,6 +228,8 @@ func (s *Service) rebuild(ctx context.Context) {
 						p.Experimental = true
 						p.Contributions = topContributions(ml.Contributions(model, fv.Values), 6)
 					}
+				} else if !volumeHistoryReady {
+					p.Reason = "正在重建30天逐笔成交量特征"
 				} else if len(model.Weights) == 0 {
 					p.Reason = "模型尚未完成首次训练"
 				}
@@ -232,17 +251,33 @@ func (s *Service) rebuild(ctx context.Context) {
 }
 
 func (s *Service) train(ctx context.Context) {
+	s.trainMu.Lock()
+	defer s.trainMu.Unlock()
+
+	s.mu.RLock()
+	volumeHistoryReady := s.volumeHistoryReady
+	s.mu.RUnlock()
+	if !volumeHistoryReady {
+		s.log.Info("training deferred until thirty day volume profile history is complete")
+		return
+	}
 	var samples []ml.Sample
 	trainingDays := s.cfg.TrainingDays
 	if trainingDays <= 0 {
 		trainingDays = 30
 	}
 	for _, sym := range s.cfg.Symbols {
-		cs, e := s.store.Candles(ctx, sym, time.Now().AddDate(0, 0, -trainingDays))
+		from := time.Now().AddDate(0, 0, -(trainingDays + 5))
+		cs, e := s.store.Candles(ctx, sym, from)
 		if e != nil {
 			continue
 		}
-		samples = append(samples, engine.HistoricalSamples(sym, cs, engine.DefaultMapConfig())...)
+		profiles, pe := s.store.VolumeProfileSnapshots(ctx, sym, from, time.Now().Add(time.Minute))
+		if pe != nil {
+			s.log.Warn("volume profile snapshots unavailable for training", "symbol", sym, "error", pe)
+			continue
+		}
+		samples = append(samples, engine.HistoricalSamplesWithProfiles(sym, cs, engine.DefaultMapConfig(), profiles)...)
 	}
 	report, model, e := ml.WalkForward("BTCUSDT,ETHUSDT", samples, engine.FeatureNames)
 	if e != nil {
@@ -424,4 +459,16 @@ func topContributions(in map[string]float64, n int) map[string]float64 {
 		out[x.k] = x.v
 	}
 	return out
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

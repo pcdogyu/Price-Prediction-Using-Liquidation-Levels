@@ -18,7 +18,7 @@ func WalkForward(symbol string, samples []Sample, names []string) (domain.Backte
 	start := samples[0].Time.Truncate(24 * time.Hour)
 	var allP []map[string]float64
 	var allY []int
-	var priorP, wallP, marketP []map[string]float64
+	var priorP, wallP, marketP, noProfileP []map[string]float64
 	var bestModel domain.ModelArtifact
 	selectedLambda := .01
 	for fold := 0; fold < 4; fold++ {
@@ -61,6 +61,11 @@ func WalkForward(symbol string, samples []Sample, names []string) (domain.Backte
 		}
 		wallP = append(wallP, baselinePredictions(train, val, test, []int{0, 1})...)
 		marketP = append(marketP, baselinePredictions(train, val, test, []int{11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 23, 24, 25})...)
+		indices := make([]int, 27)
+		for i := range indices {
+			indices[i] = i
+		}
+		noProfileP = append(noProfileP, baselinePredictions(train, val, test, indices)...)
 	}
 	if len(allY) == 0 {
 		return domain.BacktestReport{}, domain.ModelArtifact{}, errors.New("no complete folds in 30-day window")
@@ -69,9 +74,10 @@ func WalkForward(symbol string, samples []Sample, names []string) (domain.Backte
 	priorLoss, _, _ := metrics(priorP, allY)
 	wallLoss, _, _ := metrics(wallP, allY)
 	marketLoss, _, _ := metrics(marketP, allY)
-	base := math.Min(priorLoss, math.Min(wallLoss, marketLoss))
+	noProfileLoss, _, _ := metrics(noProfileP, allY)
+	base := math.Min(priorLoss, math.Min(wallLoss, math.Min(marketLoss, noProfileLoss)))
 	improvement := (base - ll) / base
-	report := domain.BacktestReport{Symbol: symbol, GeneratedAt: time.Now().UTC(), Samples: len(allY), LogLoss: ll, BrierScore: br, ECE: ece, BaselineLogLoss: base, Baselines: map[string]float64{"class_prior": priorLoss, "wall_distance": wallLoss, "market_without_map": marketLoss}, Improvement: improvement, PromotionEligible: improvement >= .03 && ece <= .08, Note: "four expanding 14d/3d/3d folds with a 60m embargo"}
+	report := domain.BacktestReport{Symbol: symbol, DataSource: domain.DataSourceBinanceUSDM, GeneratedAt: time.Now().UTC(), Samples: len(allY), LogLoss: ll, BrierScore: br, ECE: ece, BaselineLogLoss: base, Baselines: map[string]float64{"class_prior": priorLoss, "wall_distance": wallLoss, "market_without_map": marketLoss, "binance_without_volume_profile": noProfileLoss}, Improvement: improvement, PromotionEligible: improvement >= .03 && ece <= .08, Note: "four expanding 14d/3d/3d folds with a 60m embargo"}
 	// Fit the production artifact on all but the final three days and reserve
 	// those days for temperature calibration.
 	cut := samples[len(samples)-1].Time.Add(-3 * 24 * time.Hour)

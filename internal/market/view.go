@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	SourceName  = "median_composite"
+	SourceName  = domain.DataSourceBinanceUSDM
 	Interval15m = 15 * time.Minute
 )
 

@@ -37,3 +37,15 @@ func TestOfficialMessageShapes(t *testing.T) {
 		t.Fatalf("bad OKX event: %#v", o)
 	}
 }
+
+func TestParseBinanceAggregateTradeAndUMFilter(t *testing.T) {
+	payload := []byte(`{"stream":"btcusdt@aggTrade","data":{"e":"aggTrade","s":"BTCUSDT","a":123,"p":"100.50","q":"2.25","T":1700000000000,"st":1}}`)
+	trade, ok := ParseBinanceAggregateTrade(payload, []string{"BTCUSDT"})
+	if !ok || trade.ID != 123 || trade.Price != 100.5 || trade.Quantity != 2.25 || trade.PriceText != "100.50" {
+		t.Fatalf("trade=%+v ok=%v", trade, ok)
+	}
+	coin := []byte(`{"e":"aggTrade","s":"BTCUSDT","a":124,"p":"100","q":"1","T":1700000000001,"st":2}`)
+	if _, ok = ParseBinanceAggregateTrade(coin, []string{"BTCUSDT"}); ok {
+		t.Fatal("COIN-M aggregate trade must be rejected")
+	}
+}

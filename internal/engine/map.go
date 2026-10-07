@@ -25,12 +25,13 @@ type level struct {
 }
 
 type MapResult struct {
-	Bins      []domain.MapBin `json:"bins"`
-	MarkPrice float64         `json:"mark_price"`
-	ATR       float64         `json:"atr"`
-	BinWidth  float64         `json:"bin_width"`
-	Upper     *domain.Wall    `json:"upper_wall,omitempty"`
-	Lower     *domain.Wall    `json:"lower_wall,omitempty"`
+	DataSource string          `json:"data_source"`
+	Bins       []domain.MapBin `json:"bins"`
+	MarkPrice  float64         `json:"mark_price"`
+	ATR        float64         `json:"atr"`
+	BinWidth   float64         `json:"bin_width"`
+	Upper      *domain.Wall    `json:"upper_wall,omitempty"`
+	Lower      *domain.Wall    `json:"lower_wall,omitempty"`
 }
 
 func BuildMap(candles []domain.Candle, cfg MapConfig) (MapResult, error) {
@@ -135,7 +136,7 @@ func mapFromLevels(levels []level, now time.Time, mark, atr float64, cfg MapConf
 	}
 	upper := selectWall(bins, mark, atr, "upper")
 	lower := selectWall(bins, mark, atr, "lower")
-	return MapResult{Bins: bins, MarkPrice: mark, ATR: atr, BinWidth: width, Upper: upper, Lower: lower}
+	return MapResult{DataSource: domain.DataSourceBinanceUSDM, Bins: bins, MarkPrice: mark, ATR: atr, BinWidth: width, Upper: upper, Lower: lower}
 }
 
 func selectWall(b []domain.MapBin, mark, atr float64, side string) *domain.Wall {

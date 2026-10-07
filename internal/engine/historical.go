@@ -16,6 +16,20 @@ type pendingSample struct {
 // HistoricalSamples replays the map without looking ahead. Missing historical
 // liquidation streams remain zero rather than being synthesized.
 func HistoricalSamples(symbol string, candles []domain.Candle, cfg MapConfig) []ml.Sample {
+	return historicalSamples(symbol, candles, cfg, nil, false)
+}
+
+func HistoricalSamplesWithProfiles(symbol string, candles []domain.Candle, cfg MapConfig, profiles []domain.VolumeProfileSnapshot) []ml.Sample {
+	byTime := make(map[int64]domain.VolumeProfileSnapshot, len(profiles))
+	for _, profile := range profiles {
+		if profile.Complete {
+			byTime[profile.Time.UTC().Unix()] = profile
+		}
+	}
+	return historicalSamples(symbol, candles, cfg, byTime, true)
+}
+
+func historicalSamples(symbol string, candles []domain.Candle, cfg MapConfig, profiles map[int64]domain.VolumeProfileSnapshot, requireProfile bool) []ml.Sample {
 	cs := append([]domain.Candle(nil), candles...)
 	sort.Slice(cs, func(i, j int) bool {
 		if cs[i].Time.Equal(cs[j].Time) {
@@ -70,6 +84,11 @@ func HistoricalSamples(symbol string, candles []domain.Candle, cfg MapConfig) []
 		}
 		history = append(history, agg)
 		if minute.Minute()%5 == 0 && len(history) >= 61 {
+			profile, profileOK := profiles[minute.UTC().Unix()]
+			if requireProfile && !profileOK {
+				i = j
+				continue
+			}
 			recent := history
 			if len(recent) > 61 {
 				recent = recent[len(recent)-61:]
@@ -78,7 +97,11 @@ func HistoricalSamples(symbol string, candles []domain.Candle, cfg MapConfig) []
 			if atr > 0 {
 				m := mapFromLevels(levels, minute, agg.Close, atr, cfg)
 				if m.Upper != nil && m.Lower != nil {
-					fv, e := BuildFeatures(symbol, recent, m, 0, 0)
+					var profilePointer *domain.VolumeProfileSnapshot
+					if profileOK {
+						profilePointer = &profile
+					}
+					fv, e := BuildFeaturesWithProfile(symbol, recent, m, 0, 0, profilePointer)
 					if e == nil {
 						pending = append(pending, pendingSample{ml.Sample{Time: minute, Symbol: symbol, X: fv.Values}, m.Upper.Price, m.Lower.Price})
 					}

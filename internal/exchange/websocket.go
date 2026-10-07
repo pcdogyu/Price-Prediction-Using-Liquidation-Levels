@@ -21,8 +21,6 @@ type LiquidationSink func(context.Context, domain.LiquidationEvent) error
 
 func StartLiquidationStreams(ctx context.Context, symbols []string, sink LiquidationSink, health *HealthRegistry, log *slog.Logger) {
 	go reconnect(ctx, "binance_liquidations", .65, health, log, func(ctx context.Context) error { return runBinance(ctx, symbols, sink, health) })
-	go reconnect(ctx, "bybit_liquidations", 1, health, log, func(ctx context.Context) error { return runBybit(ctx, symbols, sink, health) })
-	go reconnect(ctx, "okx_liquidations", .9, health, log, func(ctx context.Context) error { return runOKX(ctx, symbols, sink, health) })
 }
 
 func reconnect(ctx context.Context, name string, coverage float64, h *HealthRegistry, log *slog.Logger, run func(context.Context) error) {

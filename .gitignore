@@ -3,6 +3,7 @@
 *.db-wal
 data/
 models/
+build/
 .env
 *.pem
 *.key

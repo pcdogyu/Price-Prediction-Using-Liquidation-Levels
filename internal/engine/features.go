@@ -7,9 +7,13 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
 
-var FeatureNames = []string{"upper_distance_atr", "lower_distance_atr", "log_upper_intensity", "log_lower_intensity", "wall_skew", "mass_up_0_5atr", "mass_down_0_5atr", "mass_up_1atr", "mass_down_1atr", "mass_up_2atr", "mass_down_2atr", "oi_change", "funding", "long_short_ratio", "taker_imbalance", "long_liq_15m", "short_liq_15m", "momentum_5m", "momentum_15m", "momentum_60m", "atr_fraction", "realized_volatility", "symbol_eth", "missing_oi", "missing_long_short_ratio", "missing_taker_flow", "missing_liquidations"}
+var FeatureNames = []string{"upper_distance_atr", "lower_distance_atr", "log_upper_intensity", "log_lower_intensity", "wall_skew", "mass_up_0_5atr", "mass_down_0_5atr", "mass_up_1atr", "mass_down_1atr", "mass_up_2atr", "mass_down_2atr", "oi_change", "funding", "long_short_ratio", "taker_imbalance", "long_liq_15m", "short_liq_15m", "momentum_5m", "momentum_15m", "momentum_60m", "atr_fraction", "realized_volatility", "symbol_eth", "missing_oi", "missing_long_short_ratio", "missing_taker_flow", "missing_liquidations", "price_above_val_atr", "vah_above_price_atr", "value_area_width_atr", "inside_value_area", "missing_volume_profile"}
 
 func BuildFeatures(symbol string, cs []domain.Candle, m MapResult, longLiq, shortLiq float64) (domain.FeatureVector, error) {
+	return BuildFeaturesWithProfile(symbol, cs, m, longLiq, shortLiq, nil)
+}
+
+func BuildFeaturesWithProfile(symbol string, cs []domain.Candle, m MapResult, longLiq, shortLiq float64, profile *domain.VolumeProfileSnapshot) (domain.FeatureVector, error) {
 	vals := make([]float64, len(FeatureNames))
 	missing := map[string]bool{}
 	if m.Upper == nil || m.Lower == nil {
@@ -70,6 +74,17 @@ func BuildFeatures(symbol string, cs []domain.Candle, m MapResult, longLiq, shor
 	vals[21] = realizedVol(latest, 60)
 	if symbol == "ETHUSDT" {
 		vals[22] = 1
+	}
+	if profile != nil && profile.Complete && profile.VAH >= profile.VAL && m.ATR > 0 {
+		vals[27] = (m.MarkPrice - profile.VAL) / m.ATR
+		vals[28] = (profile.VAH - m.MarkPrice) / m.ATR
+		vals[29] = (profile.VAH - profile.VAL) / m.ATR
+		if m.MarkPrice >= profile.VAL && m.MarkPrice <= profile.VAH {
+			vals[30] = 1
+		}
+	} else {
+		vals[31] = 1
+		missing["volume_profile"] = true
 	}
 	return domain.FeatureVector{Time: last.Time, Symbol: symbol, Names: append([]string(nil), FeatureNames...), Values: vals, Missing: missing}, nil
 }

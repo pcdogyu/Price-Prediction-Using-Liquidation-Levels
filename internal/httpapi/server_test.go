@@ -20,6 +20,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/observability"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumeprofile"
 )
 
 func testService(t *testing.T, cfg config.Config, logger *slog.Logger, logs *observability.Store) (*Server, *store.Store) {
@@ -76,8 +77,22 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=BTCUSDT", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"median_composite"`) || !strings.Contains(w.Body.String(), `"side":"long"`) {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"binance_usdm"`) || !strings.Contains(w.Body.String(), `"exchange_count":1`) || !strings.Contains(w.Body.String(), `"side":"long"`) || strings.Contains(w.Body.String(), `"last_price":102`) {
 		t.Fatalf("market status=%d body=%s", w.Code, w.Body.String())
+	}
+	session, err := volumeprofile.SessionAt(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trades := []domain.AggregateTrade{{ID: 1, Symbol: "BTCUSDT", Time: session.Start.Add(time.Minute), Price: 100, PriceText: "100", Quantity: 2}, {ID: 2, Symbol: "BTCUSDT", Time: session.Start.Add(2 * time.Minute), Price: 101, PriceText: "101", Quantity: 3}}
+	if err = st.ApplyAggregateTrades(context.Background(), "BTCUSDT", session.Start, trades, true); err != nil {
+		t.Fatal(err)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/volume-profile?symbol=BTCUSDT", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"binance_usdm"`) || !strings.Contains(w.Body.String(), `"value_area_fraction":0.7`) || strings.Contains(strings.ToLower(w.Body.String()), "poc") {
+		t.Fatalf("volume profile status=%d body=%s", w.Code, w.Body.String())
 	}
 	for _, interval := range []string{"1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "4h", "8h", "12h", "24h"} {
 		r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=BTCUSDT&limit=120&interval="+interval, nil)
@@ -108,13 +123,13 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	r = httptest.NewRequest(http.MethodGet, "/", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || !strings.Contains(w.Body.String(), `data-interval="24h"`) || strings.Contains(w.Body.String(), "async function refresh") {
+	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || !strings.Contains(w.Body.String(), `data-interval="24h"`) || !strings.Contains(w.Body.String(), `viewBox="0 0 1600 560"`) || !strings.Contains(w.Body.String(), "Binance USDⓈ-M") || strings.Contains(w.Body.String(), "async function refresh") {
 		t.Fatal("dashboard script was not externalized")
 	}
 	r = httptest.NewRequest(http.MethodGet, "/assets/dashboard.js", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "volume-profile?symbol=") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") {
 		t.Fatalf("dashboard asset status=%d", w.Code)
 	}
 
