@@ -264,7 +264,11 @@ function draw(view, map, signal, volume) {
       if (bin.price_high < low || bin.price_low > high) return;
       const width = Math.sqrt(bin.volume_usd / maximum) * (volumeRight - volumeLeft);
       const barHeight = Math.max(2, Math.abs(y(bin.price_low) - y(bin.price_high)) * .9);
-      plot.appendChild(svgNode('rect', { x: volumeRight - width, y: y(center) - barHeight / 2, width, height: barHeight, fill: '#60a5fa', opacity: bin.in_value_area ? .88 : .28, 'data-tip': 'Binance 当前时段成交量\n价格 ' + money(bin.price_low) + ' – ' + money(bin.price_high) + '\n成交额 $' + compact(bin.volume_usd) + '\n占比 ' + (bin.volume_percent || 0).toFixed(2) + '%' + (bin.in_value_area ? '\n70%价值区域内' : '\n价值区域外') }));
+      const topThree = bin.volume_rank >= 1 && bin.volume_rank <= 3;
+      const fill = topThree ? '#a855f7' : '#60a5fa';
+      const opacity = topThree ? .96 : bin.in_value_area ? .88 : .28;
+      const rankTip = topThree ? '\n成交额排名 #' + bin.volume_rank : '';
+      plot.appendChild(svgNode('rect', { x: volumeRight - width, y: y(center) - barHeight / 2, width, height: barHeight, fill, opacity, 'data-tip': 'Binance 当前时段成交量\n价格 ' + money(bin.price_low) + ' – ' + money(bin.price_high) + '\n成交额 $' + compact(bin.volume_usd) + '\n占比 ' + (bin.volume_percent || 0).toFixed(2) + '%' + rankTip + (bin.in_value_area ? '\n70%价值区域内' : '\n价值区域外') }));
     });
   }
   svg.appendChild(plot);

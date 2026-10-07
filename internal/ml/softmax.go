@@ -14,7 +14,7 @@ import (
 
 var Classes = []string{domain.UpperFirst, domain.LowerFirst, domain.Neither}
 
-const ModelVersionPrefix = "softmax-v3-binance-volume-profile-10x25x50x100-"
+const ModelVersionPrefix = "softmax-v4-binance-volume-profile-rows24-10x25x50x100-"
 
 type Sample struct {
 	Time   time.Time

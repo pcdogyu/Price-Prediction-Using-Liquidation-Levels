@@ -68,7 +68,7 @@ func (s *Service) importVolumeArchives(ctx context.Context) {
 				s.log.Warn("volume archive import failed", "symbol", symbol, "day", day.Format("2006-01-02"), "error", err)
 				continue
 			}
-			_ = s.store.MarkArchiveImport(ctx, symbol, day, "complete", "")
+			_ = s.store.MarkArchiveImport(ctx, symbol, day, volumeprofile.ArchiveStatus, "")
 			s.log.Info("volume archive import complete", "symbol", symbol, "day", day.Format("2006-01-02"))
 		}
 		count, err := s.store.CompleteArchiveDays(ctx, symbol, start, before)

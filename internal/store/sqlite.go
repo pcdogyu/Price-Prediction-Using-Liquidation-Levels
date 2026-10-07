@@ -425,12 +425,12 @@ func (s *Store) ArchiveImported(ctx context.Context, symbol string, day time.Tim
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
-	return status == "complete", err
+	return status == volumeprofile.ArchiveStatus, err
 }
 
 func (s *Store) CompleteArchiveDays(ctx context.Context, symbol string, from, before time.Time) (int, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM volume_archive_imports WHERE symbol=? AND status='complete' AND day>=? AND day<?`, symbol, from.UTC().Format("2006-01-02"), before.UTC().Format("2006-01-02")).Scan(&count)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM volume_archive_imports WHERE symbol=? AND status=? AND day>=? AND day<?`, symbol, volumeprofile.ArchiveStatus, from.UTC().Format("2006-01-02"), before.UTC().Format("2006-01-02")).Scan(&count)
 	return count, err
 }
 

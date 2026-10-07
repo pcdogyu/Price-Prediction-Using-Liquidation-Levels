@@ -30,22 +30,29 @@ func TestSessionBoundariesAndDST(t *testing.T) {
 	}
 }
 
-func TestBuildHundredBinsAndValueArea(t *testing.T) {
+func TestBuildTwentyFourBinsValueAreaAndTopThree(t *testing.T) {
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	session := Session{Start: start, End: start.Add(13*time.Hour + 30*time.Minute), ResetKind: "shanghai_0800"}
 	levels := []Level{{Price: 100, VolumeUSD: 10}, {Price: 101, VolumeUSD: 20}, {Price: 102, VolumeUSD: 70}, {Price: 103, VolumeUSD: 20}, {Price: 104, VolumeUSD: 10}}
 	p := Build("BTCUSDT", session, levels, start.Add(time.Hour), start.Add(time.Hour), true)
-	if len(p.Bins) != 100 || p.VAL == nil || p.VAH == nil || *p.VAL > *p.VAH {
+	if p.Rows != 24 || len(p.Bins) != 24 || p.VAL == nil || p.VAH == nil || *p.VAL > *p.VAH {
 		t.Fatalf("profile=%+v", p)
 	}
 	inside := 0.0
+	ranks := map[int]float64{}
 	for _, bin := range p.Bins {
 		if bin.InValueArea {
 			inside += bin.VolumeUSD
 		}
+		if bin.VolumeRank > 0 {
+			ranks[bin.VolumeRank] = bin.VolumeUSD
+		}
 	}
 	if inside+1e-9 < p.TotalVolumeUSD*.70 {
 		t.Fatalf("value area volume=%v total=%v", inside, p.TotalVolumeUSD)
+	}
+	if len(ranks) != 3 || ranks[1] != 70 || ranks[2] != 20 || ranks[3] != 20 {
+		t.Fatalf("top ranks=%v", ranks)
 	}
 }
 
@@ -53,7 +60,7 @@ func TestBuildSinglePriceAndIncomplete(t *testing.T) {
 	start := time.Now().UTC().Add(-time.Hour)
 	session := Session{Start: start, End: start.Add(2 * time.Hour), ResetKind: "test"}
 	complete := Build("ETHUSDT", session, []Level{{Price: 100, VolumeUSD: 25}}, time.Now().UTC(), time.Now().UTC(), true)
-	if len(complete.Bins) != 1 || complete.VAL == nil || complete.VAH == nil || math.Abs(complete.TotalVolumeUSD-25) > 1e-9 {
+	if complete.Rows != 24 || len(complete.Bins) != 1 || complete.Bins[0].VolumeRank != 1 || complete.VAL == nil || complete.VAH == nil || math.Abs(complete.TotalVolumeUSD-25) > 1e-9 {
 		t.Fatalf("complete=%+v", complete)
 	}
 	incomplete := Build("ETHUSDT", session, []Level{{Price: 100, VolumeUSD: 25}}, start.Add(30*time.Minute), time.Now().UTC(), false)

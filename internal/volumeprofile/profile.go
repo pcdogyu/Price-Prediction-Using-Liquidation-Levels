@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	Rows              = 100
+	Rows              = 24
 	ValueAreaFraction = .70
+	ArchiveStatus     = "complete_rows24_v1"
 )
 
 type Session struct {
@@ -72,7 +73,7 @@ func Build(symbol string, session Session, levels []Level, dataThrough, now time
 	profile := domain.VolumeProfile{
 		Symbol: symbol, Source: domain.DataSourceBinanceUSDM,
 		SessionStart: session.Start.UTC(), SessionEnd: session.End.UTC(), NextReset: session.End.UTC(),
-		ResetKind: session.ResetKind, ValueAreaFraction: ValueAreaFraction,
+		ResetKind: session.ResetKind, Rows: Rows, ValueAreaFraction: ValueAreaFraction,
 		Bins: []domain.VolumeProfileBin{}, DataThrough: dataThrough, UpdatedAt: now,
 	}
 	if now.After(session.Start) && dataThrough.After(session.Start) {
@@ -129,6 +130,7 @@ func Build(symbol string, session Session, levels []Level, dataThrough, now time
 	for i := range profile.Bins {
 		profile.Bins[i].VolumeShare = profile.Bins[i].VolumeUSD / profile.TotalVolumeUSD * 100
 	}
+	rankTopVolume(profile.Bins, 3)
 	if !complete {
 		profile.State = "backfilling"
 		return profile
@@ -144,6 +146,26 @@ func Build(symbol string, session Session, levels []Level, dataThrough, now time
 	val, vah := profile.Bins[low].PriceLow, profile.Bins[high].PriceHigh
 	profile.VAL, profile.VAH = &val, &vah
 	return profile
+}
+
+func rankTopVolume(bins []domain.VolumeProfileBin, limit int) {
+	indices := make([]int, len(bins))
+	for i := range bins {
+		indices[i] = i
+	}
+	sort.SliceStable(indices, func(i, j int) bool {
+		left, right := bins[indices[i]], bins[indices[j]]
+		if left.VolumeUSD == right.VolumeUSD {
+			return left.PriceLow < right.PriceLow
+		}
+		return left.VolumeUSD > right.VolumeUSD
+	})
+	for rank, index := range indices {
+		if rank >= limit || bins[index].VolumeUSD <= 0 {
+			break
+		}
+		bins[index].VolumeRank = rank + 1
+	}
 }
 
 func valueArea(bins []domain.VolumeProfileBin, target float64) (int, int) {

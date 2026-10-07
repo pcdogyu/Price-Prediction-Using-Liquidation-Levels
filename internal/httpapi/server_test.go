@@ -91,7 +91,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/volume-profile?symbol=BTCUSDT", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"binance_usdm"`) || !strings.Contains(w.Body.String(), `"value_area_fraction":0.7`) || strings.Contains(strings.ToLower(w.Body.String()), "poc") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"binance_usdm"`) || !strings.Contains(w.Body.String(), `"rows":24`) || !strings.Contains(w.Body.String(), `"volume_rank":1`) || !strings.Contains(w.Body.String(), `"value_area_fraction":0.7`) || strings.Contains(strings.ToLower(w.Body.String()), "poc") {
 		t.Fatalf("volume profile status=%d body=%s", w.Code, w.Body.String())
 	}
 	for _, interval := range []string{"1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "4h", "8h", "12h", "24h"} {

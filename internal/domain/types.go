@@ -51,6 +51,7 @@ type VolumeProfileBin struct {
 	VolumeUSD   float64 `json:"volume_usd"`
 	VolumeShare float64 `json:"volume_percent"`
 	InValueArea bool    `json:"in_value_area"`
+	VolumeRank  int     `json:"volume_rank,omitempty"`
 }
 
 type VolumeProfile struct {
@@ -61,6 +62,7 @@ type VolumeProfile struct {
 	SessionEnd        time.Time          `json:"session_end"`
 	NextReset         time.Time          `json:"next_reset"`
 	ResetKind         string             `json:"reset_kind"`
+	Rows              int                `json:"rows"`
 	ValueAreaFraction float64            `json:"value_area_fraction"`
 	VAL               *float64           `json:"val,omitempty"`
 	VAH               *float64           `json:"vah,omitempty"`

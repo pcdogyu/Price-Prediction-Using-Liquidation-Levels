@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumeprofile"
 )
 
 func TestStoreRoundTripAndDedup(t *testing.T) {
@@ -41,6 +42,31 @@ func TestStoreRoundTripAndDedup(t *testing.T) {
 	long, short, err := s.LiquidationTotals(ctx, "BTCUSDT", c.Time.Add(-time.Minute))
 	if err != nil || long != 6 || short != 0 {
 		t.Fatalf("long=%v short=%v err=%v", long, short, err)
+	}
+}
+
+func TestArchiveCompletionIsVersionedByProfileRows(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	day := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	if err = s.MarkArchiveImport(ctx, "BTCUSDT", day, "complete", ""); err != nil {
+		t.Fatal(err)
+	}
+	if imported, loadErr := s.ArchiveImported(ctx, "BTCUSDT", day); loadErr != nil || imported {
+		t.Fatalf("legacy archive imported=%v err=%v", imported, loadErr)
+	}
+	if err = s.MarkArchiveImport(ctx, "BTCUSDT", day, volumeprofile.ArchiveStatus, ""); err != nil {
+		t.Fatal(err)
+	}
+	if imported, loadErr := s.ArchiveImported(ctx, "BTCUSDT", day); loadErr != nil || !imported {
+		t.Fatalf("current archive imported=%v err=%v", imported, loadErr)
+	}
+	if count, countErr := s.CompleteArchiveDays(ctx, "BTCUSDT", day, day.AddDate(0, 0, 1)); countErr != nil || count != 1 {
+		t.Fatalf("complete days=%d err=%v", count, countErr)
 	}
 }
 
