@@ -173,6 +173,9 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "登录后查看行情") || !strings.Contains(w.Body.String(), "会话有效期 7 天") {
 		t.Fatalf("login page status=%d body=%s", w.Code, w.Body.String())
 	}
+	if w.Header().Get("Cache-Control") != "no-store, max-age=0" || w.Header().Get("Pragma") != "no-cache" || w.Header().Get("Expires") != "0" {
+		t.Fatalf("login page must not be cached: %v", w.Header())
+	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/logs", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
