@@ -27,12 +27,12 @@ func runBinanceAggregateTrades(ctx context.Context, symbols []string, sink Aggre
 	for _, symbol := range symbols {
 		streams = append(streams, strings.ToLower(symbol)+"@aggTrade")
 	}
-	c, err := dial(ctx, "wss://fstream.binance.com/stream?streams="+strings.Join(streams, "/"))
+	c, err := dial(ctx, binanceMarketStreamBase+"/stream?streams="+strings.Join(streams, "/"))
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	health.Touch("binance_agg_trades", 1)
+	health.Set("binance_agg_trades", Health{Connected: true, Coverage: 1})
 	deadline := time.Now().Add(23*time.Hour + 50*time.Minute)
 	for time.Now().Before(deadline) {
 		_, payload, err := c.ReadMessage()
@@ -59,13 +59,14 @@ func ParseBinanceAggregateTrade(payload []byte, symbols []string) (domain.Aggreg
 		payload = envelope.Data
 	}
 	var message struct {
-		Event  string `json:"e"`
-		Symbol string `json:"s"`
-		ID     int64  `json:"a"`
-		Price  string `json:"p"`
-		Qty    string `json:"q"`
-		Time   int64  `json:"T"`
-		Type   int    `json:"st"`
+		Event     string `json:"e"`
+		EventTime int64  `json:"E"`
+		Symbol    string `json:"s"`
+		ID        int64  `json:"a"`
+		Price     string `json:"p"`
+		Qty       string `json:"q"`
+		Time      int64  `json:"T"`
+		Type      int    `json:"st"`
 	}
 	if json.Unmarshal(payload, &message) != nil || message.Event != "aggTrade" || !allowed(message.Symbol, symbols) {
 		return domain.AggregateTrade{}, false

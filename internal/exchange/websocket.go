@@ -19,6 +19,8 @@ import (
 
 type LiquidationSink func(context.Context, domain.LiquidationEvent) error
 
+const binanceMarketStreamBase = "wss://fstream.binance.com/market"
+
 func StartLiquidationStreams(ctx context.Context, symbols []string, sink LiquidationSink, health *HealthRegistry, log *slog.Logger) {
 	go reconnect(ctx, "binance_liquidations", .65, health, log, func(ctx context.Context) error { return runBinance(ctx, symbols, sink, health) })
 }
@@ -79,12 +81,12 @@ func allowed(s string, symbols []string) bool {
 }
 
 func runBinance(ctx context.Context, symbols []string, sink LiquidationSink, h *HealthRegistry) error {
-	c, e := dial(ctx, "wss://fstream.binance.com/ws/!forceOrder@arr")
+	c, e := dial(ctx, binanceMarketStreamBase+"/ws/!forceOrder@arr")
 	if e != nil {
 		return e
 	}
 	defer c.Close()
-	h.Touch("binance_liquidations", .65)
+	h.Set("binance_liquidations", Health{Connected: true, Coverage: .65})
 	deadline := time.Now().Add(23*time.Hour + 50*time.Minute)
 	for time.Now().Before(deadline) {
 		_, b, e := c.ReadMessage()
