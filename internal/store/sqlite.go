@@ -334,8 +334,29 @@ func (s *Store) SetVolumeProfileComplete(ctx context.Context, symbol string, ses
 }
 
 func (s *Store) SaveVolumeProfileSnapshot(ctx context.Context, snapshot domain.VolumeProfileSnapshot) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO volume_profile_snapshots(symbol,ts,session_ts,val,vah,total_volume_usd,complete) VALUES(?,?,?,?,?,?,?) ON CONFLICT(symbol,ts) DO UPDATE SET session_ts=excluded.session_ts,val=excluded.val,vah=excluded.vah,total_volume_usd=excluded.total_volume_usd,complete=excluded.complete`, snapshot.Symbol, snapshot.Time.UTC().UnixMilli(), snapshot.SessionStart.UTC().UnixMilli(), snapshot.VAL, snapshot.VAH, snapshot.TotalVolumeUSD, boolInt(snapshot.Complete))
-	return err
+	return s.SaveVolumeProfileSnapshots(ctx, []domain.VolumeProfileSnapshot{snapshot})
+}
+
+func (s *Store) SaveVolumeProfileSnapshots(ctx context.Context, snapshots []domain.VolumeProfileSnapshot) error {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statement, err := tx.PrepareContext(ctx, `INSERT INTO volume_profile_snapshots(symbol,ts,session_ts,val,vah,total_volume_usd,complete) VALUES(?,?,?,?,?,?,?) ON CONFLICT(symbol,ts) DO UPDATE SET session_ts=excluded.session_ts,val=excluded.val,vah=excluded.vah,total_volume_usd=excluded.total_volume_usd,complete=excluded.complete`)
+	if err != nil {
+		return err
+	}
+	defer statement.Close()
+	for _, snapshot := range snapshots {
+		if _, err = statement.ExecContext(ctx, snapshot.Symbol, snapshot.Time.UTC().UnixMilli(), snapshot.SessionStart.UTC().UnixMilli(), snapshot.VAL, snapshot.VAH, snapshot.TotalVolumeUSD, boolInt(snapshot.Complete)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) VolumeProfileSnapshots(ctx context.Context, symbol string, from, before time.Time) ([]domain.VolumeProfileSnapshot, error) {

@@ -23,6 +23,14 @@ import (
 const archiveBaseURL = "https://data.binance.vision/data/futures/um/daily/aggTrades"
 
 func (s *Service) volumeArchiveLoop(ctx context.Context) {
+	// Current-session continuity has priority over historical reconstruction.
+	// Waiting here also prevents archive writes from delaying the initial REST
+	// catch-up and WebSocket hand-off.
+	select {
+	case <-ctx.Done():
+		return
+	case <-s.volumeLiveReady:
+	}
 	s.importVolumeArchives(ctx)
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
@@ -117,7 +125,11 @@ func (s *Service) importVolumeArchiveDay(ctx context.Context, symbol string, day
 	defer file.Close()
 	csvReader := csv.NewReader(bufio.NewReaderSize(file, 1<<20))
 	csvReader.ReuseRecord = true
-	accumulator := newArchiveAccumulator(symbol, day, s.store.SaveVolumeProfileSnapshot)
+	var snapshots []domain.VolumeProfileSnapshot
+	accumulator := newArchiveAccumulator(symbol, day, func(_ context.Context, snapshot domain.VolumeProfileSnapshot) error {
+		snapshots = append(snapshots, snapshot)
+		return nil
+	})
 	for {
 		record, readErr := csvReader.Read()
 		if readErr == io.EOF {
@@ -143,7 +155,10 @@ func (s *Service) importVolumeArchiveDay(ctx context.Context, symbol string, day
 			return err
 		}
 	}
-	return accumulator.Finish(ctx, day.Add(24*time.Hour))
+	if err = accumulator.Finish(ctx, day.Add(24*time.Hour)); err != nil {
+		return err
+	}
+	return s.store.SaveVolumeProfileSnapshots(ctx, snapshots)
 }
 
 type archiveAccumulator struct {

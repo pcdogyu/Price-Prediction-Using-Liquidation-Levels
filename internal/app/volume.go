@@ -31,6 +31,7 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 			return ctx.Err()
 		}
 	}, s.health, s.log)
+	close(s.volumeLiveReady)
 
 	flush := time.NewTicker(500 * time.Millisecond)
 	defer flush.Stop()
