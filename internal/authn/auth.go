@@ -1,6 +1,7 @@
 package authn
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -33,6 +34,14 @@ type session struct {
 	expires time.Time
 }
 
+// SessionStore persists only hashes of session tokens. The raw bearer token
+// remains in the browser cookie and is never written to disk.
+type SessionStore interface {
+	LoadAuthSessions(context.Context, time.Time) (map[string]time.Time, error)
+	SaveAuthSession(context.Context, string, time.Time) error
+	DeleteAuthSession(context.Context, string) error
+}
+
 type attempt struct {
 	windowStart time.Time
 	failures    int
@@ -49,9 +58,14 @@ type Manager struct {
 	sessions     map[string]session
 	attempts     map[string]attempt
 	hashSlots    chan struct{}
+	store        SessionStore
+	namespace    string
 }
 
-func New(username, passwordHash, basePath string) (*Manager, error) {
+func New(username, passwordHash, basePath string, stores ...SessionStore) (*Manager, error) {
+	if len(stores) > 1 {
+		return nil, errors.New("at most one session store may be configured")
+	}
 	basePath = normalizeBasePath(basePath)
 	m := &Manager{
 		username:     strings.TrimSpace(username),
@@ -63,6 +77,9 @@ func New(username, passwordHash, basePath string) (*Manager, error) {
 		attempts:     make(map[string]attempt),
 		hashSlots:    make(chan struct{}, 2),
 	}
+	if len(stores) == 1 {
+		m.store = stores[0]
+	}
 	if !m.Enabled() {
 		if m.username != "" || m.passwordHash != "" {
 			return nil, errors.New("both APP_AUTH_USERNAME and APP_AUTH_PASSWORD_HASH are required")
@@ -71,6 +88,19 @@ func New(username, passwordHash, basePath string) (*Manager, error) {
 	}
 	if _, err := parseHash(m.passwordHash); err != nil {
 		return nil, fmt.Errorf("invalid APP_AUTH_PASSWORD_HASH: %w", err)
+	}
+	identity := sha256.Sum256([]byte(m.username + "\x00" + m.passwordHash))
+	m.namespace = base64.RawURLEncoding.EncodeToString(identity[:16]) + "."
+	if m.store != nil {
+		stored, err := m.store.LoadAuthSessions(context.Background(), m.now().UTC())
+		if err != nil {
+			return nil, fmt.Errorf("load authentication sessions: %w", err)
+		}
+		for key, expires := range stored {
+			if strings.HasPrefix(key, m.namespace) && m.now().UTC().Before(expires) {
+				m.sessions[key] = session{expires: expires}
+			}
+		}
 	}
 	return m, nil
 }
@@ -112,10 +142,16 @@ func (m *Manager) Login(ip, username, password string) (string, time.Time, error
 	}
 	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
 	expires := now.Add(m.ttl)
+	key := m.sessionKey(token)
+	if m.store != nil {
+		if err := m.store.SaveAuthSession(context.Background(), key, expires); err != nil {
+			return "", time.Time{}, fmt.Errorf("persist session: %w", err)
+		}
+	}
 	m.mu.Lock()
 	delete(m.attempts, ip)
 	m.pruneSessionsLocked(now)
-	m.sessions[token] = session{expires: expires}
+	m.sessions[key] = session{expires: expires}
 	m.mu.Unlock()
 	return token, expires, nil
 }
@@ -127,21 +163,31 @@ func (m *Manager) Authenticated(token string) bool {
 	if token == "" {
 		return false
 	}
+	key := m.sessionKey(token)
 	now := m.now().UTC()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s, ok := m.sessions[token]
+	s, ok := m.sessions[key]
 	if !ok || !now.Before(s.expires) {
-		delete(m.sessions, token)
+		delete(m.sessions, key)
 		return false
 	}
 	return true
 }
 
 func (m *Manager) Logout(token string) {
+	key := m.sessionKey(token)
 	m.mu.Lock()
-	delete(m.sessions, token)
+	delete(m.sessions, key)
 	m.mu.Unlock()
+	if m.store != nil {
+		_ = m.store.DeleteAuthSession(context.Background(), key)
+	}
+}
+
+func (m *Manager) sessionKey(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return m.namespace + base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 func (m *Manager) recordFailure(ip string, now time.Time) {

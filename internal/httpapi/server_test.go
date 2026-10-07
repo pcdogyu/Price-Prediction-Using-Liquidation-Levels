@@ -36,7 +36,7 @@ func testService(t *testing.T, cfg config.Config, logger *slog.Logger, logs *obs
 		cfg.Address = ":0"
 	}
 	svc := app.New(cfg, st, logger)
-	srv, err := New(cfg, svc, logger, logs)
+	srv, err := New(cfg, svc, logger, logs, st)
 	if err != nil {
 		st.Close()
 		t.Fatal(err)
@@ -170,7 +170,7 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "登录后查看行情") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "登录后查看行情") || !strings.Contains(w.Body.String(), "会话有效期 7 天") {
 		t.Fatalf("login page status=%d body=%s", w.Code, w.Body.String())
 	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/logs", nil)
@@ -228,6 +228,10 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	if session.MaxAge < int((7*24*time.Hour-time.Minute).Seconds()) || session.MaxAge > int((7*24*time.Hour).Seconds()) {
 		t.Fatalf("session cookie max age=%d", session.MaxAge)
 	}
+	restartedAuth, err := authn.New(cfg.AuthUsername, cfg.AuthPasswordHash, cfg.BasePath, st)
+	if err != nil || !restartedAuth.Authenticated(session.Value) {
+		t.Fatalf("session did not survive authentication manager restart: %v", err)
+	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/logs?limit=50&level=INFO", nil)
 	r.AddCookie(session)
 	w = httptest.NewRecorder()
@@ -256,6 +260,10 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	srv.http.Handler.ServeHTTP(w, r)
 	if w.Code != http.StatusSeeOther || !strings.Contains(w.Header().Get("Set-Cookie"), "Max-Age=0") {
 		t.Fatalf("logout status=%d cookie=%s", w.Code, w.Header().Get("Set-Cookie"))
+	}
+	restartedAuth, err = authn.New(cfg.AuthUsername, cfg.AuthPasswordHash, cfg.BasePath, st)
+	if err != nil || restartedAuth.Authenticated(session.Value) {
+		t.Fatalf("logged-out session survived authentication manager restart: %v", err)
 	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/logs", nil)
 	r.AddCookie(session)

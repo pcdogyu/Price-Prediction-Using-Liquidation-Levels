@@ -38,8 +38,8 @@ type Server struct {
 	logs *observability.Store
 }
 
-func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observability.Store) (*Server, error) {
-	auth, err := authn.New(cfg.AuthUsername, cfg.AuthPasswordHash, cfg.BasePath)
+func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observability.Store, sessionStores ...authn.SessionStore) (*Server, error) {
+	auth, err := authn.New(cfg.AuthUsername, cfg.AuthPasswordHash, cfg.BasePath, sessionStores...)
 	if err != nil {
 		return nil, err
 	}

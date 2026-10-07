@@ -42,7 +42,7 @@ func main() {
 	defer stop()
 	svc := app.New(cfg, st, log)
 	svc.Start(ctx)
-	srv, err := httpapi.New(cfg, svc, log, logStore)
+	srv, err := httpapi.New(cfg, svc, log, logStore, st)
 	if err != nil {
 		log.Error("http server configuration failed", "error", err)
 		os.Exit(1)

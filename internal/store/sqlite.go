@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS volume_profile_levels(symbol TEXT NOT NULL,session_ts
 CREATE TABLE IF NOT EXISTS volume_profile_cursors(symbol TEXT NOT NULL,session_ts INTEGER NOT NULL,last_agg_id INTEGER NOT NULL,last_trade_ts INTEGER NOT NULL,complete INTEGER NOT NULL,updated_ts INTEGER NOT NULL,PRIMARY KEY(symbol,session_ts));
 CREATE TABLE IF NOT EXISTS volume_profile_snapshots(symbol TEXT NOT NULL,ts INTEGER NOT NULL,session_ts INTEGER NOT NULL,val REAL NOT NULL,vah REAL NOT NULL,total_volume_usd REAL NOT NULL,complete INTEGER NOT NULL,PRIMARY KEY(symbol,ts));
 CREATE INDEX IF NOT EXISTS volume_profile_snapshots_symbol_ts ON volume_profile_snapshots(symbol,ts);
-CREATE TABLE IF NOT EXISTS volume_archive_imports(symbol TEXT NOT NULL,day TEXT NOT NULL,status TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',updated_ts INTEGER NOT NULL,PRIMARY KEY(symbol,day));`
+CREATE TABLE IF NOT EXISTS volume_archive_imports(symbol TEXT NOT NULL,day TEXT NOT NULL,status TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',updated_ts INTEGER NOT NULL,PRIMARY KEY(symbol,day));
+CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY,expires_ts INTEGER NOT NULL);`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
@@ -63,6 +64,37 @@ CREATE TABLE IF NOT EXISTS volume_archive_imports(symbol TEXT NOT NULL,day TEXT 
 		}
 	}
 	_, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS predictions_source_symbol_ts ON predictions(source,symbol,ts)`)
+	return err
+}
+
+func (s *Store) LoadAuthSessions(ctx context.Context, now time.Time) (map[string]time.Time, error) {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE expires_ts<=?`, now.UTC().UnixMilli()); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT token_hash,expires_ts FROM auth_sessions WHERE expires_ts>?`, now.UTC().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	sessions := make(map[string]time.Time)
+	for rows.Next() {
+		var key string
+		var expires int64
+		if err = rows.Scan(&key, &expires); err != nil {
+			return nil, err
+		}
+		sessions[key] = time.UnixMilli(expires).UTC()
+	}
+	return sessions, rows.Err()
+}
+
+func (s *Store) SaveAuthSession(ctx context.Context, tokenHash string, expires time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_sessions(token_hash,expires_ts) VALUES(?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_ts=excluded.expires_ts`, tokenHash, expires.UTC().UnixMilli())
+	return err
+}
+
+func (s *Store) DeleteAuthSession(ctx context.Context, tokenHash string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE token_hash=?`, tokenHash)
 	return err
 }
 
