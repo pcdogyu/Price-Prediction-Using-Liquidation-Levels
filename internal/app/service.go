@@ -26,18 +26,23 @@ type Service struct {
 	health             *exchange.HealthRegistry
 	log                *slog.Logger
 	mu                 sync.RWMutex
+	priceMu            sync.Mutex
 	trainMu            sync.Mutex
 	maps               map[string]engine.MapResult
 	predictions        map[string]domain.Prediction
 	model              domain.ModelArtifact
 	subs               map[chan domain.Prediction]struct{}
+	liquidationSubs    map[chan domain.LiquidationEvent]struct{}
+	priceSubs          map[chan domain.PriceTick]struct{}
+	latestPrices       map[string]domain.PriceTick
+	lastPriceBroadcast map[string]int64
 	backfillDone       bool
 	volumeHistoryReady bool
 	volumeLiveReady    chan struct{}
 }
 
 func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, volumeLiveReady: make(chan struct{})}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, volumeLiveReady: make(chan struct{})}
 	if a, e := ml.Load(cfg.ModelPath); e == nil {
 		if a.DataSource == domain.DataSourceBinanceUSDM && strings.HasPrefix(a.Version, ml.ModelVersionPrefix) && sameStrings(a.FeatureNames, engine.FeatureNames) {
 			s.model = a
@@ -49,7 +54,8 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 }
 
 func (s *Service) Start(ctx context.Context) {
-	exchange.StartLiquidationStreams(ctx, s.cfg.Symbols, s.store.InsertLiquidation, s.health, s.log)
+	exchange.StartLiquidationStreams(ctx, s.cfg.Symbols, s.RecordLiquidation, s.health, s.log)
+	go s.priceBroadcastLoop(ctx)
 	go s.pollLoop(ctx)
 	go s.predictionLoop(ctx)
 	go s.rebuild(ctx)
@@ -361,6 +367,7 @@ func (s *Service) Latest(ctx context.Context, symbol string) (domain.Prediction,
 
 func (s *Service) Market(ctx context.Context, symbol, intervalName string, before time.Time, limit int) (domain.MarketView, error) {
 	now := time.Now().UTC()
+	latestRequest := before.IsZero()
 	interval, ok := marketview.ParseInterval(intervalName)
 	if !ok {
 		return domain.MarketView{}, errors.New("unsupported market interval")
@@ -391,6 +398,15 @@ func (s *Service) Market(ctx context.Context, symbol, intervalName string, befor
 	if err != nil {
 		return domain.MarketView{}, err
 	}
+	view.LiquidationMinimumUSD = domain.DefaultLiquidationMinimumUSD
+	if latestRequest {
+		s.priceMu.Lock()
+		tick, hasTick := s.latestPrices[symbol]
+		s.priceMu.Unlock()
+		if hasTick {
+			applyRealtimePrice(&view, tick, interval, limit)
+		}
+	}
 	if len(view.Candles) > 0 {
 		start := view.Candles[0].Time
 		end := view.Candles[len(view.Candles)-1].Time.Add(interval)
@@ -399,6 +415,12 @@ func (s *Service) Market(ctx context.Context, symbol, intervalName string, befor
 			return domain.MarketView{}, predictionErr
 		}
 		view.ModelSignals = marketview.DirectionalSignals(predictions, interval)
+		liquidations, truncated, liquidationErr := s.store.Liquidations(ctx, symbol, start, end, 5000, domain.DefaultLiquidationMinimumUSD)
+		if liquidationErr != nil {
+			return domain.MarketView{}, liquidationErr
+		}
+		view.Liquidations = liquidations
+		view.LiquidationsTruncated = truncated
 	}
 	return view, nil
 }
@@ -426,6 +448,122 @@ func (s *Service) Subscribe() (chan domain.Prediction, func()) {
 	s.subs[ch] = struct{}{}
 	s.mu.Unlock()
 	return ch, func() { s.mu.Lock(); delete(s.subs, ch); close(ch); s.mu.Unlock() }
+}
+
+func (s *Service) RecordLiquidation(ctx context.Context, event domain.LiquidationEvent) error {
+	if err := s.store.InsertLiquidation(ctx, event); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	for ch := range s.liquidationSubs {
+		select {
+		case ch <- event:
+		default:
+		}
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Service) SubscribeLiquidations() (chan domain.LiquidationEvent, func()) {
+	ch := make(chan domain.LiquidationEvent, 128)
+	s.mu.Lock()
+	s.liquidationSubs[ch] = struct{}{}
+	s.mu.Unlock()
+	return ch, func() { s.mu.Lock(); delete(s.liquidationSubs, ch); close(ch); s.mu.Unlock() }
+}
+
+func (s *Service) RecordAggregateTrade(trade domain.AggregateTrade) {
+	if trade.ID <= 0 || trade.Symbol == "" || trade.Price <= 0 || trade.Time.IsZero() {
+		return
+	}
+	tick := domain.PriceTick{TradeID: trade.ID, Symbol: trade.Symbol, Time: trade.Time.UTC(), Price: trade.Price}
+	s.priceMu.Lock()
+	current, exists := s.latestPrices[trade.Symbol]
+	if !exists || tick.TradeID > current.TradeID {
+		s.latestPrices[trade.Symbol] = tick
+	}
+	s.priceMu.Unlock()
+}
+
+func (s *Service) priceBroadcastLoop(ctx context.Context) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.broadcastLatestPrices()
+		}
+	}
+}
+
+func (s *Service) broadcastLatestPrices() {
+	s.priceMu.Lock()
+	defer s.priceMu.Unlock()
+	for symbol, tick := range s.latestPrices {
+		if tick.TradeID <= s.lastPriceBroadcast[symbol] {
+			continue
+		}
+		for ch := range s.priceSubs {
+			select {
+			case ch <- tick:
+			default:
+			}
+		}
+		s.lastPriceBroadcast[symbol] = tick.TradeID
+	}
+}
+
+func (s *Service) SubscribePrices() (chan domain.PriceTick, func()) {
+	ch := make(chan domain.PriceTick, 16)
+	s.priceMu.Lock()
+	s.priceSubs[ch] = struct{}{}
+	s.priceMu.Unlock()
+	return ch, func() {
+		s.priceMu.Lock()
+		delete(s.priceSubs, ch)
+		close(ch)
+		s.priceMu.Unlock()
+	}
+}
+
+func applyRealtimePrice(view *domain.MarketView, tick domain.PriceTick, interval time.Duration, limit int) {
+	if view == nil || tick.Symbol != view.Symbol || tick.Price <= 0 || tick.Time.IsZero() {
+		return
+	}
+	open24h := view.Summary.LastPrice - view.Summary.Change24h
+	view.Summary.LastPrice = tick.Price
+	view.Summary.High24h = max(view.Summary.High24h, tick.Price)
+	if view.Summary.Low24h <= 0 {
+		view.Summary.Low24h = tick.Price
+	} else {
+		view.Summary.Low24h = min(view.Summary.Low24h, tick.Price)
+	}
+	view.Summary.UpdatedAt = tick.Time.UTC()
+	if open24h > 0 {
+		view.Summary.Change24h = tick.Price - open24h
+		view.Summary.ChangePct24h = view.Summary.Change24h / open24h * 100
+	}
+	view.RealtimePrice = &tick
+	bucketSeconds := int64(interval / time.Second)
+	bucketUnix := tick.Time.UTC().Unix()
+	bucket := time.Unix(bucketUnix-bucketUnix%bucketSeconds, 0).UTC()
+	last := len(view.Candles) - 1
+	if last >= 0 && view.Candles[last].Time.Equal(bucket) {
+		view.Candles[last].Close = tick.Price
+		view.Candles[last].High = max(view.Candles[last].High, tick.Price)
+		view.Candles[last].Low = min(view.Candles[last].Low, tick.Price)
+		view.Candles[last].Complete = false
+		view.Candles[last].Patterns = nil
+	} else if last < 0 || view.Candles[last].Time.Before(bucket) {
+		view.Candles = append(view.Candles, domain.MarketCandle{Time: bucket, Open: tick.Price, High: tick.Price, Low: tick.Price, Close: tick.Price, ExchangeCount: 1, Complete: false})
+		if limit > 0 && len(view.Candles) > limit {
+			view.Candles = view.Candles[len(view.Candles)-limit:]
+			view.HasMore = true
+		}
+	}
 }
 func (s *Service) coverage() map[string]float64 {
 	out := map[string]float64{}

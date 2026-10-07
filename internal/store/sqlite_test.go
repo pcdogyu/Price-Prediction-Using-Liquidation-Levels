@@ -18,6 +18,13 @@ func TestStoreRoundTripAndDedup(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
+	if err = s.UpsertAuthUser(ctx, "wyx", "argon2id-test-hash"); err != nil {
+		t.Fatal(err)
+	}
+	users, userErr := s.LoadAuthUsers(ctx)
+	if userErr != nil || users["wyx"] != "argon2id-test-hash" {
+		t.Fatalf("auth users=%v err=%v", users, userErr)
+	}
 	c := domain.Candle{Exchange: "binance", Symbol: "BTCUSDT", Time: time.Now().UTC().Truncate(time.Minute), Open: 1, High: 2, Low: .5, Close: 1.5, OpenInterestUSD: 10}
 	outlier := c
 	outlier.Exchange, outlier.Close = "okx", 999
@@ -42,6 +49,22 @@ func TestStoreRoundTripAndDedup(t *testing.T) {
 	long, short, err := s.LiquidationTotals(ctx, "BTCUSDT", c.Time.Add(-time.Minute))
 	if err != nil || long != 6 || short != 0 {
 		t.Fatalf("long=%v short=%v err=%v", long, short, err)
+	}
+	later := domain.LiquidationEvent{ID: "later", Exchange: "binance", Symbol: "BTCUSDT", PositionSide: "short", EventTime: c.Time.Add(30 * time.Second), ReceivedAt: c.Time.Add(31 * time.Second), Price: 3, Quantity: 4, NotionalUSD: 12_000, Coverage: "sampled"}
+	if err = s.InsertLiquidation(ctx, later); err != nil {
+		t.Fatal(err)
+	}
+	events, truncated, err := s.Liquidations(ctx, "BTCUSDT", c.Time.Add(-time.Minute), c.Time.Add(time.Minute), 1, 0)
+	if err != nil || !truncated || len(events) != 1 || events[0].ID != "later" {
+		t.Fatalf("limited events=%+v truncated=%v err=%v", events, truncated, err)
+	}
+	events, truncated, err = s.Liquidations(ctx, "BTCUSDT", c.Time.Add(-time.Minute), c.Time.Add(time.Minute), 10, 0)
+	if err != nil || truncated || len(events) != 2 || events[0].ID != "same" || events[1].ID != "later" {
+		t.Fatalf("events=%+v truncated=%v err=%v", events, truncated, err)
+	}
+	events, truncated, err = s.Liquidations(ctx, "BTCUSDT", c.Time.Add(-time.Minute), c.Time.Add(time.Minute), 10, domain.DefaultLiquidationMinimumUSD)
+	if err != nil || truncated || len(events) != 1 || events[0].ID != "later" {
+		t.Fatalf("filtered events=%+v truncated=%v err=%v", events, truncated, err)
 	}
 }
 

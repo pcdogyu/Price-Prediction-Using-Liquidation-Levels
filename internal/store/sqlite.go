@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -52,7 +53,8 @@ CREATE TABLE IF NOT EXISTS volume_profile_cursors(symbol TEXT NOT NULL,session_t
 CREATE TABLE IF NOT EXISTS volume_profile_snapshots(symbol TEXT NOT NULL,ts INTEGER NOT NULL,session_ts INTEGER NOT NULL,val REAL NOT NULL,vah REAL NOT NULL,total_volume_usd REAL NOT NULL,complete INTEGER NOT NULL,PRIMARY KEY(symbol,ts));
 CREATE INDEX IF NOT EXISTS volume_profile_snapshots_symbol_ts ON volume_profile_snapshots(symbol,ts);
 CREATE TABLE IF NOT EXISTS volume_archive_imports(symbol TEXT NOT NULL,day TEXT NOT NULL,status TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',updated_ts INTEGER NOT NULL,PRIMARY KEY(symbol,day));
-CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY,expires_ts INTEGER NOT NULL);`
+CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY,expires_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS auth_users(username TEXT PRIMARY KEY,password_hash TEXT NOT NULL,created_ts INTEGER NOT NULL,updated_ts INTEGER NOT NULL);`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
@@ -95,6 +97,35 @@ func (s *Store) SaveAuthSession(ctx context.Context, tokenHash string, expires t
 
 func (s *Store) DeleteAuthSession(ctx context.Context, tokenHash string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE token_hash=?`, tokenHash)
+	return err
+}
+
+func (s *Store) LoadAuthUsers(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT username,password_hash FROM auth_users ORDER BY username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := make(map[string]string)
+	for rows.Next() {
+		var username, passwordHash string
+		if err = rows.Scan(&username, &passwordHash); err != nil {
+			return nil, err
+		}
+		users[username] = passwordHash
+	}
+	return users, rows.Err()
+}
+
+func (s *Store) UpsertAuthUser(ctx context.Context, username, passwordHash string) error {
+	username = strings.TrimSpace(username)
+	passwordHash = strings.TrimSpace(passwordHash)
+	if username == "" || len(username) > 128 || passwordHash == "" {
+		return errors.New("invalid authentication user")
+	}
+	now := time.Now().UTC().UnixMilli()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_users(username,password_hash,created_ts,updated_ts) VALUES(?,?,?,?)
+		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,updated_ts=excluded.updated_ts`, username, passwordHash, now, now)
 	return err
 }
 
@@ -237,6 +268,47 @@ func (s *Store) LiquidationTotals(ctx context.Context, symbol string, since time
 		}
 	}
 	return longUSD, shortUSD, rows.Err()
+}
+
+func (s *Store) Liquidations(ctx context.Context, symbol string, from, before time.Time, limit int, minimumUSD float64) ([]domain.LiquidationEvent, bool, error) {
+	if limit < 1 || limit > 5000 {
+		limit = 5000
+	}
+	if minimumUSD < 0 {
+		minimumUSD = 0
+	}
+	out := make([]domain.LiquidationEvent, 0)
+	if !from.Before(before) {
+		return out, false, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage
+		FROM liquidations WHERE exchange='binance' AND symbol=? AND event_ts>=? AND event_ts<? AND notional_usd>=?
+		ORDER BY event_ts DESC,id DESC LIMIT ?`, symbol, from.UTC().UnixMilli(), before.UTC().UnixMilli(), minimumUSD, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var event domain.LiquidationEvent
+		var eventMS, receivedMS int64
+		if err = rows.Scan(&event.ID, &event.Exchange, &event.Symbol, &event.PositionSide, &eventMS, &receivedMS, &event.Price, &event.Quantity, &event.NotionalUSD, &event.Coverage); err != nil {
+			return nil, false, err
+		}
+		event.EventTime = time.UnixMilli(eventMS).UTC()
+		event.ReceivedAt = time.UnixMilli(receivedMS).UTC()
+		out = append(out, event)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, false, err
+	}
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
+		out[left], out[right] = out[right], out[left]
+	}
+	return out, truncated, nil
 }
 
 func (s *Store) SavePrediction(ctx context.Context, p domain.Prediction) error {

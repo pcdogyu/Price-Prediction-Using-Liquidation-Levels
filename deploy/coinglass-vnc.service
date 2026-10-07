@@ -1,0 +1,22 @@
+[Unit]
+Description=Loopback-only VNC for CoinGlass browser
+Requires=coinglass-xvfb.service
+After=coinglass-xvfb.service
+
+[Service]
+Type=simple
+User=liquidation
+Group=liquidation
+Environment=DISPLAY=:99
+Environment=HOME=/var/lib/liquidation-predictor/browser-home
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/bin/x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw -noxdamage -repeat
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/liquidation-predictor /tmp
+
+[Install]
+WantedBy=multi-user.target

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +43,10 @@ type SessionStore interface {
 	DeleteAuthSession(context.Context, string) error
 }
 
+type UserStore interface {
+	LoadAuthUsers(context.Context) (map[string]string, error)
+}
+
 type attempt struct {
 	windowStart time.Time
 	failures    int
@@ -51,6 +56,7 @@ type attempt struct {
 type Manager struct {
 	username     string
 	passwordHash string
+	credentials  map[string]string
 	basePath     string
 	now          func() time.Time
 	ttl          time.Duration
@@ -70,6 +76,7 @@ func New(username, passwordHash, basePath string, stores ...SessionStore) (*Mana
 	m := &Manager{
 		username:     strings.TrimSpace(username),
 		passwordHash: strings.TrimSpace(passwordHash),
+		credentials:  make(map[string]string),
 		basePath:     basePath,
 		now:          time.Now,
 		ttl:          sessionTTL,
@@ -80,14 +87,41 @@ func New(username, passwordHash, basePath string, stores ...SessionStore) (*Mana
 	if len(stores) == 1 {
 		m.store = stores[0]
 	}
-	if !m.Enabled() {
-		if m.username != "" || m.passwordHash != "" {
-			return nil, errors.New("both APP_AUTH_USERNAME and APP_AUTH_PASSWORD_HASH are required")
+	if (m.username == "") != (m.passwordHash == "") {
+		return nil, errors.New("both APP_AUTH_USERNAME and APP_AUTH_PASSWORD_HASH are required")
+	}
+	if userStore, ok := m.store.(UserStore); ok {
+		storedUsers, err := userStore.LoadAuthUsers(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("load authentication users: %w", err)
 		}
+		for storedUsername, storedHash := range storedUsers {
+			storedUsername = strings.TrimSpace(storedUsername)
+			storedHash = strings.TrimSpace(storedHash)
+			if storedUsername != "" && storedHash != "" {
+				m.credentials[storedUsername] = storedHash
+			}
+		}
+	}
+	if m.username != "" {
+		m.credentials[m.username] = m.passwordHash
+	}
+	if !m.Enabled() {
 		return m, nil
 	}
-	if _, err := parseHash(m.passwordHash); err != nil {
-		return nil, fmt.Errorf("invalid APP_AUTH_PASSWORD_HASH: %w", err)
+	for account, encoded := range m.credentials {
+		if _, err := parseHash(encoded); err != nil {
+			return nil, fmt.Errorf("invalid password hash for authentication user %q: %w", account, err)
+		}
+	}
+	if m.passwordHash == "" {
+		accounts := make([]string, 0, len(m.credentials))
+		for account := range m.credentials {
+			accounts = append(accounts, account)
+		}
+		sort.Strings(accounts)
+		m.username = accounts[0]
+		m.passwordHash = m.credentials[m.username]
 	}
 	identity := sha256.Sum256([]byte(m.username + "\x00" + m.passwordHash))
 	m.namespace = base64.RawURLEncoding.EncodeToString(identity[:16]) + "."
@@ -105,7 +139,7 @@ func New(username, passwordHash, basePath string, stores ...SessionStore) (*Mana
 	return m, nil
 }
 
-func (m *Manager) Enabled() bool    { return m.username != "" && m.passwordHash != "" }
+func (m *Manager) Enabled() bool    { return len(m.credentials) > 0 }
 func (m *Manager) BasePath() string { return m.basePath }
 
 func (m *Manager) Login(ip, username, password string) (string, time.Time, error) {
@@ -128,10 +162,18 @@ func (m *Manager) Login(ip, username, password string) (string, time.Time, error
 		return "", time.Time{}, ErrLocked
 	}
 	providedUser := sha256.Sum256([]byte(username))
-	expectedUser := sha256.Sum256([]byte(m.username))
-	validUser := subtle.ConstantTimeCompare(providedUser[:], expectedUser[:]) == 1
-	validPassword := verifyPassword(password, m.passwordHash)
-	if !validUser || !validPassword {
+	selectedHash := m.passwordHash
+	validUser := 0
+	for account, encoded := range m.credentials {
+		expectedUser := sha256.Sum256([]byte(account))
+		matches := subtle.ConstantTimeCompare(providedUser[:], expectedUser[:])
+		validUser |= matches
+		if matches == 1 {
+			selectedHash = encoded
+		}
+	}
+	validPassword := verifyPassword(password, selectedHash)
+	if validUser != 1 || !validPassword {
 		m.recordFailure(ip, now)
 		return "", time.Time{}, ErrInvalid
 	}

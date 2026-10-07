@@ -1,0 +1,19 @@
+[Unit]
+Description=Loopback-only noVNC proxy for CoinGlass browser
+Requires=coinglass-vnc.service
+After=coinglass-vnc.service
+
+[Service]
+Type=simple
+User=liquidation
+Group=liquidation
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target

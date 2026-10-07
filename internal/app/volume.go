@@ -24,6 +24,7 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 	}
 	input := make(chan domain.AggregateTrade, 100000)
 	exchange.StartAggregateTradeStreams(ctx, s.cfg.Symbols, func(ctx context.Context, trade domain.AggregateTrade) error {
+		s.RecordAggregateTrade(trade)
 		select {
 		case input <- trade:
 			return nil

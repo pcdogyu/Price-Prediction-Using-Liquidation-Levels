@@ -3,9 +3,10 @@
 const NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
 const cache = { signal: null, map: null, market: null, volume: null };
+const defaultLiquidationMinimumUSD = 10000;
 const chart = {
   interval: localStorage.getItem('liquidation.interval') || '15m',
-  candles: [], signals: [], windowEnd: 0, visibleCount: 120,
+  candles: [], signals: [], liquidations: [], liquidationsTruncated: false, liquidationMinimumUSD: defaultLiquidationMinimumUSD, latestPriceTradeID: 0, latestPriceTick: null, windowEnd: 0, visibleCount: 120,
   hasMore: false, nextBefore: '', loadingOlder: false,
   yLow: null, yHigh: null, autoSpan: null, yManual: false,
   atLatest: true, newData: false, drag: null
@@ -27,7 +28,12 @@ const when = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: 
 const patternName = { doji: '十字星', hammer: '锤头', shooting_star: '流星', bullish_engulfing: '看涨吞没', bearish_engulfing: '看跌吞没' };
 const statusName = { unavailable: '不可用', armed: '等待触发', approaching: '接近触发', triggered: '已触发', expired: '已过期' };
 const intervalName = { '1m': '1分钟', '2m': '2分钟', '3m': '3分钟', '5m': '5分钟', '10m': '10分钟', '15m': '15分钟', '30m': '30分钟', '1h': '1小时', '4h': '4小时', '8h': '8小时', '12h': '12小时', '24h': '24小时' };
-const dims = { height: 560, width: 1600, left: 72, top: 24, bottom: 42, candleRight: 1025, volumeLeft: 1060, volumeRight: 1280, liquidationLeft: 1315, profileRight: 1565 };
+const intervalMilliseconds = { '1m': 60000, '2m': 120000, '3m': 180000, '5m': 300000, '10m': 600000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000, '8h': 28800000, '12h': 43200000, '24h': 86400000 };
+const liquidationPriceOffsetUSD = 5;
+const liquidationWallWidthScale = .9;
+const liquidationWallRight = 1510;
+const liquidationWallWidth = Math.round((liquidationWallRight - 1315) * liquidationWallWidthScale);
+const dims = { height: 560, width: 1740, left: 72, top: 24, bottom: 42, candleRight: 1025, volumeLeft: 1060, volumeRight: 1280, liquidationLeft: liquidationWallRight - liquidationWallWidth, profileRight: liquidationWallRight, axisPriceRight: 1584, rankLabelLeft: 1614, rankLabelRight: 1728 };
 if (!intervalName[chart.interval]) chart.interval = '15m';
 
 function svgNode(tag, attrs = {}, text = '') {
@@ -60,7 +66,10 @@ function updateTicker(view) {
   if (!summary) return;
   $('ticker-symbol').textContent = (view.symbol || symbol) + ' · Binance 永续价格';
   $('ticker-price').textContent = money(summary.last_price);
-  $('ticker-updated').textContent = '更新 ' + when(summary.updated_at) + (view.backfill_complete ? '' : ' · 180天历史回填中');
+  const updatedAt = new Date(summary.updated_at).getTime();
+  const ageSeconds = Number.isFinite(updatedAt) ? Math.max(0, (Date.now() - updatedAt) / 1000) : NaN;
+  const freshness = Number.isFinite(ageSeconds) ? (ageSeconds <= 3 ? ' · 实时' : ' · 延迟 ' + Math.round(ageSeconds) + '秒') : '';
+  $('ticker-updated').textContent = '更新 ' + when(summary.updated_at) + freshness + (view.backfill_complete ? '' : ' · 180天历史回填中');
   const change = finite(summary.change_pct_24h) ? summary.change_pct_24h : 0;
   const up = change >= 0;
   $('ticker-change').textContent = (up ? '+' : '') + change.toFixed(2) + '%';
@@ -69,7 +78,7 @@ function updateTicker(view) {
   $('ticker-high').textContent = money(summary.high_24h);
   $('ticker-low').textContent = money(summary.low_24h);
   $('ticker-volume').textContent = '$' + compact(summary.volume_24h_usd);
-  $('ticker-coverage').textContent = 'Binance USDⓈ-M · 单一数据源';
+  $('ticker-coverage').textContent = 'Binance USDⓈ-M · ' + (view.realtime_price ? 'aggTrade 实时' : 'REST 校准');
 }
 
 function updateProbabilities(probabilities) {
@@ -104,12 +113,23 @@ function mergeSignals(current, incoming) {
   return Array.from(values.values()).sort((a, b) => new Date(a.time) - new Date(b.time));
 }
 
+function mergeLiquidations(current, incoming) {
+  const eligible = item => item?.id && item.exchange === 'binance' && finite(item.notional_usd) && item.notional_usd >= chart.liquidationMinimumUSD;
+  const values = new Map(current.filter(eligible).map(item => [item.id, item]));
+  incoming.forEach(item => { if (eligible(item)) values.set(item.id, item); });
+  return Array.from(values.values()).sort((a, b) => new Date(a.event_time) - new Date(b.event_time));
+}
+
 function mergeMarket(view, older, reset) {
   const incomingCandles = view.candles || [];
   const incomingSignals = view.model_signals || [];
+  const incomingLiquidations = view.liquidations || [];
+  chart.liquidationMinimumUSD = finite(view.liquidation_minimum_usd) ? Math.max(0, view.liquidation_minimum_usd) : defaultLiquidationMinimumUSD;
   if (reset) {
     chart.candles = incomingCandles.slice();
     chart.signals = incomingSignals.slice();
+    chart.liquidations = mergeLiquidations([], incomingLiquidations);
+    chart.liquidationsTruncated = !!view.liquidations_truncated;
     chart.windowEnd = chart.candles.length;
     chart.atLatest = true;
     chart.newData = false;
@@ -120,12 +140,16 @@ function mergeMarket(view, older, reset) {
     const oldEnd = chart.windowEnd;
     chart.candles = mergeCandles(chart.candles, incomingCandles);
     chart.signals = mergeSignals(chart.signals, incomingSignals);
+    chart.liquidations = mergeLiquidations(chart.liquidations, incomingLiquidations);
+    chart.liquidationsTruncated = chart.liquidationsTruncated || !!view.liquidations_truncated;
     const firstIndex = oldFirst ? chart.candles.findIndex(item => item.time === oldFirst) : 0;
     chart.windowEnd = firstIndex + oldEnd;
   } else {
     const previousLast = chart.candles[chart.candles.length - 1]?.time;
     chart.candles = mergeCandles(chart.candles, incomingCandles);
     chart.signals = mergeSignals(chart.signals, incomingSignals);
+    chart.liquidations = mergeLiquidations(chart.liquidations, incomingLiquidations);
+    chart.liquidationsTruncated = chart.liquidationsTruncated || !!view.liquidations_truncated;
     const latestChanged = previousLast && chart.candles[chart.candles.length - 1]?.time !== previousLast;
     if (chart.atLatest) chart.windowEnd = chart.candles.length;
     else if (latestChanged) chart.newData = true;
@@ -135,7 +159,57 @@ function mergeMarket(view, older, reset) {
     chart.nextBefore = view.next_before || '';
   }
   cache.market = view;
+  const realtimePrice = view.realtime_price;
+  if (finite(realtimePrice?.trade_id) && realtimePrice.trade_id >= chart.latestPriceTradeID) {
+    chart.latestPriceTradeID = realtimePrice.trade_id;
+    chart.latestPriceTick = realtimePrice;
+  }
+  if (chart.latestPriceTick) applyPriceTick(chart.latestPriceTick, false, true);
   $('new-data').classList.toggle('hidden', !chart.newData);
+}
+
+function applyPriceTick(tick, render = true, force = false) {
+  const tradeID = Number(tick?.trade_id);
+  const tickTime = new Date(tick?.time).getTime();
+  if (tick?.symbol !== symbol || !finite(tick?.price) || tick.price <= 0 || !Number.isFinite(tradeID) || !Number.isFinite(tickTime)) return;
+  if (!force && tradeID <= chart.latestPriceTradeID) return;
+  if (tradeID >= chart.latestPriceTradeID) {
+    chart.latestPriceTradeID = tradeID;
+    chart.latestPriceTick = tick;
+  }
+  if (!cache.market?.summary) return;
+  const summary = cache.market.summary;
+  const open24h = summary.last_price - summary.change_24h;
+  summary.last_price = tick.price;
+  summary.high_24h = Math.max(summary.high_24h || tick.price, tick.price);
+  summary.low_24h = summary.low_24h > 0 ? Math.min(summary.low_24h, tick.price) : tick.price;
+  summary.updated_at = tick.time;
+  if (open24h > 0) {
+    summary.change_24h = tick.price - open24h;
+    summary.change_pct_24h = summary.change_24h / open24h * 100;
+  }
+  cache.market.realtime_price = tick;
+  const duration = intervalMilliseconds[chart.interval] || 900000;
+  const bucket = Math.floor(tickTime / duration) * duration;
+  const last = chart.candles[chart.candles.length - 1];
+  const lastTime = last ? new Date(last.time).getTime() : NaN;
+  if (last && lastTime === bucket) {
+    last.close = tick.price;
+    last.high = Math.max(last.high, tick.price);
+    last.low = Math.min(last.low, tick.price);
+    last.complete = false;
+    last.patterns = [];
+  } else if (!last || lastTime < bucket) {
+    chart.candles.push({ time: new Date(bucket).toISOString(), open: tick.price, high: tick.price, low: tick.price, close: tick.price, volume_usd: 0, exchange_count: 1, complete: false, patterns: [] });
+    if (chart.atLatest) chart.windowEnd = chart.candles.length;
+  }
+  updateTicker(cache.market);
+  if (!render) return;
+  if (chart.atLatest) draw(cache.market, cache.map, cache.signal, cache.volume);
+  else {
+    chart.newData = true;
+    $('new-data').classList.remove('hidden');
+  }
 }
 
 function visibleCandles() {
@@ -168,6 +242,127 @@ function arrowPath(x, cy, side, size) {
     : 'M ' + x + ' ' + (cy + size) + ' L ' + (x - size) + ' ' + (cy - size) + ' L ' + (x + size) + ' ' + (cy - size) + ' Z';
 }
 
+function renderLiquidationTop3(map) {
+  const container = $('liquidation-top3');
+  container.replaceChildren();
+  if (map?.data_source !== 'coinglass_binance_liqmap') {
+    container.appendChild(Object.assign(document.createElement('span'), { textContent: 'CoinGlass 清算数据不可用' }));
+    return;
+  }
+  [['long', '多头清算 Top3', map.top_long_liquidations || []], ['short', '空头清算 Top3', map.top_short_liquidations || []]].forEach(([className, label, peaks]) => {
+    const span = document.createElement('span');
+    span.className = className;
+    span.textContent = label + '：' + (peaks.length ? peaks.map((peak, index) => (index + 1) + ') ' + money(peak.price)).join(' / ') : '—');
+    span.title = peaks.map((peak, index) => (index + 1) + ') ' + money(peak.price) + ' · $' + compact(peak.amount_usd)).join('\n');
+    container.appendChild(span);
+  });
+}
+
+function layoutRankLabels(items, minimumY, maximumY, gap = 20) {
+  const labels = items.slice().sort((a, b) => a.targetY - b.targetY);
+  labels.forEach(item => { item.labelY = Math.max(minimumY, Math.min(maximumY, item.targetY)); });
+  for (let index = 1; index < labels.length; index++) {
+    labels[index].labelY = Math.max(labels[index].labelY, labels[index - 1].labelY + gap);
+  }
+  if (labels.length && labels[labels.length - 1].labelY > maximumY) {
+    const overflow = labels[labels.length - 1].labelY - maximumY;
+    labels.forEach(item => { item.labelY -= overflow; });
+  }
+  for (let index = labels.length - 2; index >= 0; index--) {
+    labels[index].labelY = Math.min(labels[index].labelY, labels[index + 1].labelY - gap);
+  }
+  if (labels.length && labels[0].labelY < minimumY) {
+    const underflow = minimumY - labels[0].labelY;
+    labels.forEach(item => { item.labelY += underflow; });
+  }
+  return labels;
+}
+
+function drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom) {
+  if (map?.data_source !== 'coinglass_binance_liqmap') return;
+  const labels = [];
+  [['short', '空', '#2dd4bf', map.top_short_liquidations || []], ['long', '多', '#fb7185', map.top_long_liquidations || []]].forEach(([side, prefix, color, peaks]) => {
+    peaks.slice(0, 3).forEach((peak, index) => {
+      if (!finite(peak.price) || peak.price < low || peak.price > high) return;
+      labels.push({ side, prefix, color, rank: index + 1, price: peak.price, amount: peak.amount_usd, targetY: y(peak.price) });
+    });
+  });
+  const positioned = layoutRankLabels(labels, top + 10, plotBottom - 10);
+  positioned.forEach(item => {
+    const text = item.prefix + item.rank + ' ' + money(item.price);
+    const tip = (item.side === 'short' ? '空头清算' : '多头清算') + ' Top ' + item.rank + '\n价格 ' + money(item.price) + '\n清算强度 $' + compact(item.amount);
+    const group = svgNode('g', { 'data-tip': tip });
+    group.appendChild(svgNode('circle', { cx: dims.axisPriceRight + 5, cy: item.targetY, r: 2.2, fill: item.color }));
+    group.appendChild(svgNode('path', { d: 'M ' + (dims.axisPriceRight + 5) + ' ' + item.targetY + ' L ' + (dims.rankLabelLeft - 8) + ' ' + item.targetY + ' L ' + (dims.rankLabelLeft - 2) + ' ' + item.labelY, fill: 'none', stroke: item.color, 'stroke-width': 1.15, opacity: .9 }));
+    group.appendChild(svgNode('rect', { x: dims.rankLabelLeft, y: item.labelY - 9, width: dims.rankLabelRight - dims.rankLabelLeft, height: 18, fill: '#071019', stroke: item.color, 'stroke-width': 1, rx: 4 }));
+    group.appendChild(svgNode('text', { x: dims.rankLabelLeft + 6, y: item.labelY + 3.5, fill: item.color, 'font-size': 10.5, 'font-weight': 750 }, text));
+    svg.appendChild(group);
+  });
+}
+
+function liquidationRadius(notionalUSD) {
+  const amount = Math.max(100, finite(notionalUSD) ? notionalUSD : 0);
+  return Math.max(3, Math.min(18, 3 + Math.log10(amount / 100) * 2.5));
+}
+
+function drawLiquidationBubbles(plot, candles, events, y, left, candleRight, top, plotBottom) {
+  if (!candles.length || !events.length) return;
+  const duration = intervalMilliseconds[chart.interval] || 900000;
+  const starts = new Map(candles.map((candle, index) => [new Date(candle.time).getTime(), index]));
+  const step = (candleRight - left) / chart.visibleCount;
+  const offset = chart.visibleCount - candles.length;
+  const placed = [];
+  events.forEach(event => {
+    const eventTime = new Date(event.event_time).getTime();
+    if (!Number.isFinite(eventTime) || !finite(event.price) || (event.position_side !== 'long' && event.position_side !== 'short')) return;
+    const bucket = Math.floor(eventTime / duration) * duration;
+    const candleIndex = starts.get(bucket);
+    if (candleIndex === undefined) return;
+    const fraction = Math.max(.12, Math.min(.88, (eventTime - bucket) / duration));
+    const baseX = left + (offset + candleIndex + fraction) * step;
+    let x = baseX;
+    const radius = liquidationRadius(event.notional_usd);
+    const long = event.position_side === 'long';
+    const displayPrice = event.price + (long ? -liquidationPriceOffsetUSD : liquidationPriceOffsetUSD);
+    const cy = y(displayPrice);
+    if (!finite(cy) || cy < top || cy > plotBottom) return;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const overlap = placed.find(item => Math.hypot(x - item.x, cy - item.y) < radius + item.radius + 2);
+      if (!overlap) break;
+      const shift = attempt + 1;
+      x = baseX + (shift % 2 ? 1 : -1) * Math.ceil(shift / 2) * 4;
+    }
+    placed.push({ x, y: cy, radius });
+    const color = long ? '#fb7185' : '#2dd4bf';
+    const tip = 'Binance ' + (long ? '多单爆仓' : '空单爆仓') + '\n时间 ' + when(event.event_time) + '\n爆仓价格 ' + money(event.price) + '\n圆圈显示价 ' + money(displayPrice) + '（' + (long ? '-' : '+') + liquidationPriceOffsetUSD + ' USDT）\n数量 ' + Intl.NumberFormat('en-US', { maximumFractionDigits: 8 }).format(event.quantity || 0) + '\n爆仓金额 $' + compact(event.notional_usd) + '\n覆盖：强平流每交易对每秒最近一笔';
+    plot.appendChild(svgNode('circle', { cx: x, cy, r: radius, fill: color, 'fill-opacity': .38, stroke: color, 'stroke-width': 1.5, 'data-tip': tip }));
+  });
+}
+
+function drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high) {
+  if (map?.data_source !== 'coinglass_binance_liqmap' || !finite(currentPrice) || currentPrice < low || currentPrice > high) return;
+  let aboveUSD = 0;
+  let belowUSD = 0;
+  (map.bins || []).forEach(bin => {
+    if (!finite(bin.price) || !finite(bin.total_usd) || bin.total_usd <= 0) return;
+    if (bin.price > currentPrice) aboveUSD += bin.total_usd;
+    else if (bin.price < currentPrice) belowUSD += bin.total_usd;
+  });
+  if (aboveUSD === belowUSD || (!aboveUSD && !belowUSD)) return;
+  const upward = belowUSD > aboveUSD;
+  const color = upward ? '#22c55e' : '#ef4444';
+  const currentY = y(currentPrice);
+  const x = dims.liquidationLeft + 25;
+  const tipY = currentY + (upward ? -28 : 28);
+  const shaftEndY = currentY + (upward ? -17 : 17);
+  const shaftStartY = currentY + (upward ? 13 : -13);
+  const tip = 'CoinGlass 清算金额方向\n现价上方 $' + compact(aboveUSD) + '\n现价下方 $' + compact(belowUSD) + '\n判断：' + (upward ? '下方金额更大，向上清算' : '上方金额更大，向下清算');
+  const group = svgNode('g', { 'data-tip': tip });
+  group.appendChild(svgNode('line', { x1: x, y1: shaftStartY, x2: x, y2: shaftEndY, stroke: color, 'stroke-width': 6, 'stroke-linecap': 'round' }));
+  group.appendChild(svgNode('path', { d: upward ? 'M ' + x + ' ' + tipY + ' L ' + (x - 10) + ' ' + (tipY + 13) + ' L ' + (x + 10) + ' ' + (tipY + 13) + ' Z' : 'M ' + x + ' ' + tipY + ' L ' + (x - 10) + ' ' + (tipY - 13) + ' L ' + (x + 10) + ' ' + (tipY - 13) + ' Z', fill: color, stroke: '#07141d', 'stroke-width': 1.2 }));
+  svg.appendChild(group);
+}
+
 function draw(view, map, signal, volume) {
   const svg = $('market-chart');
   svg.replaceChildren();
@@ -177,12 +372,16 @@ function draw(view, map, signal, volume) {
   const sessionRange = volume?.session_start ? ' (' + when(volume.session_start) + ' → ' + when(volume.session_end) + ')' : '';
   const profileState = volume?.state === 'ok' ? '当前时段成交量' + sessionRange : volume?.state === 'backfilling' ? '成交量回填 ' + ((volume.backfill_progress || 0) * 100).toFixed(0) + '%' + sessionRange : volume?.state === 'stale' ? '成交量已过期' + sessionRange : '成交量不可用';
   const leverageText = (map?.leverages || []).map(value => value + '×').join('/');
-  $('chart-context').textContent = (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / 当前清算墙 · 共用价格纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '');
+  const coinGlassMap = map?.data_source === 'coinglass_binance_liqmap';
+  const liquidationName = coinGlassMap ? 'CoinGlass Binance 清算墙' : 'CoinGlass 清算墙不可用';
+  renderLiquidationTop3(map);
+  const liquidationEventState = ' · Binance爆仓≥$' + compact(chart.liquidationMinimumUSD) + ' ' + chart.liquidations.length + '笔' + (chart.liquidationsTruncated ? '（仅最近5000笔）' : '');
+  $('chart-context').textContent = (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · 共用价格纵轴' + liquidationEventState + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '');
   if (!candles.length && !bins.length && !(volume?.bins || []).length) {
     svg.appendChild(svgNode('text', { x: 800, y: 280, 'text-anchor': 'middle', fill: '#83a0b2' }, '等待 K 线、成交量分布与清算地图数据'));
     return;
   }
-  const { height, left, top, bottom, candleRight, volumeLeft, volumeRight, liquidationLeft, profileRight } = dims;
+  const { height, left, top, bottom, candleRight, volumeLeft, volumeRight, liquidationLeft, profileRight, axisPriceRight } = dims;
   const [low, high] = currentRange(candles, bins, signal, volume);
   const plotBottom = height - bottom;
   const y = price => top + (high - price) / (high - low) * (plotBottom - top);
@@ -196,9 +395,12 @@ function draw(view, map, signal, volume) {
     const yy = y(price);
     svg.appendChild(svgNode('line', { x1: left, y1: yy, x2: profileRight, y2: yy, stroke: '#18313f', 'stroke-width': 1 }));
     svg.appendChild(svgNode('text', { x: left - 8, y: yy + 4, 'text-anchor': 'end', fill: '#7895a7', 'font-size': 11 }, money(price)));
+    svg.appendChild(svgNode('line', { x1: profileRight, y1: yy, x2: profileRight + 6, y2: yy, stroke: '#527083', 'stroke-width': 1 }));
+    svg.appendChild(svgNode('text', { x: axisPriceRight, y: yy + 4, 'text-anchor': 'end', fill: '#9ab4c4', 'font-size': 11 }, money(price)));
   }
   svg.appendChild(svgNode('line', { x1: volumeLeft - 18, y1: top, x2: volumeLeft - 18, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
   svg.appendChild(svgNode('line', { x1: liquidationLeft - 18, y1: top, x2: liquidationLeft - 18, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
+  svg.appendChild(svgNode('line', { x1: profileRight, y1: top, x2: profileRight, y2: plotBottom, stroke: '#527083', 'stroke-width': 1 }));
   const plot = svgNode('g', { 'clip-path': 'url(#plot-clip)' });
   if (candles.length) {
     const step = (candleRight - left) / chart.visibleCount;
@@ -210,6 +412,7 @@ function draw(view, map, signal, volume) {
       if (!modelSignals.has(key)) modelSignals.set(key, []);
       modelSignals.get(key).push(item);
     });
+    drawLiquidationBubbles(plot, candles, chart.liquidations, y, left, candleRight, top, plotBottom);
     candles.forEach((candle, index) => {
       const x = left + (offset + index + .5) * step;
       const color = candle.close >= candle.open ? '#2dd4bf' : '#fb7185';
@@ -249,11 +452,32 @@ function draw(view, map, signal, volume) {
     const maximum = Math.max(...bins.map(item => item.total_usd), 1);
     const binWidth = map?.bin_width || (high - low) / Math.max(1, bins.length);
     const barHeight = Math.max(2, Math.abs(y(low + binWidth) - y(low)) * .9);
+    const leverageColors = { '10': '#7dd3fc', '25': '#6188ff', '50': '#f5c400', '100': '#f08833' };
+    const topRanks = new Map();
+    (map.top_long_liquidations || []).forEach((peak, index) => topRanks.set(String(peak.price), { label: '多' + (index + 1), color: '#fb7185' }));
+    (map.top_short_liquidations || []).forEach((peak, index) => topRanks.set(String(peak.price), { label: '空' + (index + 1), color: '#2dd4bf' }));
     bins.forEach(bin => {
       if (bin.price < low - binWidth || bin.price > high + binWidth) return;
       const width = Math.sqrt(bin.total_usd / maximum) * (profileRight - liquidationLeft);
       const color = bin.price < (map.mark_price || signal?.mark_price) ? '#fb7185' : '#2dd4bf';
-      plot.appendChild(svgNode('rect', { x: liquidationLeft, y: y(bin.price) - barHeight / 2, width, height: barHeight, fill: color, opacity: .35 + .6 * bin.total_usd / maximum, 'data-tip': '当前清算墙快照\n价格 ' + money(bin.price) + '\n总清算强度 $' + compact(bin.total_usd) + '\n多仓 $' + compact(bin.long_usd) + '\n空仓 $' + compact(bin.short_usd) }));
+      const leverageRows = Object.entries(bin.leverage_usd || {}).filter(([, amount]) => amount > 0).sort((a, b) => Number(a[0]) - Number(b[0]));
+      const leverageTip = leverageRows.map(([leverage, amount]) => '\n' + leverage + 'x $' + compact(amount)).join('');
+      const tip = liquidationName + '\n价格 ' + money(bin.price) + '\n总清算强度 $' + compact(bin.total_usd) + leverageTip + '\n多仓 $' + compact(bin.long_usd) + '\n空仓 $' + compact(bin.short_usd);
+      if (leverageRows.length) {
+        let cursor = liquidationLeft;
+        leverageRows.forEach(([leverage, amount]) => {
+          const segmentWidth = width * amount / bin.total_usd;
+          plot.appendChild(svgNode('rect', { x: cursor, y: y(bin.price) - barHeight / 2, width: segmentWidth, height: barHeight, fill: leverageColors[leverage] || color, opacity: .4 + .58 * bin.total_usd / maximum, 'data-tip': tip }));
+          cursor += segmentWidth;
+        });
+      } else {
+        plot.appendChild(svgNode('rect', { x: liquidationLeft, y: y(bin.price) - barHeight / 2, width, height: barHeight, fill: color, opacity: .35 + .6 * bin.total_usd / maximum, 'data-tip': tip }));
+      }
+      const rank = topRanks.get(String(bin.price));
+      if (rank) {
+        plot.appendChild(svgNode('rect', { x: liquidationLeft, y: y(bin.price) - Math.max(3, barHeight / 2 + 1), width: Math.max(width, 25), height: Math.max(6, barHeight + 2), fill: 'none', stroke: rank.color, 'stroke-width': 1.4, opacity: .98, 'data-tip': rank.label + ' · ' + tip }));
+        plot.appendChild(svgNode('text', { x: liquidationLeft + 3, y: y(bin.price) + 3, fill: '#f8fafc', 'font-size': 9, 'font-weight': 750, 'data-tip': rank.label + ' · ' + tip }, rank.label));
+      }
     });
   }
   const volumeBins = volume?.bins || [];
@@ -273,8 +497,9 @@ function draw(view, map, signal, volume) {
   }
   svg.appendChild(plot);
   svg.appendChild(svgNode('text', { x: (volumeLeft + volumeRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#7dd3fc', 'font-size': 11, 'font-weight': 650 }, '当前时段成交量'));
-  svg.appendChild(svgNode('text', { x: (liquidationLeft + profileRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#83a0b2', 'font-size': 11, 'font-weight': 650 }, '当前清算墙'));
-  const levels = [['现价', view?.summary?.last_price || signal?.mark_price, '#f8fafc', '4 5'], ['上墙', signal?.upper_wall?.price, '#2dd4bf', ''], ['下墙', signal?.lower_wall?.price, '#fb7185', '']];
+  svg.appendChild(svgNode('text', { x: (liquidationLeft + profileRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: coinGlassMap ? '#7dd3fc' : '#83a0b2', 'font-size': 11, 'font-weight': 650 }, liquidationName));
+  const currentPrice = view?.summary?.last_price || signal?.mark_price;
+  const levels = [['现价', currentPrice, '#f8fafc', '4 5'], ['上墙', signal?.upper_wall?.price, '#2dd4bf', ''], ['下墙', signal?.lower_wall?.price, '#fb7185', '']];
   levels.forEach(([name, price, color, dash]) => {
     if (!price || price < low || price > high) return;
     const yy = y(price);
@@ -289,6 +514,8 @@ function draw(view, map, signal, volume) {
     svg.appendChild(svgNode('rect', { x: volumeRight - 112, y: yy - 12, width: 112, height: 22, fill: '#071019', stroke: color, rx: 5 }));
     svg.appendChild(svgNode('text', { x: volumeRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11 }, name + ' ' + money(price)));
   });
+  drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high);
+  drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom);
   bindTips(svg);
 }
 
@@ -347,7 +574,10 @@ async function refresh(resetMarket = false) {
       if (result.status === 'fulfilled') {
         if (key === 'market') mergeMarket(result.value, false, resetMarket || !chart.candles.length);
         else cache[key] = result.value;
-      } else lastFailures.push(label + ' · ' + result.reason.message);
+      } else {
+        if (key === 'map') cache.map = null;
+        lastFailures.push(label + ' · ' + result.reason.message);
+      }
     });
     if (cache.market) updateTicker(cache.market);
     if (cache.signal) {
@@ -394,9 +624,10 @@ function installChartInteractions() {
   svg.addEventListener('pointerdown', event => {
     const point = svgPoint(event);
     let mode = '';
-    if (point.x >= dims.left && point.x <= dims.candleRight) mode = 'time';
+    if (point.x >= dims.left && point.x <= dims.candleRight) mode = 'chart';
     else if (point.x >= dims.volumeLeft - 18 && point.x <= dims.profileRight) mode = 'price';
-    if (!mode) return;
+    if (!mode || !finite(chart.yLow) || !finite(chart.yHigh) || chart.yHigh <= chart.yLow) return;
+    event.preventDefault();
     chart.drag = { mode, pointerId: event.pointerId, x: point.x, y: point.y, end: chart.windowEnd, low: chart.yLow, high: chart.yHigh };
     svg.setPointerCapture(event.pointerId);
     wrap.classList.add('dragging');
@@ -404,7 +635,7 @@ function installChartInteractions() {
   svg.addEventListener('pointermove', event => {
     if (!chart.drag || chart.drag.pointerId !== event.pointerId) return;
     const point = svgPoint(event);
-    if (chart.drag.mode === 'time') {
+    if (chart.drag.mode === 'chart') {
       const step = (dims.candleRight - dims.left) / chart.visibleCount;
       const shift = Math.round((chart.drag.x - point.x) / step);
       const minimum = Math.min(chart.visibleCount, chart.candles.length);
@@ -412,20 +643,19 @@ function installChartInteractions() {
       chart.atLatest = chart.windowEnd === chart.candles.length;
       if (!chart.atLatest) chart.newData = false;
       $('new-data').classList.toggle('hidden', !chart.newData);
-      if (!chart.yManual) chart.yLow = chart.yHigh = null;
-      draw(cache.market, cache.map, cache.signal, cache.volume);
-    } else {
+    }
+    if (chart.drag.mode === 'chart' || chart.drag.mode === 'price') {
       const span = chart.drag.high - chart.drag.low;
       const delta = (point.y - chart.drag.y) / (dims.height - dims.top - dims.bottom) * span;
       chart.yLow = chart.drag.low + delta;
       chart.yHigh = chart.drag.high + delta;
       chart.yManual = true;
-      draw(cache.market, cache.map, cache.signal, cache.volume);
     }
+    draw(cache.market, cache.map, cache.signal, cache.volume);
   });
   const endDrag = event => {
     if (!chart.drag || chart.drag.pointerId !== event.pointerId) return;
-    if (chart.drag.mode === 'time' && chart.windowEnd <= chart.visibleCount + 12) loadOlder();
+    if (chart.drag.mode === 'chart' && chart.windowEnd <= chart.visibleCount + 12) loadOlder();
     chart.drag = null;
     wrap.classList.remove('dragging');
   };
@@ -436,6 +666,11 @@ function installChartInteractions() {
 function resetChartState() {
   chart.candles = [];
   chart.signals = [];
+  chart.liquidations = [];
+  chart.liquidationsTruncated = false;
+  chart.liquidationMinimumUSD = defaultLiquidationMinimumUSD;
+  chart.latestPriceTradeID = 0;
+  chart.latestPriceTick = null;
   chart.windowEnd = 0;
   chart.hasMore = false;
   chart.nextBefore = '';
@@ -486,6 +721,51 @@ async function loadLogs(older = false) {
 
 function openLogs() { $('log-drawer').classList.remove('hidden'); $('drawer-backdrop').classList.remove('hidden'); loadLogs(false); }
 function closeLogs() { $('log-drawer').classList.add('hidden'); $('drawer-backdrop').classList.add('hidden'); }
+function coinGlassBrowserURL() {
+  const base = new URL('.', document.baseURI);
+  const socketPath = base.pathname.replace(/^\/+/, '') + 'coinglass-login/websockify';
+  const target = new URL('coinglass-login/vnc.html', base);
+  target.searchParams.set('autoconnect', 'true');
+  target.searchParams.set('resize', 'scale');
+  target.searchParams.set('path', socketPath);
+  return target.toString();
+}
+function openCoinGlass() {
+  const target = coinGlassBrowserURL();
+  $('browser-frame').src = target;
+  $('browser-new-window').href = target;
+  $('browser-backdrop').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+function closeCoinGlass() {
+  $('browser-backdrop').classList.add('hidden');
+  $('browser-frame').removeAttribute('src');
+  document.body.style.overflow = '';
+}
+async function captureCoinGlass() {
+  const button = $('coinglass-capture');
+  const state = $('coinglass-capture-state');
+  button.disabled = true;
+  state.classList.remove('error');
+  state.textContent = '正在刷新清算地图并读取响应…';
+  try {
+    const response = await fetch(api('coinglass/capture'), { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
+    let body = null;
+    try { body = await response.json(); } catch (_) { /* handled below */ }
+    if (response.status === 401) {
+      location.reload();
+      return;
+    }
+    if (!response.ok) throw new Error(body?.detail || ('HTTP ' + response.status));
+    const bytes = (body.parsed || []).reduce((sum, item) => sum + (item.bytes || 0), 0);
+    state.textContent = '抓取成功：' + (body.parsed || []).length + ' 组结构化 JSON，' + compact(bytes) + 'B · ' + when(body.captured_at) + ' · 每 45 分钟自动更新';
+  } catch (error) {
+    state.classList.add('error');
+    state.textContent = '抓取失败：' + error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
 
 document.querySelectorAll('button[data-symbol]').forEach(button => {
   button.addEventListener('click', () => {
@@ -520,6 +800,12 @@ $('chart-reset').addEventListener('click', () => {
   draw(cache.market, cache.map, cache.signal, cache.volume);
 });
 $('log-button').addEventListener('click', openLogs);
+$('coinglass-button').addEventListener('click', openCoinGlass);
+$('coinglass-capture').addEventListener('click', captureCoinGlass);
+$('coinglass-json').addEventListener('click', () => window.open(api('coinglass/latest'), '_blank', 'noopener'));
+$('browser-close').addEventListener('click', closeCoinGlass);
+$('browser-backdrop').addEventListener('click', event => { if (event.target === $('browser-backdrop')) closeCoinGlass(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('browser-backdrop').classList.contains('hidden')) closeCoinGlass(); });
 $('log-close').addEventListener('click', closeLogs);
 $('drawer-backdrop').addEventListener('click', closeLogs);
 $('log-refresh').addEventListener('click', () => loadLogs(false));
@@ -541,5 +827,22 @@ events.addEventListener('prediction', event => {
   streamError = '';
   const prediction = JSON.parse(event.data);
   if (prediction.symbol === symbol) refresh(false);
+});
+events.addEventListener('price', event => {
+  streamError = '';
+  applyPriceTick(JSON.parse(event.data));
+  showFailures(lastFailures);
+});
+events.addEventListener('liquidation', event => {
+  streamError = '';
+  const liquidation = JSON.parse(event.data);
+  if (liquidation.symbol !== symbol || liquidation.exchange !== 'binance' || !finite(liquidation.notional_usd) || liquidation.notional_usd < chart.liquidationMinimumUSD) return;
+  chart.liquidations = mergeLiquidations(chart.liquidations, [liquidation]);
+  if (chart.atLatest) draw(cache.market, cache.map, cache.signal, cache.volume);
+  else {
+    chart.newData = true;
+    $('new-data').classList.remove('hidden');
+  }
+  showFailures(lastFailures);
 });
 events.onerror = () => { streamError = '连接中断，正在重试'; showFailures(lastFailures); };

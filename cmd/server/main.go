@@ -25,6 +25,10 @@ func main() {
 		hashPassword()
 		return
 	}
+	if len(os.Args) == 3 && os.Args[1] == "add-user" {
+		addUser(os.Args[2])
+		return
+	}
 	cfg := config.Load()
 	log, logStore, err := observability.New(cfg.LogPath, cfg.LogRetentionDays)
 	if err != nil {
@@ -47,6 +51,7 @@ func main() {
 		log.Error("http server configuration failed", "error", err)
 		os.Exit(1)
 	}
+	srv.StartCoinGlassScheduler(ctx, cfg.CoinGlassCaptureInterval)
 	go func() {
 		log.Info("http server listening", "address", cfg.Address)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -64,6 +69,16 @@ func main() {
 }
 
 func hashPassword() {
+	password := readPassword()
+	hash, err := authn.HashPassword(password)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "could not hash password")
+		os.Exit(2)
+	}
+	fmt.Println(hash)
+}
+
+func readPassword() string {
 	data, err := io.ReadAll(io.LimitReader(os.Stdin, 4097))
 	if err != nil || len(data) > 4096 {
 		fmt.Fprintln(os.Stderr, "could not read password")
@@ -74,10 +89,30 @@ func hashPassword() {
 		fmt.Fprintln(os.Stderr, "password must not be empty")
 		os.Exit(2)
 	}
-	hash, err := authn.HashPassword(password)
+	return password
+}
+
+func addUser(username string) {
+	username = strings.TrimSpace(username)
+	if username == "" || len(username) > 128 {
+		fmt.Fprintln(os.Stderr, "username must contain 1 to 128 characters")
+		os.Exit(2)
+	}
+	hash, err := authn.HashPassword(readPassword())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "could not hash password")
 		os.Exit(2)
 	}
-	fmt.Println(hash)
+	cfg := config.Load()
+	st, err := store.Open(cfg.DatabasePath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "could not open authentication database")
+		os.Exit(2)
+	}
+	defer st.Close()
+	if err = st.UpsertAuthUser(context.Background(), username, hash); err != nil {
+		fmt.Fprintln(os.Stderr, "could not save authentication user")
+		os.Exit(2)
+	}
+	fmt.Printf("authentication user %q saved\n", username)
 }

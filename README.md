@@ -2,11 +2,12 @@
 
 这是一个只使用 Binance USDⓈ-M 永续公开数据的 Go 单体服务。它为 BTCUSDT、ETHUSDT 估算清算压力地图，并预测未来 60 分钟最先发生的事件：触及上方墙、触及下方墙或均未触及。
 
-项目不会抓取 CoinGlass，不读取浏览器 Cookie，也不会下单。地图是基于 OI 增量和杠杆先验的模型估计，并非交易所真实仓位。
+核心模型默认只使用 Binance 公开数据，不会下单。可选的人工触发功能通过服务器上的持久化浏览器读取已登录 CoinGlass 页面收到的清算图响应；Cookie 始终留在浏览器配置目录，不会写入抓取文件。模型自身的地图仍是基于 OI 增量和杠杆先验的估计，并非交易所真实仓位。
 
 ## 已实现
 
-- Binance USDⓈ-M 公开行情与强平 WebSocket；统一 UTC、USD 名义价值和被强平仓位方向。
+- Binance USDⓈ-M 公开行情与强平 WebSocket；统一 UTC、USD 名义价值和被强平仓位方向，并在 K 线上以金额缩放圆圈实时显示逐笔爆仓。
+- 复用 Binance `aggTrade` WebSocket，每 500ms 合并推送最新成交价，实时更新顶部价格、现价线和正在形成的 K 线；分钟 REST 数据继续负责完整行情校准和断线恢复。
 - Binance 1 分钟 K 线、OI、资金费率及多空比回填，行情保留180天。
 - Binance 聚合成交实时流、REST缺口补偿及官方日归档校验；按北京时间08:00和纽约09:30重置当前成交量分布，使用24个价格档并标记成交额前三档。
 - SQLite WAL 存储、幂等强平事件、聚合成交游标、采集健康状态、指数退避重连及24小时主动重连。
@@ -40,6 +41,8 @@ GET /api/v1/volume-profile?symbol=BTCUSDT
 GET /api/v1/backtest?symbol=BTCUSDT
 GET /api/v1/logs?limit=200&level=INFO
 GET /api/v1/stream
+POST /api/v1/coinglass/capture
+GET /api/v1/coinglass/latest
 POST /auth/login
 POST /auth/logout
 GET /healthz
@@ -49,7 +52,9 @@ GET /metrics
 
 `state=ok` 才表示数据、双侧清算墙和模型均可用。`experimental=true` 表示模型尚未满足晋级门槛，不能解释为已证明有交易优势。
 
-生产环境可用 `liquidation-predictor hash-password` 从标准输入生成 Argon2id PHC 哈希，并通过 `APP_AUTH_PASSWORD_HASH` 注入。登录会话有效期为 7 天，Cookie 使用 Secure、HttpOnly 和 SameSite=Strict；程序日志以 JSON Lines 写入 `APP_LOG_PATH`，日志接口只允许已登录会话访问。
+`/api/v1/market` 的 `liquidations` 字段默认过滤低于 10,000 USDT 的事件，返回当前 K 线窗口内最多最近 5,000 笔 Binance 强平事件；`position_side=long` 表示被强平的多仓，`position_side=short` 表示被强平的空仓。原始事件仍完整保存到 SQLite。实时事件同时通过 `/api/v1/stream` 的 `liquidation` SSE 事件推送，客户端按金额过滤并按事件 ID 去重。圆圈与 K 线共用价格轴；为避免覆盖成交位置，多单圆圈在成交价下方 5 USDT、空单圆圈在成交价上方 5 USDT。K 线区域支持水平和垂直拖动，滚轮按光标价格缩放纵轴。
+
+生产环境可用 `liquidation-predictor hash-password` 从标准输入生成 Argon2id PHC 哈希，并通过 `APP_AUTH_PASSWORD_HASH` 注入主账号。也可以将密码从标准输入传给 `liquidation-predictor add-user <用户名>`，在 SQLite 中新增或更新额外账号；数据库仅保存 Argon2id 哈希。新增账号后重启服务即可加载，主账号及已有会话不受影响。登录会话有效期为 7 天，Cookie 使用 Secure、HttpOnly 和 SameSite=Strict；程序日志以 JSON Lines 写入 `APP_LOG_PATH`，日志接口只允许已登录会话访问。
 
 ## 模型规则
 
@@ -68,6 +73,8 @@ CGO_ENABLED=0 go build -trimpath -o liquidation-predictor ./cmd/server
 ```
 
 代码和二进制部署到 `/opt/Price-Prediction-Using-Liquidation-Levels`，数据和模型目录配置到 `/var/lib/liquidation-predictor`，然后参考 [systemd 单元](deploy/liquidation-predictor.service) 和 [nginx 子路径配置](deploy/nginx-liquidation-location.conf)。生产环境让服务只监听 `127.0.0.1:9090`，通过 `/liquidation/` 反向代理对外访问。
+
+可选的 CoinGlass 人工登录窗口由服务器上的持久化 Chrome、Xvfb、x11vnc 和 noVNC 组成。相关 systemd 单元位于 `deploy/coinglass-*.service`；VNC、noVNC 和 Chrome CDP 分别只监听 `127.0.0.1:5900`、`127.0.0.1:6080` 和 `127.0.0.1:9222`。Nginx 的 `/liquidation/coinglass-login/` 必须通过应用的 `/api/v1/auth/check` 子请求鉴权，不能将这些端口直接暴露到公网。Chrome 登录状态保存在 `/var/lib/liquidation-predictor/coinglass-profile`，其权限应限制为服务用户可读写。登录后可由仪表盘的“抓取 CoinGlass”按钮调用 `POST /api/v1/coinglass/capture`；服务也会按照 `APP_COINGLASS_CAPTURE_INTERVAL`（默认 45 分钟）自动抓取。每次结果保存由 CoinGlass 页面自身运行时解码得到的 BTC/ETH、Binance/全交易所四组结构化 JSON；浏览器 Cookie 不会写入结果。仪表盘选择 BTC 或 ETH 后，`/api/v1/map` 会自动使用对应的 `Binance_BTCUSDT` 或 `Binance_ETHUSDT` 数据，并在最右侧清算墙按 10x/25x/50x/100x 分色显示，同时列出多头与空头清算强度 Top 3 价格。该接口只提供两小时内的 CoinGlass 数据，过期或解析不可用时返回 503，不再回退本地估算地图。
 
 SQLite 在线备份示例：
 

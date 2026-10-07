@@ -28,13 +28,21 @@ type MarketSnapshot struct {
 }
 
 type LiquidationEvent struct {
-	ID, Exchange, Symbol, PositionSide string
-	EventTime, ReceivedAt              time.Time
-	Price, Quantity, NotionalUSD       float64
-	Coverage                           string
+	ID           string    `json:"id"`
+	Exchange     string    `json:"exchange"`
+	Symbol       string    `json:"symbol"`
+	PositionSide string    `json:"position_side"`
+	EventTime    time.Time `json:"event_time"`
+	ReceivedAt   time.Time `json:"received_at"`
+	Price        float64   `json:"price"`
+	Quantity     float64   `json:"quantity"`
+	NotionalUSD  float64   `json:"notional_usd"`
+	Coverage     string    `json:"coverage"`
 }
 
 const DataSourceBinanceUSDM = "binance_usdm"
+
+const DefaultLiquidationMinimumUSD = 10_000
 
 type AggregateTrade struct {
 	ID        int64     `json:"id"`
@@ -43,6 +51,13 @@ type AggregateTrade struct {
 	Price     float64   `json:"price"`
 	Quantity  float64   `json:"quantity"`
 	PriceText string    `json:"-"`
+}
+
+type PriceTick struct {
+	TradeID int64     `json:"trade_id"`
+	Symbol  string    `json:"symbol"`
+	Time    time.Time `json:"time"`
+	Price   float64   `json:"price"`
 }
 
 type VolumeProfileBin struct {
@@ -84,10 +99,16 @@ type VolumeProfileSnapshot struct {
 }
 
 type MapBin struct {
-	Price    float64 `json:"price"`
-	LongUSD  float64 `json:"long_usd"`
-	ShortUSD float64 `json:"short_usd"`
-	TotalUSD float64 `json:"total_usd"`
+	Price       float64            `json:"price"`
+	LongUSD     float64            `json:"long_usd"`
+	ShortUSD    float64            `json:"short_usd"`
+	TotalUSD    float64            `json:"total_usd"`
+	LeverageUSD map[string]float64 `json:"leverage_usd,omitempty"`
+}
+
+type LiquidationPeak struct {
+	Price     float64 `json:"price"`
+	AmountUSD float64 `json:"amount_usd"`
 }
 
 type Wall struct {
@@ -136,16 +157,20 @@ type DirectionalSignal struct {
 }
 
 type MarketView struct {
-	Symbol           string              `json:"symbol"`
-	Interval         string              `json:"interval"`
-	Source           string              `json:"source"`
-	Summary          PriceSummary        `json:"summary"`
-	Candles          []MarketCandle      `json:"candles"`
-	HasMore          bool                `json:"has_more"`
-	NextBefore       *time.Time          `json:"next_before,omitempty"`
-	AvailableFrom    time.Time           `json:"available_from,omitempty"`
-	BackfillComplete bool                `json:"backfill_complete"`
-	ModelSignals     []DirectionalSignal `json:"model_signals"`
+	Symbol                string              `json:"symbol"`
+	Interval              string              `json:"interval"`
+	Source                string              `json:"source"`
+	Summary               PriceSummary        `json:"summary"`
+	Candles               []MarketCandle      `json:"candles"`
+	HasMore               bool                `json:"has_more"`
+	NextBefore            *time.Time          `json:"next_before,omitempty"`
+	AvailableFrom         time.Time           `json:"available_from,omitempty"`
+	BackfillComplete      bool                `json:"backfill_complete"`
+	ModelSignals          []DirectionalSignal `json:"model_signals"`
+	Liquidations          []LiquidationEvent  `json:"liquidations"`
+	LiquidationsTruncated bool                `json:"liquidations_truncated"`
+	LiquidationMinimumUSD float64             `json:"liquidation_minimum_usd"`
+	RealtimePrice         *PriceTick          `json:"realtime_price,omitempty"`
 }
 
 type TriggerInfo struct {

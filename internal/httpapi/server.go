@@ -15,6 +15,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/app"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authn"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/coinglass"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/observability"
 )
@@ -36,6 +37,7 @@ type Server struct {
 	log  *slog.Logger
 	auth *authn.Manager
 	logs *observability.Store
+	cg   *coinglass.Capturer
 }
 
 func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observability.Store, sessionStores ...authn.SessionStore) (*Server, error) {
@@ -43,12 +45,15 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{svc: svc, log: log, auth: auth, logs: logs}
+	s := &Server{svc: svc, log: log, auth: auth, logs: logs, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", getOnly(s.index))
 	mux.HandleFunc("/assets/dashboard.js", getOnly(s.dashboardScript))
 	mux.HandleFunc("/auth/login", postOnly(s.login))
 	mux.HandleFunc("/auth/logout", postOnly(s.logout))
+	mux.HandleFunc("/api/v1/auth/check", getOnly(s.authCheck))
+	mux.HandleFunc("/api/v1/coinglass/capture", postOnly(s.coinGlassCapture))
+	mux.HandleFunc("/api/v1/coinglass/latest", getOnly(s.coinGlassLatest))
 	mux.HandleFunc("/api/v1/signals/latest", getOnly(s.signal))
 	mux.HandleFunc("/api/v1/map", getOnly(s.liquidationMap))
 	mux.HandleFunc("/api/v1/market", getOnly(s.market))
@@ -64,6 +69,33 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 }
 func (s *Server) ListenAndServe() error              { return s.http.ListenAndServe() }
 func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }
+func (s *Server) StartCoinGlassScheduler(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	s.log.Info("CoinGlass capture scheduler started", "interval", interval, "first_run", time.Now())
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		run := func() {
+			result, err := s.cg.Capture(ctx)
+			if err != nil {
+				s.log.Warn("scheduled CoinGlass capture failed", "error", err)
+				return
+			}
+			s.log.Info("scheduled CoinGlass capture saved", "file", result.File, "responses", len(result.Responses), "parsed", len(result.Parsed))
+		}
+		run()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				run()
+			}
+		}
+	}()
+}
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -108,6 +140,43 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("logout", "client_ip", clientIP(r))
 	http.Redirect(w, r, s.auth.BasePath(), http.StatusSeeOther)
 }
+func (s *Server) authCheck(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) coinGlassCapture(w http.ResponseWriter, r *http.Request) {
+	result, err := s.cg.Capture(r.Context())
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, coinglass.ErrBusy) {
+			status = http.StatusConflict
+		} else if errors.Is(err, context.DeadlineExceeded) {
+			status = http.StatusGatewayTimeout
+		}
+		s.log.Warn("CoinGlass capture failed", "error", err)
+		problem(w, status, err)
+		return
+	}
+	s.log.Info("CoinGlass capture saved", "file", result.File, "responses", len(result.Responses))
+	responses := make([]map[string]any, 0, len(result.Responses))
+	for _, response := range result.Responses {
+		responses = append(responses, map[string]any{"url": response.URL, "status": response.Status, "bytes": response.Bytes})
+	}
+	parsed := make([]map[string]any, 0, len(result.Parsed))
+	for _, item := range result.Parsed {
+		parsed = append(parsed, map[string]any{"symbol": item.Symbol, "scope": item.Scope, "code": item.Code, "success": item.Success, "bytes": item.Bytes})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"captured_at": result.CapturedAt, "page_url": result.PageURL, "file": result.File, "responses": responses, "parsed": parsed})
+}
+func (s *Server) coinGlassLatest(w http.ResponseWriter, _ *http.Request) {
+	result, err := s.cg.Latest()
+	if err != nil {
+		problem(w, http.StatusNotFound, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, result)
+}
 func (s *Server) renderLogin(w http.ResponseWriter, status int, message string) {
 	html := strings.ReplaceAll(string(loginHTML), "{{LOGIN_ACTION}}", s.auth.BasePath()+"auth/login")
 	html = strings.ReplaceAll(html, "{{ERROR}}", message)
@@ -144,9 +213,10 @@ func (s *Server) liquidationMap(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, e)
 		return
 	}
-	m, ok := s.svc.Map(sym)
-	if !ok {
-		problem(w, http.StatusServiceUnavailable, fmt.Errorf("map unavailable"))
+	m, err := s.cg.LiquidationMap(sym, 2*time.Hour)
+	if err != nil {
+		s.log.Warn("CoinGlass liquidation map unavailable", "symbol", sym, "error", err)
+		problem(w, http.StatusServiceUnavailable, fmt.Errorf("CoinGlass liquidation map unavailable: %w", err))
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
@@ -306,6 +376,10 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	}
 	ch, cancel := s.svc.Subscribe()
 	defer cancel()
+	liquidations, cancelLiquidations := s.svc.SubscribeLiquidations()
+	defer cancelLiquidations()
+	prices, cancelPrices := s.svc.SubscribePrices()
+	defer cancelPrices()
 	ping := time.NewTicker(20 * time.Second)
 	defer ping.Stop()
 	for {
@@ -314,6 +388,14 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		case p, open := <-ch:
 			if !open || !writeEvent("prediction", p) {
+				return
+			}
+		case event, open := <-liquidations:
+			if !open || !writeEvent("liquidation", event) {
+				return
+			}
+		case tick, open := <-prices:
+			if !open || !writeEvent("price", tick) {
 				return
 			}
 		case <-ping.C:

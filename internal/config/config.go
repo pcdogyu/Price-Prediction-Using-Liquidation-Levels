@@ -13,6 +13,9 @@ type Config struct {
 	AuthUsername                     string
 	AuthPasswordHash                 string
 	LogPath                          string
+	CoinGlassDebugURL                string
+	CoinGlassCaptureDir              string
+	CoinGlassCaptureInterval         time.Duration
 	Symbols                          []string
 	BackfillDays                     int
 	TrainingDays                     int
@@ -26,6 +29,7 @@ func Load() Config {
 		ModelPath: env("APP_MODEL", "models/model.json"), Symbols: split(env("APP_SYMBOLS", "BTCUSDT,ETHUSDT")),
 		BasePath: env("APP_BASE_PATH", "/"), AuthUsername: strings.TrimSpace(os.Getenv("APP_AUTH_USERNAME")),
 		AuthPasswordHash: strings.TrimSpace(os.Getenv("APP_AUTH_PASSWORD_HASH")), LogPath: strings.TrimSpace(os.Getenv("APP_LOG_PATH")),
+		CoinGlassDebugURL: env("APP_COINGLASS_DEBUG_URL", "http://127.0.0.1:9222"), CoinGlassCaptureDir: env("APP_COINGLASS_CAPTURE_DIR", "data/coinglass-captures"), CoinGlassCaptureInterval: envDuration("APP_COINGLASS_CAPTURE_INTERVAL", 45*time.Minute),
 		LogRetentionDays: envInt("APP_LOG_RETENTION_DAYS", 7),
 		BackfillDays:     envInt("APP_BACKFILL_DAYS", 180), TrainingDays: envInt("APP_TRAINING_DAYS", 30), SnapshotInterval: envDuration("APP_SNAPSHOT_INTERVAL", 5*time.Minute),
 		StaleAfter: envDuration("APP_STALE_AFTER", 90*time.Second),

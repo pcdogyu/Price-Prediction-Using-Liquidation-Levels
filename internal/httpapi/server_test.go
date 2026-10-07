@@ -74,11 +74,27 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if err = st.SavePrediction(context.Background(), domain.Prediction{Symbol: "BTCUSDT", Time: now, State: "ok", MarkPrice: 101, LeadingClass: domain.UpperFirst, ModelVersion: "test-v1", Probabilities: map[string]float64{domain.UpperFirst: .6}}); err != nil {
 		t.Fatal(err)
 	}
+	if err = st.InsertLiquidation(context.Background(), domain.LiquidationEvent{ID: "binance-live", Exchange: "binance", Symbol: "BTCUSDT", PositionSide: "long", EventTime: now, ReceivedAt: now, Price: 100, Quantity: 300, NotionalUSD: 30_000, Coverage: "sampled"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.InsertLiquidation(context.Background(), domain.LiquidationEvent{ID: "binance-small", Exchange: "binance", Symbol: "BTCUSDT", PositionSide: "short", EventTime: now, ReceivedAt: now, Price: 99, Quantity: 30, NotionalUSD: 3_000, Coverage: "sampled"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.InsertLiquidation(context.Background(), domain.LiquidationEvent{ID: "other-exchange", Exchange: "okx", Symbol: "BTCUSDT", PositionSide: "short", EventTime: now, ReceivedAt: now, Price: 102, Quantity: 1, NotionalUSD: 102, Coverage: "full"}); err != nil {
+		t.Fatal(err)
+	}
+	srv.svc.RecordAggregateTrade(domain.AggregateTrade{ID: 12345, Symbol: "BTCUSDT", Time: now.Add(30 * time.Second), Price: 101.5, Quantity: 2})
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=BTCUSDT", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"binance_usdm"`) || !strings.Contains(w.Body.String(), `"exchange_count":1`) || !strings.Contains(w.Body.String(), `"side":"long"`) || strings.Contains(w.Body.String(), `"last_price":102`) {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"binance_usdm"`) || !strings.Contains(w.Body.String(), `"exchange_count":1`) || !strings.Contains(w.Body.String(), `"side":"long"`) || !strings.Contains(w.Body.String(), `"id":"binance-live"`) || !strings.Contains(w.Body.String(), `"position_side":"long"`) || !strings.Contains(w.Body.String(), `"liquidations_truncated":false`) || !strings.Contains(w.Body.String(), `"liquidation_minimum_usd":10000`) || !strings.Contains(w.Body.String(), `"last_price":101.5`) || !strings.Contains(w.Body.String(), `"realtime_price":{"trade_id":12345`) || strings.Contains(w.Body.String(), `"id":"binance-small"`) || strings.Contains(w.Body.String(), `"id":"other-exchange"`) || strings.Contains(w.Body.String(), `"last_price":102`) {
 		t.Fatalf("market status=%d body=%s", w.Code, w.Body.String())
+	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/map?symbol=BTCUSDT", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "CoinGlass liquidation map unavailable") {
+		t.Fatalf("CoinGlass-only map status=%d body=%s", w.Code, w.Body.String())
 	}
 	session, err := volumeprofile.SessionAt(now)
 	if err != nil {
@@ -123,7 +139,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	r = httptest.NewRequest(http.MethodGet, "/", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || !strings.Contains(w.Body.String(), `data-interval="24h"`) || !strings.Contains(w.Body.String(), `viewBox="0 0 1600 560"`) || !strings.Contains(w.Body.String(), "Binance USDⓈ-M") || strings.Contains(w.Body.String(), "async function refresh") {
+	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || !strings.Contains(w.Body.String(), `data-interval="24h"`) || !strings.Contains(w.Body.String(), `viewBox="0 0 1740 560"`) || !strings.Contains(w.Body.String(), "Binance USDⓈ-M") || !strings.Contains(w.Body.String(), "多单爆仓") || !strings.Contains(w.Body.String(), "空单爆仓") || !strings.Contains(w.Body.String(), `id="coinglass-button"`) || !strings.Contains(w.Body.String(), `id="coinglass-capture"`) || !strings.Contains(w.Body.String(), `id="coinglass-json"`) || !strings.Contains(w.Body.String(), `id="liquidation-top3"`) || !strings.Contains(w.Body.String(), `id="browser-frame"`) || strings.Contains(w.Body.String(), "async function refresh") {
 		t.Fatal("dashboard script was not externalized")
 	}
 	if !strings.Contains(w.Body.String(), `data-symbol="ETHUSDT" class="active"`) || strings.Contains(w.Body.String(), `data-symbol="BTCUSDT" class="active"`) {
@@ -132,7 +148,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	r = httptest.NewRequest(http.MethodGet, "/assets/dashboard.js", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "let symbol = 'ETHUSDT'") || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "volume-profile?symbol=") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "let symbol = 'ETHUSDT'") || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "volume-profile?symbol=") || !strings.Contains(w.Body.String(), "coinglass-login/vnc.html") || !strings.Contains(w.Body.String(), "coinglass-login/websockify") || !strings.Contains(w.Body.String(), "coinglass/capture") || !strings.Contains(w.Body.String(), "coinglass_binance_liqmap") || !strings.Contains(w.Body.String(), "top_long_liquidations") || !strings.Contains(w.Body.String(), "bin.leverage_usd") || !strings.Contains(w.Body.String(), "layoutRankLabels") || !strings.Contains(w.Body.String(), "drawLiquidationRankLabels") || !strings.Contains(w.Body.String(), "drawLiquidationBubbles") || !strings.Contains(w.Body.String(), "drawLiquidationBiasArrow") || !strings.Contains(w.Body.String(), "liquidationRadius") || !strings.Contains(w.Body.String(), "defaultLiquidationMinimumUSD") || !strings.Contains(w.Body.String(), "liquidationPriceOffsetUSD = 5") || !strings.Contains(w.Body.String(), "liquidationWallWidthScale = .9") || !strings.Contains(w.Body.String(), "const cy = y(displayPrice)") || !strings.Contains(w.Body.String(), "mode = 'chart'") || !strings.Contains(w.Body.String(), "addEventListener('price'") || !strings.Contains(w.Body.String(), "applyPriceTick") || !strings.Contains(w.Body.String(), "aggTrade 实时") || !strings.Contains(w.Body.String(), "addEventListener('liquidation'") || !strings.Contains(w.Body.String(), "rankLabelRight") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") {
 		t.Fatalf("dashboard asset status=%d", w.Code)
 	}
 
@@ -146,9 +162,41 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if got := streamResponse.Header.Get("Content-Type"); got != "text/event-stream" {
 		t.Fatalf("SSE content type=%q", got)
 	}
-	line, err := bufio.NewReader(streamResponse.Body).ReadString('\n')
+	reader := bufio.NewReader(streamResponse.Body)
+	line, err := reader.ReadString('\n')
 	if err != nil || line != "event: health\n" {
 		t.Fatalf("initial SSE event=%q error=%v", line, err)
+	}
+	if _, err = reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err = srv.svc.RecordLiquidation(context.Background(), domain.LiquidationEvent{ID: "sse-live", Exchange: "binance", Symbol: "BTCUSDT", PositionSide: "short", EventTime: now, ReceivedAt: now, Price: 102, Quantity: 2, NotionalUSD: 204, Coverage: "sampled"}); err != nil {
+		t.Fatal(err)
+	}
+	type readResult struct {
+		line string
+		err  error
+	}
+	next := make(chan readResult, 1)
+	go func() {
+		value, readErr := reader.ReadString('\n')
+		next <- readResult{line: value, err: readErr}
+	}()
+	select {
+	case result := <-next:
+		if result.err != nil || result.line != "event: liquidation\n" {
+			t.Fatalf("liquidation SSE event=%q error=%v", result.line, result.err)
+		}
+		dataLine, readErr := reader.ReadString('\n')
+		if readErr != nil || !strings.HasPrefix(dataLine, "data: ") || !strings.Contains(dataLine, `"id":"sse-live"`) || !strings.Contains(dataLine, `"position_side":"short"`) {
+			t.Fatalf("liquidation SSE data=%q error=%v", dataLine, readErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for liquidation SSE event")
 	}
 }
 
@@ -181,6 +229,24 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	srv.http.Handler.ServeHTTP(w, r)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated logs status=%d", w.Code)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/auth/check", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated auth check status=%d", w.Code)
+	}
+	r = httptest.NewRequest(http.MethodPost, "/api/v1/coinglass/capture", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated CoinGlass capture status=%d", w.Code)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/coinglass/latest", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated latest CoinGlass status=%d", w.Code)
 	}
 	r = httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	r.RemoteAddr = "127.0.0.1:12345"
@@ -230,6 +296,13 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	}
 	if session.MaxAge < int((7*24*time.Hour-time.Minute).Seconds()) || session.MaxAge > int((7*24*time.Hour).Seconds()) {
 		t.Fatalf("session cookie max age=%d", session.MaxAge)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/auth/check", nil)
+	r.AddCookie(session)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("authenticated auth check status=%d headers=%v", w.Code, w.Header())
 	}
 	restartedAuth, err := authn.New(cfg.AuthUsername, cfg.AuthPasswordHash, cfg.BasePath, st)
 	if err != nil || !restartedAuth.Authenticated(session.Value) {

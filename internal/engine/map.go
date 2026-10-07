@@ -28,14 +28,17 @@ type level struct {
 }
 
 type MapResult struct {
-	DataSource string          `json:"data_source"`
-	Leverages  []float64       `json:"leverages"`
-	Bins       []domain.MapBin `json:"bins"`
-	MarkPrice  float64         `json:"mark_price"`
-	ATR        float64         `json:"atr"`
-	BinWidth   float64         `json:"bin_width"`
-	Upper      *domain.Wall    `json:"upper_wall,omitempty"`
-	Lower      *domain.Wall    `json:"lower_wall,omitempty"`
+	DataSource string                   `json:"data_source"`
+	Leverages  []float64                `json:"leverages"`
+	Bins       []domain.MapBin          `json:"bins"`
+	MarkPrice  float64                  `json:"mark_price"`
+	ATR        float64                  `json:"atr"`
+	BinWidth   float64                  `json:"bin_width"`
+	Upper      *domain.Wall             `json:"upper_wall,omitempty"`
+	Lower      *domain.Wall             `json:"lower_wall,omitempty"`
+	CapturedAt *time.Time               `json:"captured_at,omitempty"`
+	TopLong    []domain.LiquidationPeak `json:"top_long_liquidations,omitempty"`
+	TopShort   []domain.LiquidationPeak `json:"top_short_liquidations,omitempty"`
 }
 
 func BuildMap(candles []domain.Candle, cfg MapConfig) (MapResult, error) {
