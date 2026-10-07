@@ -10,7 +10,7 @@ const chart = {
   yLow: null, yHigh: null, autoSpan: null, yManual: false,
   atLatest: true, newData: false, drag: null
 };
-let symbol = 'BTCUSDT';
+let symbol = 'ETHUSDT';
 let refreshing = false;
 let refreshSequence = 0;
 let streamError = '';

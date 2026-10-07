@@ -126,10 +126,13 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || !strings.Contains(w.Body.String(), `data-interval="24h"`) || !strings.Contains(w.Body.String(), `viewBox="0 0 1600 560"`) || !strings.Contains(w.Body.String(), "Binance USDⓈ-M") || strings.Contains(w.Body.String(), "async function refresh") {
 		t.Fatal("dashboard script was not externalized")
 	}
+	if !strings.Contains(w.Body.String(), `data-symbol="ETHUSDT" class="active"`) || strings.Contains(w.Body.String(), `data-symbol="BTCUSDT" class="active"`) {
+		t.Fatal("ETH should be the default dashboard symbol")
+	}
 	r = httptest.NewRequest(http.MethodGet, "/assets/dashboard.js", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "volume-profile?symbol=") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "let symbol = 'ETHUSDT'") || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "volume-profile?symbol=") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") {
 		t.Fatalf("dashboard asset status=%d", w.Code)
 	}
 
