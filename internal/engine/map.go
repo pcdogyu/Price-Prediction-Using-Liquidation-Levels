@@ -15,7 +15,10 @@ type MapConfig struct {
 }
 
 func DefaultMapConfig() MapConfig {
-	return MapConfig{Leverages: []float64{5, 10, 20, 50, 100}, Weights: []float64{.08, .22, .32, .25, .13}, HalfLivesHours: []float64{168, 120, 72, 36, 18}, MaintenanceMargin: .005, RangeFraction: .05}
+	// Keep the four leverage bands used by the target liquidation-map view.
+	// The former 5x prior is folded into 10x, while 25x inherits the former
+	// 20x weight. Weights remain normalized to one.
+	return MapConfig{Leverages: []float64{10, 25, 50, 100}, Weights: []float64{.30, .32, .25, .13}, HalfLivesHours: []float64{120, 72, 36, 18}, MaintenanceMargin: .005, RangeFraction: .05}
 }
 
 type level struct {
@@ -26,6 +29,7 @@ type level struct {
 
 type MapResult struct {
 	DataSource string          `json:"data_source"`
+	Leverages  []float64       `json:"leverages"`
 	Bins       []domain.MapBin `json:"bins"`
 	MarkPrice  float64         `json:"mark_price"`
 	ATR        float64         `json:"atr"`
@@ -136,7 +140,7 @@ func mapFromLevels(levels []level, now time.Time, mark, atr float64, cfg MapConf
 	}
 	upper := selectWall(bins, mark, atr, "upper")
 	lower := selectWall(bins, mark, atr, "lower")
-	return MapResult{DataSource: domain.DataSourceBinanceUSDM, Bins: bins, MarkPrice: mark, ATR: atr, BinWidth: width, Upper: upper, Lower: lower}
+	return MapResult{DataSource: domain.DataSourceBinanceUSDM, Leverages: append([]float64(nil), cfg.Leverages...), Bins: bins, MarkPrice: mark, ATR: atr, BinWidth: width, Upper: upper, Lower: lower}
 }
 
 func selectWall(b []domain.MapBin, mark, atr float64, side string) *domain.Wall {

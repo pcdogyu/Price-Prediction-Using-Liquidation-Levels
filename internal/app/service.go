@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,7 +39,7 @@ type Service struct {
 func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, volumeLiveReady: make(chan struct{})}
 	if a, e := ml.Load(cfg.ModelPath); e == nil {
-		if a.DataSource == domain.DataSourceBinanceUSDM && sameStrings(a.FeatureNames, engine.FeatureNames) {
+		if a.DataSource == domain.DataSourceBinanceUSDM && strings.HasPrefix(a.Version, ml.ModelVersionPrefix) && sameStrings(a.FeatureNames, engine.FeatureNames) {
 			s.model = a
 		} else {
 			log.Warn("legacy or incompatible model ignored", "version", a.Version, "data_source", a.DataSource)

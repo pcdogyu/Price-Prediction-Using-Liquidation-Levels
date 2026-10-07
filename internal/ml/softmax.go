@@ -14,6 +14,8 @@ import (
 
 var Classes = []string{domain.UpperFirst, domain.LowerFirst, domain.Neither}
 
+const ModelVersionPrefix = "softmax-v3-binance-volume-profile-10x25x50x100-"
+
 type Sample struct {
 	Time   time.Time
 	Symbol string
@@ -56,7 +58,7 @@ func Train(samples []Sample, names []string, lambda float64) (domain.ModelArtifa
 	if err != nil {
 		return domain.ModelArtifact{}, err
 	}
-	a := domain.ModelArtifact{Version: "softmax-v2-binance-volume-profile-" + time.Now().UTC().Format("20060102T150405Z"), DataSource: domain.DataSourceBinanceUSDM, FeatureNames: append([]string(nil), names...), Means: means, StdDevs: std, Lambda: lambda, Temperature: 1, TrainedAt: time.Now().UTC(), Experimental: true, Weights: make([][]float64, 3), Biases: make([]float64, 3)}
+	a := domain.ModelArtifact{Version: ModelVersionPrefix + time.Now().UTC().Format("20060102T150405Z"), DataSource: domain.DataSourceBinanceUSDM, FeatureNames: append([]string(nil), names...), Means: means, StdDevs: std, Lambda: lambda, Temperature: 1, TrainedAt: time.Now().UTC(), Experimental: true, Weights: make([][]float64, 3), Biases: make([]float64, 3)}
 	for k := 0; k < 3; k++ {
 		a.Weights[k] = append([]float64(nil), res.X[k*(d+1):k*(d+1)+d]...)
 		a.Biases[k] = res.X[k*(d+1)+d]

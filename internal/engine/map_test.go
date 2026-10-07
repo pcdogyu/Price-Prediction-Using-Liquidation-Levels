@@ -1,11 +1,22 @@
 package engine
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
+
+func TestDefaultMapConfigUsesFourRequestedLeverages(t *testing.T) {
+	cfg := DefaultMapConfig()
+	if !reflect.DeepEqual(cfg.Leverages, []float64{10, 25, 50, 100}) {
+		t.Fatalf("leverages=%v", cfg.Leverages)
+	}
+	if !reflect.DeepEqual(cfg.Weights, []float64{.30, .32, .25, .13}) || !reflect.DeepEqual(cfg.HalfLivesHours, []float64{120, 72, 36, 18}) {
+		t.Fatalf("weights=%v half_lives=%v", cfg.Weights, cfg.HalfLivesHours)
+	}
+}
 
 func syntheticCandles(n int) []domain.Candle {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -34,6 +45,9 @@ func TestBuildMapFindsBothWalls(t *testing.T) {
 	}
 	if len(m.Bins) == 0 {
 		t.Fatal("empty map")
+	}
+	if !reflect.DeepEqual(m.Leverages, []float64{10, 25, 50, 100}) {
+		t.Fatalf("map leverages=%v", m.Leverages)
 	}
 }
 

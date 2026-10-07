@@ -2,6 +2,7 @@ package ml
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,6 +17,9 @@ func TestTrainPredictProbabilities(t *testing.T) {
 	a, err := Train(s, []string{"class_hint", "noise"}, .01)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.HasPrefix(a.Version, ModelVersionPrefix) {
+		t.Fatalf("model version=%q", a.Version)
 	}
 	p, err := Predict(a, []float64{2, 1})
 	if err != nil {

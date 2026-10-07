@@ -176,7 +176,8 @@ function draw(view, map, signal, volume) {
   $('chart-title').textContent = (intervalName[chart.interval] || chart.interval) + ' K线 · 成交量分布 · 清算墙';
   const sessionRange = volume?.session_start ? ' (' + when(volume.session_start) + ' → ' + when(volume.session_end) + ')' : '';
   const profileState = volume?.state === 'ok' ? '当前时段成交量' + sessionRange : volume?.state === 'backfilling' ? '成交量回填 ' + ((volume.backfill_progress || 0) * 100).toFixed(0) + '%' + sessionRange : volume?.state === 'stale' ? '成交量已过期' + sessionRange : '成交量不可用';
-  $('chart-context').textContent = (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / 当前清算墙 · 共用价格纵轴';
+  const leverageText = (map?.leverages || []).map(value => value + '×').join('/');
+  $('chart-context').textContent = (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / 当前清算墙 · 共用价格纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '');
   if (!candles.length && !bins.length && !(volume?.bins || []).length) {
     svg.appendChild(svgNode('text', { x: 800, y: 280, 'text-anchor': 'middle', fill: '#83a0b2' }, '等待 K 线、成交量分布与清算地图数据'));
     return;
