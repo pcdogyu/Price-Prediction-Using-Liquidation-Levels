@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/app"
@@ -38,6 +39,10 @@ type Server struct {
 	auth *authn.Manager
 	logs *observability.Store
 	cg   *coinglass.Capturer
+
+	cgScheduleMu sync.RWMutex
+	cgInterval   time.Duration
+	cgNext       time.Time
 }
 
 func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observability.Store, sessionStores ...authn.SessionStore) (*Server, error) {
@@ -55,6 +60,7 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.HandleFunc("/api/v1/auth/check", getOnly(s.authCheck))
 	mux.HandleFunc("/api/v1/coinglass/capture", postOnly(s.coinGlassCapture))
 	mux.HandleFunc("/api/v1/coinglass/latest", getOnly(s.coinGlassLatest))
+	mux.HandleFunc("/api/v1/coinglass/schedule", getOnly(s.coinGlassSchedule))
 	mux.HandleFunc("/api/v1/signals/latest", getOnly(s.signal))
 	mux.HandleFunc("/api/v1/map", getOnly(s.liquidationMap))
 	mux.HandleFunc("/api/v1/market", getOnly(s.market))
@@ -74,7 +80,9 @@ func (s *Server) StartCoinGlassScheduler(ctx context.Context, interval time.Dura
 	if interval <= 0 {
 		return
 	}
-	s.log.Info("CoinGlass capture scheduler started", "interval", interval, "first_run", time.Now())
+	startedAt := time.Now().UTC()
+	s.setCoinGlassSchedule(interval, startedAt.Add(interval))
+	s.log.Info("CoinGlass capture scheduler started", "interval", interval, "first_run", startedAt)
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -91,11 +99,30 @@ func (s *Server) StartCoinGlassScheduler(ctx context.Context, interval time.Dura
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case tickedAt := <-ticker.C:
+				s.setCoinGlassSchedule(interval, tickedAt.UTC().Add(interval))
 				run()
 			}
 		}
 	}()
+}
+
+func (s *Server) setCoinGlassSchedule(interval time.Duration, next time.Time) {
+	s.cgScheduleMu.Lock()
+	s.cgInterval = interval
+	s.cgNext = next
+	s.cgScheduleMu.Unlock()
+}
+
+func (s *Server) coinGlassSchedule(w http.ResponseWriter, _ *http.Request) {
+	s.cgScheduleMu.RLock()
+	interval, next := s.cgInterval, s.cgNext
+	s.cgScheduleMu.RUnlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"interval_seconds": int64(interval / time.Second),
+		"next_capture_at":  next,
+		"server_time":      time.Now().UTC(),
+	})
 }
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" {

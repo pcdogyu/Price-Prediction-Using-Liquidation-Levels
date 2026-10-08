@@ -66,6 +66,14 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST status=%d", w.Code)
 	}
+	nextCapture := time.Now().UTC().Add(10 * time.Minute).Truncate(time.Second)
+	srv.setCoinGlassSchedule(10*time.Minute, nextCapture)
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/coinglass/schedule", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"interval_seconds":600`) || !strings.Contains(w.Body.String(), `"next_capture_at":"`+nextCapture.Format(time.RFC3339)) {
+		t.Fatalf("CoinGlass schedule status=%d body=%s", w.Code, w.Body.String())
+	}
 
 	now := time.Now().UTC().Truncate(time.Minute)
 	if err = st.UpsertCandles(context.Background(), []domain.Candle{{Exchange: "binance", Symbol: "BTCUSDT", Time: now, Open: 100, High: 102, Low: 99, Close: 101, VolumeUSD: 10}, {Exchange: "okx", Symbol: "BTCUSDT", Time: now, Open: 101, High: 103, Low: 100, Close: 102, VolumeUSD: 20}}); err != nil {
@@ -139,7 +147,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	r = httptest.NewRequest(http.MethodGet, "/bubbles", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || !strings.Contains(w.Body.String(), `data-interval="24h"`) || !strings.Contains(w.Body.String(), `viewBox="0 0 1740 560"`) || !strings.Contains(w.Body.String(), "Binance USDⓈ-M") || !strings.Contains(w.Body.String(), "多单爆仓") || !strings.Contains(w.Body.String(), "空单爆仓") || !strings.Contains(w.Body.String(), `id="coinglass-button"`) || !strings.Contains(w.Body.String(), `id="coinglass-capture"`) || !strings.Contains(w.Body.String(), `id="coinglass-json"`) || !strings.Contains(w.Body.String(), `id="liquidation-top3"`) || !strings.Contains(w.Body.String(), `id="browser-frame"`) || strings.Contains(w.Body.String(), "async function refresh") {
+	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || !strings.Contains(w.Body.String(), `data-interval="24h"`) || !strings.Contains(w.Body.String(), `viewBox="0 0 1740 560"`) || !strings.Contains(w.Body.String(), "Binance USDⓈ-M") || !strings.Contains(w.Body.String(), "多单爆仓") || !strings.Contains(w.Body.String(), "空单爆仓") || !strings.Contains(w.Body.String(), `id="coinglass-button"`) || !strings.Contains(w.Body.String(), `id="coinglass-capture"`) || !strings.Contains(w.Body.String(), `id="coinglass-json"`) || !strings.Contains(w.Body.String(), `id="liquidation-top3"`) || !strings.Contains(w.Body.String(), `id="browser-frame"`) || !strings.Contains(w.Body.String(), "正在读取下次时间") || strings.Contains(w.Body.String(), "async function refresh") {
 		t.Fatal("dashboard script was not externalized")
 	}
 	if !strings.Contains(w.Body.String(), `data-symbol="ETHUSDT" class="active"`) || strings.Contains(w.Body.String(), `data-symbol="BTCUSDT" class="active"`) {
@@ -148,7 +156,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	r = httptest.NewRequest(http.MethodGet, "/assets/dashboard.js", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "let symbol = 'ETHUSDT'") || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "volume-profile?symbol=") || !strings.Contains(w.Body.String(), "coinglass-login/vnc.html") || !strings.Contains(w.Body.String(), "coinglass-login/websockify") || !strings.Contains(w.Body.String(), "coinglass/capture") || !strings.Contains(w.Body.String(), "coinglass_binance_liqmap") || !strings.Contains(w.Body.String(), "top_long_liquidations") || !strings.Contains(w.Body.String(), "bin.leverage_usd") || !strings.Contains(w.Body.String(), "layoutRankLabels") || !strings.Contains(w.Body.String(), "drawLiquidationRankLabels") || !strings.Contains(w.Body.String(), "drawLiquidationBubbles") || !strings.Contains(w.Body.String(), "drawLiquidationBiasArrow") || !strings.Contains(w.Body.String(), "liquidationRadius") || !strings.Contains(w.Body.String(), "defaultLiquidationMinimumUSD") || !strings.Contains(w.Body.String(), "liquidationPriceOffsetUSD = 5") || !strings.Contains(w.Body.String(), "liquidationWallWidthScale = .9") || !strings.Contains(w.Body.String(), "const cy = y(displayPrice)") || !strings.Contains(w.Body.String(), "mode = 'chart'") || !strings.Contains(w.Body.String(), "addEventListener('price'") || !strings.Contains(w.Body.String(), "applyPriceTick") || !strings.Contains(w.Body.String(), "aggTrade 实时") || !strings.Contains(w.Body.String(), "addEventListener('liquidation'") || !strings.Contains(w.Body.String(), "rankLabelRight") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "let symbol = 'ETHUSDT'") || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "volume-profile?symbol=") || !strings.Contains(w.Body.String(), "coinglass-login/vnc.html") || !strings.Contains(w.Body.String(), "coinglass-login/websockify") || !strings.Contains(w.Body.String(), "coinglass/capture") || !strings.Contains(w.Body.String(), "coinglass/schedule") || !strings.Contains(w.Body.String(), "updateCoinGlassCountdown") || !strings.Contains(w.Body.String(), "captureCountdown") || !strings.Contains(w.Body.String(), "coinglass_binance_liqmap") || !strings.Contains(w.Body.String(), "top_long_liquidations") || !strings.Contains(w.Body.String(), "bin.leverage_usd") || !strings.Contains(w.Body.String(), "layoutRankLabels") || !strings.Contains(w.Body.String(), "drawLiquidationRankLabels") || !strings.Contains(w.Body.String(), "drawLiquidationBubbles") || !strings.Contains(w.Body.String(), "drawLiquidationBiasArrow") || !strings.Contains(w.Body.String(), "liquidation_above_usd") || !strings.Contains(w.Body.String(), "liquidation_below_usd") || !strings.Contains(w.Body.String(), "liquidation_direction") || !strings.Contains(w.Body.String(), "liquidationRadius") || !strings.Contains(w.Body.String(), "chartTimeScale") || !strings.Contains(w.Body.String(), "drawTimeGrid") || !strings.Contains(w.Body.String(), "const fiveMinutes = 5 * 60 * 1000") || !strings.Contains(w.Body.String(), "defaultLiquidationMinimumUSD") || !strings.Contains(w.Body.String(), "liquidationPriceOffsetUSD = 5") || !strings.Contains(w.Body.String(), "liquidationWallWidthScale = .9") || !strings.Contains(w.Body.String(), "const cy = y(displayPrice)") || !strings.Contains(w.Body.String(), "mode = 'chart'") || !strings.Contains(w.Body.String(), "addEventListener('price'") || !strings.Contains(w.Body.String(), "applyPriceTick") || !strings.Contains(w.Body.String(), "aggTrade 实时") || !strings.Contains(w.Body.String(), "addEventListener('liquidation'") || !strings.Contains(w.Body.String(), "rankLabelRight") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") || strings.Contains(w.Body.String(), "signal?.upper_wall?.price") || strings.Contains(w.Body.String(), "signal?.lower_wall?.price") || strings.Contains(w.Body.String(), "Math.round(i * (candles.length - 1) / 4)") {
 		t.Fatalf("dashboard asset status=%d", w.Code)
 	}
 
@@ -261,6 +269,12 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	srv.http.Handler.ServeHTTP(w, r)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated latest CoinGlass status=%d", w.Code)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/coinglass/schedule", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated CoinGlass schedule status=%d", w.Code)
 	}
 	r = httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	r.RemoteAddr = "127.0.0.1:12345"

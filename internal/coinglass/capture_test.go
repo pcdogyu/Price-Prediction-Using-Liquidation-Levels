@@ -79,7 +79,7 @@ func TestCaptureStoresMapResponses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("liquidation map error=%v", err)
 	}
-	if liquidationMap.DataSource != "coinglass_binance_liqmap" || liquidationMap.MarkPrice != 100 || liquidationMap.ATR != 0 || liquidationMap.CapturedAt == nil || len(liquidationMap.Bins) != 2 {
+	if liquidationMap.DataSource != "coinglass_binance_liqmap" || liquidationMap.MarkPrice != 100 || liquidationMap.ATR != 0 || liquidationMap.CapturedAt == nil || len(liquidationMap.Bins) != 2 || liquidationMap.LiquidationAboveUSD != 5000 || liquidationMap.LiquidationBelowUSD != 1500 || liquidationMap.LiquidationDirection != "down" {
 		t.Fatalf("liquidation map=%+v", liquidationMap)
 	}
 	if liquidationMap.Bins[0].Price != 90 || liquidationMap.Bins[0].LongUSD != 1500 || liquidationMap.Bins[0].ShortUSD != 0 || liquidationMap.Bins[0].LeverageUSD["10"] != 1000 || liquidationMap.Bins[0].LeverageUSD["25"] != 500 {
@@ -90,6 +90,27 @@ func TestCaptureStoresMapResponses(t *testing.T) {
 	}
 	if len(liquidationMap.TopLong) != 1 || liquidationMap.TopLong[0].Price != 90 || liquidationMap.TopLong[0].AmountUSD != 1500 || len(liquidationMap.TopShort) != 1 || liquidationMap.TopShort[0].Price != 110 || liquidationMap.TopShort[0].AmountUSD != 5000 {
 		t.Fatalf("top liquidations long=%+v short=%+v", liquidationMap.TopLong, liquidationMap.TopShort)
+	}
+}
+
+func TestLiquidationDirectionComparesSnapshotSides(t *testing.T) {
+	tests := []struct {
+		name         string
+		bins         []domain.MapBin
+		above, below float64
+		direction    string
+	}{
+		{name: "up when lower side is larger", bins: []domain.MapBin{{Price: 90, TotalUSD: 700}, {Price: 110, TotalUSD: 300}}, above: 300, below: 700, direction: "up"},
+		{name: "down when upper side is larger", bins: []domain.MapBin{{Price: 90, TotalUSD: 200}, {Price: 110, TotalUSD: 800}}, above: 800, below: 200, direction: "down"},
+		{name: "balanced when both sides match", bins: []domain.MapBin{{Price: 90, TotalUSD: 500}, {Price: 100, TotalUSD: 999}, {Price: 110, TotalUSD: 500}}, above: 500, below: 500, direction: "balanced"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			above, below, direction := liquidationDirection(test.bins, 100)
+			if above != test.above || below != test.below || direction != test.direction {
+				t.Fatalf("above=%v below=%v direction=%q", above, below, direction)
+			}
+		})
 	}
 }
 

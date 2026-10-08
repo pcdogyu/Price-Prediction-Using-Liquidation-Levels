@@ -21,6 +21,7 @@ let streamError = '';
 let lastFailures = [];
 let logCursor = '';
 let logEntries = [];
+let captureStateHoldUntil = 0;
 
 const api = path => new URL('api/v1/' + path, document.baseURI).toString();
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -62,6 +63,30 @@ function marketPath(before = '') {
   const params = new URLSearchParams({ symbol, interval: chart.interval, limit: String(chart.visibleCount) });
   if (before) params.set('before', before);
   return 'market?' + params.toString();
+}
+
+function captureCountdown(value) {
+  const seconds = Math.max(0, Math.ceil(value / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds % 3600 / 60);
+  const remainder = seconds % 60;
+  const clock = [minutes, remainder].map(item => String(item).padStart(2, '0')).join(':');
+  return hours ? String(hours).padStart(2, '0') + ':' + clock : clock;
+}
+
+function updateCoinGlassCountdown() {
+  if (Date.now() < captureStateHoldUntil) return;
+  const schedule = cache.schedule;
+  const intervalSeconds = Number(schedule?.interval_seconds);
+  const nextAt = new Date(schedule?.next_capture_at).getTime();
+  const serverAt = new Date(schedule?.server_time).getTime();
+  if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0 || !Number.isFinite(nextAt) || !Number.isFinite(serverAt)) return;
+  const receivedAt = Number(schedule.received_at_ms) || Date.now();
+  const remaining = nextAt - serverAt - Math.max(0, Date.now() - receivedAt);
+  const intervalText = intervalSeconds % 60 === 0 ? intervalSeconds / 60 + ' 分钟' : intervalSeconds + ' 秒';
+  const state = $('coinglass-capture-state');
+  state.classList.remove('error');
+  state.textContent = '自动抓取：每 ' + intervalText + ' · 下次 ' + when(schedule.next_capture_at) + ' · 倒计时 ' + captureCountdown(remaining);
 }
 
 function updateTicker(view) {
@@ -227,7 +252,7 @@ function currentRange(candles, bins, signal, volume) {
   bins.forEach(item => values.push(item.price));
   (volume?.bins || []).forEach(item => values.push(item.price_low, item.price_high));
   [volume?.val, volume?.vah].forEach(value => { if (finite(value) && value > 0) values.push(value); });
-  [signal?.mark_price, signal?.upper_wall?.price, signal?.lower_wall?.price].forEach(value => { if (finite(value) && value > 0) values.push(value); });
+  [signal?.mark_price].forEach(value => { if (finite(value) && value > 0) values.push(value); });
   if (!values.length) return [0, 1];
   let low = Math.min(...values), high = Math.max(...values);
   const padding = (high - low) * .025 || Math.max(high * .001, 1);
@@ -308,12 +333,45 @@ function liquidationRadius(notionalUSD) {
   return Math.max(3, Math.min(18, 3 + Math.log10(amount / 100) * 2.5));
 }
 
-function drawLiquidationBubbles(plot, candles, events, y, left, candleRight, top, plotBottom) {
+function chartTimeScale(candles, left, right) {
+  if (!candles.length) return null;
+  const duration = intervalMilliseconds[chart.interval] || 900000;
+  const lastStart = new Date(candles[candles.length - 1].time).getTime();
+  if (!Number.isFinite(lastStart)) return null;
+  const end = lastStart + duration;
+  const start = end - chart.visibleCount * duration;
+  const width = right - left;
+  return { start, end, duration, step: width / chart.visibleCount, x: value => left + (value - start) / (end - start) * width };
+}
+
+function timeGridStep(span, width, minimumPixels, candidates) {
+  return candidates.find(step => step * width / span >= minimumPixels) || candidates[candidates.length - 1];
+}
+
+function drawTimeGrid(svg, scale, top, plotBottom, labelY, left, right) {
+  const fiveMinutes = 5 * 60 * 1000;
+  const hour = 60 * 60 * 1000;
+  const span = scale.end - scale.start;
+  const width = right - left;
+  const minorStep = timeGridStep(span, width, 4, [fiveMinutes, 2 * fiveMinutes, 3 * fiveMinutes, 6 * fiveMinutes, hour, 2 * hour, 4 * hour, 8 * hour, 12 * hour, 24 * hour, 48 * hour, 7 * 24 * hour]);
+  const labelStep = timeGridStep(span, width, 90, [hour, 2 * hour, 3 * hour, 4 * hour, 6 * hour, 8 * hour, 12 * hour, 24 * hour, 48 * hour, 72 * hour, 7 * 24 * hour, 14 * 24 * hour, 30 * 24 * hour]);
+  for (let at = Math.ceil(scale.start / minorStep) * minorStep; at < scale.end; at += minorStep) {
+    if (at % labelStep === 0) continue;
+    const x = scale.x(at);
+    svg.appendChild(svgNode('line', { x1: x, y1: top, x2: x, y2: plotBottom, stroke: '#132a36', 'stroke-width': .7, opacity: .58 }));
+  }
+  for (let at = Math.ceil(scale.start / labelStep) * labelStep; at < scale.end; at += labelStep) {
+    const x = scale.x(at);
+    const label = new Date(at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+    svg.appendChild(svgNode('line', { x1: x, y1: top, x2: x, y2: plotBottom, stroke: '#315064', 'stroke-width': 1, opacity: .92 }));
+    svg.appendChild(svgNode('text', { x, y: labelY, 'text-anchor': 'middle', fill: '#7895a7', 'font-size': 11 }, label));
+  }
+}
+
+function drawLiquidationBubbles(plot, candles, events, y, xForTime, left, candleRight, top, plotBottom) {
   if (!candles.length || !events.length) return;
   const duration = intervalMilliseconds[chart.interval] || 900000;
   const starts = new Map(candles.map((candle, index) => [new Date(candle.time).getTime(), index]));
-  const step = (candleRight - left) / chart.visibleCount;
-  const offset = chart.visibleCount - candles.length;
   const placed = [];
   events.forEach(event => {
     const eventTime = new Date(event.event_time).getTime();
@@ -321,8 +379,8 @@ function drawLiquidationBubbles(plot, candles, events, y, left, candleRight, top
     const bucket = Math.floor(eventTime / duration) * duration;
     const candleIndex = starts.get(bucket);
     if (candleIndex === undefined) return;
-    const fraction = Math.max(.12, Math.min(.88, (eventTime - bucket) / duration));
-    const baseX = left + (offset + candleIndex + fraction) * step;
+    const baseX = xForTime(eventTime);
+    if (baseX < left || baseX > candleRight) return;
     let x = baseX;
     const radius = liquidationRadius(event.notional_usd);
     const long = event.position_side === 'long';
@@ -344,22 +402,18 @@ function drawLiquidationBubbles(plot, candles, events, y, left, candleRight, top
 
 function drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high) {
   if (map?.data_source !== 'coinglass_binance_liqmap' || !finite(currentPrice) || currentPrice < low || currentPrice > high) return;
-  let aboveUSD = 0;
-  let belowUSD = 0;
-  (map.bins || []).forEach(bin => {
-    if (!finite(bin.price) || !finite(bin.total_usd) || bin.total_usd <= 0) return;
-    if (bin.price > currentPrice) aboveUSD += bin.total_usd;
-    else if (bin.price < currentPrice) belowUSD += bin.total_usd;
-  });
-  if (aboveUSD === belowUSD || (!aboveUSD && !belowUSD)) return;
-  const upward = belowUSD > aboveUSD;
+  const aboveUSD = Number(map.liquidation_above_usd);
+  const belowUSD = Number(map.liquidation_below_usd);
+  if (!Number.isFinite(aboveUSD) || !Number.isFinite(belowUSD) || map.liquidation_direction === 'balanced') return;
+  const upward = map.liquidation_direction === 'up';
+  if (!upward && map.liquidation_direction !== 'down') return;
   const color = upward ? '#22c55e' : '#ef4444';
   const currentY = y(currentPrice);
   const x = dims.liquidationLeft + 25;
   const tipY = currentY + (upward ? -28 : 28);
   const shaftEndY = currentY + (upward ? -17 : 17);
   const shaftStartY = currentY + (upward ? 13 : -13);
-  const tip = 'CoinGlass 清算金额方向\n现价上方 $' + compact(aboveUSD) + '\n现价下方 $' + compact(belowUSD) + '\n判断：' + (upward ? '下方金额更大，向上清算' : '上方金额更大，向下清算');
+  const tip = 'CoinGlass 10分钟快照清算方向\n抓取时现价 ' + money(map.mark_price) + '\n现价上方合计 $' + compact(aboveUSD) + '\n现价下方合计 $' + compact(belowUSD) + '\n判断：' + (upward ? '下方金额更大，向上清算' : '上方金额更大，向下清算') + '\n数据时间 ' + when(map.captured_at);
   const group = svgNode('g', { 'data-tip': tip });
   group.appendChild(svgNode('line', { x1: x, y1: shaftStartY, x2: x, y2: shaftEndY, stroke: color, 'stroke-width': 6, 'stroke-linecap': 'round' }));
   group.appendChild(svgNode('path', { d: upward ? 'M ' + x + ' ' + tipY + ' L ' + (x - 10) + ' ' + (tipY + 13) + ' L ' + (x + 10) + ' ' + (tipY + 13) + ' Z' : 'M ' + x + ' ' + tipY + ' L ' + (x - 10) + ' ' + (tipY - 13) + ' L ' + (x + 10) + ' ' + (tipY - 13) + ' Z', fill: color, stroke: '#07141d', 'stroke-width': 1.2 }));
@@ -404,20 +458,21 @@ function draw(view, map, signal, volume) {
   svg.appendChild(svgNode('line', { x1: volumeLeft - 18, y1: top, x2: volumeLeft - 18, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
   svg.appendChild(svgNode('line', { x1: liquidationLeft - 18, y1: top, x2: liquidationLeft - 18, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
   svg.appendChild(svgNode('line', { x1: profileRight, y1: top, x2: profileRight, y2: plotBottom, stroke: '#527083', 'stroke-width': 1 }));
+  const timeScale = chartTimeScale(candles, left, candleRight);
+  if (timeScale) drawTimeGrid(svg, timeScale, top, plotBottom, height - 17, left, candleRight);
   const plot = svgNode('g', { 'clip-path': 'url(#plot-clip)' });
   if (candles.length) {
-    const step = (candleRight - left) / chart.visibleCount;
-    const offset = chart.visibleCount - candles.length;
-    const bodyWidth = Math.max(2, step * .58);
+    const bodyWidth = Math.max(2, timeScale.step * .58);
     const modelSignals = new Map();
     chart.signals.forEach(item => {
       const key = new Date(item.candle_time).getTime();
       if (!modelSignals.has(key)) modelSignals.set(key, []);
       modelSignals.get(key).push(item);
     });
-    drawLiquidationBubbles(plot, candles, chart.liquidations, y, left, candleRight, top, plotBottom);
-    candles.forEach((candle, index) => {
-      const x = left + (offset + index + .5) * step;
+    drawLiquidationBubbles(plot, candles, chart.liquidations, y, timeScale.x, left, candleRight, top, plotBottom);
+    candles.forEach(candle => {
+      const candleStart = new Date(candle.time).getTime();
+      const x = timeScale.x(candleStart + timeScale.duration / 2);
       const color = candle.close >= candle.open ? '#2dd4bf' : '#fb7185';
       const bodyTop = y(Math.max(candle.open, candle.close));
       const bodyBottom = y(Math.min(candle.open, candle.close));
@@ -444,12 +499,6 @@ function draw(view, map, signal, volume) {
       });
       plot.appendChild(group);
     });
-    for (let i = 0; i < 5; i++) {
-      const index = Math.min(candles.length - 1, Math.round(i * (candles.length - 1) / 4));
-      const x = left + (offset + index + .5) * step;
-      const label = new Date(candles[index].time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
-      svg.appendChild(svgNode('text', { x, y: height - 17, 'text-anchor': 'middle', fill: '#7895a7', 'font-size': 11 }, label));
-    }
   }
   if (bins.length) {
     const maximum = Math.max(...bins.map(item => item.total_usd), 1);
@@ -502,7 +551,7 @@ function draw(view, map, signal, volume) {
   svg.appendChild(svgNode('text', { x: (volumeLeft + volumeRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#7dd3fc', 'font-size': 11, 'font-weight': 650 }, '当前时段成交量'));
   svg.appendChild(svgNode('text', { x: (liquidationLeft + profileRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: coinGlassMap ? '#7dd3fc' : '#83a0b2', 'font-size': 11, 'font-weight': 650 }, liquidationName));
   const currentPrice = view?.summary?.last_price || signal?.mark_price;
-  const levels = [['现价', currentPrice, '#f8fafc', '4 5'], ['上墙', signal?.upper_wall?.price, '#2dd4bf', ''], ['下墙', signal?.lower_wall?.price, '#fb7185', '']];
+  const levels = [['现价', currentPrice, '#f8fafc', '4 5']];
   levels.forEach(([name, price, color, dash]) => {
     if (!price || price < low || price > high) return;
     const yy = y(price);
@@ -568,7 +617,7 @@ async function refresh(resetMarket = false) {
   const requestedInterval = chart.interval;
   refreshing = true;
   try {
-    const specs = [['signal', '预测', 'signals/latest?symbol=' + symbol], ['map', '清算地图', 'map?symbol=' + symbol], ['volume', '成交量分布', 'volume-profile?symbol=' + symbol], ['market', '市场行情', marketPath()]];
+    const specs = [['signal', '预测', 'signals/latest?symbol=' + symbol], ['map', '清算地图', 'map?symbol=' + symbol], ['volume', '成交量分布', 'volume-profile?symbol=' + symbol], ['market', '市场行情', marketPath()], ['schedule', '抓取计划', 'coinglass/schedule']];
     const results = await Promise.allSettled(specs.map(item => json(item[2])));
     if (requestedSymbol !== symbol || requestedInterval !== chart.interval || sequence !== refreshSequence) return;
     lastFailures = [];
@@ -576,6 +625,7 @@ async function refresh(resetMarket = false) {
       const [key, label] = specs[index];
       if (result.status === 'fulfilled') {
         if (key === 'market') mergeMarket(result.value, false, resetMarket || !chart.candles.length);
+        else if (key === 'schedule') cache.schedule = { ...result.value, received_at_ms: Date.now() };
         else cache[key] = result.value;
       } else {
         if (key === 'map') cache.map = null;
@@ -591,6 +641,7 @@ async function refresh(resetMarket = false) {
       $('model-info').textContent = '模型：' + (cache.signal.model_version || '尚未训练') + ' · 数据年龄 ' + (finite(cache.signal.data_age_seconds) ? Math.max(0, cache.signal.data_age_seconds).toFixed(0) + ' 秒' : '—');
     }
     draw(cache.market, cache.map, cache.signal, cache.volume);
+    updateCoinGlassCountdown();
     showFailures(lastFailures);
   } finally {
     if (sequence === refreshSequence) refreshing = false;
@@ -749,6 +800,7 @@ async function captureCoinGlass() {
   const button = $('coinglass-capture');
   const state = $('coinglass-capture-state');
   button.disabled = true;
+  captureStateHoldUntil = Number.POSITIVE_INFINITY;
   state.classList.remove('error');
   state.textContent = '正在刷新清算地图并读取响应…';
   try {
@@ -761,10 +813,12 @@ async function captureCoinGlass() {
     }
     if (!response.ok) throw new Error(body?.detail || ('HTTP ' + response.status));
     const bytes = (body.parsed || []).reduce((sum, item) => sum + (item.bytes || 0), 0);
-    state.textContent = '抓取成功：' + (body.parsed || []).length + ' 组结构化 JSON，' + compact(bytes) + 'B · ' + when(body.captured_at) + ' · 每 45 分钟自动更新';
+    state.textContent = '抓取成功：' + (body.parsed || []).length + ' 组结构化 JSON，' + compact(bytes) + 'B · ' + when(body.captured_at);
+    captureStateHoldUntil = Date.now() + 5000;
   } catch (error) {
     state.classList.add('error');
     state.textContent = '抓取失败：' + error.message;
+    captureStateHoldUntil = Date.now() + 8000;
   } finally {
     button.disabled = false;
   }
@@ -822,6 +876,7 @@ $('log-copy').addEventListener('click', async () => {
 installChartInteractions();
 refresh(true);
 setInterval(() => refresh(false), 10000);
+setInterval(updateCoinGlassCountdown, 1000);
 setInterval(() => { if (!$('log-drawer').classList.contains('hidden') && $('log-auto').checked) loadLogs(false); }, 5000);
 
 const events = new EventSource(api('stream'));

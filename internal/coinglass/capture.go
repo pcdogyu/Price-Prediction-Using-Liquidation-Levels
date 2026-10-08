@@ -204,17 +204,40 @@ func (c *Capturer) LiquidationMap(symbol string, maxAge time.Duration) (engine.M
 		sort.Float64s(widths)
 		binWidth = widths[len(widths)/2]
 	}
+	aboveUSD, belowUSD, direction := liquidationDirection(bins, data.LastPrice)
 	capturedAt := latest.CapturedAt
 	return engine.MapResult{
-		DataSource: "coinglass_binance_liqmap",
-		Leverages:  []float64{10, 25, 50, 100},
-		Bins:       bins,
-		MarkPrice:  data.LastPrice,
-		BinWidth:   binWidth,
-		CapturedAt: &capturedAt,
-		TopLong:    strongestLiquidations(bins, true, 3),
-		TopShort:   strongestLiquidations(bins, false, 3),
+		DataSource:           "coinglass_binance_liqmap",
+		Leverages:            []float64{10, 25, 50, 100},
+		Bins:                 bins,
+		MarkPrice:            data.LastPrice,
+		BinWidth:             binWidth,
+		CapturedAt:           &capturedAt,
+		TopLong:              strongestLiquidations(bins, true, 3),
+		TopShort:             strongestLiquidations(bins, false, 3),
+		LiquidationAboveUSD:  aboveUSD,
+		LiquidationBelowUSD:  belowUSD,
+		LiquidationDirection: direction,
 	}, nil
+}
+
+func liquidationDirection(bins []domain.MapBin, markPrice float64) (aboveUSD, belowUSD float64, direction string) {
+	for _, bin := range bins {
+		if bin.Price > markPrice {
+			aboveUSD += bin.TotalUSD
+		} else if bin.Price < markPrice {
+			belowUSD += bin.TotalUSD
+		}
+	}
+	switch {
+	case belowUSD > aboveUSD:
+		direction = "up"
+	case aboveUSD > belowUSD:
+		direction = "down"
+	default:
+		direction = "balanced"
+	}
+	return
 }
 
 func strongestLiquidations(bins []domain.MapBin, long bool, limit int) []domain.LiquidationPeak {
