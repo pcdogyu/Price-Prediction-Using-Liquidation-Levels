@@ -2,6 +2,7 @@ package exchange
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"math"
 	"net/http"
@@ -48,8 +49,17 @@ func TestAllMarketLiquidationsAndExecutedQuantity(t *testing.T) {
 	}
 }
 func TestDepthSynchronizationAndBuckets(t *testing.T) {
+	// Binance sends both e (event type) and E (event timestamp). Without an
+	// explicit lowercase e field, encoding/json matches it to E and fails.
+	var wire DepthUpdate
+	if err := json.Unmarshal([]byte(`{"e":"depthUpdate","E":1700000000000,"s":"ETHUSDT","U":99,"u":101,"pu":98,"b":[["100.01","0"]],"a":[]}`), &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Event != "depthUpdate" || wire.EventTime != 1700000000000 || wire.First != 99 || wire.Last != 101 {
+		t.Fatalf("invalid wire update: %+v", wire)
+	}
 	b := NewLocalBook("ETHUSDT", .01, 100, [][]string{{"100.01", "2"}, {"100.09", "3"}}, [][]string{{"100.11", "4"}})
-	if applied, err := b.Update(DepthUpdate{First: 99, Last: 101, Bids: [][]string{{"100.01", "0"}}}); err != nil || !applied {
+	if applied, err := b.Update(wire); err != nil || !applied {
 		t.Fatal(applied, err)
 	}
 	s := b.Snapshot(time.Now())

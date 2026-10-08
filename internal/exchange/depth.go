@@ -15,6 +15,7 @@ import (
 )
 
 type DepthUpdate struct {
+	Event     string     `json:"e"`
 	First     int64      `json:"U"`
 	Last      int64      `json:"u"`
 	Previous  int64      `json:"pu"`
