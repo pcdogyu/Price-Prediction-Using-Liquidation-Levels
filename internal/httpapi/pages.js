@@ -25,8 +25,8 @@
     if (!response.ok) throw new Error(data.detail || 'HTTP ' + response.status);
     return data;
   }
-  function metric(label, value, detail = '', color = '') {
-    return `<div class="info-metric"><div class="label">${escape(label)}</div><div class="number ${color}">${escape(value)}</div><div class="detail">${escape(detail)}</div></div>`;
+  function metric(label, value, detail = '', color = '', cardClass = '') {
+    return `<div class="info-metric${cardClass ? ' ' + escape(cardClass) : ''}"><div class="label">${escape(label)}</div><div class="number ${color}">${escape(value)}</div><div class="detail">${escape(detail)}</div></div>`;
   }
   function dateInput(value) { return value ? new Date(value + ':00+08:00').toISOString() : ''; }
   function paramsDates(from, to) {
@@ -60,7 +60,7 @@
     $('liq-coverage').textContent = d.coverage + '。最早记录：' + when(d.available_from);
     const health = packet.sources.binance_liquidations;
     $('liq-source').textContent = health ? '币安强平连接：' + (health.connected ? '已连接' : '断开') + ' · 最近事件 ' + when(health.last_message) + (health.last_error ? ' · ' + health.last_error : '') : '等待连接状态';
-    $('liq-periods').innerHTML = d.periods.map(p => metric(p.label + ' 清算金额 USD', compact(p.long_usd + p.short_usd), '多头 ' + compact(p.long_usd) + ' / 空头 ' + compact(p.short_usd) + ' · ' + p.count + ' 笔')).join('');
+    $('liq-periods').innerHTML = d.periods.map(p => metric(p.label + ' 清算金额 USD', compact(p.long_usd + p.short_usd), '多头 ' + compact(p.long_usd) + ' / 空头 ' + compact(p.short_usd) + ' · ' + p.count + ' 笔', '', p.long_usd > p.short_usd ? 'liq-long-dominant' : p.short_usd > p.long_usd ? 'liq-short-dominant' : '')).join('');
     $('liq-rows').innerHTML = d.rows.map(r => `<tr><td>${when(r.event_time)}</td><td>${escape(r.symbol)}</td><td class="${r.position_side === 'long' ? 'sell' : 'buy'}">${r.position_side === 'long' ? '多头被清算' : '空头被清算'}</td><td>${price(r.price)}</td><td>${price(r.quantity)}</td><td>${amount(r.notional_usd)}</td></tr>`).join('') || blankRow(6);
     liqNext = d.next_cursor || ''; $('liq-prev').disabled = liqStack.length === 0; $('liq-next').disabled = !liqNext;
     $('liq-page').textContent = `第 ${liqStack.length + 1} 页 · 每页 50 条 · ${liqCursor ? '历史页保持稳定，返回第一页查看新事件' : '每 5 秒更新'}`;
