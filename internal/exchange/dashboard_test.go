@@ -1,10 +1,39 @@
 package exchange
 
 import (
+	"context"
+	"io"
 	"math"
+	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
+
+type metricHistoryTransport func(*http.Request) (*http.Response, error)
+
+func (f metricHistoryTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestMetricHistoryStartWithinBinanceRetention(t *testing.T) {
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	calls := 0
+	http.DefaultTransport = metricHistoryTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		start, err := strconv.ParseInt(r.URL.Query().Get("startTime"), 10, 64)
+		if err != nil || time.Since(time.UnixMilli(start)) >= 30*24*time.Hour {
+			t.Fatalf("historical start falls outside Binance retention: %s", r.URL.Query().Get("startTime"))
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("[]")), Header: http.Header{}}, nil
+	})
+	if err := BinanceMetricHistory(context.Background(), "BTCUSDT", nil); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 {
+		t.Fatalf("expected OI and both ratio endpoints, got %d", calls)
+	}
+}
 
 func TestAllMarketLiquidationsAndExecutedQuantity(t *testing.T) {
 	payload := []byte(`{"stream":"!forceOrder@arr","data":{"e":"forceOrder","E":1700000000000,"st":1,"o":{"s":"SOLUSDC","S":"BUY","q":"20","z":"2","ap":"100","T":1700000000000}}}`)

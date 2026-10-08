@@ -109,7 +109,9 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 func BinanceMetricHistory(ctx context.Context, symbol string, sink func(context.Context, domain.MarketMetric) error) error {
 	h := newHTTP()
 	until := time.Now().UTC().Truncate(5 * time.Minute)
-	from := until.AddDate(0, 0, -30)
+	// The historical endpoint rejects timestamps even slightly older than 30
+	// days. Leave an hour of margin for request time and server clock skew.
+	from := until.AddDate(0, 0, -30).Add(time.Hour)
 	for _, kind := range []string{"openInterestHist", "globalLongShortAccountRatio", "topLongShortPositionRatio"} {
 		for start := from; start.Before(until); {
 			end := start.Add(499 * 5 * time.Minute)
