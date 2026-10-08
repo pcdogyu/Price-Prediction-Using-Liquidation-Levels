@@ -1,11 +1,14 @@
 'use strict';
 
 const NS = 'http://www.w3.org/2000/svg';
+const paint = value => window.LiquidationTheme.color(value);
 const $ = id => document.getElementById(id);
 const cache = { signal: null, map: null, market: null, volume: null };
+let savedInterval = '15m';
+try { savedInterval = localStorage.getItem('liquidation.interval') || savedInterval; } catch (_) { /* browser storage is optional */ }
 const defaultLiquidationMinimumUSD = 10000;
 const chart = {
-  interval: localStorage.getItem('liquidation.interval') || '15m',
+  interval: savedInterval,
   candles: [], signals: [], liquidations: [], liquidationsTruncated: false, liquidationMinimumUSD: defaultLiquidationMinimumUSD, latestPriceTradeID: 0, latestPriceTick: null, windowEnd: 0, visibleCount: 120,
   hasMore: false, nextBefore: '', loadingOlder: false,
   yLow: null, yHigh: null, autoSpan: null, yManual: false,
@@ -38,7 +41,7 @@ if (!intervalName[chart.interval]) chart.interval = '15m';
 
 function svgNode(tag, attrs = {}, text = '') {
   const element = document.createElementNS(NS, tag);
-  Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, value));
+  Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, (key === 'fill' || key === 'stroke') && typeof value === 'string' ? paint(value) : value));
   if (text) element.textContent = text;
   return element;
 }
@@ -92,7 +95,7 @@ function updateProbabilities(probabilities) {
 function updateTrigger(prefix, trigger) {
   const status = trigger?.status || 'unavailable';
   $(prefix + '-status').textContent = statusName[status] || status;
-  $(prefix + '-status').style.borderColor = status === 'triggered' ? '#2dd4bf' : status === 'approaching' ? '#fbbf24' : '#315064';
+  $(prefix + '-status').style.borderColor = status === 'triggered' ? 'var(--buy)' : status === 'approaching' ? 'var(--warning)' : 'var(--strong-line)';
   $(prefix + '-target').textContent = finite(trigger?.target_price) && trigger.target_price !== 0 ? money(trigger.target_price) : '—';
   $(prefix + '-distance').textContent = finite(trigger?.distance_price) && finite(trigger?.distance_percent) ? money(trigger.distance_price) + ' · ' + trigger.distance_percent.toFixed(2) + '%' : '—';
   $(prefix + '-atr').textContent = finite(trigger?.distance_atr) ? trigger.distance_atr.toFixed(2) + ' ATR' : '—';
@@ -782,7 +785,7 @@ document.querySelectorAll('button[data-interval]').forEach(button => {
   button.addEventListener('click', () => {
     if (chart.interval === button.dataset.interval) return;
     chart.interval = button.dataset.interval;
-    localStorage.setItem('liquidation.interval', chart.interval);
+    try { localStorage.setItem('liquidation.interval', chart.interval); } catch (_) { /* keep current interval */ }
     document.querySelectorAll('button[data-interval]').forEach(item => item.classList.toggle('active', item === button));
     resetChartState();
     refresh(true);
@@ -846,3 +849,4 @@ events.addEventListener('liquidation', event => {
   showFailures(lastFailures);
 });
 events.onerror = () => { streamError = '连接中断，正在重试'; showFailures(lastFailures); };
+window.addEventListener('themechange', () => draw(cache.market, cache.map, cache.signal, cache.volume));

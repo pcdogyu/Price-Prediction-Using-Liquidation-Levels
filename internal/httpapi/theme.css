@@ -1,0 +1,24 @@
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:#061019;--panel:#0c1b26;--line:#213946;--text:#edf7fc;--muted:#83a0b2;
+  --buy:#2dd4bf;--sell:#fb7185;--warning:#fbbf24;--up:var(--buy);--down:var(--sell);--none:var(--warning);
+  --control-bg:#102330;--nav-bg:#0c1b26ee;--selected-bg:#193646;--hover-bg:#132735;
+  --chart-bg:#07141d;--chart-label-bg:#071019;--chart-grid:#18313f;--strong-line:#315064;
+  --tooltip-bg:#071019ed;--body-glow:#183b50;--panel-start:#0f202cdd;--panel-end:#0a151fdd;--bar-bg:#203542;
+  --error-bg:#32121c;--error-line:#7f1d32;--error-text:#fecdd3;--warning-bg:#2b240e;--warning-line:#725b1b;
+  --link:#9cc6dc;--green:#22c55e;--red:#ef4444;--blue:#60a5fa;--purple:#a855f7;--purple-light:#c084fc;
+  --sky:#7dd3fc;--indigo:#6188ff;--gold:#f5c400;--orange:#f08833;--peak-buy:#6ee7b7;--peak-sell:#fda4af;
+  --long-bg:#0c3021;--long-line:#246346;--short-bg:#361a23;--short-line:#743544;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg:#f4f7fb;--panel:#ffffff;--line:#d8e2ec;--text:#152332;--muted:#526678;
+  --buy:#087f5b;--sell:#be123c;--warning:#946000;--up:var(--buy);--down:var(--sell);--none:var(--warning);
+  --control-bg:#f1f5f9;--nav-bg:#ffffffee;--selected-bg:#dceee8;--hover-bg:#edf3f8;
+  --chart-bg:#f8fafc;--chart-label-bg:#ffffff;--chart-grid:#dfe7ef;--strong-line:#a8bbcc;
+  --tooltip-bg:#ffffffed;--body-glow:#dceaf5;--panel-start:#ffffff;--panel-end:#f8fafc;--bar-bg:#e2eaf1;
+  --error-bg:#fff1f2;--error-line:#fda4af;--error-text:#9f1239;--warning-bg:#fff8df;--warning-line:#d5b65e;
+  --link:#245673;--green:#15803d;--red:#dc2626;--blue:#2563eb;--purple:#9333ea;--purple-light:#7e22ce;
+  --sky:#0369a1;--indigo:#4338ca;--gold:#947000;--orange:#c65d08;--peak-buy:#0e956e;--peak-sell:#d74267;
+  --long-bg:#e4f5e9;--long-line:#a7d6b5;--short-bg:#fce7ec;--short-line:#e9adb9;
+}

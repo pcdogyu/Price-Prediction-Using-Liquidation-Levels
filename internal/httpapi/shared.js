@@ -2,6 +2,15 @@
 (() => {
   const base = document.querySelector('meta[name="app-base"]').content;
   const dialog = document.getElementById('shared-logs');
+  const themeButton = document.getElementById('nav-theme');
+  function updateThemeButton() {
+    const light = document.documentElement.dataset.theme === 'light';
+    themeButton.textContent = light ? '深色主题' : '浅色主题';
+    themeButton.setAttribute('aria-label', '当前' + (light ? '浅色' : '深色') + '主题，切换至' + (light ? '深色' : '浅色') + '主题');
+  }
+  themeButton.addEventListener('click', () => window.LiquidationTheme.toggle());
+  window.addEventListener('themechange', updateThemeButton);
+  updateThemeButton();
   async function load() {
     const output = document.getElementById('shared-log-content');
     try {
