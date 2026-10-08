@@ -136,7 +136,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid limit status=%d body=%s", w.Code, w.Body.String())
 	}
-	r = httptest.NewRequest(http.MethodGet, "/", nil)
+	r = httptest.NewRequest(http.MethodGet, "/bubbles", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
 	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || !strings.Contains(w.Body.String(), `data-interval="24h"`) || !strings.Contains(w.Body.String(), `viewBox="0 0 1740 560"`) || !strings.Contains(w.Body.String(), "Binance USDⓈ-M") || !strings.Contains(w.Body.String(), "多单爆仓") || !strings.Contains(w.Body.String(), "空单爆仓") || !strings.Contains(w.Body.String(), `id="coinglass-button"`) || !strings.Contains(w.Body.String(), `id="coinglass-capture"`) || !strings.Contains(w.Body.String(), `id="coinglass-json"`) || !strings.Contains(w.Body.String(), `id="liquidation-top3"`) || !strings.Contains(w.Body.String(), `id="browser-frame"`) || strings.Contains(w.Body.String(), "async function refresh") {
@@ -224,6 +224,20 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	if w.Header().Get("Cache-Control") != "no-store, max-age=0" || w.Header().Get("Pragma") != "no-cache" || w.Header().Get("Expires") != "0" {
 		t.Fatalf("login page must not be cached: %v", w.Header())
 	}
+	for _, path := range []string{"/bubbles", "/liquidations", "/hedge-wall", "/market-info"} {
+		page := httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, path, nil))
+		if page.Code != 200 || !strings.Contains(page.Body.String(), `name="password"`) || strings.Contains(page.Body.String(), `class="app-nav"`) {
+			t.Fatalf("unprotected page %s status=%d", path, page.Code)
+		}
+	}
+	for _, path := range []string{"/api/v1/liquidations", "/api/v1/hedge-wall?symbol=ETHUSDT", "/api/v1/hedge-wall/history?symbol=ETHUSDT", "/api/v1/market-info?symbol=ETHUSDT"} {
+		api := httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(api, httptest.NewRequest(http.MethodGet, path, nil))
+		if api.Code != 401 {
+			t.Fatalf("unprotected API %s status=%d", path, api.Code)
+		}
+	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/logs", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
@@ -282,7 +296,7 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
 	response := w.Result()
-	if w.Code != http.StatusSeeOther || response.Header.Get("Location") != "/liquidation/" {
+	if w.Code != http.StatusSeeOther || response.Header.Get("Location") != "/liquidation/bubbles" {
 		t.Fatalf("login status=%d location=%s body=%s", w.Code, response.Header.Get("Location"), w.Body.String())
 	}
 	var session *http.Cookie

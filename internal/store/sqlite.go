@@ -66,7 +66,10 @@ CREATE TABLE IF NOT EXISTS auth_users(username TEXT PRIMARY KEY,password_hash TE
 		}
 	}
 	_, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS predictions_source_symbol_ts ON predictions(source,symbol,ts)`)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.migrateDashboard(ctx)
 }
 
 func (s *Store) LoadAuthSessions(ctx context.Context, now time.Time) (map[string]time.Time, error) {

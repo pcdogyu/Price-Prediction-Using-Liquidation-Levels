@@ -33,6 +33,23 @@ go run ./cmd/server
 
 ## API
 
+登录后默认进入“气泡图”，导航提供“清算历史”“对冲墙”“市场信息”。清算历史保存 Binance 全部 USDⓈ-M 币对的公开采样事件，支持时间、方向、数量和金额过滤及稳定游标分页；原气泡图仍仅显示 BTC/ETH。
+
+对冲墙由后台独立维护 BTC/ETH 本地盘口，与 CoinGlass 清算墙属于不同数据。盘口按交易对最小价格单位的十倍分桶；墙阈值为 25 万 USD 与同侧展示档位金额第 85 百分位的较大值，持续至少 3 秒并出现相邻档位确认才形成事件。无人访问网页时也会继续采集。SQLite 中每 5 秒保存压缩盘口快照，保留 30 天；墙事件保留 180 天，连接中断与服务重启单独标记。
+
+市场信息的主动买卖及 CVD 使用 USD 金额，CVD 从所选窗口开始累计，缺口不会被记成零。净仓估算使用 OI 与顶级交易员持仓比，不代表真实全市场净仓。Gamma/GEX 基于 Binance Options 的公开 Gamma、OI、合约单位与指数价格计算，CALL 计正、PUT 计负，不代表做市商真实净仓；Gamma Wall 取绝对 GEX 最大的行权价。永续指标每分钟更新，期权每 5 分钟更新，接口返回缺失、部分可用或过期状态。
+
+新增接口（均要求有效登录会话）：
+
+```text
+GET /api/v1/liquidations?symbol=ALL&side=all&field=notional_usd&minimum=0&limit=50&cursor=<cursor>&from=<RFC3339>&to=<RFC3339>
+GET /api/v1/hedge-wall?symbol=ETHUSDT&half_life=120&window=5
+GET /api/v1/hedge-wall/history?symbol=ETHUSDT&kind=events&limit=50&cursor=<cursor>&from=<RFC3339>&to=<RFC3339>
+GET /api/v1/market-info?symbol=ETHUSDT&range=1h
+```
+
+`field` 支持 `notional_usd` 或 `quantity`；`side` 指被清算仓位的 `long`/`short`，默认 `all`；`kind` 支持 `events` 或 `snapshots`。清算历史默认不设置金额门槛，与气泡图的 10,000 USDT 门槛独立。历史自服务接收事件时开始积累，公开强平流无法回填部署前的完整逐笔历史。所有时间按 UTC 存储，页面使用北京时间显示。
+
 ```text
 GET /api/v1/signals/latest?symbol=BTCUSDT
 GET /api/v1/map?symbol=BTCUSDT

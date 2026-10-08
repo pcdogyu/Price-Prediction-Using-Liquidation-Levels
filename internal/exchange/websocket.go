@@ -177,13 +177,21 @@ func parseBinanceLiquidation(b []byte, symbols []string) (domain.LiquidationEven
 	if json.Unmarshal(b, &envelope) != nil {
 		return domain.LiquidationEvent{}, false
 	}
+	if data, ok := envelope["data"]; ok {
+		return parseBinanceLiquidation(data, symbols)
+	}
+	var streamType int
+	_ = json.Unmarshal(envelope["st"], &streamType)
+	if streamType != 0 && streamType != 1 {
+		return domain.LiquidationEvent{}, false
+	}
 	var event int64
 	var order map[string]any
 	if json.Unmarshal(envelope["E"], &event) != nil || json.Unmarshal(envelope["o"], &order) != nil {
 		return domain.LiquidationEvent{}, false
 	}
 	symbol := anyString(order["s"])
-	if !allowed(symbol, symbols) {
+	if symbol == "" || (len(symbols) > 0 && !allowed(symbol, symbols)) {
 		return domain.LiquidationEvent{}, false
 	}
 	price := f(anyString(order["ap"]))
@@ -191,12 +199,18 @@ func parseBinanceLiquidation(b []byte, symbols []string) (domain.LiquidationEven
 		price = f(anyString(order["p"]))
 	}
 	qty := f(anyString(order["q"]))
-	if price <= 0 || qty == 0 {
+	if filled := f(anyString(order["z"])); filled > 0 {
+		qty = filled
+	}
+	if price <= 0 || qty <= 0 || math.IsNaN(price) || math.IsInf(price, 0) || math.IsNaN(qty) || math.IsInf(qty, 0) || (anyString(order["S"]) != "BUY" && anyString(order["S"]) != "SELL") {
 		return domain.LiquidationEvent{}, false
 	}
 	ts := ms(order["T"])
-	if ts.IsZero() {
+	if ts.UnixMilli() <= 0 {
 		ts = time.UnixMilli(event).UTC()
+	}
+	if ts.UnixMilli() <= 0 {
+		return domain.LiquidationEvent{}, false
 	}
 	return newEvent("binance", symbol, binancePositionSide(anyString(order["S"])), ts, price, qty, price*qty, "sampled"), true
 }

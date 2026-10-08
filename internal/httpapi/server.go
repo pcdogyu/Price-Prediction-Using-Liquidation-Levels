@@ -48,6 +48,7 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	s := &Server{svc: svc, log: log, auth: auth, logs: logs, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", getOnly(s.index))
+	s.registerDashboard(mux)
 	mux.HandleFunc("/assets/dashboard.js", getOnly(s.dashboardScript))
 	mux.HandleFunc("/auth/login", postOnly(s.login))
 	mux.HandleFunc("/auth/logout", postOnly(s.logout))
@@ -97,12 +98,16 @@ func (s *Server) StartCoinGlassScheduler(ctx context.Context, interval time.Dura
 	}()
 }
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	if r.URL.Path == "/" {
+		http.Redirect(w, r, s.auth.BasePath()+"bubbles", http.StatusFound)
+		return
+	}
+	if r.URL.Path != "/bubbles" {
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(indexHTML)
+	_, _ = w.Write(s.renderPage(indexHTML, "bubbles", "气泡图"))
 }
 func (s *Server) dashboardScript(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
@@ -130,7 +135,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: s.auth.BasePath(), Expires: expires, MaxAge: int(time.Until(expires).Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
 	s.log.Info("login succeeded", "client_ip", ip)
-	http.Redirect(w, r, s.auth.BasePath(), http.StatusSeeOther)
+	http.Redirect(w, r, s.auth.BasePath()+"bubbles", http.StatusSeeOther)
 }
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookie); err == nil {
@@ -434,7 +439,7 @@ func (s *Server) authorize(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.URL.Path == "/" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		if isDashboardPage(r.URL.Path) && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			s.renderLogin(w, http.StatusOK, "")
 			return
 		}
