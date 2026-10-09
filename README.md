@@ -45,7 +45,7 @@ go run ./cmd/server
 
 “期权”页固定展示 BTCUSDT / ETHUSDT 的 Deribit 归一化 Gamma 曲线、零轴、最新值、合约覆盖和更新时间。后台独立调用 Deribit 公开 API，按 OI 选取各币种前 80 个未到期且有持仓的期权，读取原始 Greeks Gamma，计算 `(ΣCALL Gamma − ΣPUT Gamma) / (ΣCALL Gamma + ΣPUT Gamma)`；OI 仅用于选样，不乘以 OI，与市场信息中的 Binance 美元 GEX 是不同口径。每分钟采集和刷新；历史从本服务采集起累计，按滚动 72 小时保存 3 天，每分钟自动清理过期记录，默认回看 24 小时，可选 1–72 小时窗口。合约缺失标记部分覆盖，失败保留最后成功值，超过 3 分钟标记过期；缺失不记为零，超过 150 秒的采样间隔断开曲线。无需 Deribit API 密钥，也不依赖其他项目的运行状态。
 
-市场信息的 Gamma/GEX 柱状图高度为 338px（原 260px 增加 30%），并显示 Gamma Flip 价格卡片与虚线。Flip 使用 Binance `markIV`、利率、OI、合约单位和剩余到期时间，固定 IV 按 Black–Scholes 重估标的现价 50%～150% 范围内的净 GEX；多处零交叉时选取距离现价最近的一处。它与每个行权价柱子的净 GEX 变号不同。API 增加 `gamma_flip`、`gamma_flips`、`flip_state`、搜索范围及 IV 覆盖字段；无符号翻转或数据不足时价格为 `null`，不显示零价格。Flip 和期权链共用原来的 5 分钟刷新与持久化路径。
+市场信息的 Gamma/GEX 柱状图高度为 440px（在 338px 基础上再增加约 30%），显示自适应密度的行权价刻度、等间隔净 GEX USD 刻度及横纵网格线，并显示 Gamma Flip 价格卡片与虚线。Flip 使用 Binance `markIV`、利率、OI、合约单位和剩余到期时间，固定 IV 按 Black–Scholes 重估标的现价 50%～150% 范围内的净 GEX；多处零交叉时选取距离现价最近的一处。它与每个行权价柱子的净 GEX 变号不同。API 增加 `gamma_flip`、`gamma_flips`、`flip_state`、搜索范围及 IV 覆盖字段；无符号翻转或数据不足时价格为 `null`，不显示零价格。Flip 和期权链共用原来的 5 分钟刷新与持久化路径。
 
 新增接口（均要求有效登录会话）：
 

@@ -27,6 +27,23 @@ with sync_playwright() as playwright:
     context = browser.new_context(viewport={"width": 1440, "height": 1100})
     context.add_init_script("""
       window.setInterval = () => 1;
+      window.__testGammaDraw = {texts: [], strokes: 0};
+      const drawing = CanvasRenderingContext2D.prototype;
+      const originalRect = drawing.fillRect, originalText = drawing.fillText, originalStroke = drawing.stroke;
+      drawing.fillRect = function(...args) {
+        if (this.canvas.id === 'gamma-chart' && args[0] === 0 && args[1] === 0)
+          window.__testGammaDraw = {texts: [], strokes: 0};
+        return originalRect.apply(this, args);
+      };
+      drawing.fillText = function(text, x, y, ...args) {
+        if (this.canvas.id === 'gamma-chart')
+          window.__testGammaDraw.texts.push({text: String(text), x, y, width: this.measureText(text).width, align: this.textAlign});
+        return originalText.call(this, text, x, y, ...args);
+      };
+      drawing.stroke = function(...args) {
+        if (this.canvas.id === 'gamma-chart') window.__testGammaDraw.strokes++;
+        return originalStroke.apply(this, args);
+      };
       window.__testActiveRequests = 0;
       const originalFetch = window.fetch;
       window.fetch = async (...args) => {
@@ -50,7 +67,7 @@ with sync_playwright() as playwright:
         expect(page).to_have_url(base + "/bubbles")
 
     baseline = context.request.get(base + "/api/v1/market-info?symbol=ETHUSDT&range=1h").json()
-    state = {"failure": False, "mode": "ok"}
+    state = {"failure": False, "mode": "ok", "shape": "normal"}
 
     def fixture(route):
         if state["failure"]:
@@ -81,6 +98,11 @@ with sync_playwright() as playwright:
             packet["gamma"]["state"] = "unavailable"
         if state["mode"] == "partial":
             packet["gamma"]["flip_contracts"] = 8
+        if state["shape"] == "single":
+            packet["gamma"]["levels"] = packet["gamma"]["levels"][:1]
+        elif state["shape"] == "zero":
+            for level in packet["gamma"]["levels"]:
+                level["net_gex_usd"] = 0
         route.fulfill(status=200, json=packet)
 
     if not production:
@@ -89,21 +111,36 @@ with sync_playwright() as playwright:
     def loaded():
         page.wait_for_function("() => window.__testActiveRequests === 0 && document.querySelectorAll('#gamma-metrics .info-metric').length === 5")
         expect(page.locator("#page-error")).to_be_hidden()
-        assert page.locator("#gamma-chart").bounding_box()["height"] == 338
+        assert page.locator("#gamma-chart").bounding_box()["height"] == 440
         assert page.locator("#oi-chart").bounding_box()["height"] == 260
 
     def refresh():
         page.locator("#refresh").click()
         loaded()
 
+    def axes(minimum_x=3):
+        drawing = page.evaluate("() => window.__testGammaDraw")
+        texts = drawing["texts"]
+        assert {"净 GEX · USD", "行权价 · USD"}.issubset({item["text"] for item in texts})
+        y_ticks = [item for item in texts if item["align"] == "right" and item["text"] != "行权价 · USD"]
+        x_ticks = [item for item in texts if item["y"] > 390 and item["align"] == "left"]
+        assert len(y_ticks) >= 7 and any(item["text"] == "0" for item in y_ticks)
+        assert len(x_ticks) >= minimum_x
+        assert drawing["strokes"] >= len(x_ticks) + len(y_ticks)
+        for previous, current in zip(x_ticks, x_ticks[1:]):
+            assert previous["x"] + previous["width"] + 6 < current["x"]
+        assert all("NaN" not in item["text"] and "Infinity" not in item["text"] for item in texts)
+
     page.goto(base + "/market-info", wait_until="domcontentloaded")
     loaded()
+    axes(5)
     card = page.locator(".gamma-flip-metric")
     expect(card.locator(".label")).to_have_text("Gamma Flip 价格")
     if production:
         for symbol in ("ETHUSDT", "BTCUSDT"):
             page.locator("#symbol").select_option(symbol)
             loaded()
+            axes(5)
             data = context.request.get(base + "/api/v1/market-info?symbol=" + symbol + "&range=1h").json()["gamma"]
             assert data["flip_method"] and data["flip_contracts"] > 0
             assert data["state"] in ("ok", "partial")
@@ -117,7 +154,7 @@ with sync_playwright() as playwright:
             else:
                 expect(card.locator(".number")).to_have_text("—")
                 expect(card).to_contain_text("无零交叉")
-            evidence.append({"symbol": symbol, "height": 338, "flip": flip, "state": data["flip_state"], "roots": data["gamma_flips"], "coverage": [data["flip_contracts"], data["flip_expected_contracts"]]})
+            evidence.append({"symbol": symbol, "height": 440, "flip": flip, "state": data["flip_state"], "roots": data["gamma_flips"], "coverage": [data["flip_contracts"], data["flip_expected_contracts"]]})
         page.locator("#symbol").select_option("ETHUSDT")
         loaded()
     else:
@@ -136,6 +173,12 @@ with sync_playwright() as playwright:
                 assert page.locator("#gamma-chart").get_attribute("data-flip-price") is None
         state["mode"] = "ok"
         refresh()
+        for shape in ("single", "zero"):
+            state["shape"] = shape
+            refresh()
+            axes(1 if shape == "single" else 5)
+        state["shape"] = "normal"
+        refresh()
         prior = card.inner_text()
         state["failure"] = True
         page.locator("#refresh").click()
@@ -150,8 +193,9 @@ with sync_playwright() as playwright:
         page.set_viewport_size({"width": width, "height": 1100})
         for theme in ("dark", "light"):
             page.evaluate("theme => window.LiquidationTheme.set(theme)", theme)
+            axes(3 if width == 390 else 5)
             assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
-            assert page.locator("#gamma-chart").bounding_box()["height"] == 338
+            assert page.locator("#gamma-chart").bounding_box()["height"] == 440
             page.locator("#gamma-chart").locator("..").screenshot(path=str(artifacts / f"gamma-flip-{mode}-{width}-{theme}.png"))
     assert not errors, errors
     print(json.dumps({"status": "passed", "mode": mode, "screenshots": 4, "evidence": evidence}, ensure_ascii=False))
