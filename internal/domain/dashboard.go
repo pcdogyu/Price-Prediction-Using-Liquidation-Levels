@@ -116,19 +116,27 @@ type GammaExpiry struct {
 	NetGEXUSD float64 `json:"net_gex_usd"`
 }
 type GammaView struct {
-	State             string        `json:"state"`
-	Symbol            string        `json:"symbol"`
-	Time              time.Time     `json:"time"`
-	SpotPrice         float64       `json:"spot_price"`
-	Contracts         int           `json:"contracts"`
-	ExpectedContracts int           `json:"expected_contracts"`
-	NetGEXUSD         float64       `json:"net_gex_usd"`
-	AbsoluteGEXUSD    float64       `json:"absolute_gex_usd"`
-	GammaWall         *float64      `json:"gamma_wall"`
-	Levels            []GammaLevel  `json:"levels"`
-	Expiries          []GammaExpiry `json:"expiries"`
-	Method            string        `json:"method"`
-	Warnings          []string      `json:"warnings"`
+	State                 string        `json:"state"`
+	Symbol                string        `json:"symbol"`
+	Time                  time.Time     `json:"time"`
+	SpotPrice             float64       `json:"spot_price"`
+	Contracts             int           `json:"contracts"`
+	ExpectedContracts     int           `json:"expected_contracts"`
+	NetGEXUSD             float64       `json:"net_gex_usd"`
+	AbsoluteGEXUSD        float64       `json:"absolute_gex_usd"`
+	GammaWall             *float64      `json:"gamma_wall"`
+	GammaFlip             *float64      `json:"gamma_flip"`
+	GammaFlips            []float64     `json:"gamma_flips"`
+	FlipState             string        `json:"flip_state"`
+	FlipContracts         int           `json:"flip_contracts"`
+	FlipExpectedContracts int           `json:"flip_expected_contracts"`
+	FlipRangeLow          float64       `json:"flip_range_low"`
+	FlipRangeHigh         float64       `json:"flip_range_high"`
+	FlipMethod            string        `json:"flip_method"`
+	Levels                []GammaLevel  `json:"levels"`
+	Expiries              []GammaExpiry `json:"expiries"`
+	Method                string        `json:"method"`
+	Warnings              []string      `json:"warnings"`
 }
 type MarketInfo struct {
 	Symbol  string         `json:"symbol"`

@@ -2,6 +2,7 @@
 #liq-periods .liq-long-dominant,#liq-period-states .liq-long-dominant{background:var(--long-bg);border-color:var(--long-line)}#liq-periods .liq-short-dominant,#liq-period-states .liq-short-dominant{background:var(--short-bg);border-color:var(--short-line)}
 .liq-period-state{font-size:13px;font-weight:650;margin:6px 0}.liq-shares{margin-top:4px;overflow-wrap:anywhere}.liq-combination{font-size:24px;font-weight:750;letter-spacing:.08em;margin:10px 0;overflow-wrap:anywhere}.liq-period-states{display:flex;gap:8px;flex-wrap:wrap}.liq-state-chip{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px}.liq-analysis p{overflow-wrap:anywhere}.liq-analysis .section-head h2{margin-bottom:0}
 body[data-page="liquidations"] .page-controls #symbol{display:none}
+#gamma-chart{height:338px}#gamma-flip-method{overflow-wrap:anywhere}
 .symbol-field{width:270px;max-width:100%;color:var(--muted);font-size:12px}
 .symbol-field>label{margin-bottom:4px}.symbol-controls{display:flex;gap:6px;align-items:center}
 .symbol-picker{position:relative;flex:1;min-width:0}.symbol-input{display:flex}

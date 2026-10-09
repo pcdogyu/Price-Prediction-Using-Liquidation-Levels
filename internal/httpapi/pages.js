@@ -186,10 +186,21 @@
     canvas.onpointermove=event=>{const p=low+(event.offsetX-pad.l)/(width-pad.l-pad.r)*(high-low),lv=raw.reduce((best,l)=>Math.abs(l.price-p)<Math.abs(best.price-p)?l:best,raw[0]);canvas.title='价格 '+price(lv.price)+'\n挂单金额 USD '+amount(lv.notional_usd)+'\n数量 '+price(lv.quantity);};
   }
   function gammaChart(g) {
+    const chart=$('gamma-chart');delete chart.dataset.flipPrice;chart.title='';chart.onpointermove=null;
     if (!g.levels?.length) { emptyChart('gamma-chart','暂无可用期权链'); return; }
     const {canvas,ctx,width,height}=env('gamma-chart'),levels=g.levels,maximum=Math.max(1,...levels.map(l=>Math.abs(l.net_gex_usd))),left=65,right=20,top=20,bottom=35,middle=(height-bottom+top)/2,step=(width-left-right)/levels.length;
     ctx.strokeStyle=paint('#213946');ctx.beginPath();ctx.moveTo(left,middle);ctx.lineTo(width-right,middle);ctx.stroke();
     for(let i=0;i<levels.length;i++){const l=levels[i],h=l.net_gex_usd/maximum*(height-top-bottom)/2;ctx.fillStyle=l.net_gex_usd>=0?paint('#2dd4bf'):paint('#fb7185');ctx.fillRect(left+i*step,Math.min(middle,middle-h),Math.max(1,step*.75),Math.abs(h));}
+    if(valid(g.gamma_flip)&&g.gamma_flip>=levels[0].strike&&g.gamma_flip<=levels[levels.length-1].strike){
+      let index=levels.findIndex(level=>level.strike>=g.gamma_flip);
+      const fraction=index>0?(g.gamma_flip-levels[index-1].strike)/(levels[index].strike-levels[index-1].strike):0;
+      const position=left+((index>0?index-1+fraction:0)+.375)*step;
+      ctx.strokeStyle=paint('#fbbf24');ctx.lineWidth=1.5;ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(position,top);ctx.lineTo(position,height-bottom);ctx.stroke();ctx.setLineDash([]);
+      const label='Flip '+amount(g.gamma_flip),labelWidth=ctx.measureText(label).width,labelX=Math.max(left,Math.min(position+7,width-right-labelWidth));
+      ctx.fillStyle=paint('#071019');ctx.fillRect(labelX-4,top-2,labelWidth+8,17);
+      ctx.fillStyle=paint('#fbbf24');ctx.fillText(label,labelX,top+11);
+      canvas.dataset.flipPrice=g.gamma_flip;
+    }
     ctx.fillStyle=paint('#83a0b2');ctx.fillText(compact(maximum),4,top+8);ctx.fillText(compact(-maximum),4,height-bottom);for(let i=0;i<3;i++){const index=Math.round((levels.length-1)*i/2);ctx.fillText(price(levels[index].strike),Math.max(left,Math.min(left+index*step,width-95)),height-10);}
     canvas.onpointermove=event=>{const i=Math.max(0,Math.min(levels.length-1,Math.floor((event.offsetX-left)/step))),l=levels[i];canvas.title='行权价 '+price(l.strike)+'\n净 GEX USD '+amount(l.net_gex_usd)+'\n绝对 GEX USD '+amount(l.absolute_gex_usd);};
   }
@@ -201,7 +212,10 @@
     $('market-windows').innerHTML=d.windows.map(w=>`<tr><td>${escape(w.label)}</td><td class="${tone(w.oi_delta_usd)}">${compact(w.oi_delta_usd)}</td><td class="${tone(w.net_position_delta_usd)}">${compact(w.net_position_delta_usd)}</td><td class="${tone(w.cvd_delta_usd)}">${compact(w.cvd_delta_usd)}</td><td>${escape(w.analysis)}</td></tr>`).join('');
     $('gamma-status').textContent=stateLabel(g.state)+' · '+when(g.time);$('gamma-method').textContent=g.method||'正在读取期权链；缺失数据不记为零。';
     const usable=['ok','partial','stale'].includes(g.state);
-    $('gamma-metrics').innerHTML=metric('净 GEX USD',usable?compact(g.net_gex_usd):'—','1% 标的价格变化',tone(g.net_gex_usd))+metric('绝对 GEX USD',usable?compact(g.absolute_gex_usd):'—','逐合约绝对敞口之和')+metric('Gamma Wall',price(g.gamma_wall),'绝对 GEX 最大的行权价')+metric('合约覆盖',usable?g.contracts+' / '+g.expected_contracts:'—',(g.expiries?.length||0)+' 个到期日');
+    const hasFlip=usable&&valid(g.gamma_flip)&&g.gamma_flip>0;
+    const flipDetail=hasFlip?(g.flip_state==='partial'||g.state==='partial'?'部分期权链估算 · ':'最近现价 · ')+(g.gamma_flips?.length||1)+' 处零交叉':g.flip_state==='no_crossing'?'搜索范围内无零交叉':'数据不足，等待计算';
+    $('gamma-metrics').innerHTML=metric('净 GEX USD',usable?compact(g.net_gex_usd):'—','1% 标的价格变化',tone(g.net_gex_usd))+metric('绝对 GEX USD',usable?compact(g.absolute_gex_usd):'—','逐合约绝对敞口之和')+metric('Gamma Wall',price(g.gamma_wall),'绝对 GEX 最大的行权价')+metric('Gamma Flip 价格',hasFlip?amount(g.gamma_flip):'—',flipDetail,'','gamma-flip-metric')+metric('合约覆盖',usable?g.contracts+' / '+g.expected_contracts:'—',(g.expiries?.length||0)+' 个到期日');
+    $('gamma-flip-method').textContent=(g.flip_method||'Gamma Flip：固定当前隐含波动率，重估净 GEX 的零交叉价格。')+(valid(g.flip_range_low)&&valid(g.flip_range_high)?' 本次范围 '+amount(g.flip_range_low)+'～'+amount(g.flip_range_high)+' USD，IV/利率覆盖 '+(g.flip_contracts||0)+'/'+(g.flip_expected_contracts||0)+' 个有持仓合约。':'')+(g.state==='partial'?' 当前期权链不完整，结果为可用样本估算。':'')+(hasFlip&&(g.gamma_flip<(g.levels?.[0]?.strike??Infinity)||g.gamma_flip>(g.levels?.[g.levels.length-1]?.strike??-Infinity))?' Flip 超出当前行权价视野，价格保留在卡片中。':'');
     gammaChart(g);$('gamma-expiries').innerHTML=(g.expiries||[]).map(e=>`<tr><td>${escape(e.expiry)}</td><td>${e.contracts}</td><td class="${tone(e.net_gex_usd)}">${amount(e.net_gex_usd)}</td></tr>`).join('')||blankRow(3);
     $('market-warnings').textContent=[...(c.warnings||[]),...(g.warnings||[]),...(d.state==='stale'?['永续指标已过期']:[]),...(g.state==='stale'?['期权数据已过期']:[])].join('；');
   }

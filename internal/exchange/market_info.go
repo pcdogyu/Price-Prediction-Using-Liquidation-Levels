@@ -171,9 +171,11 @@ type OptionContract struct {
 	Status     string  `json:"status"`
 }
 type OptionExposure struct {
-	Contract OptionContract
-	Gamma    float64
-	OI       float64
+	Contract     OptionContract
+	Gamma        float64
+	OI           float64
+	IV           *float64
+	InterestRate *float64
 }
 
 func BuildGamma(symbol string, spot float64, rows []OptionExposure, at time.Time) domain.GammaView {
@@ -227,6 +229,7 @@ func BuildGamma(symbol string, spot float64, rows []OptionExposure, at time.Time
 	if g.Contracts == 0 {
 		g.State = "unavailable"
 	}
+	buildGammaFlip(&g, rows, at)
 	return g
 }
 func BinanceGamma(ctx context.Context, symbol string) (domain.GammaView, error) {
@@ -257,17 +260,23 @@ func BinanceGamma(ctx context.Context, symbol string) (domain.GammaView, error) 
 		return domain.GammaView{}, fmt.Errorf("invalid option index for %s", symbol)
 	}
 	var marks []struct {
-		Symbol string `json:"symbol"`
-		Gamma  string `json:"gamma"`
+		Symbol       string `json:"symbol"`
+		Gamma        string `json:"gamma"`
+		IV           string `json:"markIV"`
+		InterestRate string `json:"riskFreeInterest"`
 	}
 	if err := h.get(ctx, "https://eapi.binance.com/eapi/v1/mark", &marks); err != nil {
 		return domain.GammaView{}, err
 	}
 	gammas := map[string]float64{}
+	ivs := map[string]*float64{}
+	rates := map[string]*float64{}
 	for _, m := range marks {
 		if v := number(m.Gamma); v != nil {
 			gammas[m.Symbol] = *v
 		}
+		ivs[m.Symbol] = number(m.IV)
+		rates[m.Symbol] = number(m.InterestRate)
 	}
 	oi := map[string]float64{}
 	warnings := []string{}
@@ -296,7 +305,7 @@ func BinanceGamma(ctx context.Context, symbol string) (domain.GammaView, error) 
 		gamma, gm := gammas[c.Symbol]
 		quantity, ok := oi[c.Symbol]
 		if gm && ok {
-			rows = append(rows, OptionExposure{c, gamma, quantity})
+			rows = append(rows, OptionExposure{Contract: c, Gamma: gamma, OI: quantity, IV: ivs[c.Symbol], InterestRate: rates[c.Symbol]})
 		}
 	}
 	g := BuildGamma(symbol, spot, rows, at)
@@ -306,6 +315,9 @@ func BinanceGamma(ctx context.Context, symbol string) (domain.GammaView, error) 
 		g.Warnings = append(g.Warnings, fmt.Sprintf("期权链不完整：%d/%d 个合约", len(rows), len(contracts)))
 		if g.Contracts > 0 {
 			g.State = "partial"
+		}
+		if g.FlipState == "ok" {
+			g.FlipState = "partial"
 		}
 	}
 	return g, nil
