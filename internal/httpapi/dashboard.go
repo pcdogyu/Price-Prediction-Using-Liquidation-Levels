@@ -24,6 +24,9 @@ var pagesCSS []byte
 //go:embed pages.js
 var pagesJS []byte
 
+//go:embed liquidation-analysis.js
+var liquidationAnalysisJS []byte
+
 //go:embed shared.js
 var sharedJS []byte
 
@@ -63,7 +66,7 @@ func (s *Server) registerDashboard(mux *http.ServeMux) {
 			_, _ = w.Write(s.renderPage(pagesHTML, strings.TrimPrefix(p, "/"), t))
 		}))
 	}
-	for path, data := range map[string][]byte{"/assets/pages.css": pagesCSS, "/assets/pages.js": pagesJS, "/assets/shared.js": sharedJS, "/assets/theme.js": themeJS, "/assets/theme.css": themeCSS} {
+	for path, data := range map[string][]byte{"/assets/pages.css": pagesCSS, "/assets/pages.js": pagesJS, "/assets/liquidation-analysis.js": liquidationAnalysisJS, "/assets/shared.js": sharedJS, "/assets/theme.js": themeJS, "/assets/theme.css": themeCSS} {
 		p, b := path, data
 		mux.HandleFunc(p, getOnly(func(w http.ResponseWriter, r *http.Request) {
 			kind := "text/javascript"

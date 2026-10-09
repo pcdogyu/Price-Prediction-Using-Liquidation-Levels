@@ -49,6 +49,17 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 	}
 }
 
+func TestLiquidationAnalysisRules(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; run node --test liquidation-analysis.test.cjs separately")
+	}
+	output, err := exec.Command(node, "--test", "liquidation-analysis.test.cjs").CombinedOutput()
+	if err != nil {
+		t.Fatalf("liquidation analysis rules: %v\n%s", err, output)
+	}
+}
+
 // Optional real-browser check uses an isolated SQLite fixture and never starts
 // exchange collectors or reads production credentials.
 func TestDashboardBrowser(t *testing.T) {

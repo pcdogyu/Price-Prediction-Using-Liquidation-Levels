@@ -16,9 +16,10 @@
   const stateLabel = value => ({ok:'正常',partial:'部分数据缺失',stale:'数据已过期',unavailable:'等待采集'})[value] || value;
   let busy = false, marketRange = '1h', latest = null, liqCursor = '', liqStack = [], liqNext = '', liqAnchor = '';
   let liqSymbol = 'ALL', liqSymbols = [], symbolActive = -1, pendingLoad = false;
+  let liqAnalysisAnchor = '';
   let historyCursor = '', historyRows = [], historyNext = '', historyAnchor = '', frozenBook = null, historyKind = 'events';
   $(page + '-page').hidden = false;
-  $('page-subtitle').textContent = ({liquidations:'全部 U 本位合约 · 按时间查看真实采集记录', 'hedge-wall':'盘口挂单墙 · 实时分布与历史记录', 'market-info':'永续市场数据与期权 Gamma/GEX'})[page];
+  $('page-subtitle').textContent = ({liquidations:'ETHUSDT 四周期清算结构 · 全部 U 本位合约逐笔历史', 'hedge-wall':'盘口挂单墙 · 实时分布与历史记录', 'market-info':'永续市场数据与期权 Gamma/GEX'})[page];
   if (page === 'liquidations') $('symbol').hidden = true;
   async function get(path, params = {}) {
     const response = await fetch(base + 'api/v1/' + path + '?' + new URLSearchParams(params), {cache:'no-store', credentials:'same-origin'});
@@ -45,8 +46,24 @@
       if (page === 'liquidations') {
         if (!liqCursor) liqAnchor = new Date().toISOString();
         const params = {symbol:liqSymbol, side:$('liq-side').value, field:$('liq-field').value, minimum:$('liq-min').value || '0', limit:50, cursor:liqCursor, to:liqAnchor};
-        const packet = await get('liquidations', params);
-        if (!pendingLoad) { latest = packet; renderLiquidations(packet); }
+        const anchor = liqAnchor;
+        await Promise.all([
+          get('liquidations', params).then(packet => {
+            if (!pendingLoad) { latest = packet; renderLiquidations(packet); }
+          }).catch(error => {
+            if (pendingLoad) return;
+            $('page-error').textContent = '清算明细更新失败 · ' + error.message;
+            $('page-error').hidden = false;
+            $('status').textContent = '明细更新失败 · 保留上次数据';
+          }),
+          get('liquidations', {symbol:'ETHUSDT', side:'all', field:'notional_usd', minimum:0, limit:1, to:anchor}).then(packet => {
+            if (!pendingLoad) renderLiquidationAnalysis(packet, anchor);
+          }).catch(error => {
+            if (pendingLoad) return;
+            $('liq-analysis-status').classList.add('warning');
+            $('liq-analysis-status').textContent = 'ETHUSDT分析更新失败 · ' + (liqAnalysisAnchor ? '保留上次成功数据，统计截止：' + when(liqAnalysisAnchor) : '等待有效数据') + ' · ' + error.message;
+          })
+        ]);
       } else if (page === 'hedge-wall') {
         latest = await get('hedge-wall', {symbol:$('symbol').value, half_life:$('wall-half').value, window:$('wall-window').value}); renderWalls(latest);
       } else {
@@ -61,13 +78,27 @@
     liqSymbols = [...new Set([...(d.symbols || []), ...(liqSymbol !== 'ALL' ? [liqSymbol] : [])])].sort();
     if (!$('liq-symbol-options').hidden) renderSymbolOptions(false);
     $('liq-coverage').textContent = d.coverage + '。最早记录：' + when(d.available_from);
-    const health = packet.sources.binance_liquidations;
+    const health = packet.sources?.binance_liquidations;
     $('liq-source').textContent = health ? '币安强平连接：' + (health.connected ? '已连接' : '断开') + ' · 最近事件 ' + when(health.last_message) + (health.last_error ? ' · ' + health.last_error : '') : '等待连接状态';
-    $('liq-periods').innerHTML = d.periods.map(p => metric(p.label + ' 清算金额 USD', compact(p.long_usd + p.short_usd), '多头 ' + compact(p.long_usd) + ' / 空头 ' + compact(p.short_usd) + ' · ' + p.count + ' 笔', '', p.long_usd > p.short_usd ? 'liq-long-dominant' : p.short_usd > p.long_usd ? 'liq-short-dominant' : '')).join('');
     $('liq-rows').innerHTML = d.rows.map(r => `<tr><td>${when(r.event_time)}</td><td>${escape(r.symbol)}</td><td class="${r.position_side === 'long' ? 'sell' : 'buy'}">${r.position_side === 'long' ? '多头被清算' : '空头被清算'}</td><td>${price(r.price)}</td><td>${price(r.quantity)}</td><td>${amount(r.notional_usd)}</td></tr>`).join('') || blankRow(6);
     liqNext = d.next_cursor || ''; $('liq-prev').disabled = liqStack.length === 0; $('liq-next').disabled = !liqNext;
     $('liq-page').textContent = `第 ${liqStack.length + 1} 页 · 每页 50 条 · ${liqCursor ? '历史页保持稳定，返回第一页查看新事件' : '每 5 秒更新'}`;
     $('status').textContent = '更新于 ' + when(new Date()) + (liqCursor ? ' · 历史分页' : ' · 实时');
+  }
+  function renderLiquidationAnalysis(packet, anchor) {
+    const analysis = window.LiquidationAnalysis.analyze(packet?.data?.periods);
+    const share = value => valid(value) ? (value * 100).toFixed(1) + '%' : '—';
+    $('liq-periods').innerHTML = analysis.periods.map(p => {
+      const detail = p.state === 'missing' ? '等待有效的双侧清算数据' : '多头 ' + compact(p.long_usd) + ' / 空头 ' + compact(p.short_usd) + ' · ' + (p.count ?? '—') + ' 笔';
+      return `<div class="info-metric ${p.card_class}"><div class="label">ETHUSDT · ${p.label} 清算金额 USD</div><div class="number">${compact(p.total)}</div><div class="liq-period-state">${p.state_label}</div><div class="detail">${escape(detail)}</div><div class="detail liq-shares">多头占比 ${share(p.long_share)} / 空头占比 ${share(p.short_share)}</div></div>`;
+    }).join('');
+    $('liq-combination').textContent = analysis.combination;
+    $('liq-period-states').innerHTML = analysis.periods.map(p => `<span class="liq-state-chip ${p.card_class}">${p.label} ${p.state_label}</span>`).join('');
+    $('liq-analysis-description').textContent = analysis.description;
+    liqAnalysisAnchor = anchor;
+    const health = packet?.sources?.binance_liquidations;
+    $('liq-analysis-status').classList.toggle('warning', Boolean(health && !health.connected));
+    $('liq-analysis-status').textContent = anchor ? '统计截止（北京时间）：' + when(anchor) + (liqCursor ? ' · 历史分页保持此截止时间' : ' · 每5秒更新') + (health && !health.connected ? ' · 币安强平连接断开，统计可能滞后' : '') : '等待统计截止时间';
   }
   function symbolLabel(value) { return value === 'ALL' ? '全部币对' : value; }
   function closeSymbolOptions(restore = true) {
@@ -177,6 +208,7 @@
   $('refresh').addEventListener('click',load);
   $('symbol').addEventListener('change',()=>{liqCursor='';liqStack=[];frozenBook=null;historyRows=[];$('history-results').innerHTML='';$('history-more').disabled=true;load();});
   if(page==='liquidations'){
+    renderLiquidationAnalysis(null, '');
     const input = $('liq-symbol-search'), list = $('liq-symbol-options');
     input.addEventListener('focus', () => { input.select(); renderSymbolOptions(); });
     input.addEventListener('click', () => { if (list.hidden) renderSymbolOptions(); });
