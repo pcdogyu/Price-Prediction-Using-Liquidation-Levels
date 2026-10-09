@@ -6,7 +6,7 @@
   <header class="page-heading"><div><span class="kicker">DERIBIT · OPTIONS</span><h1>期权</h1><p>BTC / ETH Deribit Gamma · 归一化时间曲线</p></div></header>
   <div id="options-error" class="error-box" role="alert" hidden></div>
   <section class="surface">
-    <form id="options-filters" class="options-toolbar"><label for="options-hours">窗口小时</label><input id="options-hours" name="hours" type="number" min="1" max="168" step="1" value="12" required><button id="options-refresh" type="submit">刷新</button><span id="options-status" class="muted" role="status">等待采集数据</span></form>
+    <form id="options-filters" class="options-toolbar"><label for="options-hours">窗口小时</label><input id="options-hours" name="hours" type="number" min="1" max="168" step="1" value="24" required><button id="options-refresh" type="submit">刷新</button><span id="options-status" class="muted" role="status">等待采集数据</span></form>
     <div class="options-plot"><canvas id="options-chart" aria-label="BTC 和 ETH Deribit 归一化 Gamma 随时间变化"></canvas><div id="options-tooltip" class="options-tooltip" hidden></div></div>
     <div class="chart-legend options-legend"><span class="options-btc"><i></i>BTCUSDT Deribit</span><span class="options-eth"><i></i>ETHUSDT Deribit</span><span class="options-zero"><i></i>0 轴</span></div>
     <p id="options-window" class="muted"></p>

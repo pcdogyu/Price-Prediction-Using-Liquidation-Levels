@@ -52,9 +52,10 @@ with sync_playwright() as playwright:
         page.get_by_role("button", name="登录", exact=True).click()
         expect(page).to_have_url(base + "/bubbles")
 
-    response = context.request.get(base + "/api/v1/options?hours=12")
+    response = context.request.get(base + "/api/v1/options")
     assert response.status == 200
     baseline = response.json()
+    assert baseline["data"]["hours"] == 24
     assert [s["symbol"] for s in baseline["data"]["series"]] == ["BTCUSDT", "ETHUSDT"]
     state = {"failure": False, "custom": None, "hold": False}
 
@@ -91,7 +92,8 @@ with sync_playwright() as playwright:
         page.goto(base + "/options", wait_until="domcontentloaded")
     loaded()
     expect(page.locator('.app-links a[aria-current=page]')).to_have_text("期权")
-    assert page.locator("#options-hours").input_value() == "12"
+    assert page.locator("#options-hours").input_value() == "24"
+    expect(page.locator("#options-window")).to_contain_text("窗口 24 小时")
     rendered = int(page.locator("#options-chart").get_attribute("data-points"))
     expected = sum(len(s["points"]) for s in baseline["data"]["series"])
     assert rendered >= expected if production else rendered == expected

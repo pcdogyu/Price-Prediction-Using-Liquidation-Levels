@@ -102,7 +102,7 @@ func (s *Server) registerDashboard(mux *http.ServeMux) {
 }
 
 func (s *Server) options(w http.ResponseWriter, r *http.Request) {
-	hours := 12
+	hours := 24
 	var err error
 	if raw := r.URL.Query().Get("hours"); raw != "" {
 		hours, err = strconv.Atoi(raw)

@@ -38,6 +38,9 @@ func TestOptionsEndpointWindowAndZero(t *testing.T) {
 		if strings.Contains(w.Body.String(), `"points":null`) {
 			t.Fatal("missing series not an empty array")
 		}
+		if hours == "" && packet.Data.Hours != 24 {
+			t.Fatalf("default options window=%d, want 24", packet.Data.Hours)
+		}
 	}
 	w := httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/options", nil))

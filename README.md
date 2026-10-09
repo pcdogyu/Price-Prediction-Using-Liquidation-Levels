@@ -43,7 +43,7 @@ go run ./cmd/server
 
 市场信息的主动买卖及 CVD 使用 USD 金额，CVD 从所选窗口开始累计，缺口不会被记成零。净仓估算使用 OI 与顶级交易员持仓比，不代表真实全市场净仓。Gamma/GEX 基于 Binance Options 的公开 Gamma、OI、合约单位与指数价格计算，CALL 计正、PUT 计负，不代表做市商真实净仓；Gamma Wall 取绝对 GEX 最大的行权价。永续指标每分钟更新，期权每 5 分钟更新，接口返回缺失、部分可用或过期状态。
 
-“期权”页固定展示 BTCUSDT / ETHUSDT 的 Deribit 归一化 Gamma 曲线、零轴、最新值、合约覆盖和更新时间。后台独立调用 Deribit 公开 API，按 OI 选取各币种前 80 个未到期且有持仓的期权，读取原始 Greeks Gamma，计算 `(ΣCALL Gamma − ΣPUT Gamma) / (ΣCALL Gamma + ΣPUT Gamma)`；OI 仅用于选样，不乘以 OI，与市场信息中的 Binance 美元 GEX 是不同口径。每 60 秒采集、页面每 10 秒刷新；历史从本服务采集起累计，保存 180 天，可选 1–168 小时窗口。合约缺失标记部分覆盖，失败保留最后成功值，超过 3 分钟标记过期；缺失不记为零，超过 150 秒的采样间隔断开曲线。无需 Deribit API 密钥，也不依赖其他项目的运行状态。
+“期权”页固定展示 BTCUSDT / ETHUSDT 的 Deribit 归一化 Gamma 曲线、零轴、最新值、合约覆盖和更新时间。后台独立调用 Deribit 公开 API，按 OI 选取各币种前 80 个未到期且有持仓的期权，读取原始 Greeks Gamma，计算 `(ΣCALL Gamma − ΣPUT Gamma) / (ΣCALL Gamma + ΣPUT Gamma)`；OI 仅用于选样，不乘以 OI，与市场信息中的 Binance 美元 GEX 是不同口径。每 60 秒采集、页面每 10 秒刷新；历史从本服务采集起累计，保存 180 天，默认回看 24 小时，可选 1–168 小时窗口。合约缺失标记部分覆盖，失败保留最后成功值，超过 3 分钟标记过期；缺失不记为零，超过 150 秒的采样间隔断开曲线。无需 Deribit API 密钥，也不依赖其他项目的运行状态。
 
 市场信息的 Gamma/GEX 柱状图高度为 338px（原 260px 增加 30%），并显示 Gamma Flip 价格卡片与虚线。Flip 使用 Binance `markIV`、利率、OI、合约单位和剩余到期时间，固定 IV 按 Black–Scholes 重估标的现价 50%～150% 范围内的净 GEX；多处零交叉时选取距离现价最近的一处。它与每个行权价柱子的净 GEX 变号不同。API 增加 `gamma_flip`、`gamma_flips`、`flip_state`、搜索范围及 IV 覆盖字段；无符号翻转或数据不足时价格为 `null`，不显示零价格。Flip 和期权链共用原来的 5 分钟刷新与持久化路径。
 
@@ -54,7 +54,7 @@ GET /api/v1/liquidations?symbol=ALL&side=all&field=notional_usd&minimum=0&limit=
 GET /api/v1/hedge-wall?symbol=ETHUSDT&half_life=120&window=5
 GET /api/v1/hedge-wall/history?symbol=ETHUSDT&kind=events&limit=50&cursor=<cursor>&from=<RFC3339>&to=<RFC3339>
 GET /api/v1/market-info?symbol=ETHUSDT&range=1h
-GET /api/v1/options?hours=12
+GET /api/v1/options?hours=24
 ```
 
 `field` 支持 `notional_usd` 或 `quantity`；`side` 指被清算仓位的 `long`/`short`，默认 `all`；`kind` 支持 `events` 或 `snapshots`。清算历史和气泡图均默认不设置金额门槛。历史自服务接收事件时开始积累，公开强平流无法回填部署前的完整逐笔历史。所有时间按 UTC 存储，页面使用北京时间显示。
