@@ -109,6 +109,8 @@ with sync_playwright() as playwright:
             offset = int(query.get("cursor", 0))
             packet = copy.deepcopy(history_base)
             packet["data"].update(rows=rows[max(0, offset - 1):offset + 500], next_cursor=str(offset + 500) if offset + 500 < len(rows) else "")
+            if not packet["data"]["next_cursor"]:
+                packet["data"].pop("next_cursor")
             route.fulfill(json=packet)
         elif parsed.path.endswith("/map"):
             factor = state["wall_factor"]
@@ -228,7 +230,7 @@ with sync_playwright() as playwright:
             while True:
                 packet = context.request.get(base + "/api/v1/liquidations", params=params).json()["data"]
                 rows.update((row["id"], row) for row in packet["rows"])
-                if not packet["next_cursor"]:
+                if not packet.get("next_cursor"):
                     break
                 params["cursor"] = packet["next_cursor"]
             drawn = {id for id, row in rows.items() if view["low"] <= row["price"] <= view["high"]}

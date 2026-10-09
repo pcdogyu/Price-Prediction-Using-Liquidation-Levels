@@ -76,7 +76,7 @@ test('switch/reset aborts old requests, late responses and states cannot leak in
   const rows = [], states = [];
   const loader = new B.WindowLoader((path, options) => {
     if (path.includes('ETHUSDT')) { oldSignal = options.signal; return new Promise(resolve => { resolveOld = resolve; }); }
-    return Promise.resolve({ data: { rows: [event('btc', 1000, 100, 'long', 'BTCUSDT')], next_cursor: '' } });
+    return Promise.resolve({ data: { rows: [event('btc', 1000, 100, 'long', 'BTCUSDT')] } });
   }, page => rows.push(...page), state => states.push(state), () => 3000);
   const old = loader.ensure('ETHUSDT', 0, 3000);
   loader.reset();
