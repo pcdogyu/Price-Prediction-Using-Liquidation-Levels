@@ -90,7 +90,8 @@
     const share = value => valid(value) ? (value * 100).toFixed(1) + '%' : '—';
     $('liq-periods').innerHTML = analysis.periods.map(p => {
       const detail = p.state === 'missing' ? '等待有效的双侧清算数据' : '多头 ' + compact(p.long_usd) + ' / 空头 ' + compact(p.short_usd) + ' · ' + (p.count ?? '—') + ' 笔';
-      return `<div class="info-metric ${p.card_class}"><div class="label">ETHUSDT · ${p.label} 清算金额 USD</div><div class="number">${compact(p.total)}</div><div class="liq-period-state">${p.state_label}</div><div class="detail">${escape(detail)}</div><div class="detail liq-shares">多头占比 ${share(p.long_share)} / 空头占比 ${share(p.short_share)}</div></div>`;
+      const side = p.state === 'long' || p.state === 'short' ? p.marker : '—';
+      return `<div class="info-metric ${p.card_class}"><div class="label">ETHUSDT · ${p.label} 清算金额 USD</div><div class="number-row"><div class="number">${compact(p.total)}</div><div class="liq-side" aria-label="${escape(p.state_label)}">${escape(side)}</div></div><div class="liq-period-state">${p.state_label}</div><div class="detail">${escape(detail)}</div><div class="detail liq-shares">多头占比 ${share(p.long_share)} / 空头占比 ${share(p.short_share)}</div></div>`;
     }).join('');
     $('liq-combination').textContent = analysis.combination;
     $('liq-period-states').innerHTML = analysis.periods.map(p => `<span class="liq-state-chip ${p.card_class}">${p.label} ${p.state_label}</span>`).join('');
