@@ -42,7 +42,7 @@ type LiquidationEvent struct {
 
 const DataSourceBinanceUSDM = "binance_usdm"
 
-const DefaultLiquidationMinimumUSD = 10_000
+const DefaultLiquidationMinimumUSD = 0
 
 type AggregateTrade struct {
 	ID        int64     `json:"id"`

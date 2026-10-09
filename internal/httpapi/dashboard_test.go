@@ -2,9 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -54,9 +57,74 @@ func TestLiquidationAnalysisRules(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not installed; run node --test liquidation-analysis.test.cjs separately")
 	}
-	output, err := exec.Command(node, "--test", "liquidation-analysis.test.cjs").CombinedOutput()
+	output, err := exec.Command(node, "--test", "liquidation-analysis.test.cjs", "bubble-chart.test.cjs").CombinedOutput()
 	if err != nil {
 		t.Fatalf("liquidation analysis rules: %v\n%s", err, output)
+	}
+}
+
+func TestMarketZeroMinimumAndCappedWindowHistory(t *testing.T) {
+	srv, st := testService(t, config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	defer st.Close()
+	ctx := context.Background()
+	at := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
+	for _, symbol := range []string{"BTCUSDT", "ETHUSDT"} {
+		if err := st.UpsertCandles(ctx, []domain.Candle{{Exchange: "binance", Symbol: symbol, Time: at, Open: 100, High: 101, Low: 99, Close: 100}}); err != nil {
+			t.Fatal(err)
+		}
+		count := 1
+		if symbol == "ETHUSDT" {
+			count = 5003
+		}
+		for i := 0; i < count; i++ {
+			e := domain.LiquidationEvent{ID: fmt.Sprintf("%s-%05d", symbol, i), Exchange: "binance", Symbol: symbol, PositionSide: "long", EventTime: at.Add(30 * time.Second), ReceivedAt: at, Price: 100, Quantity: .01, NotionalUSD: 1, Coverage: "sampled"}
+			if err := st.InsertLiquidation(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, interval := range []string{"1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "4h", "8h", "12h", "24h"} {
+			w := httptest.NewRecorder()
+			srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/market?symbol="+symbol+"&interval="+interval, nil))
+			var view domain.MarketView
+			if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+				t.Fatal(err)
+			}
+			want := count
+			if want > 5000 {
+				want = 5000
+			}
+			if w.Code != 200 || view.LiquidationMinimumUSD != 0 || len(view.Liquidations) != want || view.LiquidationsTruncated != (count > 5000) {
+				t.Fatalf("%s %s: status=%d events=%d truncated=%v minimum=%v", symbol, interval, w.Code, len(view.Liquidations), view.LiquidationsTruncated, view.LiquidationMinimumUSD)
+			}
+		}
+	}
+	params := url.Values{"symbol": {"ETHUSDT"}, "side": {"all"}, "field": {"notional_usd"}, "minimum": {"0"}, "limit": {"500"}, "from": {at.Format(time.RFC3339Nano)}, "to": {at.Add(time.Minute).Format(time.RFC3339Nano)}}
+	ids := map[string]bool{}
+	for pages := 0; ; pages++ {
+		if pages > 11 {
+			t.Fatal("pagination did not finish")
+		}
+		w := httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/liquidations?"+params.Encode(), nil))
+		var packet struct {
+			Data domain.LiquidationPage `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &packet); err != nil || w.Code != 200 {
+			t.Fatalf("history status=%d error=%v", w.Code, err)
+		}
+		for _, row := range packet.Data.Rows {
+			if ids[row.ID] {
+				t.Fatalf("duplicate ID across timestamp-tied pages: %s", row.ID)
+			}
+			ids[row.ID] = true
+		}
+		if packet.Data.NextCursor == "" {
+			break
+		}
+		params.Set("cursor", packet.Data.NextCursor)
+	}
+	if len(ids) != 5003 {
+		t.Fatalf("supplemented IDs=%d", len(ids))
 	}
 }
 

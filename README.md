@@ -52,7 +52,7 @@ GET /api/v1/hedge-wall/history?symbol=ETHUSDT&kind=events&limit=50&cursor=<curso
 GET /api/v1/market-info?symbol=ETHUSDT&range=1h
 ```
 
-`field` 支持 `notional_usd` 或 `quantity`；`side` 指被清算仓位的 `long`/`short`，默认 `all`；`kind` 支持 `events` 或 `snapshots`。清算历史默认不设置金额门槛，与气泡图的 10,000 USDT 门槛独立。历史自服务接收事件时开始积累，公开强平流无法回填部署前的完整逐笔历史。所有时间按 UTC 存储，页面使用北京时间显示。
+`field` 支持 `notional_usd` 或 `quantity`；`side` 指被清算仓位的 `long`/`short`，默认 `all`；`kind` 支持 `events` 或 `snapshots`。清算历史和气泡图均默认不设置金额门槛。历史自服务接收事件时开始积累，公开强平流无法回填部署前的完整逐笔历史。所有时间按 UTC 存储，页面使用北京时间显示。
 
 ```text
 GET /api/v1/signals/latest?symbol=BTCUSDT
@@ -73,7 +73,11 @@ GET /metrics
 
 `state=ok` 才表示数据、双侧清算墙和模型均可用。`experimental=true` 表示模型尚未满足晋级门槛，不能解释为已证明有交易优势。
 
-`/api/v1/market` 的 `liquidations` 字段默认过滤低于 10,000 USDT 的事件，返回当前 K 线窗口内最多最近 5,000 笔 Binance 强平事件；`position_side=long` 表示被强平的多仓，`position_side=short` 表示被强平的空仓。原始事件仍完整保存到 SQLite。实时事件同时通过 `/api/v1/stream` 的 `liquidation` SSE 事件推送，客户端按金额过滤并按事件 ID 去重。圆圈与 K 线共用价格轴；为避免覆盖成交位置，多单圆圈在成交价下方 5 USDT、空单圆圈在成交价上方 5 USDT。K 线区域支持水平和垂直拖动，滚轮按光标价格缩放纵轴。
+`/api/v1/market` 的 `liquidations` 字段包含当前 K 线窗口内最多最近 5,000 笔 Binance 强平事件，`liquidation_minimum_usd` 默认值为 0；超限时气泡图通过现有 `/api/v1/liquidations` 以零门槛、500 笔游标分页补齐可视时间窗口，固定查询截止时间并按事件 ID 去重。页面显示窗口加载笔数、屏内气泡数、价格视野外笔数与补齐进度，失败可重试；已完成的窗口缓存复用，SSE 与每 10 秒行情刷新校准新数据。切换币对或周期取消旧请求。
+
+`position_side=long` 表示被强平的多仓，`position_side=short` 表示被强平的空仓。原始事件完整保存到 SQLite；“全部”仅指本服务实际采集的 Binance 强平采样流（每交易对每秒最近一笔），公开流无法提供完整市场逐笔覆盖。事件按实际时间定位，无需对应 K 线桶；以实际成交价为锚点，多单向下、空单向上偏移 6 像素，图边圈体保持完整，重叠事件可悬停滚动查看。
+
+自动纵轴仅依据当前可见 K 线高低价，两侧各留跨度的 10% 余量；平价 K 线采用现价 0.1% 的最小跨度，无有效 K 线时等待。CoinGlass 墙、成交量分布、VAH/VAL 和预测价格不扩大纵轴，覆盖图层按共同价格轴裁剪；清算墙提示上下越界档数，Top3 保留完整价格并标记视野外。自动刷新保留手动缩放与历史位置，首次打开、切换币对/周期、返回最新、重置缩放恢复 K 线基准范围。K 线区域支持水平和垂直拖动，滚轮按光标价格缩放纵轴。
 
 生产环境可用 `liquidation-predictor hash-password` 从标准输入生成 Argon2id PHC 哈希，并通过 `APP_AUTH_PASSWORD_HASH` 注入主账号。也可以将密码从标准输入传给 `liquidation-predictor add-user <用户名>`，在 SQLite 中新增或更新额外账号；数据库仅保存 Argon2id 哈希。新增账号后重启服务即可加载，主账号及已有会话不受影响。登录会话有效期为 7 天，Cookie 使用 Secure、HttpOnly 和 SameSite=Strict；程序日志以 JSON Lines 写入 `APP_LOG_PATH`，日志接口只允许已登录会话访问。
 

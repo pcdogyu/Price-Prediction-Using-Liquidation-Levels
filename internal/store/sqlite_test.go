@@ -62,7 +62,7 @@ func TestStoreRoundTripAndDedup(t *testing.T) {
 	if err != nil || truncated || len(events) != 2 || events[0].ID != "same" || events[1].ID != "later" {
 		t.Fatalf("events=%+v truncated=%v err=%v", events, truncated, err)
 	}
-	events, truncated, err = s.Liquidations(ctx, "BTCUSDT", c.Time.Add(-time.Minute), c.Time.Add(time.Minute), 10, domain.DefaultLiquidationMinimumUSD)
+	events, truncated, err = s.Liquidations(ctx, "BTCUSDT", c.Time.Add(-time.Minute), c.Time.Add(time.Minute), 10, 10_000)
 	if err != nil || truncated || len(events) != 1 || events[0].ID != "later" {
 		t.Fatalf("filtered events=%+v truncated=%v err=%v", events, truncated, err)
 	}
