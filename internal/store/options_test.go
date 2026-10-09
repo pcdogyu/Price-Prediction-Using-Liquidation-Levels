@@ -18,16 +18,21 @@ func TestOptionGammaPersistenceBoundsZeroAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Now().UTC().Truncate(time.Millisecond)
-	if start, err := s.OptionGammaAvailableFrom(ctx); err != nil || start != nil {
+	cutoff := at.Add(-72 * time.Hour)
+	if start, err := s.OptionGammaAvailableFrom(ctx, cutoff); err != nil || start != nil {
 		t.Fatal(start, err)
 	}
 	zero := 0.
 	p := domain.OptionGammaPoint{Symbol: "BTCUSDT", Underlying: "BTC", Source: "deribit", Time: at, Gamma: &zero, Contracts: 80, SelectedContracts: 80, EligibleContracts: 100, State: "ok"}
-	for _, age := range []int{0, 1, 181} {
+	for _, age := range []int{0, 1, 3, 4} {
 		p.Time = at.AddDate(0, 0, -age)
 		if err = s.SaveOptionGamma(ctx, p); err != nil {
 			t.Fatal(err)
 		}
+	}
+	p.Time = cutoff.Add(-time.Millisecond)
+	if err = s.SaveOptionGamma(ctx, p); err != nil {
+		t.Fatal(err)
 	}
 	p.Time = at
 	p.State = "partial"
@@ -58,15 +63,25 @@ func TestOptionGammaPersistenceBoundsZeroAndRetention(t *testing.T) {
 	if err != nil || len(points) != 1 || !points[0].Time.Equal(at.Add(-24*time.Hour)) {
 		t.Fatal(points, err)
 	}
+	// Expired histories can span several delete batches when reducing retention.
+	for i := 1; i <= 2001; i++ {
+		p.Time = at.Add(-4*24*time.Hour - time.Duration(i)*time.Minute)
+		if err = s.SaveOptionGamma(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.PruneOptionGamma(ctx, at); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.PruneDashboard(ctx, at); err != nil {
 		t.Fatal(err)
 	}
-	start, err := s.OptionGammaAvailableFrom(ctx)
-	if err != nil || start == nil || !start.Equal(at.Add(-24*time.Hour)) {
+	start, err := s.OptionGammaAvailableFrom(ctx, cutoff)
+	if err != nil || start == nil || !start.Equal(cutoff) {
 		t.Fatal(start, err)
 	}
 	points, err = s.OptionGammaHistory(ctx, "BTCUSDT", at.AddDate(0, 0, -200), at.Add(time.Millisecond))
-	if err != nil || len(points) != 2 {
+	if err != nil || len(points) != 3 {
 		t.Fatal(points, err)
 	}
 }

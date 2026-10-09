@@ -23,7 +23,7 @@ func TestOptionsEndpointWindowAndZero(t *testing.T) {
 	if err := st.SaveOptionGamma(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
-	for _, hours := range []string{"", "1", "168"} {
+	for _, hours := range []string{"", "1", "72"} {
 		w := httptest.NewRecorder()
 		srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/options?hours="+hours, nil))
 		var packet struct {
@@ -40,6 +40,9 @@ func TestOptionsEndpointWindowAndZero(t *testing.T) {
 		}
 		if hours == "" && packet.Data.Hours != 24 {
 			t.Fatalf("default options window=%d, want 24", packet.Data.Hours)
+		}
+		if packet.Data.RefreshSeconds != 60 || packet.Data.RetentionDays != 3 {
+			t.Fatal(packet.Data)
 		}
 	}
 	w := httptest.NewRecorder()

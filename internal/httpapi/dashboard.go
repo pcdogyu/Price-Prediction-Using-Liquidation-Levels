@@ -107,8 +107,8 @@ func (s *Server) options(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("hours"); raw != "" {
 		hours, err = strconv.Atoi(raw)
 	}
-	if err != nil || hours < 1 || hours > 168 {
-		problem(w, 400, fmt.Errorf("hours must be an integer between 1 and 168"))
+	if err != nil || hours < 1 || hours > domain.OptionGammaMaxHours {
+		problem(w, 400, fmt.Errorf("hours must be an integer between 1 and %d", domain.OptionGammaMaxHours))
 		return
 	}
 	view, err := s.svc.Options(r.Context(), hours)

@@ -377,7 +377,7 @@ func (s *Store) PruneDashboard(ctx context.Context, now time.Time) error {
 	for _, q := range []struct {
 		table string
 		days  int
-	}{{"book_snapshots", 30}, {"wall_events", 180}, {"market_metrics", 180}, {"deribit_gamma_history", 180}} {
+	}{{"book_snapshots", 30}, {"wall_events", 180}, {"market_metrics", 180}} {
 		// Small batches avoid holding the single SQLite writer during collection.
 		for {
 			r, e := s.db.ExecContext(ctx, `DELETE FROM `+q.table+` WHERE rowid IN (SELECT rowid FROM `+q.table+` WHERE ts<? LIMIT 2000)`, now.AddDate(0, 0, -q.days).UnixMilli())
@@ -393,7 +393,7 @@ func (s *Store) PruneDashboard(ctx context.Context, now time.Time) error {
 			}
 		}
 	}
-	return nil
+	return s.PruneOptionGamma(ctx, now)
 }
 
 func ValidateHistoryKind(kind string) bool {

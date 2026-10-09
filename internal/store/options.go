@@ -53,9 +53,9 @@ func (s *Store) OptionGammaHistory(ctx context.Context, symbol string, from, to 
 	return points, rows.Err()
 }
 
-func (s *Store) OptionGammaAvailableFrom(ctx context.Context) (*time.Time, error) {
+func (s *Store) OptionGammaAvailableFrom(ctx context.Context, since time.Time) (*time.Time, error) {
 	var ts *int64
-	if err := s.db.QueryRowContext(ctx, `SELECT MIN(ts) FROM deribit_gamma_history`).Scan(&ts); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT MIN(ts) FROM deribit_gamma_history WHERE ts>=?`, since.UnixMilli()).Scan(&ts); err != nil {
 		return nil, err
 	}
 	if ts == nil {
@@ -63,4 +63,22 @@ func (s *Store) OptionGammaAvailableFrom(ctx context.Context) (*time.Time, error
 	}
 	at := time.UnixMilli(*ts).UTC()
 	return &at, nil
+}
+
+func (s *Store) PruneOptionGamma(ctx context.Context, now time.Time) error {
+	cutoff := now.Add(-time.Duration(domain.OptionGammaMaxHours) * time.Hour).UnixMilli()
+	for {
+		// Batch deletes allow other collectors to use the SQLite writer.
+		result, err := s.db.ExecContext(ctx, `DELETE FROM deribit_gamma_history WHERE rowid IN (SELECT rowid FROM deribit_gamma_history WHERE ts<? LIMIT 2000)`, cutoff)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count < 2000 {
+			return nil
+		}
+	}
 }

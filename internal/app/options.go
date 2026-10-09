@@ -45,9 +45,12 @@ func (s *Service) recordOptionGamma(ctx context.Context, symbol string, point do
 
 func (s *Service) deribitGammaLoop(ctx context.Context) {
 	client := exchange.NewDeribitClient()
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(time.Duration(domain.OptionGammaRefreshSeconds) * time.Second)
 	defer ticker.Stop()
 	for {
+		if err := s.store.PruneOptionGamma(ctx, time.Now().UTC()); err != nil && ctx.Err() == nil {
+			s.log.Warn("Deribit Gamma retention failed", "error", err)
+		}
 		for _, currency := range []string{"BTC", "ETH"} {
 			cc, cancel := context.WithTimeout(ctx, 45*time.Second)
 			point, err := client.Gamma(cc, currency, time.Now().UTC())
@@ -66,13 +69,14 @@ func (s *Service) deribitGammaLoop(ctx context.Context) {
 }
 
 func (s *Service) Options(ctx context.Context, hours int) (domain.OptionsView, error) {
-	if hours < 1 || hours > 168 {
-		return domain.OptionsView{}, fmt.Errorf("hours must be between 1 and 168")
+	if hours < 1 || hours > domain.OptionGammaMaxHours {
+		return domain.OptionsView{}, fmt.Errorf("hours must be between 1 and %d", domain.OptionGammaMaxHours)
 	}
 	now := time.Now().UTC()
-	view := domain.OptionsView{Source: "deribit", Method: domain.DeribitGammaMethod, From: now.Add(-time.Duration(hours) * time.Hour), To: now, Hours: hours, RefreshSeconds: 60, RetentionDays: 180, Series: []domain.OptionGammaSeries{}}
+	cutoff := now.Add(-time.Duration(domain.OptionGammaMaxHours) * time.Hour)
+	view := domain.OptionsView{Source: "deribit", Method: domain.DeribitGammaMethod, From: now.Add(-time.Duration(hours) * time.Hour), To: now, Hours: hours, RefreshSeconds: domain.OptionGammaRefreshSeconds, RetentionDays: domain.OptionGammaRetentionDays, Series: []domain.OptionGammaSeries{}}
 	var err error
-	view.AvailableFrom, err = s.store.OptionGammaAvailableFrom(ctx)
+	view.AvailableFrom, err = s.store.OptionGammaAvailableFrom(ctx, cutoff)
 	if err != nil {
 		return view, err
 	}
@@ -97,7 +101,7 @@ func (s *Service) Options(ctx context.Context, hours int) (domain.OptionsView, e
 			item.LastAttempt = &attempt.at
 			item.LastError = attempt.error
 		}
-		if hasPoint {
+		if hasPoint && !point.Time.Before(cutoff) {
 			item.Latest = &point
 			item.State = point.State
 			if now.Sub(point.Time) > 3*time.Minute {

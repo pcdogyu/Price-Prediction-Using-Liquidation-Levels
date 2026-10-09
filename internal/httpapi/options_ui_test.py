@@ -56,6 +56,8 @@ with sync_playwright() as playwright:
     assert response.status == 200
     baseline = response.json()
     assert baseline["data"]["hours"] == 24
+    assert baseline["data"]["refresh_seconds"] == 60
+    assert baseline["data"]["retention_days"] == 3
     assert [s["symbol"] for s in baseline["data"]["series"]] == ["BTCUSDT", "ETHUSDT"]
     state = {"failure": False, "custom": None, "hold": False}
 
@@ -97,7 +99,9 @@ with sync_playwright() as playwright:
     rendered = int(page.locator("#options-chart").get_attribute("data-points"))
     expected = sum(len(s["points"]) for s in baseline["data"]["series"])
     assert rendered >= expected if production else rendered == expected
-    assert page.evaluate("() => window.__testIntervals.some(item => item.ms === 10000)")
+    assert page.evaluate("() => window.__testIntervals.some(item => item.ms === 60000)")
+    assert page.locator("#options-hours").get_attribute("max") == "72"
+    expect(page.locator("#options-status")).to_contain_text("每分钟更新")
     if production:
         now = datetime.datetime.now(datetime.timezone.utc)
         for series in baseline["data"]["series"]:
@@ -115,7 +119,7 @@ with sync_playwright() as playwright:
         canvas.hover(position={"x": 400, "y": 120})
         expect(page.locator("#options-tooltip")).to_contain_text("BTCUSDT")
         expect(page.locator("#options-tooltip")).to_contain_text("ETHUSDT")
-        for hours in (1, 168):
+        for hours in (1, 72):
             page.locator("#options-hours").fill(str(hours))
             page.locator("#options-hours").dispatch_event("change")
             loaded()

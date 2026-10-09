@@ -66,7 +66,7 @@
   function render(packet) {
     const data=packet.data;
     $('options-method').textContent=data.method;
-    $('options-status').textContent='已加载 '+data.series.reduce((sum,series)=>sum+series.points.length,0)+' 个点 · 每10秒更新';
+    $('options-status').textContent='已加载 '+data.series.reduce((sum,series)=>sum+series.points.length,0)+' 个点 · 每分钟更新';
     $('options-window').textContent='窗口 '+data.hours+' 小时 · 查询截止 '+when(data.to)+' · 历史起始 '+when(data.available_from);
     $('options-rows').innerHTML=data.series.map(series=>{
       const point=series.latest;
@@ -114,5 +114,5 @@
   $('options-chart').addEventListener('pointerleave',()=>{$('options-tooltip').hidden=true;});
   const repaint=()=>{if(latest)draw(latest.data);};
   window.addEventListener('resize',repaint); window.addEventListener('themechange',repaint);
-  load(); setInterval(()=>{if(!document.hidden)load();},10000);
+  load(); setInterval(()=>{if(!document.hidden)load();},60000);
 })();

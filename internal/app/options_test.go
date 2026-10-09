@@ -52,7 +52,16 @@ func TestOptionsFailurePreservesHistoryAndRestart(t *testing.T) {
 	if err != nil || view.Series[1].State != "stale" || s.Health()["deribit_options_ETHUSDT"].Coverage != .5 {
 		t.Fatal(view, err)
 	}
-	if _, err = s.Options(ctx, 169); err == nil {
+	if view.RefreshSeconds != 60 || view.RetentionDays != 3 {
+		t.Fatal(view)
+	}
+	p.Time = time.Now().UTC().Add(-73 * time.Hour)
+	s.recordOptionGamma(ctx, p.Symbol, p, nil)
+	view, err = s.Options(ctx, 72)
+	if err != nil || view.Series[1].Latest != nil || len(view.Series[1].Points) != 1 || view.Series[1].Points[0].Time.Before(time.Now().UTC().Add(-72*time.Hour)) {
+		t.Fatal("expired Gamma remained visible", view, err)
+	}
+	if _, err = s.Options(ctx, 73); err == nil {
 		t.Fatal("invalid window accepted")
 	}
 }
