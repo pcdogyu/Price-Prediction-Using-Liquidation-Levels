@@ -110,6 +110,8 @@ with sync_playwright() as playwright:
     page.goto(base + "/liquidations", wait_until="networkidle")
     loaded()
     expect(page.locator("#liq-analysis-heading")).to_have_text("ETHUSDT 四周期清算结构")
+    expect(page.locator("#liq-state-table-heading")).to_have_text("四周期 16 种状态行情解析")
+    expect(page.locator("#liq-state-rows tr")).to_have_count(16)
     assert page.locator("#liq-periods .label").all_text_contents() == ["ETHUSDT · " + label + " 清算金额 USD" for label in labels]
     check_queries()
 
@@ -119,6 +121,8 @@ with sync_playwright() as playwright:
             state["pattern"] = pattern
             refresh()
             expect(page.locator("#liq-combination")).to_have_text(pattern)
+            expect(page.locator("#liq-state-rows tr.current .liq-table-combination")).to_have_text(pattern)
+            expect(page.locator("#liq-state-rows tr.current .liq-current-label")).to_have_text("当前")
             assert page.locator("#liq-periods .liq-period-state").all_text_contents() == ["多头清算占优" if side == "多" else "空头清算占优" for side in pattern]
             assert "NaN" not in page.locator("#liq-periods").inner_text()
         state["custom"] = [
@@ -128,6 +132,7 @@ with sync_playwright() as playwright:
         ]
         refresh()
         expect(page.locator("#liq-combination")).to_have_text("尚未形成完整多空组合")
+        expect(page.locator("#liq-state-rows tr.current")).to_have_count(0)
         assert page.locator("#liq-periods .liq-period-state").all_text_contents() == ["多空均衡", "暂无清算", "空头清算占优", "数据缺失"]
         assert "50.0%" in page.locator("#liq-periods .info-metric").nth(0).inner_text()
         assert "多头占比 — / 空头占比 —" in page.locator("#liq-periods .info-metric").nth(1).inner_text()

@@ -1,7 +1,7 @@
 'use strict';
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {analyze} = require('./liquidation-analysis.js');
+const {analyze, interpretations} = require('./liquidation-analysis.js');
 const labels = ['1H', '4H', '12H', '24H'];
 const fixture = pattern => [...pattern].map((side, i) => ({label:labels[i], long_usd:side === '多' ? 200 : 100, short_usd:side === '空' ? 200 : 100, count:3}));
 
@@ -35,7 +35,23 @@ for (const [pattern, description] of cases) {
       assert.equal(p.total, 300);
       assert.equal(p.long_share + p.short_share, 1);
     });
+    assert.equal(result.interpretation, interpretations.find(item => item.combination === pattern).interpretation);
   });
+}
+test('all 16 combinations have one complete interpretation row', () => {
+  assert.equal(interpretations.length, 16);
+  assert.equal(new Set(interpretations.map(item => item.combination)).size, 16);
+  assert.deepEqual(interpretations.map(item => item.combination), [...itertools('多空', 4)]);
+  interpretations.forEach(item => {
+    assert.deepEqual(item.sides, [...item.combination]);
+    assert.match(item.interpretation, /[。；]/);
+  });
+  assert.match(interpretations.find(item => item.combination === '多多空空').interpretation, /偏空的短周期反转/);
+});
+
+function* itertools(characters, length, prefix = '') {
+  if (prefix.length === length) { yield prefix; return; }
+  for (const character of characters) yield* itertools(characters, length, prefix + character);
 }
 test('equal, empty and missing windows do not produce a directional combination', () => {
   const result = analyze([
