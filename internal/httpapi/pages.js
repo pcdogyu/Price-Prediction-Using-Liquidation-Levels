@@ -15,11 +15,11 @@
   const tone = value => !valid(value) ? '' : value > 0 ? 'buy' : value < 0 ? 'sell' : '';
   const stateLabel = value => ({ok:'正常',partial:'部分数据缺失',stale:'数据已过期',unavailable:'等待采集'})[value] || value;
   let busy = false, marketRange = '1h', latest = null, liqCursor = '', liqStack = [], liqNext = '', liqAnchor = '';
-  let liqSymbol = 'ALL', liqSymbols = [], symbolActive = -1, pendingLoad = false;
+  let liqSymbol = 'ETHUSDT', liqSymbols = [], symbolActive = -1, pendingLoad = false;
   let liqAnalysisAnchor = '';
   let historyCursor = '', historyRows = [], historyNext = '', historyAnchor = '', frozenBook = null, historyKind = 'events';
   $(page + '-page').hidden = false;
-  $('page-subtitle').textContent = ({liquidations:'ETHUSDT 四周期清算结构 · 全部 U 本位合约逐笔历史', 'hedge-wall':'盘口挂单墙 · 实时分布与历史记录', 'market-info':'永续市场数据与期权 Gamma/GEX'})[page];
+  $('page-subtitle').textContent = ({liquidations:'默认 ETHUSDT · 四周期清算结构与逐笔爆仓历史', 'hedge-wall':'盘口挂单墙 · 实时分布与历史记录', 'market-info':'永续市场数据与期权 Gamma/GEX'})[page];
   if (page === 'liquidations') $('symbol').hidden = true;
   async function get(path, params = {}) {
     const response = await fetch(base + 'api/v1/' + path + '?' + new URLSearchParams(params), {cache:'no-store', credentials:'same-origin'});

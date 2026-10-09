@@ -113,7 +113,8 @@ with sync_playwright() as playwright:
     expect(page.locator("#liq-state-table-heading")).to_have_text("四周期 16 种状态行情解析")
     expect(page.locator("#liq-state-rows tr")).to_have_count(16)
     assert page.locator("#liq-periods .label").all_text_contents() == ["ETHUSDT · " + label + " 清算金额 USD" for label in labels]
-    check_queries()
+    _, initial_detail = check_queries()
+    assert initial_detail["symbol"] == "ETHUSDT"
 
     if not production:
         for parts in itertools.product("多空", repeat=4):
