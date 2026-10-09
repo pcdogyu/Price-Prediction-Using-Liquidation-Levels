@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="app-base" content="{{BASE}}"><script src="{{BASE}}assets/theme.js"></script><title>期权 · 清算墙雷达</title><link rel="stylesheet" href="{{BASE}}assets/pages.css"><link rel="stylesheet" href="{{BASE}}assets/theme.css"><link rel="stylesheet" href="{{BASE}}assets/options.css"><script src="{{BASE}}assets/shared.js" defer></script><script src="{{BASE}}assets/options.js" defer></script></head>
+<body data-page="options">{{NAV}}
+<main class="workspace">
+  <header class="page-heading"><div><span class="kicker">DERIBIT · OPTIONS</span><h1>期权</h1><p>BTC / ETH Deribit Gamma · 归一化时间曲线</p></div></header>
+  <div id="options-error" class="error-box" role="alert" hidden></div>
+  <section class="surface">
+    <form id="options-filters" class="options-toolbar"><label for="options-hours">窗口小时</label><input id="options-hours" name="hours" type="number" min="1" max="168" step="1" value="12" required><button id="options-refresh" type="submit">刷新</button><span id="options-status" class="muted" role="status">等待采集数据</span></form>
+    <div class="options-plot"><canvas id="options-chart" aria-label="BTC 和 ETH Deribit 归一化 Gamma 随时间变化"></canvas><div id="options-tooltip" class="options-tooltip" hidden></div></div>
+    <div class="chart-legend options-legend"><span class="options-btc"><i></i>BTCUSDT Deribit</span><span class="options-eth"><i></i>ETHUSDT Deribit</span><span class="options-zero"><i></i>0 轴</span></div>
+    <p id="options-window" class="muted"></p>
+    <div class="table-scroll"><table><thead><tr><th>币对</th><th>标的</th><th>Deribit Gamma</th><th>合约覆盖</th><th>状态</th><th>Deribit 更新时间（北京时间）</th></tr></thead><tbody id="options-rows"><tr><td colspan="6">等待 BTC / ETH 数据</td></tr></tbody></table></div>
+  </section>
+  <section class="surface options-notes"><h2>数据口径</h2><p id="options-method" class="muted"></p><p class="muted">后台每 60 秒采集，页面每 10 秒更新。Gamma 历史从本服务上线采集起累计，保留 180 天；缺失数据不记为零，连续缺失时曲线断开。采集失败会保留上次成功数据并标明状态。</p><p class="muted">来源：<a href="https://docs.deribit.com/api-reference/market-data/public-get_order_book" target="_blank" rel="noopener">Deribit 公开期权 Gamma</a> · <a href="https://docs.deribit.com/api-reference/market-data/public-get_book_summary_by_currency" target="_blank" rel="noopener">期权持仓量摘要</a></p></section>
+  <footer class="page-footer">用于市场观察与研究 · Gamma 正负描述所选合约样本的 CALL / PUT 结构</footer>
+</main></body></html>

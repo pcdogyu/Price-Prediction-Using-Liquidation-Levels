@@ -1,6 +1,6 @@
 # 清算墙概率预测系统
 
-这是一个只使用 Binance USDⓈ-M 永续公开数据的 Go 单体服务。它为 BTCUSDT、ETHUSDT 估算清算压力地图，并预测未来 60 分钟最先发生的事件：触及上方墙、触及下方墙或均未触及。
+这是一个以 Binance USDⓈ-M 永续公开数据为核心的 Go 单体服务。它为 BTCUSDT、ETHUSDT 估算清算压力地图，并预测未来 60 分钟最先发生的事件：触及上方墙、触及下方墙或均未触及；独立期权页展示 Deribit BTC / ETH Gamma。
 
 核心模型默认只使用 Binance 公开数据，不会下单。可选的人工触发功能通过服务器上的持久化浏览器读取已登录 CoinGlass 页面收到的清算图响应；Cookie 始终留在浏览器配置目录，不会写入抓取文件。模型自身的地图仍是基于 OI 增量和杠杆先验的估计，并非交易所真实仓位。
 
@@ -33,7 +33,7 @@ go run ./cmd/server
 
 ## API
 
-登录后默认进入“气泡图”，导航提供“清算历史”“对冲墙”“市场信息”。顶部“程序日志”左侧可切换浅色和深色主题，首次默认深色，选择保存在当前浏览器并在刷新、切换页面后恢复。
+登录后默认进入“气泡图”，导航提供“清算历史”“对冲墙”“市场信息”“期权”。顶部“程序日志”左侧可切换浅色和深色主题，首次默认深色，选择保存在当前浏览器并在刷新、切换页面后恢复。
 
 清算历史保存 Binance 全部 USDⓈ-M 币对的公开采样事件，筛选栏支持搜索并选择单个币对，默认全部币对；支持方向、数量和金额过滤及稳定游标分页。页面不提供时间输入，API 的时间参数仍兼容历史查询与内部分页；原气泡图仍仅显示 BTC/ETH。
 
@@ -43,6 +43,8 @@ go run ./cmd/server
 
 市场信息的主动买卖及 CVD 使用 USD 金额，CVD 从所选窗口开始累计，缺口不会被记成零。净仓估算使用 OI 与顶级交易员持仓比，不代表真实全市场净仓。Gamma/GEX 基于 Binance Options 的公开 Gamma、OI、合约单位与指数价格计算，CALL 计正、PUT 计负，不代表做市商真实净仓；Gamma Wall 取绝对 GEX 最大的行权价。永续指标每分钟更新，期权每 5 分钟更新，接口返回缺失、部分可用或过期状态。
 
+“期权”页固定展示 BTCUSDT / ETHUSDT 的 Deribit 归一化 Gamma 曲线、零轴、最新值、合约覆盖和更新时间。后台独立调用 Deribit 公开 API，按 OI 选取各币种前 80 个未到期且有持仓的期权，读取原始 Greeks Gamma，计算 `(ΣCALL Gamma − ΣPUT Gamma) / (ΣCALL Gamma + ΣPUT Gamma)`；OI 仅用于选样，不乘以 OI，与市场信息中的 Binance 美元 GEX 是不同口径。每 60 秒采集、页面每 10 秒刷新；历史从本服务采集起累计，保存 180 天，可选 1–168 小时窗口。合约缺失标记部分覆盖，失败保留最后成功值，超过 3 分钟标记过期；缺失不记为零，超过 150 秒的采样间隔断开曲线。无需 Deribit API 密钥，也不依赖其他项目的运行状态。
+
 新增接口（均要求有效登录会话）：
 
 ```text
@@ -50,6 +52,7 @@ GET /api/v1/liquidations?symbol=ALL&side=all&field=notional_usd&minimum=0&limit=
 GET /api/v1/hedge-wall?symbol=ETHUSDT&half_life=120&window=5
 GET /api/v1/hedge-wall/history?symbol=ETHUSDT&kind=events&limit=50&cursor=<cursor>&from=<RFC3339>&to=<RFC3339>
 GET /api/v1/market-info?symbol=ETHUSDT&range=1h
+GET /api/v1/options?hours=12
 ```
 
 `field` 支持 `notional_usd` 或 `quantity`；`side` 指被清算仓位的 `long`/`short`，默认 `all`；`kind` 支持 `events` 或 `snapshots`。清算历史和气泡图均默认不设置金额门槛。历史自服务接收事件时开始积累，公开强平流无法回填部署前的完整逐笔历史。所有时间按 UTC 存储，页面使用北京时间显示。
@@ -109,6 +112,6 @@ sqlite3 /var/lib/liquidation-predictor/liquidation.db ".backup '/var/backups/liq
 
 ## 数据与风险说明
 
-系统只读取 Binance USDⓈ-M 永续合约。Binance 全市场强平流对每个交易对每1000ms只推送最近一笔，因此覆盖率在 API 中按采样源标记。VAL/VAH 根据聚合成交名义额计算，POC只用于内部确定连续70%价值区域，不由API返回。
+清算与行情模型读取 Binance USDⓈ-M 永续合约，期权观察页独立读取 Deribit 公开期权数据。Binance 全市场强平流对每个交易对每1000ms只推送最近一笔，因此覆盖率在 API 中按采样源标记。VAL/VAH 根据聚合成交名义额计算，POC只用于内部确定连续70%价值区域，不由API返回。
 
 系统用于研究和可视化，不是投资建议。清算墙可能吸引价格，也可能成为加速穿越区；必须通过严格的时间序列样本外验证判断其是否提供增量信息。

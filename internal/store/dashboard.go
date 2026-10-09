@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS wall_events(id TEXT PRIMARY KEY,symbol TEXT NOT NULL,
 CREATE INDEX IF NOT EXISTS wall_event_time ON wall_events(symbol,ts DESC,id DESC);
 CREATE TABLE IF NOT EXISTS book_snapshots(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
 CREATE TABLE IF NOT EXISTS market_metrics(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
-CREATE TABLE IF NOT EXISTS gamma_latest(symbol TEXT PRIMARY KEY,payload BLOB NOT NULL);`)
+CREATE TABLE IF NOT EXISTS gamma_latest(symbol TEXT PRIMARY KEY,payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS deribit_gamma_history(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));`)
 	return err
 }
 
@@ -376,7 +377,7 @@ func (s *Store) PruneDashboard(ctx context.Context, now time.Time) error {
 	for _, q := range []struct {
 		table string
 		days  int
-	}{{"book_snapshots", 30}, {"wall_events", 180}, {"market_metrics", 180}} {
+	}{{"book_snapshots", 30}, {"wall_events", 180}, {"market_metrics", 180}, {"deribit_gamma_history", 180}} {
 		// Small batches avoid holding the single SQLite writer during collection.
 		for {
 			r, e := s.db.ExecContext(ctx, `DELETE FROM `+q.table+` WHERE rowid IN (SELECT rowid FROM `+q.table+` WHERE ts<? LIMIT 2000)`, now.AddDate(0, 0, -q.days).UnixMilli())

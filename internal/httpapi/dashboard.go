@@ -30,6 +30,15 @@ var liquidationAnalysisJS []byte
 //go:embed bubble-chart.js
 var bubbleChartJS []byte
 
+//go:embed options.html
+var optionsHTML []byte
+
+//go:embed options.js
+var optionsJS []byte
+
+//go:embed options.css
+var optionsCSS []byte
+
 //go:embed shared.js
 var sharedJS []byte
 
@@ -41,7 +50,7 @@ var themeCSS []byte
 
 func isDashboardPage(path string) bool {
 	switch path {
-	case "/", "/bubbles", "/liquidations", "/hedge-wall", "/market-info":
+	case "/", "/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options":
 		return true
 	}
 	return false
@@ -49,7 +58,7 @@ func isDashboardPage(path string) bool {
 func (s *Server) renderPage(body []byte, page, title string) []byte {
 	base := html.EscapeString(s.auth.BasePath())
 	nav := `<nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `bubbles">清算墙雷达</a><div class="app-links">`
-	for _, item := range []struct{ path, title string }{{"bubbles", "气泡图"}, {"liquidations", "清算历史"}, {"hedge-wall", "对冲墙"}, {"market-info", "市场信息"}} {
+	for _, item := range []struct{ path, title string }{{"bubbles", "气泡图"}, {"liquidations", "清算历史"}, {"hedge-wall", "对冲墙"}, {"market-info", "市场信息"}, {"options", "期权"}} {
 		active := ""
 		if item.path == page {
 			active = ` aria-current="page" class="selected"`
@@ -62,6 +71,10 @@ func (s *Server) renderPage(body []byte, page, title string) []byte {
 }
 func (s *Server) registerDashboard(mux *http.ServeMux) {
 	mux.HandleFunc("/bubbles", getOnly(s.index))
+	mux.HandleFunc("/options", getOnly(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(s.renderPage(optionsHTML, "options", "期权"))
+	}))
 	for path, title := range map[string]string{"/liquidations": "清算历史", "/hedge-wall": "对冲墙", "/market-info": "市场信息"} {
 		p, t := path, title
 		mux.HandleFunc(p, getOnly(func(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +82,7 @@ func (s *Server) registerDashboard(mux *http.ServeMux) {
 			_, _ = w.Write(s.renderPage(pagesHTML, strings.TrimPrefix(p, "/"), t))
 		}))
 	}
-	for path, data := range map[string][]byte{"/assets/pages.css": pagesCSS, "/assets/pages.js": pagesJS, "/assets/liquidation-analysis.js": liquidationAnalysisJS, "/assets/bubble-chart.js": bubbleChartJS, "/assets/shared.js": sharedJS, "/assets/theme.js": themeJS, "/assets/theme.css": themeCSS} {
+	for path, data := range map[string][]byte{"/assets/pages.css": pagesCSS, "/assets/pages.js": pagesJS, "/assets/options.js": optionsJS, "/assets/options.css": optionsCSS, "/assets/liquidation-analysis.js": liquidationAnalysisJS, "/assets/bubble-chart.js": bubbleChartJS, "/assets/shared.js": sharedJS, "/assets/theme.js": themeJS, "/assets/theme.css": themeCSS} {
 		p, b := path, data
 		mux.HandleFunc(p, getOnly(func(w http.ResponseWriter, r *http.Request) {
 			kind := "text/javascript"
@@ -85,6 +98,26 @@ func (s *Server) registerDashboard(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/hedge-wall", getOnly(s.hedgeWall))
 	mux.HandleFunc("/api/v1/hedge-wall/history", getOnly(s.hedgeHistory))
 	mux.HandleFunc("/api/v1/market-info", getOnly(s.marketInfo))
+	mux.HandleFunc("/api/v1/options", getOnly(s.options))
+}
+
+func (s *Server) options(w http.ResponseWriter, r *http.Request) {
+	hours := 12
+	var err error
+	if raw := r.URL.Query().Get("hours"); raw != "" {
+		hours, err = strconv.Atoi(raw)
+	}
+	if err != nil || hours < 1 || hours > 168 {
+		problem(w, 400, fmt.Errorf("hours must be an integer between 1 and 168"))
+		return
+	}
+	view, err := s.svc.Options(r.Context(), hours)
+	if err != nil {
+		problem(w, 503, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]any{"data": view, "sources": s.svc.Health()})
 }
 func queryLimit(r *http.Request) (int, error) {
 	raw := r.URL.Query().Get("limit")

@@ -20,16 +20,18 @@ type wallTrack struct {
 }
 type dashboardState struct {
 	sync.RWMutex
-	books    map[string]domain.BookSnapshot
-	samples  map[string][]domain.BookSnapshot
-	tracks   map[string]map[string]*wallTrack
-	lastSave map[string]time.Time
-	metrics  map[string]domain.MarketMetric
-	gamma    map[string]domain.GammaView
+	books           map[string]domain.BookSnapshot
+	samples         map[string][]domain.BookSnapshot
+	tracks          map[string]map[string]*wallTrack
+	lastSave        map[string]time.Time
+	metrics         map[string]domain.MarketMetric
+	gamma           map[string]domain.GammaView
+	deribit         map[string]domain.OptionGammaPoint
+	deribitAttempts map[string]optionGammaAttempt
 }
 
 func newDashboardState() *dashboardState {
-	return &dashboardState{books: map[string]domain.BookSnapshot{}, samples: map[string][]domain.BookSnapshot{}, tracks: map[string]map[string]*wallTrack{}, lastSave: map[string]time.Time{}, metrics: map[string]domain.MarketMetric{}, gamma: map[string]domain.GammaView{}}
+	return &dashboardState{books: map[string]domain.BookSnapshot{}, samples: map[string][]domain.BookSnapshot{}, tracks: map[string]map[string]*wallTrack{}, lastSave: map[string]time.Time{}, metrics: map[string]domain.MarketMetric{}, gamma: map[string]domain.GammaView{}, deribit: map[string]domain.OptionGammaPoint{}, deribitAttempts: map[string]optionGammaAttempt{}}
 }
 func (s *Service) startDashboard(ctx context.Context) {
 	if err := s.store.InterruptWallEvents(ctx); err != nil {
@@ -49,6 +51,14 @@ func (s *Service) startDashboard(ctx context.Context) {
 	exchange.StartDepthStreams(ctx, s.cfg.Symbols, s.recordBook, s.health, s.log)
 	go s.marketInfoLoop(ctx)
 	go s.gammaLoop(ctx)
+	for _, symbol := range []string{"BTCUSDT", "ETHUSDT"} {
+		if point, err := s.store.LatestOptionGamma(ctx, symbol); err == nil {
+			s.dashboard.Lock()
+			s.dashboard.deribit[symbol] = point
+			s.dashboard.Unlock()
+		}
+	}
+	go s.deribitGammaLoop(ctx)
 	go s.backfillMarketMetrics(ctx)
 	go func() {
 		ticker := time.NewTicker(time.Hour)

@@ -26,14 +26,14 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 	if w.Code != 302 || w.Header().Get("Location") != "/liquidation/bubbles" {
 		t.Fatal(w.Code, w.Header())
 	}
-	for _, path := range []string{"/bubbles", "/liquidations", "/hedge-wall", "/market-info"} {
+	for _, path := range []string{"/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options"} {
 		w = httptest.NewRecorder()
 		srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-		if w.Code != 200 || !strings.Contains(w.Body.String(), `href="/liquidation/market-info"`) || !strings.Contains(w.Body.String(), `content="/liquidation/"`) {
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `href="/liquidation/options"`) || !strings.Contains(w.Body.String(), `content="/liquidation/"`) {
 			t.Fatal(path, w.Code, w.Body.String())
 		}
 	}
-	for _, path := range []string{"/api/v1/liquidations?minimum=NaN", "/api/v1/liquidations?minimum=-1", "/api/v1/liquidations?side=buy", "/api/v1/liquidations?field=bad", "/api/v1/liquidations?cursor=bad", "/api/v1/hedge-wall?symbol=ETHUSDT&half_life=0", "/api/v1/hedge-wall/history?symbol=ETHUSDT&kind=bad", "/api/v1/market-info?symbol=ETHUSDT&range=100d"} {
+	for _, path := range []string{"/api/v1/liquidations?minimum=NaN", "/api/v1/liquidations?minimum=-1", "/api/v1/liquidations?side=buy", "/api/v1/liquidations?field=bad", "/api/v1/liquidations?cursor=bad", "/api/v1/hedge-wall?symbol=ETHUSDT&half_life=0", "/api/v1/hedge-wall/history?symbol=ETHUSDT&kind=bad", "/api/v1/market-info?symbol=ETHUSDT&range=100d", "/api/v1/options?hours=0", "/api/v1/options?hours=169", "/api/v1/options?hours=1.5", "/api/v1/options?hours=NaN"} {
 		w = httptest.NewRecorder()
 		srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 400 {
@@ -141,6 +141,18 @@ func TestDashboardBrowser(t *testing.T) {
 	at := time.Now().UTC().Truncate(time.Minute)
 	price, oi, r, zero := 2500., 1000000., 2., 0.
 	for _, symbol := range []string{"ETHUSDT", "BTCUSDT"} {
+		for i := 0; i < 60; i++ {
+			ts := at.Add(-time.Duration(60-i) * time.Minute)
+			value := .2 + float64(i)/300
+			underlying := "BTC"
+			if symbol == "ETHUSDT" {
+				value = -value
+				underlying = "ETH"
+			}
+			if err := st.SaveOptionGamma(ctx, domain.OptionGammaPoint{Symbol: symbol, Underlying: underlying, Source: "deribit", Time: ts, Gamma: &value, CallGamma: .01, PutGamma: .005, Contracts: 80, SelectedContracts: 80, EligibleContracts: 100, State: "ok", SourceFrom: ts, SourceTo: ts}); err != nil {
+				t.Fatal(err)
+			}
+		}
 		cs := []domain.Candle{}
 		for i := 0; i < 1500; i++ {
 			ts := at.Add(-time.Duration(1500-i) * time.Minute)
