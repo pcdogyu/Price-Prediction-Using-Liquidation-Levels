@@ -138,11 +138,13 @@ with sync_playwright() as playwright:
 
     page.locator("#liq-symbol-search").fill("BTCUSDT")
     page.locator('[data-symbol="BTCUSDT"]').click()
+    page.wait_for_function("() => window.__testActiveRequests === 0")
     page.wait_for_load_state("networkidle")
     page.locator("#liq-side").select_option("short")
     page.locator("#liq-field").select_option("quantity")
     page.locator("#liq-min").fill("500")
     page.get_by_role("button", name="应用筛选", exact=True).click()
+    page.wait_for_function("() => window.__testActiveRequests === 0")
     page.wait_for_load_state("networkidle")
     summary, detail = check_queries()
     assert {k: detail[k] for k in ["symbol", "side", "field", "minimum"]} == {"symbol": "BTCUSDT", "side": "short", "field": "quantity", "minimum": "500"}
