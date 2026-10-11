@@ -72,7 +72,7 @@ with sync_playwright() as playwright:
         packet = copy.deepcopy(baseline)
         if summary:
             packet["data"]["periods"] = state["custom"] if state["custom"] is not None else [
-                {"label": label, "long_usd": 200 if side == "多" else 100, "short_usd": 200 if side == "空" else 100, "count": 3}
+                {"label": label, "long_usd": 200 if side == "空" else 100, "short_usd": 200 if side == "多" else 100, "count": 3}
                 for label, side in zip(labels, state["pattern"])
             ]
         else:
@@ -124,7 +124,7 @@ with sync_playwright() as playwright:
             expect(page.locator("#liq-combination")).to_have_text(pattern)
             expect(page.locator("#liq-state-rows tr.current .liq-table-combination")).to_have_text(pattern)
             expect(page.locator("#liq-state-rows tr.current .liq-current-label")).to_have_text("当前")
-            assert page.locator("#liq-periods .liq-period-state").all_text_contents() == ["多头清算占优" if side == "多" else "空头清算占优" for side in pattern]
+            assert page.locator("#liq-periods .liq-period-state").all_text_contents() == ["空头清算占优" if side == "多" else "多头清算占优" for side in pattern]
             assert "NaN" not in page.locator("#liq-periods").inner_text()
         state["custom"] = [
             {"label": "1H", "long_usd": 100, "short_usd": 100, "count": 2},
@@ -140,7 +140,7 @@ with sync_playwright() as playwright:
         state["custom"] = None
         state["pattern"] = "空空多多"
         refresh()
-        expect(page.locator("#liq-analysis-description")).to_have_text("近1H、4H空头清算占优，12H、24H多头清算占优，近期窗口与较宽窗口结构不同。")
+        expect(page.locator("#liq-analysis-description")).to_have_text("近1H、4H多头清算占优，12H、24H空头清算占优，近期窗口与较宽窗口结构不同。")
 
     page.locator("#liq-symbol-search").fill("BTCUSDT")
     page.locator('[data-symbol="BTCUSDT"]').click()
@@ -211,7 +211,7 @@ with sync_playwright() as playwright:
             p = by_label[label]
             state_name = "暂无清算" if p["long_usd"] + p["short_usd"] == 0 else "多空均衡" if p["long_usd"] == p["short_usd"] else "多头清算占优" if p["long_usd"] > p["short_usd"] else "空头清算占优"
             expected_states.append(state_name)
-            pattern += "多" if state_name == "多头清算占优" else "空" if state_name == "空头清算占优" else "?"
+            pattern += "空" if state_name == "多头清算占优" else "多" if state_name == "空头清算占优" else "?"
         assert page.locator("#liq-periods .liq-period-state").all_text_contents() == expected_states
         expect(page.locator("#liq-combination")).to_have_text(pattern if "?" not in pattern else "尚未形成完整多空组合")
 
