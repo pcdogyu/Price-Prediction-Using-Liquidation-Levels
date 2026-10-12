@@ -44,7 +44,7 @@ let tooltipHideTimer;
 let chartTipsBound = false;
 let lastBubbleDraw = 0;
 const liquidationWallWidthScale = .9;
-const rightPriceAxisWidthScale = .9;
+const rightPriceAxisWidthScale = .81;
 const rightPriceAxisShift = (1740 - 1510) * (1 - rightPriceAxisWidthScale);
 const liquidationWallRight = 1510 + rightPriceAxisShift;
 const liquidationWallWidth = Math.round((1510 - 1315) * liquidationWallWidthScale);
