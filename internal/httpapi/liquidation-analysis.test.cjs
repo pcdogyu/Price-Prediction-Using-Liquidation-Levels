@@ -76,7 +76,7 @@ test('equal, empty and missing windows do not produce a directional combination'
 test('single-sided amounts remain valid and small differences retain exact comparison', () => {
   const rows = fixture('多多多多');
   rows[0].short_usd = 0;
-  rows[1].long_usd = 100.00001;
+  rows[1].long_usd = rows[1].short_usd + .00001;
   const result = analyze(rows);
   assert.equal(result.periods[0].long_share, 1);
   assert.equal(result.periods[0].short_share, 0);

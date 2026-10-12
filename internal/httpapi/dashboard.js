@@ -44,9 +44,12 @@ let tooltipHideTimer;
 let chartTipsBound = false;
 let lastBubbleDraw = 0;
 const liquidationWallWidthScale = .9;
-const liquidationWallRight = 1510;
-const liquidationWallWidth = Math.round((liquidationWallRight - 1315) * liquidationWallWidthScale);
-const dims = { height: 560, width: 1740, left: 72, top: 24, bottom: 42, candleRight: 1025, volumeLeft: 1060, volumeRight: 1280, liquidationLeft: liquidationWallRight - liquidationWallWidth, profileRight: liquidationWallRight, axisPriceRight: 1584, rankLabelLeft: 1614, rankLabelRight: 1728 };
+const rightPriceAxisWidthScale = .9;
+const rightPriceAxisShift = (1740 - 1510) * (1 - rightPriceAxisWidthScale);
+const liquidationWallRight = 1510 + rightPriceAxisShift;
+const liquidationWallWidth = Math.round((1510 - 1315) * liquidationWallWidthScale);
+const rightPriceAxisX = x => liquidationWallRight + (x - 1510) * rightPriceAxisWidthScale;
+const dims = { height: 560, width: 1740, left: 72, top: 24, bottom: 42, candleRight: 1025 + rightPriceAxisShift, volumeLeft: 1060 + rightPriceAxisShift, volumeRight: 1280 + rightPriceAxisShift, liquidationLeft: liquidationWallRight - liquidationWallWidth, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft: rightPriceAxisX(1614), rankLabelRight: rightPriceAxisX(1728) };
 if (!intervalName[chart.interval]) chart.interval = '15m';
 
 function svgNode(tag, attrs = {}, text = '') {
