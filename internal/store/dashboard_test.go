@@ -2,12 +2,80 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
+
+func TestLiquidationSixPeriodBoundariesAndCursorIndependence(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "periods.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	at := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
+	ages := []time.Duration{time.Millisecond, 5 * time.Minute, 5*time.Minute + time.Millisecond,
+		15 * time.Minute, 15*time.Minute + time.Millisecond, time.Hour,
+		time.Hour + time.Millisecond, 4 * time.Hour, 4*time.Hour + time.Millisecond,
+		12 * time.Hour, 12*time.Hour + time.Millisecond, 24 * time.Hour,
+		24*time.Hour + time.Millisecond, -time.Millisecond}
+	for i, age := range ages {
+		side, amount := "long", 100.
+		if i%2 == 1 {
+			side, amount = "short", 50
+		}
+		event := domain.LiquidationEvent{ID: fmt.Sprintf("eth-%d", i), Exchange: "binance", Symbol: "ETHUSDT", PositionSide: side, EventTime: at.Add(-age), ReceivedAt: at, Price: 100, Quantity: 1, NotionalUSD: amount, Coverage: "sampled"}
+		if err = s.InsertLiquidation(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, source := range []struct{ exchange, symbol string }{{"binance", "BTCUSDT"}, {"okx", "ETHUSDT"}} {
+		if err = s.InsertLiquidation(ctx, domain.LiquidationEvent{ID: source.exchange + "-other", Exchange: source.exchange, Symbol: source.symbol, PositionSide: "short", EventTime: at.Add(-time.Millisecond), ReceivedAt: at, Price: 100, Quantity: 1, NotionalUSD: 99999, Coverage: "sampled"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.InsertLiquidation(ctx, domain.LiquidationEvent{ID: "exact-cutoff", Exchange: "binance", Symbol: "ETHUSDT", PositionSide: "long", EventTime: at, ReceivedAt: at, Price: 100, Quantity: 1, NotionalUSD: 99999, Coverage: "sampled"}); err != nil {
+		t.Fatal(err)
+	}
+	f := domain.LiquidationFilter{Symbol: "ETHUSDT", From: at.Add(-30 * time.Hour), To: at, Limit: 1}
+	for page := 0; page < 2; page++ {
+		result, err := s.LiquidationHistory(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		labels := []string{"5M", "15M", "1H", "4H", "12H", "24H"}
+		if len(result.Periods) != len(labels) {
+			t.Fatalf("periods=%+v", result.Periods)
+		}
+		for i, p := range result.Periods {
+			if p.Label != labels[i] || p.Count != 2*(i+1) || p.LongUSD != float64(100*(i+1)) || p.ShortUSD != float64(50*(i+1)) {
+				t.Fatalf("page=%d period=%+v", page, p)
+			}
+		}
+		f.Cursor = result.NextCursor
+		if f.Cursor == "" {
+			t.Fatal("expected a second detail page")
+		}
+	}
+	// An explicit start time still bounds every period, including the new windows.
+	f.Cursor, f.From = "", at.Add(-10*time.Minute)
+	result, err := s.LiquidationHistory(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, p := range result.Periods {
+		if i == 0 {
+			continue
+		}
+		if p.Count != 3 || p.LongUSD != 200 || p.ShortUSD != 50 {
+			t.Fatalf("bounded period=%+v", p)
+		}
+	}
+}
 
 func TestLiquidationCursorStableUnderNewEvents(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "test.db"))

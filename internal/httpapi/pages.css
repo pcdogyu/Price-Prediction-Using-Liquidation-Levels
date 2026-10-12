@@ -6,6 +6,10 @@
 #liq-periods .number-row .number{min-width:0}
 #liq-periods .liq-side{margin-left:auto;text-align:right;font-size:18px;font-weight:750;line-height:1}
 #liq-periods .liq-long-dominant .liq-side{color:var(--buy)}#liq-periods .liq-short-dominant .liq-side{color:var(--sell)}
+.metric-grid.six{grid-template-columns:repeat(6,minmax(0,1fr))}
+.liq-state-table{min-width:880px}.liq-state-table .liq-table-combination{white-space:normal;overflow-wrap:anywhere}
+@media(max-width:1400px){.metric-grid.six{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:720px){.metric-grid.six{grid-template-columns:repeat(2,minmax(0,1fr))}}
 body[data-page="liquidations"] .page-controls #symbol{display:none}
 #gamma-chart{height:440px}#gamma-flip-method{overflow-wrap:anywhere}
 .symbol-field{width:270px;max-width:100%;color:var(--muted);font-size:12px}

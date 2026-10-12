@@ -1,71 +1,58 @@
 'use strict';
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {analyze, interpretations} = require('./liquidation-analysis.js');
-const labels = ['1H', '4H', '12H', '24H'];
+const {analyze} = require('./liquidation-analysis.js');
+const labels = ['5M', '15M', '1H', '4H', '12H', '24H'];
 const fixture = pattern => [...pattern].map((side, i) => ({label:labels[i], long_usd:side === '空' ? 200 : 100, short_usd:side === '多' ? 200 : 100, count:3}));
 
-const cases = [
-  ['多多多多', '四个周期均为空头清算占优，清算结构一致。'],
-  ['空空空空', '四个周期均为多头清算占优，清算结构一致。'],
-  ['多空空空', '仅1H空头清算占优，4H、12H、24H多头清算占优，近期窗口出现分歧。'],
-  ['空多多多', '仅1H多头清算占优，4H、12H、24H空头清算占优，近期窗口出现分歧。'],
-  ['多多空空', '近1H、4H空头清算占优，12H、24H多头清算占优，近期窗口与较宽窗口结构不同。'],
-  ['空空多多', '近1H、4H多头清算占优，12H、24H空头清算占优，近期窗口与较宽窗口结构不同。'],
-  ['多多多空', '1H、4H、12H空头清算占优，仅24H多头清算占优，较宽窗口与其余周期不同。'],
-  ['空空空多', '1H、4H、12H多头清算占优，仅24H空头清算占优，较宽窗口与其余周期不同。'],
-  ['多空多多', '仅4H多头清算占优，1H、12H、24H空头清算占优，其余三个周期一致。'],
-  ['空多空空', '仅4H空头清算占优，1H、12H、24H多头清算占优，其余三个周期一致。'],
-  ['多多空多', '仅12H多头清算占优，1H、4H、24H空头清算占优，其余三个周期一致。'],
-  ['空空多空', '仅12H空头清算占优，1H、4H、24H多头清算占优，其余三个周期一致。'],
-  ['多空空多', '1H、24H空头清算占优，4H、12H多头清算占优，两个中间窗口与其余周期不同。'],
-  ['空多多空', '1H、24H多头清算占优，4H、12H空头清算占优，两个中间窗口与其余周期不同。'],
-  ['多空多空', '1H、12H空头清算占优，4H、24H多头清算占优，周期间交错分歧，缺少一致的清算结构。'],
-  ['空多空多', '1H、12H多头清算占优，4H、24H空头清算占优，周期间交错分歧，缺少一致的清算结构。']
-];
-for (const [pattern, description] of cases) {
-  test(pattern, () => {
+function* combinations(prefix = '') {
+  if (prefix.length === 6) { yield prefix; return; }
+  for (const side of '多空') yield* combinations(prefix + side);
+}
+for (const pattern of combinations()) {
+  test('six-period state ' + pattern, () => {
     const result = analyze(fixture(pattern).reverse());
     assert.equal(result.complete, true);
     assert.equal(result.combination, pattern);
-    assert.equal(result.description, description);
     assert.deepEqual(result.periods.map(p => p.label), labels);
     result.periods.forEach((p, i) => {
+      assert.equal(p.marker, pattern[i]);
       assert.equal(p.state, pattern[i] === '多' ? 'short' : 'long');
+      assert.equal(p.card_class, pattern[i] === '多' ? 'liq-long-dominant' : 'liq-short-dominant');
       assert.equal(p.total, 300);
       assert.equal(p.long_share + p.short_share, 1);
+      if (new Set(pattern).size > 1) assert.ok(result.description.includes(labels[i]));
     });
-    assert.equal(result.interpretation, interpretations.find(item => item.combination === pattern).interpretation);
+    if (pattern.includes('多')) assert.match(result.interpretation, /空头清算占优，对应被迫买入（多）/);
+    if (pattern.includes('空')) assert.match(result.interpretation, /多头清算占优，对应被迫卖出（空）/);
+    assert.doesNotMatch(result.description + result.interpretation, /NaN|Infinity|趋势反转|止跌|偏强|偏弱/);
   });
 }
-test('all 16 combinations have one complete interpretation row', () => {
-  assert.equal(interpretations.length, 16);
-  assert.equal(new Set(interpretations.map(item => item.combination)).size, 16);
-  assert.deepEqual(interpretations.map(item => item.combination), [...itertools('多空', 4)]);
-  interpretations.forEach(item => {
-    assert.deepEqual(item.sides, [...item.combination]);
-    assert.match(item.interpretation, /[。；]/);
-  });
-  assert.match(interpretations.find(item => item.combination === '多多空空').interpretation, /偏多的短周期反转/);
+test('short windows distinguish agreement and disagreement across six periods', () => {
+  assert.match(analyze(fixture('多空多多多多')).description, /5M 与 15M 清算方向不同/);
+  assert.match(analyze(fixture('多多空空空空')).description, /5M、15M 清算方向一致，与 1H 窗口不同/);
+  assert.match(analyze(fixture('多多多空空空')).description, /5M、15M、1H 清算方向一致，较长窗口存在分歧/);
+  assert.equal(analyze(fixture('多多多多多多')).description, '六个周期均为空头清算占优。六周期清算方向一致。');
+  assert.equal(analyze(fixture('空空空空空空')).description, '六个周期均为多头清算占优。六周期清算方向一致。');
 });
-test('liquidated positions map to the opposite market direction and color', () => {
-  const result = analyze(fixture('多空多空'));
-  assert.deepEqual(result.periods.map(p => p.marker), ['多', '空', '多', '空']);
-  assert.deepEqual(result.periods.map(p => p.state), ['short', 'long', 'short', 'long']);
-  assert.deepEqual(result.periods.map(p => p.card_class), ['liq-long-dominant', 'liq-short-dominant', 'liq-long-dominant', 'liq-short-dominant']);
+test('missing 5M or 15M cannot fall back to the old four-period state', () => {
+  for (const index of [0, 1]) {
+    const rows = fixture('多多多多多多');
+    rows.splice(index, 1);
+    const result = analyze(rows);
+    assert.equal(result.complete, false);
+    assert.equal(result.periods[index].state, 'missing');
+  }
 });
-
-function* itertools(characters, length, prefix = '') {
-  if (prefix.length === length) { yield prefix; return; }
-  for (const character of characters) yield* itertools(characters, length, prefix + character);
-}
 test('equal, empty and missing windows do not produce a directional combination', () => {
   const result = analyze([
-    {label:'1H', long_usd:100, short_usd:100, count:2},
-    {label:'4H', long_usd:0, short_usd:0, count:0},
-    {label:'12H', long_usd:2, short_usd:1, count:2}
+    {label:'5M', long_usd:100, short_usd:100, count:2},
+    {label:'15M', long_usd:0, short_usd:0, count:0},
+    {label:'1H', long_usd:2, short_usd:1, count:2}
   ]);
-  assert.deepEqual(result.periods.map(p => p.state), ['balanced', 'empty', 'long', 'missing']);
+  assert.deepEqual(result.periods.map(p => p.state), ['balanced', 'empty', 'long', 'missing', 'missing', 'missing']);
+  assert.equal(result.interpretation, result.description);
+  assert.deepEqual(result.periods.map(p => p.marker), ['均衡', '暂无', '空', '缺失', '缺失', '缺失']);
   assert.equal(result.complete, false);
   assert.equal(result.combination, '尚未形成完整多空组合');
   assert.equal(result.periods[0].long_share, .5);
@@ -74,7 +61,7 @@ test('equal, empty and missing windows do not produce a directional combination'
   assert.match(result.description, /24H 数据缺失/);
 });
 test('single-sided amounts remain valid and small differences retain exact comparison', () => {
-  const rows = fixture('多多多多');
+  const rows = fixture('多多多多多多');
   rows[0].short_usd = 0;
   rows[1].long_usd = rows[1].short_usd + .00001;
   const result = analyze(rows);
@@ -84,11 +71,11 @@ test('single-sided amounts remain valid and small differences retain exact compa
 });
 test('invalid, negative, overflowing and duplicate amounts are missing, never directional', () => {
   for (const value of [undefined, null, '100', NaN, Infinity, -1]) {
-    const rows = fixture('多多多多');
+    const rows = fixture('多多多多多多');
     rows[0].long_usd = value;
     assert.equal(analyze(rows).periods[0].state, 'missing');
   }
-  const rows = fixture('多多多多');
+  const rows = fixture('多多多多多多');
   rows[0].long_usd = rows[0].short_usd = Number.MAX_VALUE;
   assert.equal(analyze(rows).periods[0].state, 'missing');
   assert.equal(analyze([...rows, rows[0]]).periods[0].state, 'missing');

@@ -19,7 +19,7 @@
   let liqAnalysisAnchor = '';
   let historyCursor = '', historyRows = [], historyNext = '', historyAnchor = '', frozenBook = null, historyKind = 'events';
   $(page + '-page').hidden = false;
-  $('page-subtitle').textContent = ({liquidations:'默认 ETHUSDT · 四周期清算结构与逐笔爆仓历史', 'hedge-wall':'盘口挂单墙 · 实时分布与历史记录', 'market-info':'永续市场数据与期权 Gamma/GEX'})[page];
+  $('page-subtitle').textContent = ({liquidations:'默认 ETHUSDT · 六周期清算结构与逐笔爆仓历史', 'hedge-wall':'盘口挂单墙 · 实时分布与历史记录', 'market-info':'永续市场数据与期权 Gamma/GEX'})[page];
   if (page === 'liquidations') $('symbol').hidden = true;
   async function get(path, params = {}) {
     const response = await fetch(base + 'api/v1/' + path + '?' + new URLSearchParams(params), {cache:'no-store', credentials:'same-origin'});
@@ -96,11 +96,11 @@
     $('liq-combination').textContent = analysis.combination;
     $('liq-period-states').innerHTML = analysis.periods.map(p => `<span class="liq-state-chip ${p.card_class}">${p.label} ${p.state_label}</span>`).join('');
     $('liq-analysis-description').textContent = analysis.description;
-    $('liq-state-rows').innerHTML = window.LiquidationAnalysis.interpretations.map(item => {
-      const current = analysis.complete && item.combination === analysis.combination;
-      const cells = item.sides.map(side => `<td><span class="liq-table-side ${side === '多' ? 'long' : 'short'}">${side}</span></td>`).join('');
-      return `<tr${current ? ' class="current" aria-current="true"' : ''}><td><span class="liq-table-combination">${item.combination}</span>${current ? '<span class="liq-current-label">当前</span>' : ''}</td>${cells}<td class="liq-interpretation">${escape(item.interpretation)}</td></tr>`;
+    const cells = analysis.periods.map(p => {
+      const color = p.state === 'short' ? 'long' : p.state === 'long' ? 'short' : '';
+      return `<td><span class="liq-table-side ${color}">${escape(p.marker)}</span></td>`;
     }).join('');
+    $('liq-state-rows').innerHTML = `<tr class="current" aria-current="true"><td><span class="liq-table-combination">${escape(analysis.combination)}</span><span class="liq-current-label">当前</span></td>${cells}<td class="liq-interpretation">${escape(analysis.interpretation || analysis.description)}</td></tr>`;
     liqAnalysisAnchor = anchor;
     const health = packet?.sources?.binance_liquidations;
     $('liq-analysis-status').classList.toggle('warning', Boolean(health && !health.connected));

@@ -21,7 +21,7 @@ production = "--production" in sys.argv
 root = pathlib.Path(__file__).resolve().parents[2]
 artifacts = root / "build"
 artifacts.mkdir(exist_ok=True)
-labels = ["1H", "4H", "12H", "24H"]
+labels = ["5M", "15M", "1H", "4H", "12H", "24H"]
 records = []
 errors = []
 
@@ -49,7 +49,7 @@ with sync_playwright() as playwright:
       };
     """)
     page = context.new_page()
-    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("pageerror", lambda error: errors.append(error.stack))
     if production:
         entries = json.loads((root / "pem" / "password.json").read_text(encoding="utf-8"))
         entry = next(e for e in entries if e["username"] == "pcdog")
@@ -60,7 +60,7 @@ with sync_playwright() as playwright:
         expect(page).to_have_url(base + "/bubbles")
 
     baseline = context.request.get(base + "/api/v1/liquidations?symbol=ALL&limit=1").json()
-    state = {"pattern": "空空多多", "failure": False, "detail_failure": False, "rows_tag": "initial", "custom": None}
+    state = {"pattern": "空空多多多多", "failure": False, "detail_failure": False, "rows_tag": "initial", "custom": None}
 
     def fixture(route):
         query = {k: v[0] for k, v in parse_qs(urlsplit(route.request.url).query, keep_blank_values=True).items()}
@@ -92,7 +92,7 @@ with sync_playwright() as playwright:
 
     def loaded():
         expect(page.locator("#liq-analysis-status")).to_contain_text("统计截止", timeout=30000)
-        expect(page.locator("#liq-periods .info-metric")).to_have_count(4)
+        expect(page.locator("#liq-periods .info-metric")).to_have_count(6)
 
     def refresh():
         page.locator("#refresh").click()
@@ -109,38 +109,42 @@ with sync_playwright() as playwright:
 
     page.goto(base + "/liquidations", wait_until="networkidle")
     loaded()
-    expect(page.locator("#liq-analysis-heading")).to_have_text("ETHUSDT 四周期清算结构")
-    expect(page.locator("#liq-state-table-heading")).to_have_text("四周期 16 种状态行情解析")
-    expect(page.locator("#liq-state-rows tr")).to_have_count(16)
+    expect(page.locator("#liq-analysis-heading")).to_have_text("ETHUSDT 六周期清算结构")
+    expect(page.locator("#liq-state-table-heading")).to_have_text("六周期当前状态行情解析")
+    expect(page.locator("#liq-state-rows tr")).to_have_count(1)
     assert page.locator("#liq-periods .label").all_text_contents() == ["ETHUSDT · " + label + " 清算金额 USD" for label in labels]
+    expect(page.locator(".liq-state-table thead th")).to_have_text(["组合", *labels, "行情解析"])
     _, initial_detail = check_queries()
     assert initial_detail["symbol"] == "ETHUSDT"
 
     if not production:
-        for parts in itertools.product("多空", repeat=4):
+        for parts in itertools.product("多空", repeat=6):
             pattern = "".join(parts)
             state["pattern"] = pattern
             refresh()
+            expect(page.locator("#liq-state-rows tr")).to_have_count(1)
+            expect(page.locator("#liq-state-rows .liq-table-side")).to_have_text(list(pattern))
             expect(page.locator("#liq-combination")).to_have_text(pattern)
             expect(page.locator("#liq-state-rows tr.current .liq-table-combination")).to_have_text(pattern)
             expect(page.locator("#liq-state-rows tr.current .liq-current-label")).to_have_text("当前")
             assert page.locator("#liq-periods .liq-period-state").all_text_contents() == ["空头清算占优" if side == "多" else "多头清算占优" for side in pattern]
             assert "NaN" not in page.locator("#liq-periods").inner_text()
         state["custom"] = [
-            {"label": "1H", "long_usd": 100, "short_usd": 100, "count": 2},
-            {"label": "4H", "long_usd": 0, "short_usd": 0, "count": 0},
-            {"label": "12H", "long_usd": 100, "short_usd": 200, "count": 3},
+            {"label": "5M", "long_usd": 100, "short_usd": 100, "count": 2},
+            {"label": "15M", "long_usd": 0, "short_usd": 0, "count": 0},
+            {"label": "1H", "long_usd": 100, "short_usd": 200, "count": 3},
         ]
         refresh()
         expect(page.locator("#liq-combination")).to_have_text("尚未形成完整多空组合")
-        expect(page.locator("#liq-state-rows tr.current")).to_have_count(0)
-        assert page.locator("#liq-periods .liq-period-state").all_text_contents() == ["多空均衡", "暂无清算", "空头清算占优", "数据缺失"]
+        expect(page.locator("#liq-state-rows tr.current")).to_have_count(1)
+        expect(page.locator("#liq-state-rows .liq-table-side")).to_have_text(["均衡", "暂无", "多", "缺失", "缺失", "缺失"])
+        assert page.locator("#liq-periods .liq-period-state").all_text_contents() == ["多空均衡", "暂无清算", "空头清算占优", "数据缺失", "数据缺失", "数据缺失"]
         assert "50.0%" in page.locator("#liq-periods .info-metric").nth(0).inner_text()
         assert "多头占比 — / 空头占比 —" in page.locator("#liq-periods .info-metric").nth(1).inner_text()
         state["custom"] = None
-        state["pattern"] = "空空多多"
+        state["pattern"] = "空空多多多多"
         refresh()
-        expect(page.locator("#liq-analysis-description")).to_have_text("近1H、4H多头清算占优，12H、24H空头清算占优，近期窗口与较宽窗口结构不同。")
+        expect(page.locator("#liq-analysis-description")).to_have_text("1H、4H、12H、24H空头清算占优；5M、15M多头清算占优。5M、15M 清算方向一致，与 1H 窗口不同。")
 
     page.locator("#liq-symbol-search").fill("BTCUSDT")
     page.locator('[data-symbol="BTCUSDT"]').click()
@@ -155,7 +159,7 @@ with sync_playwright() as playwright:
     summary, detail = check_queries()
     assert {k: detail[k] for k in ["symbol", "side", "field", "minimum"]} == {"symbol": "BTCUSDT", "side": "short", "field": "quantity", "minimum": "500"}
     if not production:
-        expect(page.locator("#liq-combination")).to_have_text("空空多多")
+        expect(page.locator("#liq-combination")).to_have_text("空空多多多多")
         expect(page.locator("#liq-rows")).to_contain_text("BTCUSDT")
         anchor = summary["to"]
         page.locator("#liq-next").click()
@@ -173,16 +177,16 @@ with sync_playwright() as playwright:
         expect(page.locator("#liq-analysis-status")).to_contain_text("保留上次成功数据")
         expect(page.locator("#liq-page")).to_contain_text("第 1 页")
         expect(page.locator("#page-error")).to_be_hidden()
-        expect(page.locator("#liq-combination")).to_have_text("空空多多")
+        expect(page.locator("#liq-combination")).to_have_text("空空多多多多")
         expect(page.locator("#liq-rows")).to_contain_text("321")
         state["failure"] = False
         state["detail_failure"] = True
-        state["pattern"] = "多多多多"
+        state["pattern"] = "多多多多多多"
         refresh()
-        expect(page.locator("#liq-combination")).to_have_text("多多多多")
+        expect(page.locator("#liq-combination")).to_have_text("多多多多多多")
         expect(page.locator("#page-error")).to_contain_text("清算明细更新失败")
         state["detail_failure"] = False
-        state["pattern"] = "空空多多"
+        state["pattern"] = "空空多多多多"
         refresh()
 
     # Restore unfiltered details and explicitly exercise the actual 5-second callback.
@@ -223,7 +227,7 @@ with sync_playwright() as playwright:
             page.screenshot(path=str(artifacts / ("eth-analysis-" + ("production-" if production else "fixture-") + theme + "-" + str(width) + ".png")), full_page=True)
             colors = page.locator("#liq-periods .info-metric").evaluate_all("cards => cards.map(card => getComputedStyle(card).backgroundColor)")
             if not production:
-                expected = ["rgb(54, 26, 35)"] * 2 + ["rgb(12, 48, 33)"] * 2 if theme == "dark" else ["rgb(252, 231, 236)"] * 2 + ["rgb(228, 245, 233)"] * 2
+                expected = ["rgb(54, 26, 35)"] * 2 + ["rgb(12, 48, 33)"] * 4 if theme == "dark" else ["rgb(252, 231, 236)"] * 2 + ["rgb(228, 245, 233)"] * 4
                 assert colors == expected, (theme, colors)
     assert not errors, errors
     if not production:
@@ -232,10 +236,10 @@ with sync_playwright() as playwright:
         first_failure.route("**/api/v1/liquidations?**", fixture)
         first_failure.goto(base + "/liquidations", wait_until="networkidle")
         expect(first_failure.locator("#liq-analysis-status")).to_contain_text("等待有效数据")
-        expect(first_failure.locator("#liq-periods .info-metric")).to_have_count(4)
+        expect(first_failure.locator("#liq-periods .info-metric")).to_have_count(6)
         expect(first_failure.locator("#liq-combination")).to_have_text("尚未形成完整多空组合")
         expect(first_failure.locator("#liq-rows")).to_contain_text("321")
         first_failure.close()
-    print(json.dumps({"production": production, "all_16_combinations": not production, "fixed_eth_scope": True, "independent_filters": True, "paired_cutoff": True, "five_second_refresh": True, "failure_and_recovery": not production, "themes": ["dark", "light"], "widths": [1440, 390], "javascript_errors": errors, "live_periods": actual if production else None}, ensure_ascii=False))
+    print(json.dumps({"production": production, "all_64_combinations": not production, "current_row_only": True, "fixed_eth_scope": True, "independent_filters": True, "paired_cutoff": True, "five_second_refresh": True, "failure_and_recovery": not production, "themes": ["dark", "light"], "widths": [1440, 390], "javascript_errors": errors, "live_periods": actual if production else None}, ensure_ascii=False))
     context.close()
     browser.close()

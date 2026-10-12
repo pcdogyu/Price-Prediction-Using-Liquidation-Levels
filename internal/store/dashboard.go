@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -137,15 +136,22 @@ func (s *Store) LiquidationHistory(ctx context.Context, f domain.LiquidationFilt
 	if err != nil {
 		return out, err
 	}
-	for _, h := range []int{1, 4, 12, 24} {
+	for _, window := range []struct {
+		label    string
+		duration time.Duration
+	}{
+		{"5M", 5 * time.Minute}, {"15M", 15 * time.Minute},
+		{"1H", time.Hour}, {"4H", 4 * time.Hour},
+		{"12H", 12 * time.Hour}, {"24H", 24 * time.Hour},
+	} {
 		sf := f
 		sf.Cursor = ""
-		cut := f.To.Add(-time.Duration(h) * time.Hour)
+		cut := f.To.Add(-window.duration)
 		if sf.From.Before(cut) {
 			sf.From = cut
 		}
 		w, a := liquidationWhere(sf)
-		p := domain.LiquidationPeriod{Label: fmt.Sprintf("%dH", h)}
+		p := domain.LiquidationPeriod{Label: window.label}
 		err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN position_side='long' THEN notional_usd ELSE 0 END),0),COALESCE(SUM(CASE WHEN position_side='short' THEN notional_usd ELSE 0 END),0),COUNT(*) FROM liquidations WHERE `+w, a...).Scan(&p.LongUSD, &p.ShortUSD, &p.Count)
 		if err != nil {
 			return out, err
