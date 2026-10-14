@@ -96,7 +96,10 @@ func TestBinanceKlinesGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if span := until.UnixMilli() - start; span != int64(1000*4*time.Hour/time.Millisecond) {
+	// The cursor is floored to the interval, so the window is measured from that
+	// boundary rather than from the submitted timestamp.
+	end := until.Truncate(4 * time.Hour).UnixMilli()
+	if span := end - start; span != int64(1000*4*time.Hour/time.Millisecond) {
 		t.Fatalf("the window must hold exactly limit buckets, got %d ms", span)
 	}
 }
