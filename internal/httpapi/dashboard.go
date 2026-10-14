@@ -50,7 +50,7 @@ var themeCSS []byte
 
 func isDashboardPage(path string) bool {
 	switch path {
-	case "/", "/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options":
+	case "/", "/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/alerts":
 		return true
 	}
 	return false
@@ -58,7 +58,7 @@ func isDashboardPage(path string) bool {
 func (s *Server) renderPage(body []byte, page, title string) []byte {
 	base := html.EscapeString(s.auth.BasePath())
 	nav := `<nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `bubbles">清算墙雷达</a><div class="app-links">`
-	for _, item := range []struct{ path, title string }{{"bubbles", "气泡图"}, {"liquidations", "清算历史"}, {"hedge-wall", "对冲墙"}, {"market-info", "市场信息"}, {"options", "期权"}} {
+	for _, item := range []struct{ path, title string }{{"bubbles", "气泡图"}, {"liquidations", "清算历史"}, {"hedge-wall", "对冲墙"}, {"market-info", "市场信息"}, {"options", "期权"}, {"alerts", "报警"}} {
 		active := ""
 		if item.path == page {
 			active = ` aria-current="page" class="selected"`

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="app-base" content="{{BASE}}"><script src="{{BASE}}assets/theme.js"></script><title>报警 · 清算墙雷达</title><link rel="stylesheet" href="{{BASE}}assets/pages.css"><link rel="stylesheet" href="{{BASE}}assets/theme.css"><link rel="stylesheet" href="{{BASE}}assets/alerts.css"><script src="{{BASE}}assets/shared.js" defer></script><script src="{{BASE}}assets/alerts.js" defer></script></head>
+<body data-page="alerts">{{NAV}}
+<main class="workspace">
+  <header class="page-heading"><div><span class="kicker">BINANCE USDⓈ-M · LIQUIDATION ALERTS</span><h1>报警</h1><p>成交额前 50 币对 · 3 分钟爆仓预警 · 激进 / 稳健下单信号</p></div></header>
+  <div id="alerts-error" class="error-box" role="alert" hidden></div>
+  <section class="metric-grid six" id="alerts-metrics" aria-label="报警概要"></section>
+  <section class="surface">
+    <div class="section-head"><h2>实时监控（3 分钟滑动窗口）</h2><span id="alerts-monitor-status" class="muted" role="status">等待数据</span></div>
+    <div class="table-scroll alerts-scroll"><table class="alerts-monitor-table"><thead><tr><th>排名</th><th>币对</th><th>24H 成交额</th><th>阈值</th><th>多单爆仓</th><th>空单爆仓</th><th>状态</th><th>安静截止（北京时间）</th></tr></thead><tbody id="alerts-monitor-rows"><tr><td colspan="8">等待监控数据</td></tr></tbody></table></div>
+    <p class="muted alerts-note" id="alerts-monitor-note"></p>
+  </section>
+  <section class="surface">
+    <div class="section-head"><h2>最新信号</h2><span id="alerts-signal-status" class="muted" role="status">等待数据</span></div>
+    <div class="table-scroll"><table class="alerts-signal-table"><thead><tr><th>时间（北京时间）</th><th>币对</th><th>类型</th><th>下单方向</th><th>预警爆仓额</th><th>安静 / 反向确认</th><th>参考价</th><th>通知</th></tr></thead><tbody id="alerts-signal-rows"><tr><td colspan="8">尚无信号</td></tr></tbody></table></div>
+  </section>
+  <section class="surface">
+    <div class="section-head"><h2>信号历史</h2><span id="alerts-history-status" class="muted" role="status">等待数据</span></div>
+    <form id="alerts-filters" class="filter-bar">
+      <label for="alerts-symbol">币对<input id="alerts-symbol" name="symbol" type="text" placeholder="全部" autocomplete="off" maxlength="32"></label>
+      <label for="alerts-kind">类型<select id="alerts-kind" name="kind"><option value="all">全部</option><option value="aggressive">激进</option><option value="steady">稳健</option></select></label>
+      <label for="alerts-limit">每页<select id="alerts-limit" name="limit"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
+      <button id="alerts-apply" type="submit">查询</button>
+      <button id="alerts-more" type="button" disabled>加载更多</button>
+      <span id="alerts-count" class="muted"></span>
+    </form>
+    <div class="table-scroll"><table class="alerts-signal-table"><thead><tr><th>时间（北京时间）</th><th>币对</th><th>类型</th><th>下单方向</th><th>预警爆仓额</th><th>安静 / 反向确认</th><th>参考价</th><th>通知</th></tr></thead><tbody id="alerts-history-rows"><tr><td colspan="8">尚无历史信号</td></tr></tbody></table></div>
+  </section>
+
+  <section class="surface">
+    <div class="section-head"><h2>预警历史</h2><span id="alerts-alert-status" class="muted" role="status">等待数据</span></div>
+    <div class="table-scroll"><table class="alerts-alert-table"><thead><tr><th>触发时间（北京时间）</th><th>币对</th><th>爆仓方向</th><th>下单方向</th><th>窗口爆仓额</th><th>阈值</th><th>笔数</th><th>顺延</th><th>状态</th><th>安静截止（北京时间）</th></tr></thead><tbody id="alerts-alert-rows"><tr><td colspan="10">尚无预警记录</td></tr></tbody></table></div>
+    <p class="muted alerts-note" id="alerts-alert-note"></p>
+  </section>
+  <section class="surface">
+    <div class="section-head"><h2>Telegram 通知</h2><span id="alerts-notify-status" class="muted" role="status">读取设置</span></div>
+    <form id="alerts-settings" class="alerts-settings">
+      <label class="alerts-check"><input id="alerts-enabled" type="checkbox"><span>启用 Telegram 推送</span></label>
+      <label class="alerts-check"><input id="alerts-notify-alerts" type="checkbox"><span>爆仓预警</span></label>
+      <label class="alerts-check"><input id="alerts-notify-aggressive" type="checkbox"><span>激进信号</span></label>
+      <label class="alerts-check"><input id="alerts-notify-steady" type="checkbox"><span>稳健信号</span></label>
+      <label for="alerts-token">Bot Token<input id="alerts-token" type="password" placeholder="留空保持现有 Token" autocomplete="new-password" maxlength="128"></label>
+      <label for="alerts-chat">Chat ID<input id="alerts-chat" type="text" placeholder="@channel 或 -1001234567890" autocomplete="off" maxlength="64"></label>
+      <div class="alerts-settings-actions"><button id="alerts-save" type="submit">保存设置</button><button id="alerts-test" type="button">发送测试消息</button></div>
+      <p id="alerts-token-state" class="muted"></p>
+    </form>
+    <p class="muted alerts-note">Token 只写入服务器数据库，页面与接口只显示掩码；留空保存会保留现有 Token。也可用环境变量 <code>APP_TELEGRAM_BOT_TOKEN</code> 与 <code>APP_TELEGRAM_CHAT_ID</code> 提供默认值。</p>
+  </section>
+  <section class="surface options-notes"><h2>策略与数据口径</h2><p id="alerts-method" class="muted"></p><p class="muted">规则：某侧爆仓额在窗口内超过阈值 → 预警；预警后该侧持续爆仓只顺延安静期，不下单；安静期满 → 按预警方向发出<b>激进</b>信号；随后在确认窗口内出现反向爆仓 → 同一方向发出<b>稳健</b>信号。多单被爆仓按做多处理，空单被爆仓按做空处理，两个方向对称。</p><p class="muted">默认阈值：BTCUSDT $300,000 · ETHUSDT $250,000 · 其他币对 $300,000；安静期 10 分钟，确认窗口 30 分钟，均可用环境变量调整。预警与信号在 SQLite 保留 180 天，便于后续回测与参数调优。</p><p class="muted">来源：<a href="https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/All-Market-Liquidation-Order-Streams" target="_blank" rel="noopener">Binance 全市场强平流</a> · <a href="https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/24hr-Ticker-Price-Change-Statistics" target="_blank" rel="noopener">24 小时成交额排行</a> · <a href="https://core.telegram.org/bots/api#sendmessage" target="_blank" rel="noopener">Telegram sendMessage</a></p></section>
+  <footer class="page-footer">用于市场观察与研究 · 信号不构成投资建议，爆仓金额为公开采样值</footer>
+</main></body></html>

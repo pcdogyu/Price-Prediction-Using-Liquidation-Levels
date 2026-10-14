@@ -15,6 +15,7 @@
 - 32 个不依赖未来数据的特征（包含 VAL/VAH 距离、价值区宽度及缺失标志）、60 分钟三分类标签、Go/Gonum 多项逻辑回归、L2 正则和温度校准。
 - 4 组扩展窗口回测、60 分钟隔离区、类别先验基线、Log Loss、Brier Score 和 ECE。
 - JSON API、SSE、Prometheus 文本指标、健康检查和内嵌网页仪表盘。
+- 报警页：成交额前 50 币对的 3 分钟爆仓窗口监控、激进/稳健下单信号、180 天预警与信号留存及 Telegram 推送。
 
 历史交易所 API 不提供完整的逐笔强平回放，因此回测中的真实强平特征为缺失/零值；实时强平只从服务启动后积累。成交量价值区使用 Binance 官方 USD-M `aggTrades` 日归档重建。连续30天归档完成并重新训练前，预测严格返回 `data_insufficient`。
 
@@ -33,7 +34,7 @@ go run ./cmd/server
 
 ## API
 
-登录后默认进入“气泡图”，导航提供“清算历史”“对冲墙”“市场信息”“期权”。顶部“程序日志”左侧可切换浅色和深色主题，首次默认深色，选择保存在当前浏览器并在刷新、切换页面后恢复。
+登录后默认进入“气泡图”，导航提供“清算历史”“对冲墙”“市场信息”“期权”“报警”。顶部“程序日志”左侧可切换浅色和深色主题，首次默认深色，选择保存在当前浏览器并在刷新、切换页面后恢复。
 
 清算历史保存 Binance 全部 USDⓈ-M 币对的公开采样事件，筛选栏支持搜索并选择单个币对，默认全部币对；支持方向、数量和金额过滤及稳定游标分页。页面不提供时间输入，API 的时间参数仍兼容历史查询与内部分页；原气泡图仍仅显示 BTC/ETH。
 
@@ -47,6 +48,8 @@ go run ./cmd/server
 
 市场信息的 Gamma/GEX 柱状图高度为 440px（在 338px 基础上再增加约 30%），显示自适应密度的行权价刻度、等间隔净 GEX USD 刻度及横纵网格线，并显示 Gamma Flip 价格卡片与虚线。Flip 使用 Binance `markIV`、利率、OI、合约单位和剩余到期时间，固定 IV 按 Black–Scholes 重估标的现价 50%～150% 范围内的净 GEX；多处零交叉时选取距离现价最近的一处。它与每个行权价柱子的净 GEX 变号不同。API 增加 `gamma_flip`、`gamma_flips`、`flip_state`、搜索范围及 IV 覆盖字段；无符号翻转或数据不足时价格为 `null`，不显示零价格。Flip 和期权链共用原来的 5 分钟刷新与持久化路径。
 
+“报警”页监控 Binance USDT 本位永续成交额前 50 个币对（BTCUSDT、ETHUSDT 始终保留），每 5 秒刷新 3 分钟滑动窗口。某侧爆仓金额超过该币对阈值（BTC 30 万、ETH 25 万、其他 30 万 USD）即记录爆仓预警；预警后该侧继续爆仓只按最新事件顺延安静截止（10 分钟），不重复预警也不下单；安静期满仍在窗口内爆仓时按预警方向发出激进信号（多单被爆仓按做多、空单被爆仓按做空）；此后 30 分钟确认窗口内出现达到最小金额的反向爆仓时，同一方向发出稳健信号，窗口内反向爆仓不足则只保留激进信号。反向确认与顺延的最小爆仓额默认 0（任意金额都计入），可用 `APP_ALERT_OPPOSITE_MIN_USD`、`APP_ALERT_FOLLOW_UP_MIN_USD` 提高门槛，用于后续调参。预警与信号均落库并保留 180 天，配合 `GET /api/v1/alerts/history` 与 `GET /api/v1/alerts/signals` 可导出历史做回测和阈值调优；程序重启会按窗口回读近 3 小时事件与进行中的周期，重启回放不重复推送。Telegram 通知在页面填写 Bot Token 与 Chat ID 后写入 SQLite（Token 只回显掩码，留空保存保留原值），也可用 `APP_TELEGRAM_BOT_TOKEN`、`APP_TELEGRAM_CHAT_ID` 提供默认值；消息含币对、方向、窗口爆仓金额、参考价与北京时间，推送走非阻塞队列并带同类冷却，队列积压时丢弃而不影响清算采集。
+
 新增接口（均要求有效登录会话）：
 
 ```text
@@ -55,6 +58,11 @@ GET /api/v1/hedge-wall?symbol=ETHUSDT&half_life=120&window=5
 GET /api/v1/hedge-wall/history?symbol=ETHUSDT&kind=events&limit=50&cursor=<cursor>&from=<RFC3339>&to=<RFC3339>
 GET /api/v1/market-info?symbol=ETHUSDT&range=1h
 GET /api/v1/options?hours=24
+GET /api/v1/alerts
+GET /api/v1/alerts/history?symbol=BTCUSDT&side=long&limit=50&cursor=<cursor>
+GET /api/v1/alerts/signals?symbol=BTCUSDT&kind=steady&limit=50&cursor=<cursor>
+GET|POST /api/v1/alerts/settings
+POST /api/v1/alerts/settings/test
 ```
 
 `field` 支持 `notional_usd` 或 `quantity`；`side` 指被清算仓位的 `long`/`short`，默认 `all`；`kind` 支持 `events` 或 `snapshots`。清算历史和气泡图均默认不设置金额门槛。历史自服务接收事件时开始积累，公开强平流无法回填部署前的完整逐笔历史。所有时间按 UTC 存储，页面使用北京时间显示。

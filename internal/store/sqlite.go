@@ -69,7 +69,10 @@ CREATE TABLE IF NOT EXISTS auth_users(username TEXT PRIMARY KEY,password_hash TE
 	if err != nil {
 		return err
 	}
-	return s.migrateDashboard(ctx)
+	if err := s.migrateDashboard(ctx); err != nil {
+		return err
+	}
+	return s.migrateAlerts(ctx)
 }
 
 func (s *Store) LoadAuthSessions(ctx context.Context, now time.Time) (map[string]time.Time, error) {

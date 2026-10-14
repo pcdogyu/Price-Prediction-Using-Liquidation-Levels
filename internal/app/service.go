@@ -21,6 +21,7 @@ import (
 
 type Service struct {
 	dashboard          *dashboardState
+	alerts             *alertRuntime
 	cfg                config.Config
 	store              *store.Store
 	clients            []exchange.Client
@@ -45,6 +46,7 @@ type Service struct {
 func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, volumeLiveReady: make(chan struct{})}
 	s.dashboard = newDashboardState()
+	s.alerts = s.newAlertRuntime()
 	if a, e := ml.Load(cfg.ModelPath); e == nil {
 		if a.DataSource == domain.DataSourceBinanceUSDM && strings.HasPrefix(a.Version, ml.ModelVersionPrefix) && sameStrings(a.FeatureNames, engine.FeatureNames) {
 			s.model = a
@@ -67,6 +69,7 @@ func (s *Service) Start(ctx context.Context) {
 	go s.retentionLoop(ctx)
 	s.startVolumeProfiles(ctx)
 	go s.volumeArchiveLoop(ctx)
+	go s.startAlerts(ctx)
 }
 
 func (s *Service) predictionLoop(ctx context.Context) {
@@ -456,6 +459,11 @@ func (s *Service) Subscribe() (chan domain.Prediction, func()) {
 func (s *Service) RecordLiquidation(ctx context.Context, event domain.LiquidationEvent) error {
 	if err := s.store.InsertLiquidation(ctx, event); err != nil {
 		return err
+	}
+	// The alert engine only tracks the top volume watch list, so this stays cheap
+	// for every event the all-symbol liquidation stream delivers.
+	if s.alerts != nil {
+		s.alerts.observe(ctx, event)
 	}
 	s.mu.Lock()
 	for ch := range s.liquidationSubs {

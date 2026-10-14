@@ -54,6 +54,7 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", getOnly(s.index))
 	s.registerDashboard(mux)
+	s.registerAlerts(mux)
 	mux.HandleFunc("/assets/dashboard.js", getOnly(s.dashboardScript))
 	mux.HandleFunc("/auth/login", postOnly(s.login))
 	mux.HandleFunc("/auth/logout", postOnly(s.logout))

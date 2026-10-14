@@ -1,0 +1,265 @@
+package alert
+
+import (
+	"testing"
+	"time"
+
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+)
+
+var testStart = time.Date(2026, 10, 14, 3, 0, 0, 0, time.UTC)
+
+// testEvent builds a liquidation event with an explicit time so every transition is
+// reproducible without a wall clock.
+func testEvent(symbol, side string, at time.Time, usd float64) domain.LiquidationEvent {
+	return domain.LiquidationEvent{ID: symbol + "-" + side + "-" + at.Format("150405"), Exchange: "binance", Symbol: symbol, PositionSide: side, EventTime: at, Price: 100, Quantity: usd / 100, NotionalUSD: usd}
+}
+
+func testEngine(t *testing.T, cfg Config, symbols ...string) *Engine {
+	t.Helper()
+	engine := New(cfg)
+	entries := make([]WatchEntry, 0, len(symbols))
+	for i, symbol := range symbols {
+		entries = append(entries, WatchEntry{Symbol: symbol, Rank: i + 1, QuoteVolumeUSD: 1e9 - float64(i)})
+	}
+	engine.Watch(entries)
+	return engine
+}
+
+func kinds(signals []domain.TradeSignal) []string {
+	out := make([]string, 0, len(signals))
+	for _, signal := range signals {
+		out = append(out, signal.Kind)
+	}
+	return out
+}
+
+// TestBelowThresholdRaisesNothing covers rule 1's negative case: totals inside the
+// window that stay under the threshold must not create an alert.
+func TestBelowThresholdRaisesNothing(t *testing.T) {
+	engine := testEngine(t, Defaults(), "BTCUSDT")
+	res := engine.Observe(testEvent("BTCUSDT", "long", testStart, 200000))
+	if len(res.Alerts) != 0 || len(res.Signals) != 0 {
+		t.Fatalf("expected no output below threshold, got alerts %d signals %v", len(res.Alerts), kinds(res.Signals))
+	}
+	res = engine.Observe(testEvent("BTCUSDT", "long", testStart.Add(30*time.Second), 50000))
+	if len(res.Alerts) != 0 {
+		t.Fatalf("250k below the 300k threshold must not alert, got %d", len(res.Alerts))
+	}
+	snapshot := engine.Snapshot(testStart.Add(time.Minute))
+	if len(snapshot) != 1 || snapshot[0].LongUSD != 250000 || snapshot[0].LongCount != 2 {
+		t.Fatalf("snapshot window wrong: %+v", snapshot)
+	}
+}
+
+// TestWarningAggressiveThenSteady walks the full happy path for the long side.
+func TestWarningAggressiveThenSteady(t *testing.T) {
+	engine := testEngine(t, Defaults(), "BTCUSDT")
+	res := engine.Observe(testEvent("BTCUSDT", "long", testStart, 400000))
+	if len(res.Alerts) != 1 {
+		t.Fatalf("expected one alert, got %d", len(res.Alerts))
+	}
+	warning := res.Alerts[0]
+	if warning.Symbol != "BTCUSDT" || warning.Side != "long" || warning.TradeSide != "long" || warning.Status != domain.AlertStateWatching {
+		t.Fatalf("unexpected warning: %+v", warning)
+	}
+	if !warning.QuietUntil.Equal(testStart.Add(10 * time.Minute)) {
+		t.Fatalf("quiet deadline should be trigger plus quiet period, got %v", warning.QuietUntil)
+	}
+	if got := engine.Tick(testStart.Add(9 * time.Minute)); len(got.Signals) != 0 {
+		t.Fatalf("signal fired before the quiet period elapsed: %v", kinds(got.Signals))
+	}
+	ticked := engine.Tick(testStart.Add(10 * time.Minute))
+	if len(ticked.Signals) != 1 || ticked.Signals[0].Kind != domain.SignalAggressive {
+		t.Fatalf("expected one aggressive signal, got %v", kinds(ticked.Signals))
+	}
+	aggressive := ticked.Signals[0]
+	if aggressive.Side != "long" || aggressive.LiquidationSide != "long" || aggressive.QuietElapsedSeconds != 600 || aggressive.AlertNotionalUSD != 400000 {
+		t.Fatalf("unexpected aggressive signal: %+v", aggressive)
+	}
+	if len(ticked.Alerts) != 1 || ticked.Alerts[0].Status != domain.AlertStateAggressive || ticked.Alerts[0].AggressiveID != aggressive.ID {
+		t.Fatalf("the warning row must follow the signal: %+v", ticked.Alerts)
+	}
+	confirmed := engine.Observe(testEvent("BTCUSDT", "short", testStart.Add(14*time.Minute), 120000))
+	if len(confirmed.Signals) != 1 || confirmed.Signals[0].Kind != domain.SignalSteady {
+		t.Fatalf("expected one steady signal, got %v", kinds(confirmed.Signals))
+	}
+	steady := confirmed.Signals[0]
+	if steady.Side != "long" || steady.LiquidationSide != "long" || steady.OppositeUSD != 120000 || steady.OppositeSeconds != 240 {
+		t.Fatalf("unexpected steady signal: %+v", steady)
+	}
+	if len(confirmed.Alerts) != 1 || confirmed.Alerts[0].Status != domain.AlertStateSteady {
+		t.Fatalf("warning must end as steady: %+v", confirmed.Alerts)
+	}
+	if later := engine.Tick(testStart.Add(90 * time.Minute)); !later.empty() {
+		t.Fatalf("a closed cycle produced output: alerts %d signals %v", len(later.Alerts), kinds(later.Signals))
+	}
+}
+
+// TestSameSideBurstExtendsQuiet covers rule 2: continuing liquidations on the warned
+// side delay the aggressive signal instead of producing one.
+func TestSameSideBurstExtendsQuiet(t *testing.T) {
+	engine := testEngine(t, Defaults(), "ETHUSDT")
+	res := engine.Observe(testEvent("ETHUSDT", "long", testStart, 300000))
+	if len(res.Alerts) != 1 {
+		t.Fatalf("expected an ETH warning above the 250k threshold: %+v", res.Alerts)
+	}
+	follow := engine.Observe(testEvent("ETHUSDT", "long", testStart.Add(4*time.Minute), 1000))
+	if len(follow.Signals) != 0 {
+		t.Fatalf("a continuing burst must not signal: %v", kinds(follow.Signals))
+	}
+	if len(follow.Alerts) != 1 || !follow.Alerts[0].QuietUntil.Equal(testStart.Add(14*time.Minute)) || follow.Alerts[0].FollowUps != 1 {
+		t.Fatalf("the quiet deadline must move with the follow-up: %+v", follow.Alerts)
+	}
+	if got := engine.Tick(testStart.Add(13 * time.Minute)); len(got.Signals) != 0 {
+		t.Fatalf("a signal fired during the extended quiet period")
+	}
+	got := engine.Tick(testStart.Add(14 * time.Minute))
+	if len(got.Signals) != 1 || got.Signals[0].Kind != domain.SignalAggressive || got.Signals[0].QuietElapsedSeconds != 600 || got.Signals[0].FollowUps != 1 {
+		t.Fatalf("expected one delayed aggressive signal: %+v", got.Signals)
+	}
+}
+
+// TestShortSideIsSymmetric checks that a short liquidation wave is traded short.
+func TestShortSideIsSymmetric(t *testing.T) {
+	engine := testEngine(t, Defaults(), "BTCUSDT")
+	res := engine.Observe(testEvent("BTCUSDT", "short", testStart, 400000))
+	if len(res.Alerts) != 1 || res.Alerts[0].Side != "short" || res.Alerts[0].TradeSide != "short" {
+		t.Fatalf("a short warning should trade short: %+v", res.Alerts)
+	}
+	ticked := engine.Tick(testStart.Add(10 * time.Minute))
+	if len(ticked.Signals) != 1 || ticked.Signals[0].Side != "short" {
+		t.Fatalf("expected a short aggressive signal: %+v", ticked.Signals)
+	}
+	confirmed := engine.Observe(testEvent("BTCUSDT", "long", testStart.Add(11*time.Minute), 90000))
+	if len(confirmed.Signals) != 1 || confirmed.Signals[0].Side != "short" || confirmed.Signals[0].Kind != domain.SignalSteady {
+		t.Fatalf("expected a short steady signal: %+v", confirmed.Signals)
+	}
+}
+
+// TestConfirmationWindowExpiry keeps only the aggressive signal when no opposite
+// liquidation arrives in time, and frees the symbol for the next warning.
+func TestConfirmationWindowExpiry(t *testing.T) {
+	engine := testEngine(t, Defaults(), "BTCUSDT")
+	if res := engine.Observe(testEvent("BTCUSDT", "long", testStart, 350000)); len(res.Alerts) != 1 {
+		t.Fatalf("expected a warning")
+	}
+	engine.Tick(testStart.Add(10 * time.Minute))
+	if got := engine.Tick(testStart.Add(39*time.Minute + 59*time.Second)); len(got.Alerts) != 0 {
+		t.Fatalf("the cycle expired too early: %+v", got.Alerts)
+	}
+	got := engine.Tick(testStart.Add(40 * time.Minute))
+	if len(got.Alerts) != 1 || got.Alerts[0].Status != domain.AlertStateExpired || len(got.Signals) != 0 {
+		t.Fatalf("expected an expired warning without a new signal: %+v %v", got.Alerts, kinds(got.Signals))
+	}
+	if res := engine.Observe(testEvent("BTCUSDT", "long", testStart.Add(41*time.Minute), 400000)); len(res.Alerts) != 1 || res.Alerts[0].Status != domain.AlertStateWatching {
+		t.Fatalf("a fresh breach after expiry must alert again: %+v", res.Alerts)
+	}
+}
+
+// TestMinimumsGateBothPhases checks FollowUpMinimumUSD and OppositeMinimumUSD, the two
+// settings that default to zero so any liquidation counts.
+func TestMinimumsGateBothPhases(t *testing.T) {
+	cfg := Defaults()
+	cfg.FollowUpMinimumUSD = 50000
+	cfg.OppositeMinimumUSD = 50000
+	engine := testEngine(t, cfg, "BTCUSDT")
+	if res := engine.Observe(testEvent("BTCUSDT", "long", testStart, 400000)); len(res.Alerts) != 1 {
+		t.Fatalf("expected a warning")
+	}
+	// A same side liquidation below the follow-up minimum must leave the quiet
+	// deadline alone, so the aggressive signal still fires on schedule.
+	small := engine.Observe(testEvent("BTCUSDT", "long", testStart.Add(5*time.Minute), 10000))
+	if len(small.Signals) != 0 {
+		t.Fatalf("a below minimum follow-up must not signal: %v", kinds(small.Signals))
+	}
+	if !small.empty() {
+		t.Fatalf("a below minimum follow-up must not change the warning row: %+v", small.Alerts)
+	}
+	ticked := engine.Tick(testStart.Add(10 * time.Minute))
+	if len(ticked.Signals) != 1 || ticked.Signals[0].FollowUps != 0 {
+		t.Fatalf("expected one aggressive signal without counted follow-ups: %+v", ticked.Signals)
+	}
+	if below := engine.Observe(testEvent("BTCUSDT", "short", testStart.Add(11*time.Minute), 20000)); len(below.Signals) != 0 {
+		t.Fatalf("a below minimum opposite liquidation must not confirm: %v", kinds(below.Signals))
+	}
+	confirmed := engine.Observe(testEvent("BTCUSDT", "short", testStart.Add(12*time.Minute), 60000))
+	if len(confirmed.Signals) != 1 || confirmed.Signals[0].Kind != domain.SignalSteady {
+		t.Fatalf("the first opposite liquidation above the minimum must confirm: %v", kinds(confirmed.Signals))
+	}
+	if confirmed.Signals[0].OppositeUSD != 80000 || confirmed.Signals[0].OppositeCount != 2 {
+		t.Fatalf("both opposite events should be accumulated for reporting: %+v", confirmed.Signals[0])
+	}
+}
+
+// TestUnwatchedAndInvalidEventsAreIgnored keeps the engine from tracking symbols that
+// left the watch list and from trusting malformed events.
+func TestUnwatchedAndInvalidEventsAreIgnored(t *testing.T) {
+	engine := testEngine(t, Defaults(), "BTCUSDT")
+	if res := engine.Observe(testEvent("SOLUSDT", "long", testStart, 5000000)); !res.empty() {
+		t.Fatalf("an unwatched symbol must be ignored: %+v", res)
+	}
+	if res := engine.Observe(testEvent("BTCUSDT", "long", testStart, 0)); !res.empty() {
+		t.Fatalf("a zero notional event must be ignored")
+	}
+	if res := engine.Observe(testEvent("BTCUSDT", "both", testStart, 500000)); !res.empty() {
+		t.Fatalf("an unknown position side must be ignored")
+	}
+	snapshot := engine.Snapshot(testStart)
+	if len(snapshot) != 1 || snapshot[0].Symbol != "BTCUSDT" || snapshot[0].State != "idle" {
+		t.Fatalf("unexpected snapshot: %+v", snapshot)
+	}
+}
+
+// TestDroppedSymbolStopsTracking matters because the top 50 list rotates: a symbol
+// that falls out must not keep emitting alerts.
+func TestDroppedSymbolStopsTracking(t *testing.T) {
+	engine := testEngine(t, Defaults(), "BTCUSDT", "ETHUSDT")
+	engine.Watch([]WatchEntry{{Symbol: "ETHUSDT", Rank: 1}})
+	if res := engine.Observe(testEvent("BTCUSDT", "long", testStart, 400000)); !res.empty() {
+		t.Fatalf("a dropped symbol must be ignored: %+v", res)
+	}
+	snapshot := engine.Snapshot(testStart)
+	if len(snapshot) != 1 || snapshot[0].Symbol != "ETHUSDT" || snapshot[0].Rank != 1 {
+		t.Fatalf("unexpected watch list after rotation: %+v", snapshot)
+	}
+}
+
+// TestSeedReplayIsIdempotent proves a restart replay reproduces the same row IDs, so
+// the store can drop duplicates instead of notifying twice.
+func TestSeedReplayIsIdempotent(t *testing.T) {
+	first := testEngine(t, Defaults(), "BTCUSDT")
+	second := testEngine(t, Defaults(), "BTCUSDT")
+	trigger := testEvent("BTCUSDT", "long", testStart, 400000)
+	a, b := first.Seed([]domain.LiquidationEvent{trigger}), second.Seed([]domain.LiquidationEvent{trigger})
+	if len(a.Alerts) != 1 || len(b.Alerts) != 1 || a.Alerts[0].ID != b.Alerts[0].ID {
+		t.Fatalf("warning IDs must be deterministic: %v vs %v", a.Alerts, b.Alerts)
+	}
+	ta := first.Tick(testStart.Add(10 * time.Minute))
+	tb := second.Tick(testStart.Add(10 * time.Minute))
+	if len(ta.Signals) != 1 || len(tb.Signals) != 1 || ta.Signals[0].ID != tb.Signals[0].ID {
+		t.Fatalf("signal IDs must be deterministic: %v vs %v", ta.Signals, tb.Signals)
+	}
+	confirm := testEvent("BTCUSDT", "short", testStart.Add(12*time.Minute), 150000)
+	ca, cb := first.Observe(confirm), second.Observe(confirm)
+	if len(ca.Signals) != 1 || len(cb.Signals) != 1 || ca.Signals[0].ID != cb.Signals[0].ID {
+		t.Fatalf("steady IDs must be deterministic: %v vs %v", ca.Signals, cb.Signals)
+	}
+}
+
+// TestZeroConfigKeepsProductionDefaults protects callers that build a Config by hand,
+// such as an empty config.Config in a test server.
+func TestZeroConfigKeepsProductionDefaults(t *testing.T) {
+	engine := testEngine(t, Config{}, "BTCUSDT")
+	got := engine.Config()
+	if got.Window != 3*time.Minute || got.Quiet != 10*time.Minute || got.Confirm != 30*time.Minute || got.BTCUSD != 300000 || got.ETHUSD != 250000 || got.OtherUSD != 300000 {
+		t.Fatalf("zero values must fall back to the documented defaults: %+v", got)
+	}
+	thresholds := engine.Thresholds()
+	if thresholds.WindowMinutes != 3 || thresholds.QuietMinutes != 10 || thresholds.ConfirmMinutes != 30 || thresholds.TopSymbols != domain.AlertTopSymbolsDefault {
+		t.Fatalf("the threshold view must publish minutes and the top N: %+v", thresholds)
+	}
+	if got.ThresholdFor("ethusdt") != 250000 || got.ThresholdFor("SOLUSDT") != 300000 {
+		t.Fatalf("threshold lookup must normalize the symbol: %+v", got)
+	}
+}
