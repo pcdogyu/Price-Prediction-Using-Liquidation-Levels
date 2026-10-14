@@ -1,0 +1,28 @@
+/* K-line page layout. Colours all come from the shared theme variables so the
+   chart follows the light and dark theme used across the app. */
+.hidden{display:none!important}
+.kline-back a{color:var(--link);font-size:13px;text-decoration:none;padding:8px 12px;border:1px solid var(--line);border-radius:9px}
+.kline-back a:hover{background:var(--hover-bg)}
+.kline-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-bottom:12px}
+.kline-intervals{display:flex;gap:5px;flex-wrap:wrap}
+.kline-intervals button{padding:6px 12px;border-radius:8px;font-size:12px;white-space:nowrap}
+.kline-jump{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
+.kline-jump input{width:150px;padding:7px 10px}
+.kline-jump button{padding:7px 12px;font-size:12px;border-radius:8px}
+.kline-actions{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;margin-left:auto}
+.kline-actions button{padding:7px 12px;font-size:12px;border-radius:8px;white-space:nowrap}
+.new-data{color:var(--warning);font-size:12px}
+.kline-legend{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:12px;color:var(--muted);padding-bottom:6px}
+.kline-legend .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+.kline-mark{font-weight:700;font-size:12px}
+.kline-mark.buy{color:var(--buy)}
+.kline-mark.sell{color:var(--sell)}
+.kline-readout{margin:0 0 6px;font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted);min-height:18px;overflow-wrap:anywhere}
+.kline-readout b{color:var(--text)}
+.kline-wrap{position:relative;user-select:none;cursor:crosshair;border:1px solid var(--line);border-radius:12px;background:var(--chart-bg);overflow:hidden;touch-action:none}
+.kline-wrap.dragging{cursor:grabbing}
+#kline-chart{display:block;width:100%}
+.kline-tooltip{position:absolute;z-index:5;pointer-events:none;max-width:280px;padding:8px 10px;border:1px solid var(--strong-line);border-radius:10px;background:var(--tooltip-bg);color:var(--text);font-size:12px;line-height:1.5}
+.kline-note{margin-top:10px;overflow-wrap:anywhere}
+.kline-signal-table{min-width:660px}
+@media(max-width:900px){.kline-actions{margin-left:0;width:100%}}

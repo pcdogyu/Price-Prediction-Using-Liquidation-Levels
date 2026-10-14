@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -302,5 +303,137 @@ func TestTelegramTestEndpointReportsFailure(t *testing.T) {
 	}
 	if len(paths) != 1 || paths[0] != "/bot12345:secretvalue/sendMessage" {
 		t.Fatalf("the test send must hit the configured base: %v", paths)
+	}
+}
+
+// TestAlertChartPageAndAssets checks the per symbol K-line page renders inside the
+// shared navigation and serves its own three assets.
+func TestAlertChartPageAndAssets(t *testing.T) {
+	srv, _ := alertTestServer(t)
+	w := serveAlert(srv, http.MethodGet, "/alerts/chart?symbol=BTCUSDT", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("chart page status=%d body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"币对 K 线", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
+		"kline-signals", "kline-aggressive", "kline-steady", "显示下单信号", "回到最新", "重置缩放", "kline-signal-rows",
+		"返回报警", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the K-line page must contain %q", want)
+		}
+	}
+	for path, kind := range map[string]string{"/assets/alerts-chart.css": "text/css", "/assets/alerts-chart.js": "text/javascript", "/assets/alerts-chart-app.js": "text/javascript"} {
+		asset := serveAlert(srv, http.MethodGet, path, nil)
+		if asset.Code != http.StatusOK || !strings.HasPrefix(asset.Header().Get("Content-Type"), kind) {
+			t.Fatalf("%s status=%d type=%q", path, asset.Code, asset.Header().Get("Content-Type"))
+		}
+		if asset.Body.Len() == 0 {
+			t.Fatalf("%s must not be empty", path)
+		}
+	}
+	if post := serveAlert(srv, http.MethodPost, "/alerts/chart", nil); post.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /alerts/chart status=%d", post.Code)
+	}
+}
+
+// TestAlertChartPeriodsAreTheNineRequested keeps the offered periods exactly as
+// requested: the chart builds its buttons from one shared list.
+func TestAlertChartPeriodsAreTheNineRequested(t *testing.T) {
+	srv, _ := alertTestServer(t)
+	script := serveAlert(srv, http.MethodGet, "/assets/alerts-chart.js", nil).Body.String()
+	if !strings.Contains(script, "['1m', '2m', '5m', '15m', '30m', '1h', '4h', '8h', '12h']") {
+		t.Fatal("the chart must offer the nine requested periods, in order")
+	}
+	for _, forbidden := range []string{"'1d'", "'3m'", "'6h'", "'1w'"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("the chart must not offer period %s", forbidden)
+		}
+	}
+}
+
+// TestAlertPageLinksSymbolsToTheChart documents that every pair name on the alert
+// page opens its own K-line tab.
+func TestAlertPageLinksSymbolsToTheChart(t *testing.T) {
+	srv, _ := alertTestServer(t)
+	script := serveAlert(srv, http.MethodGet, "/assets/alerts.js", nil).Body.String()
+	for _, want := range []string{"alerts/chart?symbol=", `target="_blank"`, `rel="noopener"`, "encodeURIComponent(symbol)"} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("the alert page must link pairs to the chart with %q", want)
+		}
+	}
+	// the monitor table, the signal history and the alert history all link out
+	if got := strings.Count(script, "chartLink("); got != 3 {
+		t.Fatalf("the monitor, signal and alert tables must all link to the chart, found %d uses", got)
+	}
+}
+
+// TestAlertKlineQueryValidation documents the guards in front of the proxy.
+func TestAlertKlineQueryValidation(t *testing.T) {
+	symbol, interval, limit, before, err := alertKlineQuery(url.Values{"symbol": []string{"dogeusdt"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if symbol != "DOGEUSDT" || interval != alertKlineDefaultInterval || limit != 300 || !before.IsZero() {
+		t.Fatalf("defaults wrong: %s %s %d %v", symbol, interval, limit, before)
+	}
+	until := time.Now().UTC().Add(-time.Hour).Truncate(time.Minute)
+	_, mixedCase, bigLimit, gotBefore, err := alertKlineQuery(url.Values{"symbol": []string{"BTCUSDT"}, "interval": []string{"4H"},
+		"limit": []string{"1000"}, "before": []string{until.Format(time.RFC3339)}})
+	if err != nil || mixedCase != "4h" || bigLimit != 1000 || !gotBefore.Equal(until) {
+		t.Fatalf("a valid query must pass through: %v %s %d %v", err, mixedCase, bigLimit, gotBefore)
+	}
+	rejected := []struct {
+		name  string
+		query url.Values
+	}{
+		{"missing symbol", url.Values{}},
+		{"symbol with a space", url.Values{"symbol": []string{"BTC USDT"}}},
+		{"symbol with a query", url.Values{"symbol": []string{"BTCUSDT&limit=1"}}},
+		{"symbol too long", url.Values{"symbol": []string{strings.Repeat("A", 33)}}},
+		{"period one day", url.Values{"symbol": []string{"BTCUSDT"}, "interval": []string{"1d"}}},
+		{"period three min", url.Values{"symbol": []string{"BTCUSDT"}, "interval": []string{"3m"}}},
+		{"limit zero", url.Values{"symbol": []string{"BTCUSDT"}, "limit": []string{"0"}}},
+		{"limit past the page", url.Values{"symbol": []string{"BTCUSDT"}, "limit": []string{"1001"}}},
+		{"limit not a number", url.Values{"symbol": []string{"BTCUSDT"}, "limit": []string{"many"}}},
+		{"before unparseable", url.Values{"symbol": []string{"BTCUSDT"}, "before": []string{"yesterday"}}},
+		{"before the future", url.Values{"symbol": []string{"BTCUSDT"}, "before": []string{time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)}}},
+		{"before coinbase", url.Values{"symbol": []string{"BTCUSDT"}, "before": []string{"2001-01-01T00:00:00Z"}}},
+	}
+	for _, bad := range rejected {
+		if _, _, _, _, err := alertKlineQuery(bad.query); err == nil {
+			t.Fatalf("%s must be rejected: %v", bad.name, bad.query)
+		}
+	}
+}
+
+// TestAlertKlineEndpointRejectsBadRequests covers the HTTP surface: a rejected
+// query never reaches Binance, so it fails as a client error.
+func TestAlertKlineEndpointRejectsBadRequests(t *testing.T) {
+	srv, _ := alertTestServer(t)
+	for _, path := range []string{"/api/v1/alerts/klines", "/api/v1/alerts/klines?symbol=BTCUSDT&interval=1d",
+		"/api/v1/alerts/klines?symbol=%22%3Bdrop%20table", "/api/v1/alerts/klines?symbol=BTCUSDT&limit=5000",
+		"/api/v1/alerts/klines?symbol=BTCUSDT&before=soon"} {
+		w := serveAlert(srv, http.MethodGet, path, nil)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s status=%d want 400 body=%s", path, w.Code, w.Body.String())
+		}
+	}
+	if post := serveAlert(srv, http.MethodPost, "/api/v1/alerts/klines", nil); post.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /api/v1/alerts/klines status=%d", post.Code)
+	}
+}
+
+// TestIsDashboardPageCoversChartRoute keeps the K-line page behind the login form
+// like the other pages instead of a bare JSON 401.
+func TestIsDashboardPageCoversChartRoute(t *testing.T) {
+	for _, path := range []string{"/", "/bubbles", "/options", "/alerts", "/alerts/chart"} {
+		if !isDashboardPage(path) {
+			t.Fatalf("%s must render the login page when unauthenticated", path)
+		}
+	}
+	for _, path := range []string{"/api/v1/alerts", "/api/v1/alerts/klines", "/assets/alerts-chart.js"} {
+		if isDashboardPage(path) {
+			t.Fatalf("%s must answer with a 401 problem", path)
+		}
 	}
 }

@@ -144,6 +144,21 @@ type SignalPage struct {
 	SteadyCount     int64         `json:"steady_count"`
 }
 
+// KlineView backs the per symbol K-line chart on the alert page. The candles come
+// straight from the Binance USDⓈ-M klines endpoint, so every monitored pair can be
+// charted even though only the configured symbols are stored locally. NextBefore
+// is the cursor the chart sends back to page further into history.
+type KlineView struct {
+	Symbol     string         `json:"symbol"`
+	Interval   string         `json:"interval"`
+	IntervalMS int64          `json:"interval_ms"`
+	Candles    []MarketCandle `json:"candles"`
+	HasMore    bool           `json:"has_more"`
+	NextBefore *time.Time     `json:"next_before,omitempty"`
+	Source     string         `json:"source"`
+	FetchedAt  time.Time      `json:"fetched_at"`
+}
+
 // NotificationSettings is persisted in SQLite. The bot token is deliberately
 // excluded from JSON so it can never leave the server in an API response.
 type NotificationSettings struct {

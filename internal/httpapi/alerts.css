@@ -8,4 +8,6 @@
 .alerts-note{margin-top:10px;overflow-wrap:anywhere}
 .alerts-note code{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--text)}
 #alerts-symbol{width:150px}
+.alerts-symbol-link{color:var(--link);text-decoration:underline;text-underline-offset:2px;font-weight:650;white-space:nowrap}
+.alerts-symbol-link:hover,.alerts-symbol-link:focus-visible{color:var(--text);background:var(--hover-bg);border-radius:5px}
 @media(max-width:720px){.alerts-settings input[type=text],.alerts-settings input[type=password]{width:100%}.alerts-monitor-table,.alerts-signal-table,.alerts-alert-table{min-width:760px}}

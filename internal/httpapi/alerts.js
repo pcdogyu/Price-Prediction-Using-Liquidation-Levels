@@ -17,6 +17,9 @@
   const monitorStates = { idle: '监控中', watching: '预警观察中', aggressive: '激进 · 等待确认' };
   const notifyLabels = { queued: '已入队', suppressed: '已抑制', muted: '类别关闭', restored: '重启回放', disabled: '通知关闭' };
   const stateClass = state => state === 'watching' ? 'warning' : state === 'aggressive' || state === 'steady' ? 'buy' : 'muted';
+  // Every pair name links to its own K-line page in a new tab, so the alert page
+  // keeps its scroll position and filters while the chart opens beside it.
+  const chartLink = symbol => '<a class="alerts-symbol-link" target="_blank" rel="noopener" href="' + base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '" title="在新标签页打开 ' + escape(symbol) + ' K线">' + escape(symbol) + '</a>';
 
   let overviewSequence = 0, historySequence = 0, historyCursor = '', historyRows = [], historyBusy = false, settingsLoaded = false;
 
@@ -38,7 +41,7 @@
   function monitorRows(rows) {
     if (!rows.length) { $('alerts-monitor-rows').innerHTML = '<tr><td colspan="8">等待监控数据</td></tr>'; return; }
     $('alerts-monitor-rows').innerHTML = rows.map(row => '<tr' + (row.state === 'idle' ? '' : ' class="alerts-row-active"') + '>' +
-      '<td>' + escape(row.rank) + '</td><td>' + escape(row.symbol) + '</td>' +
+      '<td>' + escape(row.rank) + '</td><td>' + chartLink(row.symbol) + '</td>' +
       '<td>' + money(row.quote_volume_usd) + '</td><td>' + money(row.threshold_usd) + '</td>' +
       '<td' + (row.long_usd >= row.threshold_usd ? ' class="buy"' : '') + '>' + money(row.long_usd) + (row.long_count ? '<span class="muted"> · ' + row.long_count + ' 笔</span>' : '') + '</td>' +
       '<td' + (row.short_usd >= row.threshold_usd ? ' class="sell"' : '') + '>' + money(row.short_usd) + (row.short_count ? '<span class="muted"> · ' + row.short_count + ' 笔</span>' : '') + '</td>' +
@@ -50,7 +53,7 @@
     const detail = signal.kind === 'steady'
       ? '反向爆仓 ' + money(signal.opposite_usd) + ' · ' + (signal.opposite_count || 0) + ' 笔 · ' + span(signal.opposite_elapsed_seconds)
       : '安静 ' + span(signal.quiet_elapsed_seconds) + ' · 顺延 ' + (signal.follow_ups || 0) + ' 次';
-    return '<td>' + when(signal.created_at) + '</td><td>' + escape(signal.symbol) + '</td>' +
+    return '<td>' + when(signal.created_at) + '</td><td>' + chartLink(signal.symbol) + '</td>' +
       '<td class="' + (signal.kind === 'steady' ? 'buy' : 'warning') + '">' + (signal.kind === 'steady' ? '稳健' : '激进') + '</td>' +
       '<td>' + escape(sideLabel(signal.side)) + '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span></td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
@@ -67,7 +70,7 @@
   function alertRows(rows) {
     if (!rows.length) { $('alerts-alert-rows').innerHTML = '<tr><td colspan="10">尚无预警记录</td></tr>'; return; }
     $('alerts-alert-rows').innerHTML = rows.map(row => '<tr>' +
-      '<td>' + when(row.triggered_at) + '</td><td>' + escape(row.symbol) + '</td>' +
+      '<td>' + when(row.triggered_at) + '</td><td>' + chartLink(row.symbol) + '</td>' +
       '<td class="' + (row.side === 'long' ? 'buy' : 'sell') + '">' + escape(liqLabel(row.side)) + '</td>' +
       '<td>' + escape(sideLabel(row.trade_side)) + '</td>' +
       '<td>' + money(row.notional_usd) + '<span class="muted"> · 峰值 ' + money(row.peak_usd) + '</span></td>' +

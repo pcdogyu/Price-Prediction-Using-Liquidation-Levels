@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 )
 
@@ -22,12 +26,36 @@ var alertsJS []byte
 //go:embed alerts.css
 var alertsCSS []byte
 
+//go:embed alerts-chart.html
+var alertsChartHTML []byte
+
+//go:embed alerts-chart.js
+var alertsChartJS []byte
+
+//go:embed alerts-chart-app.js
+var alertsChartAppJS []byte
+
+//go:embed alerts-chart.css
+var alertsChartCSS []byte
+
+// alertKlineDefaultInterval is what a bare ?symbol=... link opens with; the nine
+// supported periods themselves come from the exchange package.
+const alertKlineDefaultInterval = "15m"
+
+// alertSymbolPattern accepts Binance perpetual symbols such as BTCUSDT or
+// 1000SHIBUSDT and rejects anything that could leak into an upstream query.
+var alertSymbolPattern = regexp.MustCompile(`^[A-Z0-9]{2,32}$`)
+
 // registerAlerts exposes the liquidation alert page, its polling endpoints and the
 // Telegram settings form.
 func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/alerts", getOnly(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(s.renderPage(alertsHTML, "alerts", "报警"))
+	}))
+	mux.HandleFunc("/alerts/chart", getOnly(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(s.renderPage(alertsChartHTML, "alerts", "币对K线"))
 	}))
 	mux.HandleFunc("/assets/alerts.js", getOnly(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
@@ -39,9 +67,25 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(alertsCSS)
 	}))
+	mux.HandleFunc("/assets/alerts-chart.js", getOnly(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(alertsChartJS)
+	}))
+	mux.HandleFunc("/assets/alerts-chart-app.js", getOnly(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(alertsChartAppJS)
+	}))
+	mux.HandleFunc("/assets/alerts-chart.css", getOnly(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(alertsChartCSS)
+	}))
 	mux.HandleFunc("/api/v1/alerts", getOnly(s.alertOverview))
 	mux.HandleFunc("/api/v1/alerts/history", getOnly(s.alertHistory))
 	mux.HandleFunc("/api/v1/alerts/signals", getOnly(s.alertSignals))
+	mux.HandleFunc("/api/v1/alerts/klines", getOnly(s.alertKlines))
 	mux.HandleFunc("/api/v1/alerts/settings", s.alertSettings)
 	mux.HandleFunc("/api/v1/alerts/settings/test", postOnly(s.alertSettingsTest))
 }
@@ -125,6 +169,58 @@ func (s *Server) alertSignals(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, page)
+}
+
+// alertKlines proxies the Binance USDⓈ-M klines for a single pair so the K-line
+// page can chart every monitored symbol, not only the ones stored locally.
+func (s *Server) alertKlines(w http.ResponseWriter, r *http.Request) {
+	chartSymbol, chartInterval, chartLimit, chartBefore, err := alertKlineQuery(r.URL.Query())
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	view, err := s.svc.AlertKlines(r.Context(), chartSymbol, chartInterval, chartLimit, chartBefore)
+	if err != nil {
+		problem(w, http.StatusBadGateway, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, view)
+}
+
+// alertKlineQuery validates the K-line query. The symbol is mandatory because the
+// chart only ever opens from a symbol on the alert page, and every value is
+// checked before it can reach the upstream Binance request.
+func alertKlineQuery(query url.Values) (symbol, interval string, limit int, before time.Time, err error) {
+	symbol = strings.ToUpper(strings.TrimSpace(query.Get("symbol")))
+	if !alertSymbolPattern.MatchString(symbol) {
+		return "", "", 0, time.Time{}, fmt.Errorf("symbol must be 2 to 32 letters or digits")
+	}
+	interval = strings.ToLower(strings.TrimSpace(query.Get("interval")))
+	if interval == "" {
+		interval = alertKlineDefaultInterval
+	}
+	if _, ok := exchange.KlineIntervalMinutes[interval]; !ok {
+		return "", "", 0, time.Time{}, fmt.Errorf("interval must be one of " + strings.Join(exchange.KlineIntervals, ", "))
+	}
+	limit = 300
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > exchange.KlinePageLimit {
+			return "", "", 0, time.Time{}, fmt.Errorf("limit must be between 1 and %d", exchange.KlinePageLimit)
+		}
+	}
+	if raw := strings.TrimSpace(query.Get("before")); raw != "" {
+		before, err = time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return "", "", 0, time.Time{}, fmt.Errorf("before must be an RFC3339 timestamp")
+		}
+		before = before.UTC()
+		if before.Before(time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)) || before.Add(10*time.Minute).After(time.Now().UTC()) {
+			return "", "", 0, time.Time{}, fmt.Errorf("before is outside the supported range")
+		}
+	}
+	return symbol, interval, limit, before, nil
 }
 
 // alertSettings reads or stores the Telegram notification settings. The bot token is

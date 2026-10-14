@@ -50,7 +50,7 @@ var themeCSS []byte
 
 func isDashboardPage(path string) bool {
 	switch path {
-	case "/", "/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/alerts":
+	case "/", "/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/alerts", "/alerts/chart":
 		return true
 	}
 	return false

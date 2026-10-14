@@ -29,6 +29,8 @@ type Service struct {
 	log                *slog.Logger
 	mu                 sync.RWMutex
 	priceMu            sync.Mutex
+	klineMu            sync.Mutex
+	klineCache         map[string]klineCacheEntry
 	trainMu            sync.Mutex
 	maps               map[string]engine.MapResult
 	predictions        map[string]domain.Prediction
@@ -44,7 +46,7 @@ type Service struct {
 }
 
 func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, volumeLiveReady: make(chan struct{})}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, volumeLiveReady: make(chan struct{})}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	if a, e := ml.Load(cfg.ModelPath); e == nil {
