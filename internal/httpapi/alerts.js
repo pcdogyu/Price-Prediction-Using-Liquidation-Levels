@@ -18,7 +18,7 @@
   const notifyLabels = { queued: '已入队', suppressed: '已抑制', muted: '类别关闭', restored: '重启回放', disabled: '通知关闭' };
   const stateClass = state => state === 'watching' ? 'warning' : state === 'aggressive' || state === 'steady' ? 'buy' : 'muted';
 
-  let overviewSequence = 0, historySequence = 0, historyCursor = '', historyRows = [], settingsLoaded = false;
+  let overviewSequence = 0, historySequence = 0, historyCursor = '', historyRows = [], historyBusy = false, settingsLoaded = false;
 
   function error(message) { $('alerts-error').textContent = message; $('alerts-error').hidden = false; }
   function clearError() { $('alerts-error').hidden = true; }
@@ -58,9 +58,10 @@
       '<td>' + escape(notifyLabels[signal.notify_status] || signal.notify_status || '未推送') + (signal.notify_error ? '<span class="muted" title="' + escape(signal.notify_error) + '"> ⓘ</span>' : '') + '</td>';
   }
 
-  function signalRows(target, rows, empty) {
-    if (!rows.length) { $(target).innerHTML = '<tr><td colspan="8">' + empty + '</td></tr>'; return; }
-    $(target).innerHTML = rows.map(signal => '<tr>' + signalCells(signal) + '</tr>').join('');
+  function signalRows(rows, empty) {
+    const target = $('alerts-history-rows');
+    if (!rows.length) { target.innerHTML = '<tr><td colspan="8">' + empty + '</td></tr>'; return; }
+    target.innerHTML = rows.map(signal => '<tr>' + signalCells(signal) + '</tr>').join('');
   }
 
   function alertRows(rows) {
@@ -112,13 +113,12 @@
       clearError();
       metrics(data);
       monitorRows(data.monitor);
-      signalRows('alerts-signal-rows', data.signals, '尚无信号');
       alertRows(data.alerts);
+      syncLatestSignals(data.signals);
       $('alerts-method').textContent = data.method;
       const states = data.monitor.filter(row => row.state !== 'idle').length;
       $('alerts-monitor-status').textContent = ({ waiting_watch_list: '等待成交额排行', stale: '成交额排名已过期' })[data.state] || ('已加载 ' + data.monitor.length + ' 个币对 · ' + states + ' 个处于预警流程 · 每 5 秒更新');
       $('alerts-monitor-note').textContent = '排名更新 ' + when(data.watch_updated_at) + (data.watch_error ? ' · 最近刷新失败：' + data.watch_error : '') + ' · 预警与信号自 ' + when(data.available_from) + ' 起可查询';
-      $('alerts-signal-status').textContent = '激进 ' + data.aggressive_total + ' · 稳健 ' + data.steady_total + ' · 共 ' + data.signal_total + ' 条';
       $('alerts-alert-status').textContent = '共 ' + data.alert_total + ' 条预警 · 最新 ' + data.alerts.length + ' 条已显示';
       $('alerts-alert-note').textContent = '“顺延”记录预警后同方向继续爆仓的次数，每次顺延都会重新计算安静截止。状态为过期的预警表示确认窗口内未出现反向爆仓，只保留激进信号。';
       renderSettings(packet.settings);
@@ -131,12 +131,39 @@
   }
 
 
-  async function loadHistory(append) {
+  // historyFiltersAreAll reports whether the signal table shows every stored signal,
+  // the only state in which a poll may fold new rows in without contradicting a filter.
+  function historyFiltersAreAll() {
+    return !$('alerts-symbol').value.trim() && $('alerts-kind').value === 'all';
+  }
+
+  // syncLatestSignals keeps the one signal table live. The overview poll carries the
+  // newest stored signals, so a row that is missing locally and newer than the top
+  // loaded row has just arrived: the visible page reloads, widened to cover whatever the
+  // reader already paged through, so rows and counts stay true. Past the page ceiling the
+  // fresh rows are folded in by hand instead of disturbing the loaded pages.
+  function syncLatestSignals(signals) {
+    if (!Array.isArray(signals) || !signals.length || historyBusy || !historyFiltersAreAll()) return;
+    const loaded = new Set(historyRows.map(row => row.id));
+    const newest = historyRows.length ? Date.parse(historyRows[0].created_at) : -1;
+    const fresh = signals.filter(row => !loaded.has(row.id) && (newest < 0 || Date.parse(row.created_at) > newest));
+    if (!fresh.length) return;
+    if (historyRows.length + fresh.length <= 200) {
+      loadHistory(false, Math.max(Number($('alerts-limit').value), historyRows.length + fresh.length));
+      return;
+    }
+    historyRows = fresh.concat(historyRows);
+    signalRows(historyRows, '尚无信号');
+    $('alerts-count').textContent = '已显示 ' + historyRows.length + ' 条 · 最新信号已并入';
+  }
+
+  async function loadHistory(append, widenedLimit) {
     historySequence++;
     const current = historySequence;
-    const params = new URLSearchParams({ symbol: $('alerts-symbol').value.trim(), kind: $('alerts-kind').value, limit: $('alerts-limit').value });
+    historyBusy = true;
+    const params = new URLSearchParams({ symbol: $('alerts-symbol').value.trim(), kind: $('alerts-kind').value, limit: String(widenedLimit || $('alerts-limit').value) });
     if (append && historyCursor) params.set('cursor', historyCursor);
-    $('alerts-history-status').textContent = '正在读取…';
+    if (!widenedLimit) $('alerts-history-status').textContent = '正在读取…';
     $('alerts-more').disabled = true;
     try {
       const response = await fetch(base + 'api/v1/alerts/signals?' + params, { cache: 'no-store', credentials: 'same-origin' });
@@ -146,8 +173,8 @@
       if (current !== historySequence) return;
       historyRows = append ? historyRows.concat(packet.rows || []) : (packet.rows || []);
       historyCursor = packet.next_cursor || '';
-      signalRows('alerts-history-rows', historyRows, '尚无历史信号');
-      $('alerts-history-status').textContent = '激进 ' + packet.aggressive_count + ' · 稳健 ' + packet.steady_count + ' · 共 ' + packet.signal_count + ' 条';
+      signalRows(historyRows, '尚无信号');
+      $('alerts-history-status').textContent = '激进 ' + packet.aggressive_count + ' · 稳健 ' + packet.steady_count + ' · 共 ' + packet.signal_count + ' 条 · 每 5 秒自动刷新';
       $('alerts-count').textContent = '已显示 ' + historyRows.length + ' 条';
       $('alerts-more').disabled = !historyCursor;
       clearError();
@@ -155,6 +182,8 @@
       if (current !== historySequence) return;
       error('信号历史读取失败：' + caught.message);
       $('alerts-history-status').textContent = '读取失败';
+    } finally {
+      if (current === historySequence) historyBusy = false;
     }
   }
 

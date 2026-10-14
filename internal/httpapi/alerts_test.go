@@ -54,6 +54,17 @@ func TestAlertPageAndAssets(t *testing.T) {
 			t.Fatalf("the alerts page must contain %q", want)
 		}
 	}
+	// Signals live in one table: the duplicated 最新信号 block is gone so a page cannot
+	// show the same rows twice, and the live monitor table stays the last section.
+	for _, gone := range []string{"最新信号", "alerts-signal-rows", "alerts-signal-status"} {
+		if strings.Contains(body, gone) {
+			t.Fatalf("the alerts page must not contain %q", gone)
+		}
+	}
+	history, monitor := strings.Index(body, "信号历史"), strings.Index(body, "实时监控")
+	if history < 0 || monitor < 0 || monitor < history {
+		t.Fatalf("实时监控 must stay below 信号历史: history %d monitor %d", history, monitor)
+	}
 	// The navigation entry has to sit to the right of the options page.
 	options, alerts := strings.Index(body, `href="/options"`), strings.Index(body, `href="/alerts"`)
 	if options < 0 || alerts < 0 || alerts < options {
