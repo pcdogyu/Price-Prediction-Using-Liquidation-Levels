@@ -382,6 +382,17 @@ func TestAlertKlineQueryValidation(t *testing.T) {
 	if err != nil || mixedCase != "4h" || bigLimit != 1000 || !gotBefore.Equal(until) {
 		t.Fatalf("a valid query must pass through: %v %s %d %v", err, mixedCase, bigLimit, gotBefore)
 	}
+	// The cursor is the oldest candle of the page currently in view, so a chart
+	// opened on the newest data asks for a time only a minute or two old; rejecting
+	// that would break paging on every live chart.
+	for _, recent := range []time.Duration{-2 * time.Minute, -90 * time.Second, -time.Minute} {
+		cursor := time.Now().UTC().Add(recent).Truncate(time.Second)
+		if _, _, _, got, err := alertKlineQuery(url.Values{"symbol": []string{"BTCUSDT"}, "before": []string{cursor.Format(time.RFC3339)}}); err != nil {
+			t.Fatalf("a cursor %v old must be accepted: %v", -recent, err)
+		} else if !got.Equal(cursor) {
+			t.Fatalf("the cursor must survive the round trip: %v != %v", got, cursor)
+		}
+	}
 	rejected := []struct {
 		name  string
 		query url.Values

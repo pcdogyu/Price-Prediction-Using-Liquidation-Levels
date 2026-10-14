@@ -216,8 +216,14 @@ func alertKlineQuery(query url.Values) (symbol, interval string, limit int, befo
 			return "", "", 0, time.Time{}, fmt.Errorf("before must be an RFC3339 timestamp")
 		}
 		before = before.UTC()
-		if before.Before(time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)) || before.Add(10*time.Minute).After(time.Now().UTC()) {
+		if before.Before(time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)) {
 			return "", "", 0, time.Time{}, fmt.Errorf("before is outside the supported range")
+		}
+		// The cursor is the oldest candle of the page in view, so a chart opened on
+		// the newest data asks for a time only one bucket old. Only a timestamp
+		// clearly ahead of this server is a bad cursor.
+		if before.After(time.Now().UTC().Add(2 * time.Minute)) {
+			return "", "", 0, time.Time{}, fmt.Errorf("before is in the future")
 		}
 	}
 	return symbol, interval, limit, before, nil
