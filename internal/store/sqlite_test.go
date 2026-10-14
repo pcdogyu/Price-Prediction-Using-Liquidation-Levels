@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,35 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumeprofile"
 )
+
+// TestCancelledQueryDoesNotPoisonPool protects the production failure where a
+// cancelled HTTP request left modernc/sqlite's only pooled connection in
+// SQLITE_INTERRUPT state. Every later read and write then failed with
+// "interrupted (9)" until the process was restarted.
+func TestCancelledQueryDoesNotPoisonPool(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "cancel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err = s.db.QueryRowContext(ctx, `WITH RECURSIVE n(x) AS (
+		SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < 100000000
+	) SELECT sum(x) FROM n`).Scan(new(int64))
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled query error = %v, want a context cancellation", err)
+	}
+
+	var got int
+	if err = s.db.QueryRowContext(context.Background(), `SELECT 1`).Scan(&got); err != nil {
+		t.Fatalf("database connection remained interrupted after cancellation: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("recovery query = %d, want 1", got)
+	}
+}
 
 func TestStoreRoundTripAndDedup(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
