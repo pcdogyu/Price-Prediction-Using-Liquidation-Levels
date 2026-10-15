@@ -17,6 +17,7 @@
 .kline-mark{font-weight:700;font-size:12px}
 .kline-mark.buy{color:var(--buy)}
 .kline-mark.sell{color:var(--sell)}
+.kline-warning{color:var(--warning);font-weight:700}
 .kline-readout{margin:0 0 6px;font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted);min-height:18px;overflow-wrap:anywhere}
 .kline-readout b{color:var(--text)}
 .kline-wrap{position:relative;user-select:none;cursor:crosshair;border:1px solid var(--line);border-radius:12px;background:var(--chart-bg);overflow:hidden;touch-action:none}

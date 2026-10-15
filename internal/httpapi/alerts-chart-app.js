@@ -12,7 +12,7 @@
   const storedText = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (error) { return fallback; } };
   const rememberText = (key, value) => { try { localStorage.setItem(key, value); } catch (error) { /* private mode keeps defaults */ } };
 
-  const STORE_SIGNALS = 'liquidation.kline.signals', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady';
+  const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady';
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000;
   const params = new URLSearchParams(location.search);
   const wantedInterval = (params.get('interval') || '').toLowerCase();
@@ -23,12 +23,12 @@
   const state = {
     symbol: (params.get('symbol') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32),
     interval: K.INTERVALS.includes(wantedInterval) ? wantedInterval : (K.INTERVALS.includes(storedText('liquidation.kline.interval', '')) ? storedText('liquidation.kline.interval', '15m') : '15m'),
-    candles: [], signals: [], hits: [],
+    candles: [], alerts: [], signals: [], hits: [],
     view: { start: 0, end: 0 }, yLow: 0, yHigh: 1, yManual: false,
     hasMore: true, nextBefore: '', newest: 0, atLatest: true, newData: false, keepSpan: 0,
-    loading: false, loadingHistory: false, loadingSignals: false,
+    loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false,
     drag: null, hoverCandle: null, hoverMarker: null,
-    toggles: { signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true) }
+    toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true) }
   };
   let dims = null, colors = {}, scales = null;
 
@@ -41,6 +41,7 @@
     return { minSpan: K.MIN_VISIBLE * step(), maxSpan: K.MAX_VISIBLE * step(), minStart: first - span, maxEnd: last + (K.RIGHT_PAD + 1) * step() };
   };
   const signalOptions = () => ({ aggressive: state.toggles.aggressive, steady: state.toggles.steady });
+  const shownAlerts = () => state.toggles.alerts ? K.filterAlerts(state.alerts) : [];
   const shownSignals = () => state.toggles.signals ? K.filterSignals(state.signals, signalOptions()) : [];
 
   async function json(path) {
@@ -108,6 +109,7 @@
     const parts = [state.candles.length + ' 根 ' + state.interval + ' K 线'];
     if (last) parts.push('最新 ' + clock(last.t));
     parts.push(state.hasMore ? '左拉可读取更早数据' : '已到最早数据');
+    parts.push(shownAlerts().length + ' 个预警');
     parts.push(shownSignals().length + ' 个下单信号');
     parts.push(state.atLatest ? '每 5 秒自动刷新' : '已暂停跟随最新');
     return parts.join(' · ');
@@ -196,6 +198,36 @@
     }
   }
 
+  // loadAlerts mirrors the alerts page history feed and keeps enough pages to
+  // cover the visible chart window. The chart uses triggered_at because that is
+  // the timestamp shown for a warning on the alerts page.
+  async function loadAlerts() {
+    if (state.loadingAlerts || !state.symbol) return;
+    state.loadingAlerts = true;
+    try {
+      const rows = [];
+      let cursor = '', pages = 0;
+      do {
+        const packet = await json('api/v1/alerts/history?symbol=' + encodeURIComponent(state.symbol) + '&limit=200' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''));
+        rows.push(...(packet.rows || []));
+        cursor = packet.next_cursor || '';
+        pages += 1;
+        const times = rows.map(row => Date.parse(row.triggered_at)).filter(Number.isFinite);
+        if (!times.length || !state.view.start || times.reduce((oldest, at) => Math.min(oldest, at), Infinity) < state.view.start) break;
+      } while (cursor && pages < 3);
+      state.alerts = rows.map(row => ({ id: row.id, t: Date.parse(row.triggered_at), side: row.trade_side || row.side,
+        liquidation_side: row.side, reference_price: row.reference_price, notional_usd: row.notional_usd,
+        threshold_usd: row.threshold_usd, status: row.status })).filter(row => Number.isFinite(row.t));
+      $('kline-alert-status').textContent = '已读取 ' + state.alerts.length + ' 条 · 每 15 秒刷新';
+    } catch (error) {
+      $('kline-alert-status').textContent = '预警读取失败：' + error.message;
+    } finally {
+      state.loadingAlerts = false;
+      renderSignals();
+      draw();
+    }
+  }
+
   function renderSignals() {
     const notifyLabels = { sent: '已推送', suppressed: '已抑制', skipped: '未启用', disabled: '已关闭', invalid: '配置无效', failed: '发送失败' };
     const rows = shownSignals().slice().reverse().slice(0, 200);
@@ -216,11 +248,14 @@
     const candle = state.hoverCandle || newestCandle();
     if (!candle) { $('kline-readout').textContent = '等待 K 线数据'; return; }
     const change = candle.open > 0 ? (candle.close / candle.open - 1) * 100 : 0;
+    const markerText = state.hoverMarker ? (state.hoverMarker.type === 'alert'
+      ? ' · 悬停预警：' + (state.hoverMarker.side === 'short' ? '做空' : '做多') + ' ×' + state.hoverMarker.count
+      : ' · 悬停信号：' + escape(state.hoverMarker.kind === 'steady' ? '稳健' : '激进') +
+        (state.hoverMarker.side === 'short' ? '做空' : '做多') + ' ×' + state.hoverMarker.count) : '';
     $('kline-readout').innerHTML = '<b>' + escape(state.symbol) + ' · ' + escape(state.interval) + '</b> ' + escape(clock(candle.t)) +
       ' 开 ' + escape(priceText(candle.open)) + ' 高 ' + escape(priceText(candle.high)) + ' 低 ' + escape(priceText(candle.low)) +
       ' 收 ' + escape(priceText(candle.close)) + ' <span class="' + (change >= 0 ? 'buy' : 'sell') + '">' + (change >= 0 ? '+' : '') + change.toFixed(2) + '%</span>' +
-      ' 成交额 ' + escape(money(candle.volume)) + (state.hoverMarker ? ' · 悬停信号：' + escape(state.hoverMarker.kind === 'steady' ? '稳健' : '激进') +
-        (state.hoverMarker.side === 'short' ? '做空' : '做多') + ' ×' + state.hoverMarker.count : '');
+      ' 成交额 ' + escape(money(candle.volume)) + markerText;
   }
 
   // palette reads the theme variables so the canvas follows the shared light and
@@ -296,10 +331,35 @@
       ctx.fillStyle = colour;
       ctx.fillRect(cx - body / 2, top, body, Math.max(1, bottom - top));
     }
+    drawAlerts(ctx, shown, x, y, plot, priceBottom, intervalStep);
     drawSignals(ctx, shown, x, y, plot, priceBottom, intervalStep);
     drawLastPrice(ctx, y, plot, priceBottom);
     if (state.hoverCandle) drawCrosshair(ctx, x, plot, priceBottom);
     renderReadout();
+  }
+
+  // drawAlerts paints warning diamonds below the signal layer. They use the
+  // trade direction from the alert page and remain visually distinct from the
+  // ▲/▼ order markers.
+  function drawAlerts(ctx, shown, x, y, plot, priceBottom, intervalStep) {
+    if (!state.toggles.alerts) return;
+    const byTime = new Map(shown.map(candle => [candle.t, candle]));
+    for (const group of K.alertGroups(shownAlerts(), intervalStep)) {
+      const cx = x(group.bucket + intervalStep / 2);
+      if (cx < plot.left - 10 || cx > plot.right + 10) continue;
+      const candle = byTime.get(group.bucket) || nearest(shown, group.bucket);
+      const price = group.price > 0 ? group.price : candle ? candle.close : 0;
+      if (!price) continue;
+      const long = group.side !== 'short';
+      const py = Math.max(plot.top + 10, Math.min(priceBottom - 10, y(price) + (long ? 32 : -32)));
+      diamond(ctx, cx, py, colors.warning);
+      if (group.count > 1) {
+        ctx.fillStyle = colors.text;
+        ctx.textAlign = 'left';
+        ctx.fillText('×' + group.count, cx + 10, py);
+      }
+      state.hits.push({ x: cx, y: py, group });
+    }
   }
 
   function notice(ctx, width, height, message) {
@@ -329,7 +389,7 @@
         ctx.textAlign = 'left';
         ctx.fillText('×' + group.count, cx + 10, py);
       }
-      state.hits.push({ x: cx, y: py, group });
+      state.hits.push({ x: cx, y: py, group: Object.assign({ type: 'signal' }, group) });
     }
   }
 
@@ -356,6 +416,27 @@
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.lineWidth = 1;
+  }
+
+  function diamond(ctx, cx, cy, colour) {
+    const size = 7;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - size);
+    ctx.lineTo(cx + size, cy);
+    ctx.lineTo(cx, cy + size);
+    ctx.lineTo(cx - size, cy);
+    ctx.closePath();
+    ctx.fillStyle = colors.bg;
+    ctx.fill();
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = colour;
+    ctx.font = 'bold 10px system-ui, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('!', cx, cy + .5);
+    ctx.restore();
   }
 
   function drawLastPrice(ctx, y, plot, priceBottom) {
@@ -439,8 +520,15 @@
     const tooltip = $('kline-tooltip'), wrap = $('kline-wrap');
     if (!state.hoverMarker || !dims) { tooltip.hidden = true; return; }
     const marker = state.hoverMarker;
-    tooltip.innerHTML = '<b>' + escape(marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +
-      escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>参考价 ' + escape(priceText(marker.price));
+    if (marker.type === 'alert') {
+      tooltip.innerHTML = '<b>预警 · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +
+        escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>清算方向 ' +
+        escape(marker.liquidationSide === 'short' ? '空单爆仓' : '多单爆仓') + '<br>参考价 ' + escape(priceText(marker.price)) +
+        '<br>预警爆仓额 ' + escape(money(marker.notionalUSD));
+    } else {
+      tooltip.innerHTML = '<b>' + escape(marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +
+        escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>参考价 ' + escape(priceText(marker.price));
+    }
     tooltip.hidden = false;
     tooltip.style.left = Math.max(6, Math.min(wrap.clientWidth - tooltip.offsetWidth - 6, at.x + 14)) + 'px';
     tooltip.style.top = Math.max(6, Math.min(dims.height - tooltip.offsetHeight - 6, at.y + 12)) + 'px';
@@ -548,7 +636,7 @@
   }
 
   function bindControls() {
-    const boxes = [[STORE_SIGNALS, 'kline-signals', 'signals'], [STORE_AGGRESSIVE, 'kline-aggressive', 'aggressive'], [STORE_STEADY, 'kline-steady', 'steady']];
+    const boxes = [[STORE_ALERTS, 'kline-alerts', 'alerts'], [STORE_SIGNALS, 'kline-signals', 'signals'], [STORE_AGGRESSIVE, 'kline-aggressive', 'aggressive'], [STORE_STEADY, 'kline-steady', 'steady']];
     for (const [key, id, toggle] of boxes) {
       const box = $(id);
       box.checked = state.toggles[toggle];
@@ -562,7 +650,7 @@
     }
     $('kline-latest').addEventListener('click', goLatest);
     $('kline-reset').addEventListener('click', resetView);
-    $('kline-refresh').addEventListener('click', () => { loadCandles(); loadSignals(); });
+    $('kline-refresh').addEventListener('click', () => { loadCandles(); loadAlerts(); loadSignals(); });
     $('kline-jump').addEventListener('submit', event => {
       event.preventDefault();
       const target = $('kline-symbol-input').value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32);
@@ -591,10 +679,11 @@
     document.title = state.symbol + ' K线 · 清算墙雷达';
     note('正在读取 ' + state.symbol + ' ' + state.interval + ' K 线');
     loadCandles();
+    loadAlerts();
     loadSignals();
     setInterval(() => { if (!document.hidden && !state.drag) loadCandles(); }, CANDLE_REFRESH_MS);
-    setInterval(() => { if (!document.hidden && !state.drag) loadSignals(); }, SIGNAL_REFRESH_MS);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadCandles(); loadSignals(); } });
+    setInterval(() => { if (!document.hidden && !state.drag) { loadAlerts(); loadSignals(); } }, SIGNAL_REFRESH_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadCandles(); loadAlerts(); loadSignals(); } });
     window.addEventListener('resize', resize);
     window.addEventListener('themechange', () => { palette(); draw(); });
     if (window.ResizeObserver) new ResizeObserver(resize).observe($('kline-wrap'));

@@ -14,6 +14,7 @@
       <div id="kline-intervals" class="kline-intervals" role="group" aria-label="K 线周期"></div>
       <form id="kline-jump" class="kline-jump" autocomplete="off"><label for="kline-symbol-input">币对</label><input id="kline-symbol-input" type="text" maxlength="32" placeholder="如 BTCUSDT"><button type="submit">跳转</button></form>
       <div class="kline-actions">
+        <label class="alerts-check"><input id="kline-alerts" type="checkbox"><span>显示预警</span></label>
         <label class="alerts-check"><input id="kline-signals" type="checkbox"><span>显示下单信号</span></label>
         <label class="alerts-check"><input id="kline-aggressive" type="checkbox"><span>激进信号</span></label>
         <label class="alerts-check"><input id="kline-steady" type="checkbox"><span>稳健信号</span></label>
@@ -28,7 +29,8 @@
       <span><i class="dot" style="background:var(--sell)"></i>下跌 K 线</span>
       <span><i class="dot" style="background:var(--blue)"></i>成交额（下方柱状）</span>
       <span><b class="kline-mark buy">▲</b>做多信号 · 稳健实心 / 激进空心</span>
-      <span><b class="kline-mark sell">▼</b>做空信号</span>
+      <span><b class="kline-mark sell">▼</b>做空信号 · 稳健实心 / 激进空心</span>
+      <span><b class="kline-warning">◆!</b>预警</span>
     </div>
     <p id="kline-readout" class="kline-readout">等待 K 线数据</p>
     <div class="kline-wrap" id="kline-wrap">
@@ -38,9 +40,9 @@
     <p id="kline-status" class="muted kline-note" role="status">正在读取 K 线</p>
   </section>
   <section class="surface">
-    <div class="section-head"><h2>该币对下单信号</h2><span id="kline-signal-status" class="muted">读取信号</span></div>
+    <div class="section-head"><h2>该币对下单信号</h2><span id="kline-signal-status" class="muted">读取信号</span><span id="kline-alert-status" class="muted">读取预警</span></div>
     <div class="table-scroll alerts-scroll"><table class="alerts-signal-table kline-signal-table"><thead><tr><th>时间（北京时间）</th><th>类型</th><th>下单方向</th><th>参考价</th><th>预警爆仓额</th><th>通知</th></tr></thead><tbody id="kline-signal-rows"><tr><td colspan="6">尚无信号</td></tr></tbody></table></div>
-    <p class="muted alerts-note">信号来自清算预警策略：多单爆仓预警后按做多、空单爆仓后按做空。▲ / ▼ 画在信号发生的那根 K 线上，纵向位置取信号参考价，悬停可看明细。</p>
+    <p class="muted alerts-note">信号来自清算预警策略：多单爆仓预警后按做多、空单爆仓后按做空。◆! 为预警，▲ / ▼ 为下单信号；稳健实心、激进空心，均画在对应的 K 线上，悬停可看明细。</p>
   </section>
   <footer class="page-footer">K 线实时取自 Binance USDⓈ-M klines 接口（本服务代理） · 信号与回测金额不构成投资建议</footer>
 </main>

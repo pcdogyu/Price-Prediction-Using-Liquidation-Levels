@@ -123,6 +123,43 @@
     return Array.from(groups.values()).sort((a, b) => a.bucket - b.bucket);
   }
 
+  // filterAlerts keeps one entry per alert id and normalises the direction used
+  // by the chart. An alert's trade_side is the direction shown on the alerts
+  // page; older rows may omit it, so the liquidation side is the fallback.
+  function filterAlerts(alerts) {
+    const byId = new Map();
+    for (const alert of alerts) {
+      if (!alert || !alert.id || !Number.isFinite(alert.t)) continue;
+      const side = alert.side === 'short' || alert.trade_side === 'short' ? 'short' : 'long';
+      byId.set(alert.id, Object.assign({}, alert, { side }));
+    }
+    return Array.from(byId.values()).sort((a, b) => a.t - b.t);
+  }
+
+  // alertGroups keeps several alerts in the same candle readable while retaining
+  // their direction, reference price and total liquidation amount for hover text.
+  function alertGroups(alerts, step) {
+    const groups = new Map();
+    for (const alert of filterAlerts(alerts)) {
+      const bucket = bucketStart(alert.t, step);
+      const key = bucket + '|' + alert.side;
+      const group = groups.get(key);
+      if (group) {
+        group.count += 1;
+        group.latest = Math.max(group.latest, alert.t);
+        group.notionalUSD += finite(alert.notional_usd) ? alert.notional_usd : 0;
+        if (alert.reference_price > 0) group.price = alert.reference_price;
+        if (alert.liquidation_side === 'short' || alert.liquidation_side === 'long') group.liquidationSide = alert.liquidation_side;
+        continue;
+      }
+      groups.set(key, { type: 'alert', bucket, side: alert.side, count: 1, first: alert.t, latest: alert.t,
+        price: finite(alert.reference_price) && alert.reference_price > 0 ? alert.reference_price : 0,
+        liquidationSide: alert.liquidation_side || alert.side,
+        notionalUSD: finite(alert.notional_usd) ? alert.notional_usd : 0 });
+    }
+    return Array.from(groups.values()).sort((a, b) => a.bucket - b.bucket);
+  }
+
   // signalWindowStart reports the oldest signal time, which decides whether more
   // signal pages are needed to cover the visible chart range.
   function oldestSignal(signals) {
@@ -131,7 +168,7 @@
 
   const exported = { INTERVALS, INTERVAL_MS, DEFAULT_VISIBLE, MIN_VISIBLE, MAX_VISIBLE, RIGHT_PAD, HISTORY_TRIGGER,
     intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles, priceRange, volumeMax,
-    niceTicks, mergeCandles, normaliseCandles, filterSignals, markerGroups, oldestSignal };
+    niceTicks, mergeCandles, normaliseCandles, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.LiquidationKline = exported;
 })(typeof window === 'object' ? window : globalThis);

@@ -340,7 +340,7 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 	}
 	body := w.Body.String()
 	for _, want := range []string{"币对 K 线", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
-		"kline-signals", "kline-aggressive", "kline-steady", "显示下单信号", "回到最新", "重置缩放", "kline-signal-rows",
+		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "显示预警", "显示下单信号", "稳健实心 / 激进空心", "kline-alert-status", "回到最新", "重置缩放", "kline-signal-rows",
 		"返回报警", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the K-line page must contain %q", want)

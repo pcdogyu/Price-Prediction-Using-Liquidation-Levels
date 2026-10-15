@@ -121,3 +121,26 @@ test('oldestSignal reports the earliest fetched signal time', () => {
   assert.equal(K.oldestSignal([signal('a', 5000), signal('b', 3000)]), 3000);
   assert.equal(K.oldestSignal([]), Infinity);
 });
+
+test('filterAlerts dedupes alerts and uses trade direction for chart markers', () => {
+  const all = [
+    { id: 'a', t: 1000, side: 'long', trade_side: 'short' },
+    { id: 'a', t: 1000, side: 'long', trade_side: 'short' },
+    { id: 'b', t: 2000, side: 'short', trade_side: 'short' },
+    { id: 'bad', t: NaN }
+  ];
+  assert.deepEqual(K.filterAlerts(all).map(row => [row.id, row.side]), [['a', 'short'], ['b', 'short']]);
+});
+
+test('alertGroups keeps long and short warnings separate and aggregates their amount', () => {
+  const groups = K.alertGroups([
+    { id: 'a', t: 1500, side: 'long', liquidation_side: 'long', reference_price: 100, notional_usd: 10 },
+    { id: 'b', t: 1800, side: 'long', liquidation_side: 'long', reference_price: 101, notional_usd: 20 },
+    { id: 'c', t: 1500, side: 'short', liquidation_side: 'short', reference_price: 99, notional_usd: 5 }
+  ], 1000);
+  assert.deepEqual(groups.map(group => [group.bucket, group.side, group.count, group.notionalUSD]), [
+    [1000, 'long', 2, 30], [1000, 'short', 1, 5]
+  ]);
+  assert.equal(groups[0].price, 101);
+  assert.equal(groups[0].type, 'alert');
+});
