@@ -168,7 +168,17 @@ with sync_playwright() as playwright:
         assert set(initial["ids"]) == {r["id"] for r in all_rows if r["price"] != 2800}
         assert "视野外" in page.locator("#liquidation-top3").inner_text()
         assert "上方视野外" in page.locator("#market-chart").text_content() and "下方视野外" in page.locator("#market-chart").text_content()
-        assert page.evaluate("() => Array.from(document.querySelectorAll('[data-event-id]')).every(e => Number(e.getAttribute('cx'))-Number(e.getAttribute('r'))>=72 && Number(e.getAttribute('cx'))+Number(e.getAttribute('r'))<=1025 && Number(e.getAttribute('cy'))-Number(e.getAttribute('r'))>=24 && Number(e.getAttribute('cy'))+Number(e.getAttribute('r'))<=518)")
+        # Bubbles clamp to the candle plot, whose right edge follows dims.candleRight after the
+        # chart enlargement, so read the live geometry instead of hardcoding pixel bounds.
+        outside = page.evaluate("""() => {
+          const box = {left: dims.left, right: dims.candleRight, top: dims.top, bottom: dims.height - dims.bottom};
+          const clipped = Array.from(document.querySelectorAll('[data-event-id]')).filter(e => {
+            const x = Number(e.getAttribute('cx')), y = Number(e.getAttribute('cy')), r = Number(e.getAttribute('r'));
+            return x - r < box.left - .01 || x + r > box.right + .01 || y - r < box.top - .01 || y + r > box.bottom + .01;
+          });
+          return {count: clipped.length, sample: clipped.slice(0, 3).map(e => e.dataset.eventId), box};
+        }""")
+        assert outside["count"] == 0, outside
         overlap_id = next(r["id"] for r in all_rows if r["id"].endswith("-6000"))
         circle = page.locator(f'[data-event-id="{overlap_id}"]')
         box = circle.bounding_box()
@@ -320,8 +330,10 @@ with sync_playwright() as playwright:
     assert wall_zoomed["liquidation"] > 1 and wall_zoomed["volume"] == volume_zoomed["volume"], wall_zoomed
     assert wall_zoomed["visible"] == 120, wall_zoomed
     chart_titles = page.evaluate("() => Array.from(document.querySelectorAll('#market-chart text')).map(item => item.textContent)")
-    assert any("当前时段成交量（缩放 ×" in title for title in chart_titles), chart_titles
-    assert any("清算" in title and "（缩放 ×" in title for title in chart_titles), chart_titles
+    # Panel titles carry the live multiplier through zoomSuffix, which renders "×1.25".
+    zoom_text = lambda value: "×" + (str(int(round(value * 100) / 100)) if round(value * 100) % 100 == 0 else str(round(value * 100) / 100))
+    assert any(title == "当前时段成交量 " + zoom_text(volume_zoomed["volume"]) for title in chart_titles), (chart_titles, volume_zoomed)
+    assert any("清算" in title and title.endswith(" " + zoom_text(wall_zoomed["liquidation"])) for title in chart_titles), (chart_titles, wall_zoomed)
 
     candle_zoomed = wheel("candle", -1, 2)
     assert 24 <= candle_zoomed["visible"] < 120, candle_zoomed
