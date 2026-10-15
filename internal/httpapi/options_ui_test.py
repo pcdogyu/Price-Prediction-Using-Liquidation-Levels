@@ -56,7 +56,7 @@ with sync_playwright() as playwright:
     assert response.status == 200
     baseline = response.json()
     assert baseline["data"]["hours"] == 24
-    assert baseline["data"]["refresh_seconds"] == 600
+    assert baseline["data"]["refresh_seconds"] == 300
     assert baseline["data"]["retention_days"] == 90
     assert baseline["data"]["dense_hours"] == 24
     assert baseline["data"]["archive_minutes"] == 30
@@ -101,9 +101,9 @@ with sync_playwright() as playwright:
     rendered = int(page.locator("#options-chart").get_attribute("data-points"))
     expected = sum(len(s["points"]) for s in baseline["data"]["series"])
     assert rendered >= expected if production else rendered == expected
-    assert page.evaluate("() => window.__testIntervals.some(item => item.ms === 600000)")
+    assert page.evaluate("() => window.__testIntervals.some(item => item.ms === 300000)")
     assert page.locator("#options-hours").get_attribute("max") == "2160"
-    expect(page.locator("#options-status")).to_contain_text("每 10 分钟更新")
+    expect(page.locator("#options-status")).to_contain_text("每 5 分钟更新")
     if production:
         now = datetime.datetime.now(datetime.timezone.utc)
         for series in baseline["data"]["series"]:

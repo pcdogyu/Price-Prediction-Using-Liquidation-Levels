@@ -96,7 +96,7 @@ type OptionGammaCleanupReport struct {
 }
 
 // CleanupOptionGamma applies the two storage tiers in bounded transactions:
-// ten-minute source data for 24 hours, then one representative nearest each
+// five-minute source data for 24 hours, then one representative nearest each
 // wall-clock :00/:30 slot through day 90. The time slots are UTC, which has the
 // same minute boundaries as Beijing time.
 func (s *Store) CleanupOptionGamma(ctx context.Context, now time.Time) (OptionGammaCleanupReport, error) {

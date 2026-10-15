@@ -42,7 +42,7 @@ func TestOptionsEndpointWindowAndZero(t *testing.T) {
 		if hours == "" && packet.Data.Hours != 24 {
 			t.Fatalf("default options window=%d, want 24", packet.Data.Hours)
 		}
-		if packet.Data.RefreshSeconds != 600 || packet.Data.RetentionDays != 90 || packet.Data.DenseHours != 24 || packet.Data.ArchiveMinutes != 30 {
+		if packet.Data.RefreshSeconds != 300 || packet.Data.RetentionDays != 90 || packet.Data.DenseHours != 24 || packet.Data.ArchiveMinutes != 30 {
 			t.Fatal(packet.Data)
 		}
 	}
@@ -71,7 +71,7 @@ func TestOptionsAssetFollowsServerCadence(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/options", nil))
-	if !strings.Contains(w.Body.String(), "每 10 分钟") || !strings.Contains(w.Body.String(), "最长保留 90 天") || !strings.Contains(w.Body.String(), "整点和半点") {
+	if !strings.Contains(w.Body.String(), "每 5 分钟") || !strings.Contains(w.Body.String(), "最长保留 90 天") || !strings.Contains(w.Body.String(), "整点和半点") {
 		t.Fatal("options page copy does not describe tiered retention")
 	}
 }
