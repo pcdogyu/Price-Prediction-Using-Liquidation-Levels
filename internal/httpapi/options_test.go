@@ -24,7 +24,7 @@ func TestOptionsEndpointWindowAndZero(t *testing.T) {
 	if err := st.SaveOptionGamma(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
-	for _, hours := range []string{"", "1", "72"} {
+	for _, hours := range []string{"", "1", "2160"} {
 		w := httptest.NewRecorder()
 		srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/options?hours="+hours, nil))
 		var packet struct {
@@ -42,7 +42,7 @@ func TestOptionsEndpointWindowAndZero(t *testing.T) {
 		if hours == "" && packet.Data.Hours != 24 {
 			t.Fatalf("default options window=%d, want 24", packet.Data.Hours)
 		}
-		if packet.Data.RefreshSeconds != 300 || packet.Data.RetentionDays != 3 {
+		if packet.Data.RefreshSeconds != 600 || packet.Data.RetentionDays != 90 || packet.Data.DenseHours != 24 || packet.Data.ArchiveMinutes != 30 {
 			t.Fatal(packet.Data)
 		}
 	}
@@ -71,8 +71,8 @@ func TestOptionsAssetFollowsServerCadence(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/options", nil))
-	if !strings.Contains(w.Body.String(), "每 5 分钟") || !strings.Contains(w.Body.String(), "保留 3 天") {
-		t.Fatal("options page copy does not describe the five minute cadence and three day window")
+	if !strings.Contains(w.Body.String(), "每 10 分钟") || !strings.Contains(w.Body.String(), "最长保留 90 天") || !strings.Contains(w.Body.String(), "整点和半点") {
+		t.Fatal("options page copy does not describe tiered retention")
 	}
 }
 

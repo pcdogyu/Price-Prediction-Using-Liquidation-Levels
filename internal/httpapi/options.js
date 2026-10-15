@@ -12,7 +12,7 @@
   const color = token => getComputedStyle(document.documentElement).getPropertyValue('--' + token).trim();
   let latest = null, controller, sequence = 0;
   // Keep polling even when the very first request fails, then adopt the server cadence.
-  let cadenceSeconds = 300, refreshTimer = null;
+  let cadenceSeconds = 600, refreshTimer = null;
   function scheduleRefresh() {
     const next = Math.max(15, cadenceSeconds) * 1000;
     if (refreshTimer && refreshTimer.ms === next) return;
@@ -46,7 +46,8 @@
     for (let i=0;i<ticks;i++) {
       const at=start+(end-start)*i/(ticks-1), xx=x(at);
       ctx.strokeStyle=color('chart-grid'); ctx.beginPath(); ctx.moveTo(xx,plot.top); ctx.lineTo(xx,plot.bottom); ctx.stroke();
-      const text=new Date(at).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false});
+      const date=new Date(at), span=end-start;
+      const text=span>48*3600000?date.toLocaleDateString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit'}):span>24*3600000?date.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):date.toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false});
       ctx.fillText(text,Math.max(plot.left,Math.min(plot.right-ctx.measureText(text).width,xx-ctx.measureText(text).width/2)),height-12);
     }
     ctx.strokeStyle=color('options-zero'); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(plot.left,y(0)); ctx.lineTo(plot.right,y(0)); ctx.stroke();
@@ -61,7 +62,9 @@
         const at=Date.parse(point.time);
         if (!valid(point.gamma) || !Number.isFinite(at)) {previous=null;continue;}
         const px=x(at),py=y(point.gamma);
-        if (previous && at-previous.time<=data.refresh_seconds*2500) ctx.lineTo(px,py); else ctx.moveTo(px,py);
+        const denseCutoff=Date.parse(data.to)-(data.dense_hours||24)*3600000;
+        const maxGap=previous&&previous.time<denseCutoff?(data.archive_minutes||30)*90000:data.refresh_seconds*2500;
+        if (previous && at-previous.time<=maxGap) ctx.lineTo(px,py); else ctx.moveTo(px,py);
         previous={time:at};
         hoverPoints.push({x:px,y:py,point,series});
       }
@@ -79,7 +82,7 @@
     scheduleRefresh();
     $('options-method').textContent=data.method;
     $('options-status').textContent='已加载 '+data.series.reduce((sum,series)=>sum+series.points.length,0)+' 个点 · '+cadence(data.refresh_seconds);
-    $('options-window').textContent='窗口 '+data.hours+' 小时 · 查询截止 '+when(data.to)+' · 历史起始 '+when(data.available_from);
+    $('options-window').textContent='窗口 '+data.hours+' 小时 · 近 '+data.dense_hours+' 小时保留完整采样，更早每 '+data.archive_minutes+' 分钟一个值 · 查询截止 '+when(data.to)+' · 历史起始 '+when(data.available_from);
     $('options-rows').innerHTML=data.series.map(series=>{
       const point=series.latest;
       const sourceTime=Date.parse(point?.source_to)>0?point.source_to:point?.time;

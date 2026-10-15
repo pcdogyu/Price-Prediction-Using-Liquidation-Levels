@@ -5,9 +5,11 @@ import "time"
 const (
 	// OptionGammaRefreshSeconds is both the Deribit collection cadence and the
 	// interval the options page polls on, so the served copy cannot drift.
-	OptionGammaRefreshSeconds = 300
-	OptionGammaRetentionDays  = 3
+	OptionGammaRefreshSeconds = 600
+	OptionGammaRetentionDays  = 90
 	OptionGammaMaxHours       = OptionGammaRetentionDays * 24
+	OptionGammaDenseHours     = 24
+	OptionGammaArchiveMinutes = 30
 	// OptionGammaStaleAfter marks the last successful sample as expired after two
 	// collection cycles plus slack, so a normal cadence is never reported stale.
 	OptionGammaStaleAfter = 2*time.Duration(OptionGammaRefreshSeconds)*time.Second + 2*time.Minute
@@ -50,6 +52,8 @@ type OptionsView struct {
 	Hours          int                 `json:"hours"`
 	RefreshSeconds int                 `json:"refresh_seconds"`
 	RetentionDays  int                 `json:"retention_days"`
+	DenseHours     int                 `json:"dense_hours"`
+	ArchiveMinutes int                 `json:"archive_minutes"`
 	AvailableFrom  *time.Time          `json:"available_from"`
 	Series         []OptionGammaSeries `json:"series"`
 }

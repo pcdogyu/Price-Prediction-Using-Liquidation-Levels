@@ -47,10 +47,14 @@ func TestDailyMaintenanceBoundsCapturesAndGammaHistory(t *testing.T) {
 	}
 
 	value := 0.4
-	expiredPoint := domain.OptionGammaPoint{Symbol: "BTCUSDT", Underlying: "BTC", Source: "deribit", Time: past, Gamma: &value, Contracts: 80, SelectedContracts: 80, EligibleContracts: 100, State: "ok"}
+	expiredPoint := domain.OptionGammaPoint{Symbol: "BTCUSDT", Underlying: "BTC", Source: "deribit", Time: now.Add(-91 * 24 * time.Hour), Gamma: &value, Contracts: 80, SelectedContracts: 80, EligibleContracts: 100, State: "ok"}
 	currentPoint := expiredPoint
 	currentPoint.Time = now.Add(-time.Minute)
-	for _, point := range []domain.OptionGammaPoint{expiredPoint, currentPoint} {
+	archivePoint := expiredPoint
+	archivePoint.Time = now.Add(-48 * time.Hour).Truncate(30 * time.Minute)
+	redundantArchivePoint := archivePoint
+	redundantArchivePoint.Time = archivePoint.Time.Add(5 * time.Minute)
+	for _, point := range []domain.OptionGammaPoint{expiredPoint, archivePoint, redundantArchivePoint, currentPoint} {
 		if err = st.SaveOptionGamma(ctx, point); err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +72,7 @@ func TestDailyMaintenanceBoundsCapturesAndGammaHistory(t *testing.T) {
 		}
 	}
 	points, err := st.OptionGammaHistory(ctx, "BTCUSDT", now.Add(-time.Duration(domain.OptionGammaMaxHours)*time.Hour), now)
-	if err != nil || len(points) != 1 || !points[0].Time.Equal(currentPoint.Time) {
+	if err != nil || len(points) != 2 || !points[0].Time.Equal(archivePoint.Time) || !points[1].Time.Equal(currentPoint.Time) {
 		t.Fatalf("gamma window=%d points=%v err=%v", domain.OptionGammaMaxHours, points, err)
 	}
 }

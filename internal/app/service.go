@@ -343,6 +343,13 @@ func (s *Service) runDailyMaintenance(ctx context.Context) {
 		failed = true
 		s.log.Warn("dashboard retention cleanup failed", "error", err)
 	}
+	optionCleanup, err := s.store.CleanupOptionGamma(ctx, started)
+	if err != nil && ctx.Err() == nil {
+		failed = true
+		s.log.Warn("option Gamma cleanup failed", "error", err)
+	} else if optionCleanup.Expired > 0 || optionCleanup.Downsampled > 0 {
+		s.log.Info("option Gamma cleanup", "expired", optionCleanup.Expired, "downsampled", optionCleanup.Downsampled, "dense_hours", domain.OptionGammaDenseHours, "retention_days", domain.OptionGammaRetentionDays)
+	}
 	if err := s.store.PruneAlerts(ctx, started.AddDate(0, 0, -domain.AlertRetentionDays)); err != nil && ctx.Err() == nil {
 		failed = true
 		s.log.Warn("alert retention cleanup failed", "error", err)

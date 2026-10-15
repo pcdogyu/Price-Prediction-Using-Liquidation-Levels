@@ -392,7 +392,7 @@ func (s *Store) PruneDashboard(ctx context.Context, now time.Time) error {
 			return err
 		}
 	}
-	return s.PruneOptionGamma(ctx, now)
+	return nil
 }
 
 func ValidateHistoryKind(kind string) bool {

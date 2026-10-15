@@ -52,16 +52,16 @@ func TestOptionsFailurePreservesHistoryAndRestart(t *testing.T) {
 	if err != nil || view.Series[1].State != "stale" || s.Health()["deribit_options_ETHUSDT"].Coverage != .5 {
 		t.Fatal(view, err)
 	}
-	if view.RefreshSeconds != 300 || view.RetentionDays != 3 {
+	if view.RefreshSeconds != 600 || view.RetentionDays != 90 || view.DenseHours != 24 || view.ArchiveMinutes != 30 {
 		t.Fatal(view)
 	}
-	p.Time = time.Now().UTC().Add(-73 * time.Hour)
+	p.Time = time.Now().UTC().Add(-time.Duration(domain.OptionGammaMaxHours+1) * time.Hour)
 	s.recordOptionGamma(ctx, p.Symbol, p, nil)
-	view, err = s.Options(ctx, 72)
-	if err != nil || view.Series[1].Latest != nil || len(view.Series[1].Points) != 1 || view.Series[1].Points[0].Time.Before(time.Now().UTC().Add(-72*time.Hour)) {
+	view, err = s.Options(ctx, domain.OptionGammaMaxHours)
+	if err != nil || view.Series[1].Latest != nil || len(view.Series[1].Points) != 1 || view.Series[1].Points[0].Time.Before(time.Now().UTC().Add(-time.Duration(domain.OptionGammaMaxHours)*time.Hour)) {
 		t.Fatal("expired Gamma remained visible", view, err)
 	}
-	if _, err = s.Options(ctx, 73); err == nil {
+	if _, err = s.Options(ctx, domain.OptionGammaMaxHours+1); err == nil {
 		t.Fatal("invalid window accepted")
 	}
 }

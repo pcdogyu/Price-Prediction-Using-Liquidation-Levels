@@ -45,22 +45,34 @@ func (s *Service) recordOptionGamma(ctx context.Context, symbol string, point do
 
 func (s *Service) deribitGammaLoop(ctx context.Context) {
 	client := exchange.NewDeribitClient()
-	ticker := time.NewTicker(time.Duration(domain.OptionGammaRefreshSeconds) * time.Second)
-	defer ticker.Stop()
+	interval := time.Duration(domain.OptionGammaRefreshSeconds) * time.Second
+	scheduledAt := time.Now().UTC().Truncate(interval)
 	for {
 		for _, currency := range []string{"BTC", "ETH"} {
 			cc, cancel := context.WithTimeout(ctx, 45*time.Second)
-			point, err := client.Gamma(cc, currency, time.Now().UTC())
+			point, err := client.Gamma(cc, currency, scheduledAt)
 			cancel()
+			if err == nil {
+				// The source timestamps remain in SourceFrom/SourceTo. Time identifies
+				// this service's aligned ten-minute sampling slot.
+				point.Time = scheduledAt
+			}
 			s.recordOptionGamma(ctx, currency+"USDT", point, err)
 			if ctx.Err() != nil {
 				return
 			}
 		}
+		next := scheduledAt.Add(interval)
+		if !next.After(time.Now().UTC()) {
+			next = time.Now().UTC().Truncate(interval).Add(interval)
+		}
+		timer := time.NewTimer(time.Until(next))
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
+			scheduledAt = next
 		}
 	}
 }
@@ -71,7 +83,7 @@ func (s *Service) Options(ctx context.Context, hours int) (domain.OptionsView, e
 	}
 	now := time.Now().UTC()
 	cutoff := now.Add(-time.Duration(domain.OptionGammaMaxHours) * time.Hour)
-	view := domain.OptionsView{Source: "deribit", Method: domain.DeribitGammaMethod, From: now.Add(-time.Duration(hours) * time.Hour), To: now, Hours: hours, RefreshSeconds: domain.OptionGammaRefreshSeconds, RetentionDays: domain.OptionGammaRetentionDays, Series: []domain.OptionGammaSeries{}}
+	view := domain.OptionsView{Source: "deribit", Method: domain.DeribitGammaMethod, From: now.Add(-time.Duration(hours) * time.Hour), To: now, Hours: hours, RefreshSeconds: domain.OptionGammaRefreshSeconds, RetentionDays: domain.OptionGammaRetentionDays, DenseHours: domain.OptionGammaDenseHours, ArchiveMinutes: domain.OptionGammaArchiveMinutes, Series: []domain.OptionGammaSeries{}}
 	var err error
 	view.AvailableFrom, err = s.store.OptionGammaAvailableFrom(ctx, cutoff)
 	if err != nil {
