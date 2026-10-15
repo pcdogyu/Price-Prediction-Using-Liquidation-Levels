@@ -61,20 +61,6 @@ func (s *Service) startDashboard(ctx context.Context) {
 	go s.deribitGammaLoop(ctx)
 	go s.backfillMarketMetrics(ctx)
 	go func() {
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		for {
-			if err := s.store.PruneDashboard(ctx, time.Now().UTC()); err != nil && ctx.Err() == nil {
-				s.log.Warn("dashboard retention failed", "error", err)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
-	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {

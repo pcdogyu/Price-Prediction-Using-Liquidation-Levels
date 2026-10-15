@@ -326,11 +326,13 @@ func (s *Store) RecentLiquidationEvents(ctx context.Context, since time.Time, li
 // small batches, mirroring how the liquidation history is pruned.
 func (s *Store) PruneAlerts(ctx context.Context, before time.Time) error {
 	cutoff := before.UTC().UnixMilli()
-	for _, statement := range []string{
-		`DELETE FROM liquidation_alerts WHERE id IN (SELECT id FROM liquidation_alerts WHERE trigger_ts<? LIMIT 2000)`,
-		`DELETE FROM trade_signals WHERE id IN (SELECT id FROM trade_signals WHERE created_ts<? LIMIT 2000)`,
+	for _, target := range []struct {
+		table, column string
+	}{
+		{"liquidation_alerts", "trigger_ts"},
+		{"trade_signals", "created_ts"},
 	} {
-		if _, err := s.db.ExecContext(ctx, statement, cutoff); err != nil {
+		if _, err := s.pruneBatches(ctx, target.table, target.column, cutoff); err != nil {
 			return err
 		}
 	}

@@ -5,12 +5,77 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumeprofile"
 )
+
+func TestRetentionIndexesAndBatchedCleanup(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "retention.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	targets := []struct {
+		table, column, index string
+	}{
+		{"candles", "ts", "candles_retention_time"},
+		{"predictions", "ts", "predictions_retention_time"},
+		{"liquidations", "event_ts", "liquidations_retention_time"},
+		{"volume_profile_snapshots", "ts", "volume_profile_snapshots_retention_time"},
+		{"volume_profile_levels", "session_ts", "volume_profile_levels_retention_time"},
+		{"volume_profile_cursors", "session_ts", "volume_profile_cursors_retention_time"},
+		{"volume_archive_imports", "day", "volume_archive_imports_retention_day"},
+		{"auth_sessions", "expires_ts", "auth_sessions_retention_expiry"},
+		{"book_snapshots", "ts", "book_snapshots_retention_time"},
+		{"wall_events", "ts", "wall_events_retention_time"},
+		{"market_metrics", "ts", "market_metrics_retention_time"},
+		{"deribit_gamma_history", "ts", "deribit_gamma_retention_time"},
+	}
+	for _, target := range targets {
+		rows, queryErr := s.db.QueryContext(ctx, `EXPLAIN QUERY PLAN SELECT rowid FROM `+target.table+` WHERE `+target.column+`<? LIMIT ?`, 0, pruneBatchSize)
+		if queryErr != nil {
+			t.Fatal(queryErr)
+		}
+		var plan strings.Builder
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if queryErr = rows.Scan(&id, &parent, &unused, &detail); queryErr != nil {
+				rows.Close()
+				t.Fatal(queryErr)
+			}
+			plan.WriteString(detail)
+		}
+		if queryErr = rows.Close(); queryErr != nil {
+			t.Fatal(queryErr)
+		}
+		if !strings.Contains(plan.String(), target.index) {
+			t.Errorf("%s retention plan %q does not use %s", target.table, plan.String(), target.index)
+		}
+	}
+
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	_, err = s.db.ExecContext(ctx, `WITH RECURSIVE n(x) AS (SELECT 0 UNION ALL SELECT x+1 FROM n WHERE x<2500)
+		INSERT INTO candles(exchange,symbol,ts) SELECT 'binance','BATCH',?+x FROM n`, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.PruneBefore(ctx, time.UnixMilli(base+2500)); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM candles WHERE symbol='BATCH'`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("batched cleanup left %d candles, want 1", remaining)
+	}
+}
 
 // TestCancelledQueryDoesNotPoisonPool protects the production failure where a
 // cancelled HTTP request left modernc/sqlite's only pooled connection in

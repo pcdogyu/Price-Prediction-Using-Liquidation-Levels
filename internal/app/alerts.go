@@ -133,7 +133,6 @@ func (s *Service) startAlerts(ctx context.Context) {
 	go rtm.notifier.Start(ctx)
 	go rtm.topSymbolLoop(ctx)
 	go rtm.tickLoop(ctx)
-	go rtm.retentionLoop(ctx)
 	s.log.Info("liquidation alert engine started", "watch_symbols", rtm.engine.WatchCount(), "window", rtm.cfg.Window, "quiet", rtm.cfg.Quiet, "confirm", rtm.cfg.Confirm)
 }
 
@@ -162,27 +161,6 @@ func (rtm *alertRuntime) tickLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			rtm.persist(context.WithoutCancel(ctx), rtm.engine.Tick(time.Now().UTC()), true)
-		}
-	}
-}
-
-// retentionLoop prunes alert and signal history once an hour.
-func (rtm *alertRuntime) retentionLoop(ctx context.Context) {
-	prune := func() {
-		cutoff := time.Now().UTC().AddDate(0, 0, -domain.AlertRetentionDays)
-		if err := rtm.store.PruneAlerts(ctx, cutoff); err != nil && ctx.Err() == nil {
-			rtm.log.Warn("alert retention cleanup failed", "error", err)
-		}
-	}
-	prune()
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			prune()
 		}
 	}
 }

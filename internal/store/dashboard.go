@@ -21,10 +21,14 @@ CREATE INDEX IF NOT EXISTS liquidation_time_page ON liquidations(exchange,event_
 CREATE INDEX IF NOT EXISTS liquidation_symbol_page ON liquidations(exchange,symbol,event_ts DESC,id DESC);
 CREATE TABLE IF NOT EXISTS wall_events(id TEXT PRIMARY KEY,symbol TEXT NOT NULL,ts INTEGER NOT NULL,ended_ts INTEGER,payload BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS wall_event_time ON wall_events(symbol,ts DESC,id DESC);
+CREATE INDEX IF NOT EXISTS wall_events_retention_time ON wall_events(ts);
 CREATE TABLE IF NOT EXISTS book_snapshots(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
+CREATE INDEX IF NOT EXISTS book_snapshots_retention_time ON book_snapshots(ts);
 CREATE TABLE IF NOT EXISTS market_metrics(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
+CREATE INDEX IF NOT EXISTS market_metrics_retention_time ON market_metrics(ts);
 CREATE TABLE IF NOT EXISTS gamma_latest(symbol TEXT PRIMARY KEY,payload BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS deribit_gamma_history(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));`)
+CREATE TABLE IF NOT EXISTS deribit_gamma_history(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
+CREATE INDEX IF NOT EXISTS deribit_gamma_retention_time ON deribit_gamma_history(ts);`)
 	return err
 }
 
@@ -384,19 +388,8 @@ func (s *Store) PruneDashboard(ctx context.Context, now time.Time) error {
 		table string
 		days  int
 	}{{"book_snapshots", 30}, {"wall_events", 180}, {"market_metrics", 180}} {
-		// Small batches avoid holding the single SQLite writer during collection.
-		for {
-			r, e := s.db.ExecContext(ctx, `DELETE FROM `+q.table+` WHERE rowid IN (SELECT rowid FROM `+q.table+` WHERE ts<? LIMIT 2000)`, now.AddDate(0, 0, -q.days).UnixMilli())
-			if e != nil {
-				return e
-			}
-			n, e := r.RowsAffected()
-			if e != nil {
-				return e
-			}
-			if n < 2000 {
-				break
-			}
+		if _, err := s.pruneBatches(ctx, q.table, "ts", now.AddDate(0, 0, -q.days).UnixMilli()); err != nil {
+			return err
 		}
 	}
 	return s.PruneOptionGamma(ctx, now)

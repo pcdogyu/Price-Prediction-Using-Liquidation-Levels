@@ -317,21 +317,48 @@ func (s *Service) train(ctx context.Context) {
 }
 func (s *Service) retentionLoop(ctx context.Context) {
 	prune := func() {
-		if err := s.store.PruneBefore(ctx, time.Now().UTC().AddDate(0, 0, -s.cfg.BackfillDays)); err != nil && ctx.Err() == nil {
+		started := time.Now().UTC()
+		failed := false
+		if err := s.store.PruneBefore(ctx, started.AddDate(0, 0, -s.cfg.BackfillDays)); err != nil && ctx.Err() == nil {
+			failed = true
 			s.log.Warn("market retention cleanup failed", "error", err)
+		}
+		if err := s.store.PruneDashboard(ctx, started); err != nil && ctx.Err() == nil {
+			failed = true
+			s.log.Warn("dashboard retention cleanup failed", "error", err)
+		}
+		if err := s.store.PruneAlerts(ctx, started.AddDate(0, 0, -domain.AlertRetentionDays)); err != nil && ctx.Err() == nil {
+			failed = true
+			s.log.Warn("alert retention cleanup failed", "error", err)
+		}
+		if ctx.Err() == nil && !failed {
+			s.log.Info("daily database maintenance complete", "elapsed", time.Since(started))
 		}
 	}
 	prune()
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
 	for {
+		timer := time.NewTimer(time.Until(nextDailyMaintenance(time.Now())))
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			prune()
 		}
 	}
+}
+
+var maintenanceLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
+
+// nextDailyMaintenance schedules retention for 03:30 Beijing time, outside the
+// busiest monitoring period and independently of the server's local timezone.
+func nextDailyMaintenance(now time.Time) time.Time {
+	local := now.In(maintenanceLocation)
+	next := time.Date(local.Year(), local.Month(), local.Day(), 3, 30, 0, 0, maintenanceLocation)
+	if !next.After(local) {
+		next = next.AddDate(0, 0, 1)
+	}
+	return next
 }
 func (s *Service) retrainLoop(ctx context.Context) {
 	for {

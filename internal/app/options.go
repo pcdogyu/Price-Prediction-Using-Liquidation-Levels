@@ -48,9 +48,6 @@ func (s *Service) deribitGammaLoop(ctx context.Context) {
 	ticker := time.NewTicker(time.Duration(domain.OptionGammaRefreshSeconds) * time.Second)
 	defer ticker.Stop()
 	for {
-		if err := s.store.PruneOptionGamma(ctx, time.Now().UTC()); err != nil && ctx.Err() == nil {
-			s.log.Warn("Deribit Gamma retention failed", "error", err)
-		}
 		for _, currency := range []string{"BTC", "ETH"} {
 			cc, cancel := context.WithTimeout(ctx, 45*time.Second)
 			point, err := client.Gamma(cc, currency, time.Now().UTC())

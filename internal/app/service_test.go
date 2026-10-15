@@ -16,6 +16,20 @@ import (
 type historyCall struct{ from, until time.Time }
 type historyClient struct{ calls []historyCall }
 
+func TestNextDailyMaintenanceUsesBeijingTime(t *testing.T) {
+	tests := []struct {
+		now, want time.Time
+	}{
+		{time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC), time.Date(2026, 10, 14, 19, 30, 0, 0, time.UTC)},
+		{time.Date(2026, 10, 14, 20, 0, 0, 0, time.UTC), time.Date(2026, 10, 15, 19, 30, 0, 0, time.UTC)},
+	}
+	for _, test := range tests {
+		if got := nextDailyMaintenance(test.now); !got.Equal(test.want) {
+			t.Errorf("nextDailyMaintenance(%v) = %v, want %v", test.now, got, test.want)
+		}
+	}
+}
+
 func (*historyClient) Name() string { return "binance" }
 func (c *historyClient) History(_ context.Context, symbol string, from, until time.Time) ([]domain.Candle, error) {
 	c.calls = append(c.calls, historyCall{from, until})

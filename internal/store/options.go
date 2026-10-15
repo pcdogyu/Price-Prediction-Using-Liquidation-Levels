@@ -67,18 +67,6 @@ func (s *Store) OptionGammaAvailableFrom(ctx context.Context, since time.Time) (
 
 func (s *Store) PruneOptionGamma(ctx context.Context, now time.Time) error {
 	cutoff := now.Add(-time.Duration(domain.OptionGammaMaxHours) * time.Hour).UnixMilli()
-	for {
-		// Batch deletes allow other collectors to use the SQLite writer.
-		result, err := s.db.ExecContext(ctx, `DELETE FROM deribit_gamma_history WHERE rowid IN (SELECT rowid FROM deribit_gamma_history WHERE ts<? LIMIT 2000)`, cutoff)
-		if err != nil {
-			return err
-		}
-		count, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if count < 2000 {
-			return nil
-		}
-	}
+	_, err := s.pruneBatches(ctx, "deribit_gamma_history", "ts", cutoff)
+	return err
 }

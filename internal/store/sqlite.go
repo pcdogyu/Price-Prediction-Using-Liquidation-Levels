@@ -44,16 +44,24 @@ func (s *Store) migrate(ctx context.Context) error {
 	const schema = `
 CREATE TABLE IF NOT EXISTS candles(exchange TEXT NOT NULL,symbol TEXT NOT NULL,ts INTEGER NOT NULL,open REAL,high REAL,low REAL,close REAL,volume_usd REAL,taker_buy_usd REAL,open_interest_usd REAL,funding_rate REAL,long_short_ratio REAL,PRIMARY KEY(exchange,symbol,ts));
 CREATE INDEX IF NOT EXISTS candles_symbol_ts ON candles(symbol,ts);
+CREATE INDEX IF NOT EXISTS candles_retention_time ON candles(ts);
 CREATE TABLE IF NOT EXISTS liquidations(id TEXT PRIMARY KEY,exchange TEXT NOT NULL,symbol TEXT NOT NULL,position_side TEXT NOT NULL,event_ts INTEGER NOT NULL,received_ts INTEGER NOT NULL,price REAL NOT NULL,quantity REAL NOT NULL,notional_usd REAL NOT NULL,coverage TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS liq_symbol_ts ON liquidations(symbol,event_ts);
+CREATE INDEX IF NOT EXISTS liquidations_retention_time ON liquidations(event_ts);
 CREATE TABLE IF NOT EXISTS predictions(symbol TEXT NOT NULL,ts INTEGER NOT NULL,source TEXT NOT NULL DEFAULT '',payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
+CREATE INDEX IF NOT EXISTS predictions_retention_time ON predictions(ts);
 CREATE TABLE IF NOT EXISTS backtests(symbol TEXT PRIMARY KEY,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS volume_profile_levels(symbol TEXT NOT NULL,session_ts INTEGER NOT NULL,price_key TEXT NOT NULL,price REAL NOT NULL,volume_usd REAL NOT NULL,trade_count INTEGER NOT NULL,last_trade_ts INTEGER NOT NULL,PRIMARY KEY(symbol,session_ts,price_key));
+CREATE INDEX IF NOT EXISTS volume_profile_levels_retention_time ON volume_profile_levels(session_ts);
 CREATE TABLE IF NOT EXISTS volume_profile_cursors(symbol TEXT NOT NULL,session_ts INTEGER NOT NULL,last_agg_id INTEGER NOT NULL,last_trade_ts INTEGER NOT NULL,complete INTEGER NOT NULL,updated_ts INTEGER NOT NULL,PRIMARY KEY(symbol,session_ts));
+CREATE INDEX IF NOT EXISTS volume_profile_cursors_retention_time ON volume_profile_cursors(session_ts);
 CREATE TABLE IF NOT EXISTS volume_profile_snapshots(symbol TEXT NOT NULL,ts INTEGER NOT NULL,session_ts INTEGER NOT NULL,val REAL NOT NULL,vah REAL NOT NULL,total_volume_usd REAL NOT NULL,complete INTEGER NOT NULL,PRIMARY KEY(symbol,ts));
 CREATE INDEX IF NOT EXISTS volume_profile_snapshots_symbol_ts ON volume_profile_snapshots(symbol,ts);
+CREATE INDEX IF NOT EXISTS volume_profile_snapshots_retention_time ON volume_profile_snapshots(ts);
 CREATE TABLE IF NOT EXISTS volume_archive_imports(symbol TEXT NOT NULL,day TEXT NOT NULL,status TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',updated_ts INTEGER NOT NULL,PRIMARY KEY(symbol,day));
+CREATE INDEX IF NOT EXISTS volume_archive_imports_retention_day ON volume_archive_imports(day);
 CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY,expires_ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_sessions_retention_expiry ON auth_sessions(expires_ts);
 CREATE TABLE IF NOT EXISTS auth_users(username TEXT PRIMARY KEY,password_hash TEXT NOT NULL,created_ts INTEGER NOT NULL,updated_ts INTEGER NOT NULL);`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
@@ -520,30 +528,54 @@ func boolInt(value bool) int {
 }
 
 func (s *Store) PruneBefore(ctx context.Context, before time.Time) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	cutoff := before.UTC().UnixMilli()
-	for _, q := range []string{
-		`DELETE FROM candles WHERE ts<?`,
-		`DELETE FROM predictions WHERE ts<?`,
-		`DELETE FROM liquidations WHERE event_ts<?`,
-		`DELETE FROM volume_profile_snapshots WHERE ts<?`,
+	for _, q := range []struct {
+		table, column string
+	}{
+		{"candles", "ts"},
+		{"predictions", "ts"},
+		{"liquidations", "event_ts"},
+		{"volume_profile_snapshots", "ts"},
 	} {
-		if _, err = tx.ExecContext(ctx, q, cutoff); err != nil {
+		if _, err := s.pruneBatches(ctx, q.table, q.column, cutoff); err != nil {
 			return err
 		}
 	}
 	profileCutoff := time.Now().UTC().Add(-72 * time.Hour).UnixMilli()
-	if _, err = tx.ExecContext(ctx, `DELETE FROM volume_profile_levels WHERE session_ts<?`, profileCutoff); err != nil {
+	for _, table := range []string{"volume_profile_levels", "volume_profile_cursors"} {
+		if _, err := s.pruneBatches(ctx, table, "session_ts", profileCutoff); err != nil {
+			return err
+		}
+	}
+	if _, err := s.pruneBatches(ctx, "volume_archive_imports", "day", before.UTC().Format("2006-01-02")); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM volume_profile_cursors WHERE session_ts<?`, profileCutoff); err != nil {
-		return err
+	_, err := s.pruneBatches(ctx, "auth_sessions", "expires_ts", time.Now().UTC().UnixMilli())
+	return err
+}
+
+const pruneBatchSize = 2000
+
+// pruneBatches bounds each write transaction so daily retention cannot hold the
+// single SQLite writer for the duration of a large historical cleanup. Table and
+// column are internal constants supplied by the retention methods, never input.
+func (s *Store) pruneBatches(ctx context.Context, table, column string, cutoff any) (int64, error) {
+	var total int64
+	query := `DELETE FROM ` + table + ` WHERE rowid IN (SELECT rowid FROM ` + table + ` WHERE ` + column + `<? LIMIT ?)`
+	for {
+		result, err := s.db.ExecContext(ctx, query, cutoff, pruneBatchSize)
+		if err != nil {
+			return total, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return total, err
+		}
+		total += count
+		if count < pruneBatchSize {
+			return total, nil
+		}
 	}
-	return tx.Commit()
 }
 func (s *Store) SaveBacktest(ctx context.Context, r domain.BacktestReport) error {
 	if r.DataSource == "" {
