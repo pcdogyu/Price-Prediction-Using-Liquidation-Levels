@@ -108,7 +108,18 @@ func (s *Store) CleanupOptionGamma(ctx context.Context, now time.Time) (OptionGa
 	}
 
 	denseCutoff := now.UTC().Add(-time.Duration(domain.OptionGammaDenseHours) * time.Hour).UnixMilli()
-	bucketMillis := int64(domain.OptionGammaArchiveMinutes) * int64(time.Minute/time.Millisecond)
+	archiveRemoved, err := s.downsampleOptionGamma(ctx, cutoff, denseCutoff, domain.OptionGammaArchiveMinutes)
+	report.Downsampled += archiveRemoved
+	if err != nil {
+		return report, err
+	}
+	denseRemoved, err := s.downsampleOptionGamma(ctx, denseCutoff, now.UTC().Add(time.Minute).UnixMilli(), domain.OptionGammaRefreshSeconds/60)
+	report.Downsampled += denseRemoved
+	return report, err
+}
+
+func (s *Store) downsampleOptionGamma(ctx context.Context, from, to int64, bucketMinutes int) (int64, error) {
+	bucketMillis := int64(bucketMinutes) * int64(time.Minute/time.Millisecond)
 	halfBucket := bucketMillis / 2
 	query := `DELETE FROM deribit_gamma_history WHERE rowid IN (
   SELECT rowid FROM (
@@ -120,18 +131,19 @@ func (s *Store) CleanupOptionGamma(ctx context.Context, now time.Time) (OptionGa
     WHERE ts>=? AND ts<?
   ) WHERE keep_rank>1 LIMIT ?
 )`
+	var total int64
 	for {
-		result, execErr := s.db.ExecContext(ctx, query, halfBucket, bucketMillis, halfBucket, bucketMillis, bucketMillis, cutoff, denseCutoff, pruneBatchSize)
+		result, execErr := s.db.ExecContext(ctx, query, halfBucket, bucketMillis, halfBucket, bucketMillis, bucketMillis, from, to, pruneBatchSize)
 		if execErr != nil {
-			return report, execErr
+			return total, execErr
 		}
 		count, rowsErr := result.RowsAffected()
 		if rowsErr != nil {
-			return report, rowsErr
+			return total, rowsErr
 		}
-		report.Downsampled += count
+		total += count
 		if count < pruneBatchSize {
-			return report, nil
+			return total, nil
 		}
 	}
 }
