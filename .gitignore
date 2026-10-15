@@ -11,6 +11,7 @@ pem/
 .chrome*
 chrome-data/
 coverage.out
+__pycache__/
 liquidation-predictor
 liquidation-predictor.exe
 /server

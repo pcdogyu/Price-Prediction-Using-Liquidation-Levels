@@ -7,9 +7,15 @@ const cache = { signal: null, map: null, market: null, volume: null };
 let savedInterval = '15m';
 try { savedInterval = localStorage.getItem('liquidation.interval') || savedInterval; } catch (_) { /* browser storage is optional */ }
 const defaultLiquidationMinimumUSD = 0;
+const defaultVisibleCandles = 120;
+// Wheel zoom is regional: the candle strip changes how many candles it shows, and
+// /api/v1/market caps one page at 500 candles, so that is the widest zoom out. The two
+// profile panels cannot fetch anything, so their wheel scales the bar lengths instead.
+const candleZoomLimits = { minimum: 24, maximum: 500 };
+const profileZoomLimits = { minimum: .25, maximum: 12 };
 const chart = {
   interval: savedInterval,
-  candles: [], signals: [], liquidations: [], liquidationsTruncated: false, liquidationMinimumUSD: defaultLiquidationMinimumUSD, latestPriceTradeID: 0, latestPriceTick: null, windowEnd: 0, visibleCount: 120,
+  candles: [], signals: [], liquidations: [], liquidationsTruncated: false, liquidationMinimumUSD: defaultLiquidationMinimumUSD, latestPriceTradeID: 0, latestPriceTick: null, windowEnd: 0, visibleCount: defaultVisibleCandles, volumeZoom: 1, liquidationZoom: 1,
   hasMore: false, nextBefore: '', loadingOlder: false,
   yLow: null, yHigh: null, autoSpan: null, yManual: false,
   atLatest: true, newData: false, drag: null
@@ -33,6 +39,8 @@ const quantityFormat = Intl.NumberFormat('en-US', { maximumFractionDigits: 8 });
 const money = value => finite(value) ? moneyFormat.format(value) : '—';
 const compact = value => finite(value) ? compactFormat.format(value) : '—';
 const pct = value => finite(value) ? (value * 100).toFixed(1) + '%' : '—';
+const zoomLabel = value => '×' + (Math.round(value * 100) / 100);
+const zoomSuffix = value => value === 1 ? '' : ' ' + zoomLabel(value);
 const when = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
 const patternName = { doji: '十字星', hammer: '锤头', shooting_star: '流星', bullish_engulfing: '看涨吞没', bearish_engulfing: '看跌吞没' };
 const statusName = { unavailable: '不可用', armed: '等待触发', approaching: '接近触发', triggered: '已触发', expired: '已过期' };
@@ -449,7 +457,7 @@ function draw(view, map, signal, volume) {
   const state = bubbleLoader.state;
   $('bubble-retry').classList.toggle('hidden', state.status !== 'error');
   const loadState = state.status === 'loading' ? '补齐中 · ' + state.pages + '页 / ' + state.loaded + '笔' : state.status === 'error' ? '补齐失败：' + state.error + '（可重试）' : state.status === 'complete' ? '窗口已补齐' : '等待数据';
-  const context = (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '');
+  const context = (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · K线 ' + chart.visibleCount + '根 · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom);
   if (!range || !chartTimeScale(candles, dims.left, dims.candleRight)) {
     ['price-low', 'price-high', 'window-start', 'window-end', 'bubble-count'].forEach(key => svg.removeAttribute('data-' + key));
     $('chart-context').textContent = context + ' · 等待有效K线';
@@ -460,12 +468,22 @@ function draw(view, map, signal, volume) {
   const [low, high] = range;
   svg.setAttribute('data-price-low', low);
   svg.setAttribute('data-price-high', high);
+  svg.setAttribute('data-visible-count', chart.visibleCount);
+  svg.setAttribute('data-volume-zoom', chart.volumeZoom);
+  svg.setAttribute('data-liquidation-zoom', chart.liquidationZoom);
   const plotBottom = height - bottom;
   const y = price => top + (high - price) / (high - low) * (plotBottom - top);
   const defs = svgNode('defs');
   const clip = svgNode('clipPath', { id: 'plot-clip' });
   clip.appendChild(svgNode('rect', { x: left, y: top, width: profileRight - left, height: plotBottom - top }));
   defs.appendChild(clip);
+  // Each profile panel keeps its own clip so a wheel-zoomed bar is cut off inside its own
+  // column instead of running into the neighbouring panel or the price axis.
+  [['volume-clip', volumeLeft, volumeRight], ['liquidation-clip', liquidationLeft, profileRight]].forEach(([id, from, until]) => {
+    const panel = svgNode('clipPath', { id });
+    panel.appendChild(svgNode('rect', { x: from, y: top, width: Math.max(1, until - from), height: plotBottom - top }));
+    defs.appendChild(panel);
+  });
   svg.appendChild(defs);
   for (let i = 0; i < 6; i++) {
     const price = high - (high - low) * i / 5;
@@ -533,48 +551,52 @@ function draw(view, map, signal, volume) {
     const topRanks = new Map();
     (map.top_long_liquidations || []).forEach((peak, index) => topRanks.set(String(peak.price), { label: '多' + (index + 1), color: '#fb7185' }));
     (map.top_short_liquidations || []).forEach((peak, index) => topRanks.set(String(peak.price), { label: '空' + (index + 1), color: '#2dd4bf' }));
+    const wall = svgNode('g', { 'clip-path': 'url(#liquidation-clip)' });
     bins.forEach(bin => {
       if (bin.price < low - binWidth || bin.price > high + binWidth) return;
-      const width = Math.sqrt(bin.total_usd / maximum) * (profileRight - liquidationLeft);
+      const width = Math.sqrt(bin.total_usd / maximum) * (profileRight - liquidationLeft) * chart.liquidationZoom;
       const color = bin.price < (map.mark_price || signal?.mark_price) ? '#fb7185' : '#2dd4bf';
       const leverageRows = Object.entries(bin.leverage_usd || {}).filter(([, amount]) => amount > 0).sort((a, b) => Number(a[0]) - Number(b[0]));
       const leverageTip = leverageRows.map(([leverage, amount]) => '\n' + leverage + 'x $' + compact(amount)).join('');
-      const tip = liquidationName + '\n价格 ' + money(bin.price) + '\n总清算强度 $' + compact(bin.total_usd) + leverageTip + '\n多仓 $' + compact(bin.long_usd) + '\n空仓 $' + compact(bin.short_usd);
+      const tip = liquidationName + zoomSuffix(chart.liquidationZoom) + '\n价格 ' + money(bin.price) + '\n总清算强度 $' + compact(bin.total_usd) + leverageTip + '\n多仓 $' + compact(bin.long_usd) + '\n空仓 $' + compact(bin.short_usd);
       if (leverageRows.length) {
         let cursor = liquidationLeft;
         leverageRows.forEach(([leverage, amount]) => {
           const segmentWidth = width * amount / bin.total_usd;
-          plot.appendChild(svgNode('rect', { x: cursor, y: y(bin.price) - barHeight / 2, width: segmentWidth, height: barHeight, fill: leverageColors[leverage] || color, opacity: .4 + .58 * bin.total_usd / maximum, 'data-tip': tip }));
+          wall.appendChild(svgNode('rect', { x: cursor, y: y(bin.price) - barHeight / 2, width: segmentWidth, height: barHeight, fill: leverageColors[leverage] || color, opacity: .4 + .58 * bin.total_usd / maximum, 'data-tip': tip, 'data-wall': 'segment' }));
           cursor += segmentWidth;
         });
       } else {
-        plot.appendChild(svgNode('rect', { x: liquidationLeft, y: y(bin.price) - barHeight / 2, width, height: barHeight, fill: color, opacity: .35 + .6 * bin.total_usd / maximum, 'data-tip': tip }));
+        wall.appendChild(svgNode('rect', { x: liquidationLeft, y: y(bin.price) - barHeight / 2, width, height: barHeight, fill: color, opacity: .35 + .6 * bin.total_usd / maximum, 'data-tip': tip, 'data-wall': 'bar' }));
       }
       const rank = topRanks.get(String(bin.price));
       if (rank) {
-        plot.appendChild(svgNode('rect', { x: liquidationLeft, y: y(bin.price) - Math.max(3, barHeight / 2 + 1), width: Math.max(width, 25), height: Math.max(6, barHeight + 2), fill: 'none', stroke: rank.color, 'stroke-width': 1.4, opacity: .98, 'data-tip': rank.label + ' · ' + tip }));
-        plot.appendChild(svgNode('text', { x: liquidationLeft + 3, y: y(bin.price) + 3, fill: '#f8fafc', 'font-size': 9, 'font-weight': 750, 'data-tip': rank.label + ' · ' + tip }, rank.label));
+        wall.appendChild(svgNode('rect', { x: liquidationLeft, y: y(bin.price) - Math.max(3, barHeight / 2 + 1), width: Math.max(width, 25), height: Math.max(6, barHeight + 2), fill: 'none', stroke: rank.color, 'stroke-width': 1.4, opacity: .98, 'data-tip': rank.label + ' · ' + tip }));
+        wall.appendChild(svgNode('text', { x: liquidationLeft + 3, y: y(bin.price) + 3, fill: '#f8fafc', 'font-size': 9, 'font-weight': 750, 'data-tip': rank.label + ' · ' + tip }, rank.label));
       }
     });
+    plot.appendChild(wall);
   }
   const volumeBins = volume?.bins || [];
   if (volumeBins.length) {
     const maximum = Math.max(...volumeBins.map(item => item.volume_usd), 1);
+    const volumeGroup = svgNode('g', { 'clip-path': 'url(#volume-clip)' });
     volumeBins.forEach(bin => {
       const center = (bin.price_low + bin.price_high) / 2;
       if (bin.price_high < low || bin.price_low > high) return;
-      const width = Math.sqrt(bin.volume_usd / maximum) * (volumeRight - volumeLeft);
+      const width = Math.sqrt(bin.volume_usd / maximum) * (volumeRight - volumeLeft) * chart.volumeZoom;
       const barHeight = Math.max(2, Math.abs(y(bin.price_low) - y(bin.price_high)) * .9);
       const topThree = bin.volume_rank >= 1 && bin.volume_rank <= 3;
       const fill = topThree ? '#a855f7' : '#60a5fa';
       const opacity = topThree ? .96 : bin.in_value_area ? .88 : .28;
       const rankTip = topThree ? '\n成交额排名 #' + bin.volume_rank : '';
-      plot.appendChild(svgNode('rect', { x: volumeRight - width, y: y(center) - barHeight / 2, width, height: barHeight, fill, opacity, 'data-tip': 'Binance 当前时段成交量\n价格 ' + money(bin.price_low) + ' – ' + money(bin.price_high) + '\n成交额 $' + compact(bin.volume_usd) + '\n占比 ' + (bin.volume_percent || 0).toFixed(2) + '%' + rankTip + (bin.in_value_area ? '\n70%价值区域内' : '\n价值区域外') }));
+      volumeGroup.appendChild(svgNode('rect', { x: volumeRight - width, y: y(center) - barHeight / 2, width, height: barHeight, fill, opacity, 'data-volume-bar': '', 'data-tip': 'Binance 当前时段成交量' + zoomSuffix(chart.volumeZoom) + '\n价格 ' + money(bin.price_low) + ' – ' + money(bin.price_high) + '\n成交额 $' + compact(bin.volume_usd) + '\n占比 ' + (bin.volume_percent || 0).toFixed(2) + '%' + rankTip + (bin.in_value_area ? '\n70%价值区域内' : '\n价值区域外') }));
     });
+    plot.appendChild(volumeGroup);
   }
   svg.appendChild(plot);
-  svg.appendChild(svgNode('text', { x: (volumeLeft + volumeRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#7dd3fc', 'font-size': 11, 'font-weight': 650 }, '当前时段成交量'));
-  svg.appendChild(svgNode('text', { x: (liquidationLeft + profileRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: coinGlassMap ? '#7dd3fc' : '#83a0b2', 'font-size': 11, 'font-weight': 650 }, liquidationName));
+  svg.appendChild(svgNode('text', { x: (volumeLeft + volumeRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#7dd3fc', 'font-size': 11, 'font-weight': 650 }, '当前时段成交量' + zoomSuffix(chart.volumeZoom)));
+  svg.appendChild(svgNode('text', { x: (liquidationLeft + profileRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: coinGlassMap ? '#7dd3fc' : '#83a0b2', 'font-size': 11, 'font-weight': 650 }, liquidationName + zoomSuffix(chart.liquidationZoom)));
   if (coinGlassMap) {
     const above = bins.filter(bin => bin.price > high).length;
     const below = bins.filter(bin => bin.price < low).length;
@@ -704,26 +726,84 @@ function svgPoint(event) {
   return { x: (event.clientX - rect.left) * dims.width / rect.width, y: (event.clientY - rect.top) * dims.height / rect.height };
 }
 
+// chartRegion is the wheel routing table. The vertical wheel means something different in
+// every column of this chart, so the hovered x decides which series the gesture scales.
+function chartRegion(point) {
+  if (point.x >= dims.left && point.x <= dims.candleRight) return 'candles';
+  if (point.x >= dims.volumeLeft && point.x <= dims.volumeRight) return 'volume';
+  if (point.x >= dims.liquidationLeft && point.x <= dims.profileRight) return 'liquidation';
+  return 'price';
+}
+
+// zoomCandleWindow resizes the candle strip around the candle under the cursor. windowEnd
+// is a candle index, so the continuous index below the pointer is held fixed while the
+// visible count scales, which mirrors how the pointer drag pans the same index space.
+function zoomCandleWindow(fraction, factor) {
+  const total = chart.candles.length;
+  if (!total) return false;
+  const right = 1 - Math.max(0, Math.min(1, fraction));
+  const next = Math.round(Math.max(candleZoomLimits.minimum, Math.min(candleZoomLimits.maximum, chart.visibleCount * factor)));
+  if (next === chart.visibleCount) return false;
+  const anchor = chart.windowEnd - right * chart.visibleCount;
+  chart.visibleCount = next;
+  chart.windowEnd = Math.round(Math.max(Math.min(next, total), Math.min(total, anchor + right * next)));
+  chart.atLatest = chart.windowEnd === total;
+  if (!chart.atLatest) chart.newData = false;
+  $('new-data').classList.toggle('hidden', !chart.newData);
+  return true;
+}
+
+// zoomProfilePanel scales one profile column's bar lengths. The columns render their own
+// data, so zooming them never asks the server for anything.
+function zoomProfilePanel(region, factor) {
+  const key = region === 'volume' ? 'volumeZoom' : 'liquidationZoom';
+  const next = Math.max(profileZoomLimits.minimum, Math.min(profileZoomLimits.maximum, chart[key] * factor));
+  if (next === chart[key]) return false;
+  chart[key] = next;
+  return true;
+}
+
+// zoomPriceAxis keeps the gesture this wheel handler used to perform unconditionally: it
+// stays available on shift + wheel and while the cursor sits over a gutter or the axis.
+function zoomPriceAxis(point, factor) {
+  if (!finite(chart.yLow) || !finite(chart.yHigh)) return false;
+  const plotHeight = dims.height - dims.top - dims.bottom;
+  const anchor = chart.yHigh - (point.y - dims.top) / plotHeight * (chart.yHigh - chart.yLow);
+  const current = cache.market?.summary?.last_price || cache.signal?.mark_price || 1;
+  const minSpan = Math.max(current * .001, 1e-8);
+  const maxSpan = Math.max((chart.autoSpan || chart.yHigh - chart.yLow) * 8, minSpan);
+  const oldSpan = chart.yHigh - chart.yLow;
+  const span = Math.min(maxSpan, Math.max(minSpan, oldSpan * factor));
+  const ratio = (anchor - chart.yLow) / oldSpan;
+  chart.yLow = anchor - span * ratio;
+  chart.yHigh = chart.yLow + span;
+  chart.yManual = true;
+  return true;
+}
+
 function installChartInteractions() {
   const svg = $('market-chart');
   const wrap = svg.parentElement;
   svg.addEventListener('wheel', event => {
     event.preventDefault();
-    if (!finite(chart.yLow) || !finite(chart.yHigh)) return;
     const point = svgPoint(event);
-    const plotHeight = dims.height - dims.top - dims.bottom;
-    const anchor = chart.yHigh - (point.y - dims.top) / plotHeight * (chart.yHigh - chart.yLow);
+    // One tick resizes a series by 12%. Wheel down widens the candle window and the price span,
+    // which is the same direction the profile bars read as shrinking, so they take the reciprocal.
     const factor = event.deltaY > 0 ? 1.12 : 1 / 1.12;
-    const current = cache.market?.summary?.last_price || cache.signal?.mark_price || 1;
-    const minSpan = Math.max(current * .001, 1e-8);
-    const maxSpan = Math.max((chart.autoSpan || chart.yHigh - chart.yLow) * 8, minSpan);
-    const oldSpan = chart.yHigh - chart.yLow;
-    const span = Math.min(maxSpan, Math.max(minSpan, oldSpan * factor));
-    const ratio = (anchor - chart.yLow) / oldSpan;
-    chart.yLow = anchor - span * ratio;
-    chart.yHigh = chart.yLow + span;
-    chart.yManual = true;
-    draw(cache.market, cache.map, cache.signal, cache.volume);
+    const region = event.shiftKey || event.ctrlKey ? 'price' : chartRegion(point);
+    if (region === 'candles') {
+      if (!zoomCandleWindow((point.x - dims.left) / (dims.candleRight - dims.left), factor)) return;
+      draw(cache.market, cache.map, cache.signal, cache.volume);
+      ensureWindowLiquidations();
+      // Zooming out past the loaded page needs the same history paging a left drag does.
+      if (chart.windowEnd <= chart.visibleCount + 12) loadOlder();
+      return;
+    }
+    if (region === 'volume' || region === 'liquidation') {
+      if (zoomProfilePanel(region, 1 / factor)) draw(cache.market, cache.map, cache.signal, cache.volume);
+      return;
+    }
+    if (zoomPriceAxis(point, factor)) draw(cache.market, cache.map, cache.signal, cache.volume);
   }, { passive: false });
   svg.addEventListener('pointerdown', event => {
     const point = svgPoint(event);
@@ -909,7 +989,12 @@ $('chart-latest').addEventListener('click', () => {
 $('chart-reset').addEventListener('click', () => {
   chart.yManual = false;
   chart.yLow = chart.yHigh = chart.autoSpan = null;
+  chart.visibleCount = defaultVisibleCandles;
+  chart.volumeZoom = chart.liquidationZoom = 1;
+  chart.windowEnd = Math.max(Math.min(chart.windowEnd, chart.candles.length), 0);
+  chart.atLatest = chart.windowEnd === chart.candles.length;
   draw(cache.market, cache.map, cache.signal, cache.volume);
+  ensureWindowLiquidations();
 });
 $('bubble-retry').addEventListener('click', () => ensureWindowLiquidations(true));
 $('tooltip').addEventListener('pointerenter', () => clearTimeout(tooltipHideTimer));

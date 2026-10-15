@@ -196,10 +196,44 @@ with sync_playwright() as playwright:
         page.evaluate("tick => window.__testStream.emit('price', tick)", tick)
         assert check_axis()["high"] > initial["high"]
 
-    box = page.locator("#market-chart").bounding_box()
-    page.mouse.move(box["x"] + box["width"] * .3, box["y"] + box["height"] * .5)
-    page.mouse.wheel(0, -200)
+    zoom_state = """() => ({
+      visible: chart.visibleCount, volume: chart.volumeZoom, liquidation: chart.liquidationZoom,
+      price_low: chart.yLow, price_high: chart.yHigh, window_end: chart.windowEnd,
+      total: chart.candles.length, at_latest: chart.atLatest, manual: chart.yManual
+    })"""
+
+    def chart_point(column):
+        """Client point in the middle of one chart column, the inverse of the page's svgPoint."""
+        return page.evaluate("""(which) => {
+          const rect = document.getElementById('market-chart').getBoundingClientRect();
+          const edges = { candle: [dims.left, dims.candleRight], volume: [dims.volumeLeft, dims.volumeRight],
+                          wall: [dims.liquidationLeft, dims.profileRight], gutter: [4, dims.left - 24] };
+          const x = (edges[which][0] + edges[which][1]) / 2, y = (dims.top + dims.height - dims.bottom) / 2;
+          return [rect.left + x * rect.width / dims.width, rect.top + y * rect.height / dims.height];
+        }""", column)
+
+    def wheel(column, direction, steps=1):
+        x, y = chart_point(column)
+        page.mouse.move(x, y)
+        for _ in range(steps):
+            page.mouse.wheel(0, direction * 240)
+        idle()
+        return page.evaluate(zoom_state)
+
+    def shift_wheel(column, direction):
+        """Wheel over one column with shift held; the flag rides on a dispatched WheelEvent."""
+        page.evaluate("""([which, deltaY, x, y]) => document.getElementById('market-chart').dispatchEvent(
+          new WheelEvent('wheel', { deltaY, shiftKey: true, bubbles: true, cancelable: true, clientX: x, clientY: y }))""",
+                     [column, direction * 240, *chart_point(column)])
+        idle()
+        return page.evaluate(zoom_state)
+
+    # A plain wheel over the candles now scales the candle count, so the manual price axis
+    # gesture is exercised with the modifier that still routes the wheel to the vertical axis.
+    auto_axis = snapshot()
+    assert shift_wheel("candle", -1)["manual"] is True, auto_axis
     manual = snapshot()
+    assert manual["high"] - manual["low"] < auto_axis["high"] - auto_axis["low"], (auto_axis, manual)
     refresh()
     assert snapshot()["low"] == manual["low"] and snapshot()["high"] == manual["high"]
     page.locator("#chart-reset").click()
@@ -271,6 +305,60 @@ with sync_playwright() as playwright:
     idle()
     page.locator('button[data-interval="1m"]').click()
     idle()
+    # The wheel is region dependent: the K-line strip changes how many candles are visible,
+    # each profile column scales only its own bars, and the price axis keeps the previous
+    # behaviour for shift + wheel or a wheel over a gutter.
+    initial_zoom = page.evaluate(zoom_state)
+    assert initial_zoom["visible"] == 120 and initial_zoom["volume"] == 1 and initial_zoom["liquidation"] == 1, initial_zoom
+    assert initial_zoom["manual"] is False, initial_zoom
+
+    volume_zoomed = wheel("volume", -1, 2)
+    assert 1 < volume_zoomed["volume"] <= 12, volume_zoomed
+    assert volume_zoomed["visible"] == 120 and volume_zoomed["liquidation"] == 1, volume_zoomed
+
+    wall_zoomed = wheel("wall", -1, 2)
+    assert wall_zoomed["liquidation"] > 1 and wall_zoomed["volume"] == volume_zoomed["volume"], wall_zoomed
+    assert wall_zoomed["visible"] == 120, wall_zoomed
+    chart_titles = page.evaluate("() => Array.from(document.querySelectorAll('#market-chart text')).map(item => item.textContent)")
+    assert any("当前时段成交量（缩放 ×" in title for title in chart_titles), chart_titles
+    assert any("清算" in title and "（缩放 ×" in title for title in chart_titles), chart_titles
+
+    candle_zoomed = wheel("candle", -1, 2)
+    assert 24 <= candle_zoomed["visible"] < 120, candle_zoomed
+    assert candle_zoomed["volume"] == volume_zoomed["volume"] and candle_zoomed["liquidation"] == wall_zoomed["liquidation"], candle_zoomed
+
+    zoomed_out = wheel("candle", 1, 16)
+    assert zoomed_out["visible"] == 500, zoomed_out
+    assert zoomed_out["window_end"] <= zoomed_out["total"], zoomed_out
+    assert zoomed_out["volume"] == volume_zoomed["volume"] and zoomed_out["liquidation"] == wall_zoomed["liquidation"], zoomed_out
+    candle_clamped = wheel("candle", -1, 40)
+    assert candle_clamped["visible"] == 24, candle_clamped
+
+    axis_zoomed = wheel("gutter", -1)
+    assert (axis_zoomed["price_low"], axis_zoomed["price_high"]) != (candle_clamped["price_low"], candle_clamped["price_high"]), axis_zoomed
+    assert axis_zoomed["visible"] == 24 and axis_zoomed["manual"] is True, axis_zoomed
+    assert axis_zoomed["volume"] == volume_zoomed["volume"] and axis_zoomed["liquidation"] == wall_zoomed["liquidation"], axis_zoomed
+
+    shifted = shift_wheel("volume", -1)
+    assert shifted["volume"] == volume_zoomed["volume"], shifted
+    assert (shifted["price_low"], shifted["price_high"]) != (axis_zoomed["price_low"], axis_zoomed["price_high"]), shifted
+
+    assert wheel("volume", -1, 24)["volume"] == 12, "volume profile must clamp at its widest scale"
+    assert wheel("wall", 1, 16)["liquidation"] == .25, "liquidation profile must clamp at its narrowest scale"
+    print("[UI] region wheel zoom: candle strip, volume column, liquidation column and price axis verified")
+
+    # 重置缩放 restores the default zoom of all three regions and keeps the browsed window.
+    window_before_reset = page.evaluate("() => chart.windowEnd")
+    page.locator("#chart-reset").click()
+    idle()
+    after_reset = page.evaluate(zoom_state)
+    assert after_reset["visible"] == 120, after_reset
+    assert after_reset["volume"] == 1 and after_reset["liquidation"] == 1, after_reset
+    assert after_reset["manual"] is False and after_reset["window_end"] == window_before_reset, after_reset
+    assert after_reset["at_latest"] == (after_reset["window_end"] == after_reset["total"]), after_reset
+    print("[UI] chart zoom reset verified")
+
+
     for width in (1740, 390):
         page.set_viewport_size({"width": width, "height": 1100})
         for theme in ("light", "dark"):
