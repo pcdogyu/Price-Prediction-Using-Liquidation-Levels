@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -221,6 +223,129 @@ func (s *Store) TradeSignals(ctx context.Context, symbol, kind string, limit int
 	}
 	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0) FROM trade_signals WHERE `+where, args...).Scan(&out.SignalCount, &out.AggressiveCount, &out.SteadyCount)
 	return out, err
+}
+
+// AlertTimeline merges alert triggers and the signals produced from them into
+// one stable, newest-first cursor stream. kind accepts alert, aggressive,
+// steady, or an empty value for all three record types.
+func (s *Store) AlertTimeline(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.AlertTimelinePage, error) {
+	out := domain.AlertTimelinePage{Rows: []domain.AlertTimelineItem{}}
+	if limit < 1 || limit > 200 {
+		return out, errors.New("invalid timeline limit")
+	}
+	at, cursorID, err := DecodeCursor(cursor)
+	if err != nil {
+		return out, err
+	}
+	if kind != "" && kind != "alert" && kind != domain.SignalAggressive && kind != domain.SignalSteady {
+		return out, errors.New("invalid timeline kind")
+	}
+
+	symbolWhere := ""
+	if symbol != "" && symbol != "ALL" {
+		symbolWhere = " WHERE symbol=?"
+	}
+	parts := []string{}
+	args := []any{}
+	if kind == "" || kind == "alert" {
+		parts = append(parts, `SELECT 'alert' AS record_type,trigger_ts AS event_ts,'alert:'||id AS sort_id,payload FROM liquidation_alerts`+symbolWhere)
+		if symbolWhere != "" {
+			args = append(args, symbol)
+		}
+	}
+	if kind == "" || kind == domain.SignalAggressive || kind == domain.SignalSteady {
+		where := symbolWhere
+		if kind == domain.SignalAggressive || kind == domain.SignalSteady {
+			if where == "" {
+				where = " WHERE kind=?"
+			} else {
+				where += " AND kind=?"
+			}
+		}
+		parts = append(parts, `SELECT kind AS record_type,created_ts AS event_ts,'signal:'||id AS sort_id,payload FROM trade_signals`+where)
+		if symbolWhere != "" {
+			args = append(args, symbol)
+		}
+		if kind == domain.SignalAggressive || kind == domain.SignalSteady {
+			args = append(args, kind)
+		}
+	}
+
+	query := "SELECT record_type,event_ts,sort_id,payload FROM (" + strings.Join(parts, " UNION ALL ") + ")"
+	if !at.IsZero() {
+		query += " WHERE (event_ts<? OR (event_ts=? AND sort_id<?))"
+		args = append(args, at.UnixMilli(), at.UnixMilli(), cursorID)
+	}
+	query += " ORDER BY event_ts DESC,sort_id DESC LIMIT ?"
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	type timelineRow struct {
+		item   domain.AlertTimelineItem
+		sortID string
+	}
+	loaded := []timelineRow{}
+	for rows.Next() {
+		var recordType, sortID string
+		var eventMS int64
+		var payload []byte
+		if err = rows.Scan(&recordType, &eventMS, &sortID, &payload); err != nil {
+			return out, err
+		}
+		item := domain.AlertTimelineItem{Type: recordType, EventAt: time.UnixMilli(eventMS).UTC()}
+		if recordType == "alert" {
+			item.Alert = &domain.LiquidationAlert{}
+			err = json.Unmarshal(payload, item.Alert)
+		} else {
+			item.Signal = &domain.TradeSignal{}
+			err = json.Unmarshal(payload, item.Signal)
+		}
+		if err != nil {
+			return out, fmt.Errorf("decode %s timeline row: %w", recordType, err)
+		}
+		loaded = append(loaded, timelineRow{item: item, sortID: sortID})
+	}
+	if err = rows.Err(); err != nil {
+		return out, err
+	}
+	if err = rows.Close(); err != nil {
+		return out, err
+	}
+	if len(loaded) > limit {
+		loaded = loaded[:limit]
+		last := loaded[len(loaded)-1]
+		out.NextCursor = EncodeCursor(last.item.EventAt, last.sortID)
+	}
+	for _, row := range loaded {
+		out.Rows = append(out.Rows, row.item)
+	}
+
+	countWhere := ""
+	countArgs := []any{}
+	if symbolWhere != "" {
+		countWhere = " WHERE symbol=?"
+		countArgs = append(countArgs, symbol)
+	}
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts`+countWhere, countArgs...).Scan(&out.AlertCount); err != nil {
+		return out, err
+	}
+	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0) FROM trade_signals`+countWhere, countArgs...).Scan(&out.AggressiveCount, &out.SteadyCount); err != nil {
+		return out, err
+	}
+	switch kind {
+	case "alert":
+		out.TotalCount = out.AlertCount
+	case domain.SignalAggressive:
+		out.TotalCount = out.AggressiveCount
+	case domain.SignalSteady:
+		out.TotalCount = out.SteadyCount
+	default:
+		out.TotalCount = out.AlertCount + out.AggressiveCount + out.SteadyCount
+	}
+	return out, nil
 }
 
 // SignalTotals reports the stored signal counts per kind.

@@ -7,22 +7,18 @@
   <div id="alerts-error" class="error-box" role="alert" hidden></div>
   <section class="metric-grid six" id="alerts-metrics" aria-label="报警概要"></section>
   <section class="surface">
-    <div class="section-head"><h2>信号历史</h2><span id="alerts-history-status" class="muted" role="status">等待数据</span></div>
+    <div class="section-head"><h2>预警与信号历史</h2><span id="alerts-history-status" class="muted" role="status">等待数据</span></div>
     <form id="alerts-filters" class="filter-bar">
       <label for="alerts-symbol">币对<input id="alerts-symbol" name="symbol" type="text" placeholder="全部" autocomplete="off" maxlength="32"></label>
-      <label for="alerts-kind">类型<select id="alerts-kind" name="kind"><option value="all">全部</option><option value="aggressive">激进</option><option value="steady">稳健</option></select></label>
-      <label for="alerts-limit">每页<select id="alerts-limit" name="limit"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
+      <label for="alerts-kind">类型<select id="alerts-kind" name="kind"><option value="all">全部</option><option value="alert">预警</option><option value="aggressive">激进信号</option><option value="steady">稳健信号</option></select></label>
+      <span class="muted alerts-page-size">每页 20 条</span>
       <button id="alerts-apply" type="submit">查询</button>
-      <button id="alerts-more" type="button" disabled>加载更多</button>
+      <button id="alerts-prev" type="button" disabled>上一页</button>
+      <button id="alerts-next" type="button" disabled>下一页</button>
       <span id="alerts-count" class="muted"></span>
     </form>
-    <div class="table-scroll"><table class="alerts-signal-table"><thead><tr><th>时间（北京时间）</th><th>币对</th><th>类型</th><th>下单方向</th><th>预警爆仓额</th><th>安静 / 反向确认</th><th>参考价</th><th>通知</th></tr></thead><tbody id="alerts-history-rows"><tr><td colspan="8">尚无信号</td></tr></tbody></table></div>
-  </section>
-
-  <section class="surface">
-    <div class="section-head"><h2>预警历史</h2><span id="alerts-alert-status" class="muted" role="status">等待数据</span></div>
-    <div class="table-scroll"><table class="alerts-alert-table"><thead><tr><th>触发时间（北京时间）</th><th>币对</th><th>爆仓方向</th><th>下单方向</th><th>窗口爆仓额</th><th>阈值</th><th>笔数</th><th>顺延</th><th>状态</th><th>安静截止（北京时间）</th></tr></thead><tbody id="alerts-alert-rows"><tr><td colspan="10">尚无预警记录</td></tr></tbody></table></div>
-    <p class="muted alerts-note" id="alerts-alert-note"></p>
+    <div class="table-scroll"><table class="alerts-history-table"><thead><tr><th>时间（北京时间）</th><th>币对</th><th>记录类型</th><th>方向</th><th>爆仓额 / 阈值</th><th>过程 / 状态</th><th>参考价</th><th>通知</th></tr></thead><tbody id="alerts-history-rows"><tr><td colspan="8">尚无历史记录</td></tr></tbody></table></div>
+    <p class="muted alerts-note">预警、激进信号和稳健信号按发生时间统一排序。“顺延”表示预警后同方向继续爆仓并重算安静截止；“已过期”表示确认窗口内没有出现反向爆仓。</p>
   </section>
   <section class="surface">
     <div class="section-head"><h2>Telegram 通知</h2><span id="alerts-notify-status" class="muted" role="status">读取设置</span></div>

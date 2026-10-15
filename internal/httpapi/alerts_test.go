@@ -55,9 +55,14 @@ func TestAlertPageAndAssets(t *testing.T) {
 			t.Fatalf("the alerts page must contain %q", want)
 		}
 	}
-	// Signals live in one table: the duplicated 最新信号 block is gone so a page cannot
-	// show the same rows twice, and the live monitor table stays the last section.
-	for _, gone := range []string{"最新信号", "alerts-signal-rows", "alerts-signal-status"} {
+	// Alerts and signals live in one 20-row paged table, and the live monitor table
+	// stays the last section.
+	for _, want := range []string{"预警与信号历史", "每页 20 条", "alerts-prev", "alerts-next"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the merged history must contain %q", want)
+		}
+	}
+	for _, gone := range []string{"最新信号", "alerts-signal-rows", "alerts-signal-status", "alerts-alert-rows", "alerts-limit"} {
 		if strings.Contains(body, gone) {
 			t.Fatalf("the alerts page must not contain %q", gone)
 		}
@@ -189,6 +194,23 @@ func TestAlertHistoryEndpoints(t *testing.T) {
 	if unknown.Code != http.StatusOK || json.Unmarshal(unknown.Body.Bytes(), &empty) != nil || len(empty.Rows) != 0 || empty.SignalCount != 0 {
 		t.Fatalf("an unknown symbol must return an empty page: %d %s", unknown.Code, unknown.Body.String())
 	}
+	timeline := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline", nil)
+	var merged domain.AlertTimelinePage
+	if timeline.Code != http.StatusOK || json.Unmarshal(timeline.Body.Bytes(), &merged) != nil {
+		t.Fatalf("merged timeline status=%d body=%s", timeline.Code, timeline.Body.String())
+	}
+	if len(merged.Rows) != 8 || merged.TotalCount != 8 || merged.AlertCount != 4 || merged.AggressiveCount != 3 || merged.SteadyCount != 1 {
+		t.Fatalf("unexpected merged timeline: %+v", merged)
+	}
+	for i := 1; i < len(merged.Rows); i++ {
+		if merged.Rows[i-1].EventAt.Before(merged.Rows[i].EventAt) {
+			t.Fatalf("merged timeline must be newest first: %+v", merged.Rows)
+		}
+	}
+	steadyTimeline := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?kind=steady", nil)
+	if steadyTimeline.Code != http.StatusOK || !strings.Contains(steadyTimeline.Body.String(), `"total_count":1`) || !strings.Contains(steadyTimeline.Body.String(), `"type":"steady"`) {
+		t.Fatalf("the merged kind filter failed: %d %s", steadyTimeline.Code, steadyTimeline.Body.String())
+	}
 	for _, path := range []string{
 		"/api/v1/alerts/history?limit=0",
 		"/api/v1/alerts/history?limit=999",
@@ -197,6 +219,8 @@ func TestAlertHistoryEndpoints(t *testing.T) {
 		"/api/v1/alerts/signals?kind=trend",
 		"/api/v1/alerts/signals?limit=-1",
 		"/api/v1/alerts/signals?symbol=" + strings.Repeat("T", 33),
+		"/api/v1/alerts/timeline?kind=trend",
+		"/api/v1/alerts/timeline?cursor=not-a-cursor",
 	} {
 		bad := serveAlert(srv, http.MethodGet, path, nil)
 		if bad.Code != http.StatusBadRequest {

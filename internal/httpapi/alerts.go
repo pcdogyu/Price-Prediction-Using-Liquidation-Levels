@@ -85,9 +85,40 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts", getOnly(s.alertOverview))
 	mux.HandleFunc("/api/v1/alerts/history", getOnly(s.alertHistory))
 	mux.HandleFunc("/api/v1/alerts/signals", getOnly(s.alertSignals))
+	mux.HandleFunc("/api/v1/alerts/timeline", getOnly(s.alertTimeline))
 	mux.HandleFunc("/api/v1/alerts/klines", getOnly(s.alertKlines))
 	mux.HandleFunc("/api/v1/alerts/settings", s.alertSettings)
 	mux.HandleFunc("/api/v1/alerts/settings/test", postOnly(s.alertSettingsTest))
+}
+
+// alertTimeline reads the unified alert and signal history. The page size is
+// intentionally fixed at 20 so every browser page has the same shape.
+func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	symbol, _, err := alertFilters(query.Get("symbol"), "")
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	kind := strings.ToLower(strings.TrimSpace(query.Get("kind")))
+	if kind == "all" {
+		kind = ""
+	}
+	if kind != "" && kind != "alert" && kind != domain.SignalAggressive && kind != domain.SignalSteady {
+		problem(w, http.StatusBadRequest, fmt.Errorf("kind must be alert, aggressive, steady or all"))
+		return
+	}
+	if err = alertCursor(query.Get("cursor")); err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	page, err := s.svc.AlertTimeline(r.Context(), symbol, kind, 20, query.Get("cursor"))
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, page)
 }
 
 // alertOverview serves the monitoring snapshot, the newest alerts and signals, and

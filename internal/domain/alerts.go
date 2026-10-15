@@ -144,6 +144,27 @@ type SignalPage struct {
 	SteadyCount     int64         `json:"steady_count"`
 }
 
+// AlertTimelineItem is one row in the unified alert and signal history. Type is
+// alert, aggressive or steady; exactly one of Alert and Signal is populated.
+type AlertTimelineItem struct {
+	Type    string            `json:"type"`
+	EventAt time.Time         `json:"event_at"`
+	Alert   *LiquidationAlert `json:"alert,omitempty"`
+	Signal  *TradeSignal      `json:"signal,omitempty"`
+}
+
+// AlertTimelinePage cursor-paginates the unified history. The three counters
+// describe all rows for the selected symbol, while TotalCount honors the type
+// filter and therefore matches the result set being paged.
+type AlertTimelinePage struct {
+	Rows            []AlertTimelineItem `json:"rows"`
+	NextCursor      string              `json:"next_cursor,omitempty"`
+	TotalCount      int64               `json:"total_count"`
+	AlertCount      int64               `json:"alert_count"`
+	AggressiveCount int64               `json:"aggressive_count"`
+	SteadyCount     int64               `json:"steady_count"`
+}
+
 // KlineView backs the per symbol K-line chart on the alert page. The candles come
 // straight from the Binance USDⓈ-M klines endpoint, so every monitored pair can be
 // charted even though only the configured symbols are stored locally. NextBefore

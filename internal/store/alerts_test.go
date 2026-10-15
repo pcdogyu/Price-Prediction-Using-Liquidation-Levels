@@ -169,6 +169,58 @@ func TestTradeSignalNoveltyAndNotification(t *testing.T) {
 	}
 }
 
+// TestAlertTimelinePaginationAndFilters proves that alerts and both signal kinds
+// share one stable chronological stream without dropping rows at page boundaries.
+func TestAlertTimelinePaginationAndFilters(t *testing.T) {
+	store, ctx := openAlertStore(t)
+	base := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i < 12; i++ {
+		at := base.Add(time.Duration(i) * time.Minute)
+		symbol := "BTCUSDT"
+		if i == 0 {
+			symbol = "ETHUSDT"
+		}
+		if _, err := store.SaveLiquidationAlert(ctx, alertRow("timeline-a"+string(rune('a'+i)), symbol, "long", at, domain.AlertStateWatching)); err != nil {
+			t.Fatal(err)
+		}
+		kind := domain.SignalAggressive
+		if i%2 == 1 {
+			kind = domain.SignalSteady
+		}
+		if _, err := store.SaveTradeSignal(ctx, signalRow("timeline-s"+string(rune('a'+i)), symbol, kind, "long", at.Add(30*time.Second))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := store.AlertTimeline(ctx, "", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Rows) != 20 || first.TotalCount != 24 || first.AlertCount != 12 || first.AggressiveCount != 6 || first.SteadyCount != 6 || first.NextCursor == "" {
+		t.Fatalf("unexpected first timeline page: %+v", first)
+	}
+	for i := 1; i < len(first.Rows); i++ {
+		if first.Rows[i-1].EventAt.Before(first.Rows[i].EventAt) {
+			t.Fatalf("timeline must be newest first: %+v", first.Rows)
+		}
+	}
+	second, err := store.AlertTimeline(ctx, "", "", 20, first.NextCursor)
+	if err != nil || len(second.Rows) != 4 || second.NextCursor != "" {
+		t.Fatalf("unexpected second timeline page: %+v err %v", second, err)
+	}
+	steady, err := store.AlertTimeline(ctx, "BTCUSDT", domain.SignalSteady, 20, "")
+	if err != nil || len(steady.Rows) != 6 || steady.TotalCount != 6 || steady.AlertCount != 11 || steady.AggressiveCount != 5 || steady.SteadyCount != 6 {
+		t.Fatalf("timeline filters or counters are wrong: %+v err %v", steady, err)
+	}
+	for _, row := range steady.Rows {
+		if row.Type != domain.SignalSteady || row.Signal == nil || row.Alert != nil || row.Signal.Symbol != "BTCUSDT" {
+			t.Fatalf("unexpected filtered timeline row: %+v", row)
+		}
+	}
+	if _, err = store.AlertTimeline(ctx, "", "unknown", 20, ""); err == nil {
+		t.Fatal("an invalid timeline kind must be rejected")
+	}
+}
+
 // TestWatchListAndSettingsPersistence covers the two small stores the alert page
 // manages: the top volume watch list and the Telegram settings row.
 func TestWatchListAndSettingsPersistence(t *testing.T) {

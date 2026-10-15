@@ -1,8 +1,9 @@
 .alerts-settings{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:10px}.alerts-settings label{display:flex;flex-direction:column;gap:5px;color:var(--muted);font-size:12px}.alerts-settings input[type=text],.alerts-settings input[type=password]{width:260px;max-width:100%}.alerts-check{flex-direction:row;align-items:center;gap:7px;font-size:13px;color:var(--text)}.alerts-check input{width:auto}.alerts-settings-actions{display:flex;gap:8px;flex-wrap:wrap}.alerts-settings p{width:100%;margin:2px 0 0;overflow-wrap:anywhere}
 .alerts-scroll{max-height:520px}
-.alerts-monitor-table,.alerts-signal-table,.alerts-alert-table{min-width:880px}
-.alerts-monitor-table th,.alerts-monitor-table td,.alerts-signal-table td:nth-child(5),.alerts-signal-table td:nth-child(6),.alerts-alert-table td:nth-child(5){white-space:nowrap}
-.alerts-monitor-table td span.muted,.alerts-signal-table td span.muted,.alerts-alert-table td span.muted{display:inline-block;margin-left:4px}
+.alerts-monitor-table,.alerts-history-table{min-width:880px}
+.alerts-monitor-table th,.alerts-monitor-table td,.alerts-history-table td:nth-child(5),.alerts-history-table td:nth-child(6){white-space:nowrap}
+.alerts-monitor-table td span.muted,.alerts-history-table td span.muted{display:inline-block;margin-left:4px}
+.alerts-page-size{align-self:center}
 .alerts-row-active{background:var(--selected-bg)}
 .alerts-row-active:hover{background:var(--selected-bg)}
 .alerts-note{margin-top:10px;overflow-wrap:anywhere}
@@ -10,4 +11,4 @@
 #alerts-symbol{width:150px}
 .alerts-symbol-link{color:var(--link);text-decoration:underline;text-underline-offset:2px;font-weight:650;white-space:nowrap}
 .alerts-symbol-link:hover,.alerts-symbol-link:focus-visible{color:var(--text);background:var(--hover-bg);border-radius:5px}
-@media(max-width:720px){.alerts-settings input[type=text],.alerts-settings input[type=password]{width:100%}.alerts-monitor-table,.alerts-signal-table,.alerts-alert-table{min-width:760px}}
+@media(max-width:720px){.alerts-settings input[type=text],.alerts-settings input[type=password]{width:100%}.alerts-monitor-table,.alerts-history-table{min-width:760px}}

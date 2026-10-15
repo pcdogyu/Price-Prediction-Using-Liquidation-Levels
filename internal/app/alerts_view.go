@@ -72,6 +72,11 @@ func (s *Service) AlertSignals(ctx context.Context, symbol, kind string, limit i
 	return s.alerts.store.TradeSignals(ctx, symbol, kind, limit, cursor)
 }
 
+// AlertTimeline reads the unified alert and signal history.
+func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.AlertTimelinePage, error) {
+	return s.alerts.store.AlertTimeline(ctx, symbol, kind, limit, cursor)
+}
+
 // AlertSettings returns the masked notification settings.
 func (s *Service) AlertSettings() domain.NotificationSettings {
 	return s.alerts.snapshotSettings()
