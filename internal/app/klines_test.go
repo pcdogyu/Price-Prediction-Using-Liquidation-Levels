@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,5 +94,56 @@ func TestKlineCachePrunesExpiredEntries(t *testing.T) {
 	defer svc.klineMu.Unlock()
 	if len(svc.klineCache) != 1 {
 		t.Fatalf("expired entries must be pruned before growing: %d", len(svc.klineCache))
+	}
+}
+
+// TestAlertKlinesFallsBackToStoredMinutes keeps a transient Binance timeout
+// from leaving the chart empty for BTC/ETH, whose one-minute candles are stored
+// continuously by the main service.
+func TestAlertKlinesFallsBackToStoredMinutes(t *testing.T) {
+	svc := klineService(t)
+	end := time.Date(2026, 10, 15, 0, 10, 0, 0, time.UTC)
+	rows := make([]domain.Candle, 0, 10)
+	for index := 0; index < 10; index++ {
+		price := 2400 + float64(index)
+		rows = append(rows, domain.Candle{Exchange: "binance", Symbol: "ETHUSDT", Time: end.Add(time.Duration(index-10) * time.Minute),
+			Open: price, High: price + 2, Low: price - 1, Close: price + 1, VolumeUSD: 100 + float64(index)})
+	}
+	if err := svc.store.UpsertCandles(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+
+	original := fetchAlertKlines
+	fetchAlertKlines = func(context.Context, string, string, int, time.Time) ([]domain.MarketCandle, bool, error) {
+		return nil, false, errors.New("upstream timeout")
+	}
+	t.Cleanup(func() { fetchAlertKlines = original })
+
+	view, err := svc.AlertKlines(context.Background(), "ETHUSDT", "5m", 2, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Source != "binance_usdm_local_fallback" || len(view.Candles) != 2 {
+		t.Fatalf("unexpected fallback view: %+v", view)
+	}
+	if view.Candles[0].Time != end.Add(-10*time.Minute) || view.Candles[1].Time != end.Add(-5*time.Minute) {
+		t.Fatalf("fallback buckets are not aligned: %+v", view.Candles)
+	}
+	if view.Candles[0].Open != 2400 || view.Candles[1].Close != 2410 {
+		t.Fatalf("fallback OHLC was not aggregated from stored minutes: %+v", view.Candles)
+	}
+}
+
+func TestAlertKlinesReportsBothUpstreamAndFallbackFailures(t *testing.T) {
+	svc := klineService(t)
+	original := fetchAlertKlines
+	fetchAlertKlines = func(context.Context, string, string, int, time.Time) ([]domain.MarketCandle, bool, error) {
+		return nil, false, errors.New("upstream timeout")
+	}
+	t.Cleanup(func() { fetchAlertKlines = original })
+
+	_, err := svc.AlertKlines(context.Background(), "DOGEUSDT", "1m", 50, time.Time{})
+	if err == nil || !strings.Contains(err.Error(), "upstream timeout") || !strings.Contains(err.Error(), "local candle fallback unavailable") {
+		t.Fatalf("combined error=%v", err)
 	}
 }
