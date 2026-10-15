@@ -3,6 +3,7 @@ package coinglass
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,47 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
+
+func TestPruneCapturesKeepsLatestAndRecentFiles(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	expired := filepath.Join(dir, capturePrefix+now.Add(-4*24*time.Hour).Format("20060102T150405.000000000Z")+".json")
+	recent := filepath.Join(dir, capturePrefix+now.Add(-time.Hour).Format("20060102T150405.000000000Z")+".json")
+	latest := filepath.Join(dir, "latest.json")
+	foreign := filepath.Join(dir, "notes.txt")
+	for _, path := range []string{expired, recent, latest, foreign} {
+		if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := now.Add(-4 * 24 * time.Hour)
+	if err := os.Chtimes(expired, past, past); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := New("", dir).Prune(now, 72*time.Hour)
+	if err != nil || removed != 1 {
+		t.Fatalf("removed=%d err=%v", removed, err)
+	}
+	for _, path := range []string{recent, latest, foreign} {
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("%s must survive: %v", path, statErr)
+		}
+	}
+	if _, statErr := os.Stat(expired); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expired capture survived: %v", statErr)
+	}
+	// A missing or unset directory is not an error, and a zero window is a
+	// configuration mistake that must not delete the whole retention window.
+	if _, missErr := PruneCaptures(filepath.Join(dir, "absent"), now, 72*time.Hour); missErr != nil {
+		t.Fatal(missErr)
+	}
+	if _, emptyErr := PruneCaptures("", now, 72*time.Hour); emptyErr != nil {
+		t.Fatal(emptyErr)
+	}
+	if _, zeroErr := PruneCaptures(dir, now, 0); zeroErr == nil {
+		t.Fatal("zero retention accepted")
+	}
+}
 
 func TestCaptureStoresMapResponses(t *testing.T) {
 	upgrader := websocket.Upgrader{}

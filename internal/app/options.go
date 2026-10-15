@@ -101,7 +101,7 @@ func (s *Service) Options(ctx context.Context, hours int) (domain.OptionsView, e
 		if hasPoint && !point.Time.Before(cutoff) {
 			item.Latest = &point
 			item.State = point.State
-			if now.Sub(point.Time) > 3*time.Minute {
+			if now.Sub(point.Time) > domain.OptionGammaStaleAfter {
 				item.State = "stale"
 			} else if item.LastError != "" {
 				item.State = "partial"

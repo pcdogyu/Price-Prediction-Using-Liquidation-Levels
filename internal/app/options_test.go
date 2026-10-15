@@ -41,7 +41,7 @@ func TestOptionsFailurePreservesHistoryAndRestart(t *testing.T) {
 	if err != nil || view.Series[0].State != "ok" || !view.Series[0].Latest.Time.Equal(p.Time) {
 		t.Fatal(view, err)
 	}
-	p.Time = time.Now().UTC().Add(-4 * time.Minute)
+	p.Time = time.Now().UTC().Add(-domain.OptionGammaStaleAfter - time.Minute)
 	p.Symbol = "ETHUSDT"
 	p.Underlying = "ETH"
 	p.State = "partial"
@@ -52,7 +52,7 @@ func TestOptionsFailurePreservesHistoryAndRestart(t *testing.T) {
 	if err != nil || view.Series[1].State != "stale" || s.Health()["deribit_options_ETHUSDT"].Coverage != .5 {
 		t.Fatal(view, err)
 	}
-	if view.RefreshSeconds != 60 || view.RetentionDays != 3 {
+	if view.RefreshSeconds != 300 || view.RetentionDays != 3 {
 		t.Fatal(view)
 	}
 	p.Time = time.Now().UTC().Add(-73 * time.Hour)

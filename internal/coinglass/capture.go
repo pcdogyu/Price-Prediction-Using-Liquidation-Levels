@@ -113,6 +113,56 @@ func (c *Capturer) Capture(ctx context.Context) (Result, error) {
 	return result, nil
 }
 
+const capturePrefix = "coinglass-"
+
+// PruneCaptures deletes the timestamped capture files written before now minus
+// keep and reports how many went away. latest.json is the live pointer the map
+// page reads, so it is never touched, and a missing directory is not an error.
+func PruneCaptures(dir string, now time.Time, keep time.Duration) (int, error) {
+	if strings.TrimSpace(dir) == "" {
+		return 0, nil
+	}
+	if keep <= 0 {
+		return 0, errors.New("coinglass capture retention must be positive")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("read coinglass capture directory: %w", err)
+	}
+	cutoff := now.Add(-keep)
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !isCaptureName(entry.Name()) {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if removeErr := os.Remove(filepath.Join(dir, entry.Name())); removeErr != nil {
+			if errors.Is(removeErr, os.ErrNotExist) {
+				continue
+			}
+			return removed, fmt.Errorf("delete coinglass capture %s: %w", entry.Name(), removeErr)
+		}
+		removed++
+	}
+	return removed, nil
+}
+
+// Prune applies PruneCaptures to the directory this capturer writes into.
+func (c *Capturer) Prune(now time.Time, keep time.Duration) (int, error) {
+	return PruneCaptures(c.dir, now, keep)
+}
+
+// isCaptureName matches only the timestamped captures, never latest.json.
+func isCaptureName(name string) bool {
+	return len(name) > len(capturePrefix)+len(".json") && strings.HasPrefix(name, capturePrefix) && strings.HasSuffix(name, ".json")
+}
+
 func (c *Capturer) Latest() (Result, error) {
 	data, err := os.ReadFile(filepath.Join(c.dir, "latest.json"))
 	if err != nil {
@@ -355,7 +405,7 @@ func (c *Capturer) save(result Result) (string, error) {
 	if err := os.MkdirAll(c.dir, 0700); err != nil {
 		return "", fmt.Errorf("create capture directory: %w", err)
 	}
-	name := "coinglass-" + result.CapturedAt.Format("20060102T150405.000000000Z") + ".json"
+	name := capturePrefix + result.CapturedAt.Format("20060102T150405.000000000Z") + ".json"
 	path := filepath.Join(c.dir, name)
 	result.File = path
 	data, err := json.MarshalIndent(result, "", "  ")

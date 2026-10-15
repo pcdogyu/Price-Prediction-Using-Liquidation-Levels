@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ func TestOptionsEndpointWindowAndZero(t *testing.T) {
 		if hours == "" && packet.Data.Hours != 24 {
 			t.Fatalf("default options window=%d, want 24", packet.Data.Hours)
 		}
-		if packet.Data.RefreshSeconds != 60 || packet.Data.RetentionDays != 3 {
+		if packet.Data.RefreshSeconds != 300 || packet.Data.RetentionDays != 3 {
 			t.Fatal(packet.Data)
 		}
 	}
@@ -49,6 +50,29 @@ func TestOptionsEndpointWindowAndZero(t *testing.T) {
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/options", nil))
 	if w.Code != 405 {
 		t.Fatal(w.Code)
+	}
+}
+
+func TestOptionsAssetFollowsServerCadence(t *testing.T) {
+	srv, st := testService(t, config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	defer st.Close()
+	w := httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/assets/options.js", nil))
+	body := w.Body.String()
+	// The chart and the poller must adopt the cadence the API reports instead of
+	// a hardcoded minute, otherwise the copy and the data drift apart.
+	for _, marker := range []string{"cadence(data.refresh_seconds)", "cadenceSeconds=data.refresh_seconds", "scheduleRefresh()", "setInterval(() => { if (!document.hidden) load(); }, next)"} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("options asset lost %q", marker)
+		}
+	}
+	if strings.Contains(body, "每分钟更新") || strings.Contains(body, "},60000)") {
+		t.Fatal("options asset still hardcodes a one minute refresh")
+	}
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/options", nil))
+	if !strings.Contains(w.Body.String(), "每 5 分钟") || !strings.Contains(w.Body.String(), "保留 3 天") {
+		t.Fatal("options page copy does not describe the five minute cadence and three day window")
 	}
 }
 

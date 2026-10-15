@@ -56,7 +56,7 @@ with sync_playwright() as playwright:
     assert response.status == 200
     baseline = response.json()
     assert baseline["data"]["hours"] == 24
-    assert baseline["data"]["refresh_seconds"] == 60
+    assert baseline["data"]["refresh_seconds"] == 300
     assert baseline["data"]["retention_days"] == 3
     assert [s["symbol"] for s in baseline["data"]["series"]] == ["BTCUSDT", "ETHUSDT"]
     state = {"failure": False, "custom": None, "hold": False}
@@ -99,9 +99,9 @@ with sync_playwright() as playwright:
     rendered = int(page.locator("#options-chart").get_attribute("data-points"))
     expected = sum(len(s["points"]) for s in baseline["data"]["series"])
     assert rendered >= expected if production else rendered == expected
-    assert page.evaluate("() => window.__testIntervals.some(item => item.ms === 60000)")
+    assert page.evaluate("() => window.__testIntervals.some(item => item.ms === 300000)")
     assert page.locator("#options-hours").get_attribute("max") == "72"
-    expect(page.locator("#options-status")).to_contain_text("每分钟更新")
+    expect(page.locator("#options-status")).to_contain_text("每 5 分钟更新")
     if production:
         now = datetime.datetime.now(datetime.timezone.utc)
         for series in baseline["data"]["series"]:
@@ -110,7 +110,7 @@ with sync_playwright() as playwright:
             assert point and point["contracts"] == point["selected_contracts"] == 80
             assert abs((point["call_gamma"] - point["put_gamma"]) / (point["call_gamma"] + point["put_gamma"]) - point["gamma"]) < 1e-12
             at = datetime.datetime.fromisoformat(point["time"].replace("Z", "+00:00"))
-            assert (now - at).total_seconds() < 180
+            assert (now - at).total_seconds() < 11 * 60
         print(json.dumps({"live": [{"symbol": s["symbol"], "gamma": s["latest"]["gamma"], "contracts": s["latest"]["contracts"], "time": s["latest"]["time"], "points": len(s["points"])} for s in baseline["data"]["series"]]}, ensure_ascii=False))
     else:
         expect(page.locator("#options-rows tr").nth(0)).to_contain_text("0.396667")

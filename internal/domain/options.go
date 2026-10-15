@@ -3,9 +3,14 @@ package domain
 import "time"
 
 const (
-	OptionGammaRefreshSeconds = 60
+	// OptionGammaRefreshSeconds is both the Deribit collection cadence and the
+	// interval the options page polls on, so the served copy cannot drift.
+	OptionGammaRefreshSeconds = 300
 	OptionGammaRetentionDays  = 3
 	OptionGammaMaxHours       = OptionGammaRetentionDays * 24
+	// OptionGammaStaleAfter marks the last successful sample as expired after two
+	// collection cycles plus slack, so a normal cadence is never reported stale.
+	OptionGammaStaleAfter = 2*time.Duration(OptionGammaRefreshSeconds)*time.Second + 2*time.Minute
 )
 
 const DeribitGammaMethod = "按 OI 选取 BTC / ETH 各前 80 个未到期、有持仓的 Deribit 期权合约。归一化 Gamma = (CALL Gamma 之和 − PUT Gamma 之和) / 全部样本 Gamma 绝对值之和，范围 −1～1；OI 仅用于选取样本，不乘以 OI。该指标不是美元 GEX 或做市商真实净仓。"

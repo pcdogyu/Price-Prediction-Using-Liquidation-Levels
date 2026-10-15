@@ -7,8 +7,18 @@
   const gamma = value => valid(value) ? value.toFixed(6) : '—';
   const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const labels = {ok:'正常', partial:'部分数据缺失', stale:'数据已过期', unavailable:'等待采集'};
+  // The cadence comes from the API so the copy cannot drift from the collector.
+  const cadence = seconds => Number.isFinite(seconds) && seconds >= 60 && seconds % 60 === 0 ? '每 '+(seconds/60)+' 分钟更新' : Number.isFinite(seconds) && seconds > 0 ? '每 '+seconds+' 秒更新' : '自动更新';
   const color = token => getComputedStyle(document.documentElement).getPropertyValue('--' + token).trim();
   let latest = null, controller, sequence = 0;
+  // Keep polling even when the very first request fails, then adopt the server cadence.
+  let cadenceSeconds = 300, refreshTimer = null;
+  function scheduleRefresh() {
+    const next = Math.max(15, cadenceSeconds) * 1000;
+    if (refreshTimer && refreshTimer.ms === next) return;
+    if (refreshTimer) clearInterval(refreshTimer.id);
+    refreshTimer = {ms: next, id: setInterval(() => { if (!document.hidden) load(); }, next)};
+  }
   let hoverPoints = [], hoverWidth = 0, hoverX = null;
 
   function draw(data) {
@@ -65,8 +75,10 @@
 
   function render(packet) {
     const data=packet.data;
+    if (Number.isFinite(data.refresh_seconds)&&data.refresh_seconds>0) cadenceSeconds=data.refresh_seconds;
+    scheduleRefresh();
     $('options-method').textContent=data.method;
-    $('options-status').textContent='已加载 '+data.series.reduce((sum,series)=>sum+series.points.length,0)+' 个点 · 每分钟更新';
+    $('options-status').textContent='已加载 '+data.series.reduce((sum,series)=>sum+series.points.length,0)+' 个点 · '+cadence(data.refresh_seconds);
     $('options-window').textContent='窗口 '+data.hours+' 小时 · 查询截止 '+when(data.to)+' · 历史起始 '+when(data.available_from);
     $('options-rows').innerHTML=data.series.map(series=>{
       const point=series.latest;
@@ -114,5 +126,5 @@
   $('options-chart').addEventListener('pointerleave',()=>{$('options-tooltip').hidden=true;});
   const repaint=()=>{if(latest)draw(latest.data);};
   window.addEventListener('resize',repaint); window.addEventListener('themechange',repaint);
-  load(); setInterval(()=>{if(!document.hidden)load();},60000);
+  scheduleRefresh(); load();
 })();

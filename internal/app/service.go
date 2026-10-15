@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/coinglass"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/engine"
@@ -316,26 +317,7 @@ func (s *Service) train(ctx context.Context) {
 	s.rebuild(ctx)
 }
 func (s *Service) retentionLoop(ctx context.Context) {
-	prune := func() {
-		started := time.Now().UTC()
-		failed := false
-		if err := s.store.PruneBefore(ctx, started.AddDate(0, 0, -s.cfg.BackfillDays)); err != nil && ctx.Err() == nil {
-			failed = true
-			s.log.Warn("market retention cleanup failed", "error", err)
-		}
-		if err := s.store.PruneDashboard(ctx, started); err != nil && ctx.Err() == nil {
-			failed = true
-			s.log.Warn("dashboard retention cleanup failed", "error", err)
-		}
-		if err := s.store.PruneAlerts(ctx, started.AddDate(0, 0, -domain.AlertRetentionDays)); err != nil && ctx.Err() == nil {
-			failed = true
-			s.log.Warn("alert retention cleanup failed", "error", err)
-		}
-		if ctx.Err() == nil && !failed {
-			s.log.Info("daily database maintenance complete", "elapsed", time.Since(started))
-		}
-	}
-	prune()
+	s.runDailyMaintenance(ctx)
 	for {
 		timer := time.NewTimer(time.Until(nextDailyMaintenance(time.Now())))
 		select {
@@ -343,8 +325,46 @@ func (s *Service) retentionLoop(ctx context.Context) {
 			timer.Stop()
 			return
 		case <-timer.C:
-			prune()
+			s.runDailyMaintenance(ctx)
 		}
+	}
+}
+
+// runDailyMaintenance is the whole daily cleanup: row retention, the capture
+// files the browser leaves behind, and the space reclamation retention frees.
+func (s *Service) runDailyMaintenance(ctx context.Context) {
+	started := time.Now().UTC()
+	failed := false
+	if err := s.store.PruneBefore(ctx, started.AddDate(0, 0, -s.cfg.BackfillDays)); err != nil && ctx.Err() == nil {
+		failed = true
+		s.log.Warn("market retention cleanup failed", "error", err)
+	}
+	if err := s.store.PruneDashboard(ctx, started); err != nil && ctx.Err() == nil {
+		failed = true
+		s.log.Warn("dashboard retention cleanup failed", "error", err)
+	}
+	if err := s.store.PruneAlerts(ctx, started.AddDate(0, 0, -domain.AlertRetentionDays)); err != nil && ctx.Err() == nil {
+		failed = true
+		s.log.Warn("alert retention cleanup failed", "error", err)
+	}
+	// The captures the CoinGlass browser writes are only read through
+	// latest.json, so anything past the rolling window is pure disk pressure.
+	removed, err := coinglass.PruneCaptures(s.cfg.CoinGlassCaptureDir, started, domain.CoinGlassCaptureRetention)
+	if err != nil && ctx.Err() == nil {
+		failed = true
+		s.log.Warn("coinglass capture cleanup failed", "error", err)
+	} else if removed > 0 {
+		s.log.Info("coinglass capture cleanup", "removed", removed, "retention", domain.CoinGlassCaptureRetention)
+	}
+	compact, err := s.store.Compact(ctx, domain.DatabaseCompactMinimumFreeBytes)
+	if err != nil && ctx.Err() == nil {
+		failed = true
+		s.log.Warn("database space cleanup failed", "error", err)
+	} else if compact.Compacted {
+		s.log.Info("database space reclaimed", "free_bytes", compact.FreeBytes, "bytes_before", compact.BytesBefore, "bytes_after", compact.BytesAfter, "elapsed", compact.Elapsed)
+	}
+	if ctx.Err() == nil && !failed {
+		s.log.Info("daily database maintenance complete", "elapsed", time.Since(started))
 	}
 }
 
