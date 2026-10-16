@@ -23,11 +23,11 @@ const (
 const (
 	// AlertTopSymbolsDefault is how many Binance USDM pairs by 24h quote volume
 	// the alert strategy watches.
-	AlertTopSymbolsDefault = 50
+	AlertTopSymbolsDefault = 100
 	// AlertRetentionDays keeps alerts and signals long enough for backtesting.
 	AlertRetentionDays = 180
 	// AlertMonitorMethod documents the live 3 minute totals and the watch list.
-	AlertMonitorMethod = "监控名单为 Binance USDⓈ-M 24 小时成交额前 50 个 USDT 永续（每 10 分钟刷新，BTCUSDT/ETHUSDT 恒含）。金额为公开采样强平流在 3 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。预警方向为被爆仓的一侧：多单爆仓预警后按做多下单，空单爆仓预警后按做空下单。"
+	AlertMonitorMethod = "监控名单为 Binance USDⓈ-M 24 小时成交额前 100 个 USDT 永续（每 10 分钟刷新，BTCUSDT/ETHUSDT 恒含）。金额为公开采样强平流在 3 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。预警方向为被爆仓的一侧：多单爆仓预警后按做多下单，空单爆仓后按做空下单。"
 )
 
 // LiquidationAlert is one alert cycle for a symbol and the liquidated position
