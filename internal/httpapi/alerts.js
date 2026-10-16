@@ -219,18 +219,15 @@
   }
 
   async function triggerOrder(button) {
-    const symbol = button.dataset.triggerSymbol || '';
-    const side = button.dataset.triggerSide || '';
-    if (!window.confirm('确认发送 ' + symbol + ' ' + side + ' 下单信号？')) return;
     button.disabled = true;
     const original = button.textContent;
-    button.textContent = '发送中…';
+    button.textContent = '下单中';
     try {
       const response = await fetch(base + 'api/v1/alerts/trigger', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ record_type: button.dataset.triggerType, record_id: button.dataset.triggerId }) });
       const packet = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
-      button.textContent = '已发送';
-      button.classList.add('alerts-trigger-done');
+      button.textContent = original;
+      button.disabled = false;
       clearError();
     } catch (caught) {
       button.disabled = false;

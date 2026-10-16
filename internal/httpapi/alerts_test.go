@@ -89,6 +89,9 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "alerts-trigger") || !strings.Contains(script, "api/v1/alerts/trigger") {
 		t.Fatal("the alerts script must expose the manual order trigger")
 	}
+	if !strings.Contains(script, "下单中") || !strings.Contains(script, "button.textContent = original") || strings.Contains(script, "window.confirm") {
+		t.Fatal("manual order trigger must show in-button progress without a confirmation popup")
+	}
 	if post := serveAlert(srv, http.MethodPost, "/alerts", nil); post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /alerts status=%d", post.Code)
 	}
