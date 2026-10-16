@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "每页 20 条", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>"} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "每页 20 条", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -222,7 +222,7 @@ func TestAlertOverviewShape(t *testing.T) {
 	if view.Thresholds.WindowMinutes != 3 || view.Thresholds.QuietMinutes != 10 || view.Thresholds.ConfirmMinutes != 30 {
 		t.Fatalf("the strategy periods must be published: %+v", view.Thresholds)
 	}
-	if view.Thresholds.BTCUSD != 300000 || view.Thresholds.ETHUSD != 250000 || view.Thresholds.OtherUSD != 300000 {
+	if view.Thresholds.BTCUSD != 300000 || view.Thresholds.ETHUSD != 200000 || view.Thresholds.OtherUSD != 100000 {
 		t.Fatalf("the alert thresholds must be published: %+v", view.Thresholds)
 	}
 	if view.State != "waiting_watch_list" || len(view.Monitor) != 0 {
@@ -242,6 +242,31 @@ func TestAlertOverviewShape(t *testing.T) {
 	}
 	if packet.Sources == nil {
 		t.Fatal("exchange health must be reported like on the other pages")
+	}
+}
+
+func TestAlertStrategySettingsEndpoint(t *testing.T) {
+	srv, st := alertTestServer(t)
+	defer st.Close()
+
+	initial := serveAlert(srv, http.MethodGet, "/api/v1/alerts/strategy-settings", nil)
+	if initial.Code != http.StatusOK || !strings.Contains(initial.Body.String(), `"window_minutes":3`) || !strings.Contains(initial.Body.String(), `"eth_usd":200000`) || !strings.Contains(initial.Body.String(), `"other_usd":100000`) {
+		t.Fatalf("default strategy settings status=%d body=%s", initial.Code, initial.Body.String())
+	}
+	saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":5,"btc_usd":300000,"eth_usd":200000,"other_usd":100000}`))
+	if saved.Code != http.StatusOK || !strings.Contains(saved.Body.String(), `"window_minutes":5`) {
+		t.Fatalf("saved strategy settings status=%d body=%s", saved.Code, saved.Body.String())
+	}
+	view, err := srv.svc.Alerts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Thresholds.WindowMinutes != 5 || view.Thresholds.ETHUSD != 200000 || view.Thresholds.OtherUSD != 100000 {
+		t.Fatalf("live strategy settings = %+v", view.Thresholds)
+	}
+	invalid := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":0,"btc_usd":300000,"eth_usd":200000,"other_usd":100000}`))
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid strategy settings status=%d body=%s", invalid.Code, invalid.Body.String())
 	}
 }
 

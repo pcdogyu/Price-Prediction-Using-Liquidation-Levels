@@ -15,7 +15,6 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 	now := time.Now().UTC()
 	view := domain.AlertsView{
 		State:       "waiting_watch_list",
-		Method:      domain.AlertMonitorMethod,
 		Thresholds:  rtm.engine.Thresholds(),
 		Monitor:     []domain.AlertMonitor{},
 		Watch:       []domain.WatchSymbol{},
@@ -23,6 +22,7 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 		Signals:     []domain.TradeSignal{},
 		GeneratedAt: now,
 	}
+	view.Method = domain.AlertMonitorMethod(view.Thresholds.WindowMinutes, view.Thresholds.RefreshMinutes, view.Thresholds.TopSymbols)
 	rtm.mu.RLock()
 	view.Watch = append(view.Watch, rtm.watch...)
 	view.WatchError = rtm.watchErr
@@ -107,6 +107,20 @@ func (s *Service) SaveAlertSettings(ctx context.Context, in domain.NotificationS
 		return domain.NotificationSettings{}, errors.New("alert engine unavailable")
 	}
 	return s.alerts.updateSettings(ctx, in)
+}
+
+// AlertStrategySettings returns the effective editable alert parameters.
+func (s *Service) AlertStrategySettings() domain.AlertStrategySettings {
+	return s.alerts.snapshotStrategySettings()
+}
+
+// SaveAlertStrategySettings validates, persists and applies the editable alert
+// parameters to the running engine.
+func (s *Service) SaveAlertStrategySettings(ctx context.Context, in domain.AlertStrategySettings) (domain.AlertStrategySettings, error) {
+	if s.alerts == nil {
+		return domain.AlertStrategySettings{}, errors.New("alert engine unavailable")
+	}
+	return s.alerts.updateStrategySettings(ctx, in)
 }
 
 // TelegramTest sends one test message and returns the delivery error, if any.

@@ -61,8 +61,8 @@ func Defaults() Config {
 		Confirm:            30 * time.Minute,
 		Refresh:            10 * time.Minute,
 		BTCUSD:             300000,
-		ETHUSD:             250000,
-		OtherUSD:           300000,
+		ETHUSD:             200000,
+		OtherUSD:           100000,
 		FollowUpMinimumUSD: 0,
 		OppositeMinimumUSD: 0,
 		TopSymbols:         domain.AlertTopSymbolsDefault,
@@ -217,10 +217,26 @@ func (e *Engine) SetClock(clock func() time.Time) {
 }
 
 // Config returns the effective configuration.
-func (e *Engine) Config() Config { return e.cfg }
+func (e *Engine) Config() Config {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.cfg
+}
 
 // Thresholds returns the effective thresholds and periods.
-func (e *Engine) Thresholds() domain.AlertThresholds { return e.cfg.Thresholds() }
+func (e *Engine) Thresholds() domain.AlertThresholds {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.cfg.Thresholds()
+}
+
+// UpdateConfig applies editable strategy parameters without discarding the
+// current watch list, rolling samples, or open cycles.
+func (e *Engine) UpdateConfig(cfg Config) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cfg = cfg.withDefaults()
+}
 
 // Watch replaces the watched symbol set. Symbols that drop out lose their window
 // and cycle state, so a delisted pair cannot emit further alerts.
@@ -471,7 +487,7 @@ func (e *Engine) Snapshot(now time.Time) []domain.AlertMonitor {
 		for side, samples := range st.windows {
 			st.windows[side] = pruneSamples(samples, now, e.cfg.Window)
 		}
-		row := domain.AlertMonitor{Symbol: symbol, Rank: st.rank, QuoteVolumeUSD: st.volume, ThresholdUSD: e.cfg.ThresholdFor(symbol), State: "idle"}
+		row := domain.AlertMonitor{Symbol: symbol, Rank: st.rank, QuoteVolumeUSD: st.volume, ThresholdUSD: e.cfg.ThresholdFor(symbol), WindowMinutes: int(e.cfg.Window / time.Minute), State: "idle"}
 		row.LongUSD, row.LongCount, _ = windowTotal(st.windows["long"], now, e.cfg.Window)
 		row.ShortUSD, row.ShortCount, _ = windowTotal(st.windows["short"], now, e.cfg.Window)
 		var last time.Time

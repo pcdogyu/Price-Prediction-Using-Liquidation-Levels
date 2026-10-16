@@ -266,6 +266,14 @@ func TestWatchListAndSettingsPersistence(t *testing.T) {
 	if err != nil || stored.TelegramEnabled || stored.TelegramToken != "123:secret" {
 		t.Fatalf("the settings row must be updated in place: %+v err %v", stored, err)
 	}
+	strategy := domain.AlertStrategySettings{WindowMinutes: 5, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 100000}
+	if err := store.SaveAlertStrategySettings(ctx, strategy); err != nil {
+		t.Fatal(err)
+	}
+	storedStrategy, found, err := store.AlertStrategySettings(ctx)
+	if err != nil || !found || storedStrategy.WindowMinutes != 5 || storedStrategy.ETHUSD != 200000 || storedStrategy.OtherUSD != 100000 {
+		t.Fatalf("the strategy settings did not round trip: %+v found=%v err=%v", storedStrategy, found, err)
+	}
 }
 
 // TestRecentLiquidationEventsAndAlertPruning covers the restart warm-up read and the

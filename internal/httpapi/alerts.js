@@ -31,7 +31,7 @@
     return '<button type="button" class="alerts-action alerts-notify-trigger" data-action="notify" data-trigger-type="' + escape(recordType) + '" data-trigger-id="' + escape(recordID) + '">触发报价</button>';
   };
 
-  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false;
+  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, strategyLoaded = false;
 
   function error(message) { $('alerts-error').textContent = message; $('alerts-error').hidden = false; }
   function clearError() { $('alerts-error').hidden = true; }
@@ -49,10 +49,11 @@
   }
 
   function monitorRows(rows) {
-    if (!rows.length) { $('alerts-monitor-rows').innerHTML = '<tr><td colspan="8">等待监控数据</td></tr>'; return; }
+    if (!rows.length) { $('alerts-monitor-rows').innerHTML = '<tr><td colspan="9">等待监控数据</td></tr>'; return; }
     $('alerts-monitor-rows').innerHTML = rows.map(row => '<tr' + (row.state === 'idle' ? '' : ' class="alerts-row-active"') + '>' +
       '<td>' + escape(row.rank) + '</td><td>' + chartLink(row.symbol) + '</td>' +
       '<td>' + money(row.quote_volume_usd) + '</td><td>' + money(row.threshold_usd) + '</td>' +
+      '<td>' + escape(row.window_minutes || '—') + ' 分钟</td>' +
       '<td' + (row.long_usd >= row.threshold_usd ? ' class="buy"' : '') + '>' + money(row.long_usd) + (row.long_count ? '<span class="muted"> · ' + row.long_count + ' 笔</span>' : '') + '</td>' +
       '<td' + (row.short_usd >= row.threshold_usd ? ' class="sell"' : '') + '>' + money(row.short_usd) + (row.short_count ? '<span class="muted"> · ' + row.short_count + ' 笔</span>' : '') + '</td>' +
       '<td class="' + stateClass(row.state) + '">' + escape(monitorStates[row.state] || row.state) + (row.active_side ? '<span class="muted"> · ' + escape(liqLabel(row.active_side)) + '</span>' : '') + '</td>' +
@@ -112,6 +113,18 @@
     $('alerts-notify-status').textContent = parts.join(' · ');
   }
 
+  function renderStrategySettings(settings) {
+    if (!settings) return;
+    const fields = [['alerts-threshold-btc', settings.btc_usd], ['alerts-threshold-eth', settings.eth_usd], ['alerts-threshold-other', settings.other_usd], ['alerts-window-minutes', settings.window_minutes]];
+    for (const [id, value] of fields) {
+      const input = $(id);
+      if (document.activeElement !== input && Number.isFinite(Number(value))) input.value = value;
+    }
+    $('alerts-monitor-window').textContent = settings.window_minutes || 3;
+    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 100) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健下单信号';
+    if (!strategyLoaded) strategyLoaded = true;
+  }
+
   async function loadOverview() {
     overviewSequence++;
     const current = overviewSequence;
@@ -125,6 +138,7 @@
       clearError();
       metrics(data);
       monitorRows(data.monitor);
+      renderStrategySettings(data.thresholds);
       $('alerts-method').textContent = data.method;
       const states = data.monitor.filter(row => row.state !== 'idle').length;
       $('alerts-monitor-status').textContent = ({ waiting_watch_list: '等待成交额排行', stale: '成交额排名已过期' })[data.state] || ('已加载 ' + data.monitor.length + ' 个币对 · ' + states + ' 个处于预警流程 · 每 5 秒更新');
@@ -183,6 +197,35 @@
     const token = $('alerts-token').value.trim();
     if (token) body.telegram_token = token;
     return body;
+  }
+
+  function strategySettingsBody() {
+    return {
+      btc_usd: Number($('alerts-threshold-btc').value),
+      eth_usd: Number($('alerts-threshold-eth').value),
+      other_usd: Number($('alerts-threshold-other').value),
+      window_minutes: Number($('alerts-window-minutes').value)
+    };
+  }
+
+  async function saveStrategySettings(event) {
+    event.preventDefault();
+    $('alerts-strategy-save').disabled = true;
+    $('alerts-strategy-status').textContent = '正在保存报警参数…';
+    try {
+      const response = await fetch(base + 'api/v1/alerts/strategy-settings', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(strategySettingsBody()) });
+      const packet = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
+      renderStrategySettings(packet);
+      $('alerts-strategy-status').textContent = '报警参数已保存并立即生效';
+      clearError();
+      loadOverview();
+    } catch (caught) {
+      error('保存报警参数失败：' + caught.message);
+      $('alerts-strategy-status').textContent = '保存失败';
+    } finally {
+      $('alerts-strategy-save').disabled = false;
+    }
   }
 
   async function saveSettings(event) {
@@ -263,6 +306,7 @@
   $('alerts-prev').addEventListener('click', () => { if (historyPage > 0) loadHistory(historyCursors[historyPage - 1], historyPage - 1); });
   $('alerts-next').addEventListener('click', () => { if (!historyNextCursor) return; historyCursors[historyPage + 1] = historyNextCursor; loadHistory(historyNextCursor, historyPage + 1); });
   $('alerts-settings').addEventListener('submit', saveSettings);
+  $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
   $('alerts-test').addEventListener('click', testSettings);
   $('alerts-history-rows').addEventListener('click', event => {
     const button = event.target.closest('.alerts-action');

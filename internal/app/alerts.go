@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -44,11 +45,6 @@ type alertRuntime struct {
 // alertNotifyCooldown suppresses repeated messages for the same symbol and signal
 // kind so a burst cannot flood the chat.
 const alertNotifyCooldown = 5 * time.Minute
-
-// alertSeedOverlap is how much stored liquidation history the engine replays after
-// a restart. Window plus quiet period is enough to restore the rolling totals and
-// every cycle that could still produce a signal.
-var alertSeedOverlap = 13 * time.Minute
 
 func (s *Service) newAlertRuntime() *alertRuntime {
 	cfg := alert.Config{
@@ -115,6 +111,76 @@ func (rtm *alertRuntime) restoreSettings(ctx context.Context) {
 	rtm.mu.Unlock()
 }
 
+const (
+	minAlertWindowMinutes = 1
+	maxAlertWindowMinutes = 60
+	minAlertThresholdUSD  = 1
+	maxAlertThresholdUSD  = 1_000_000_000
+)
+
+func validateAlertStrategySettings(in domain.AlertStrategySettings) error {
+	if in.WindowMinutes < minAlertWindowMinutes || in.WindowMinutes > maxAlertWindowMinutes {
+		return fmt.Errorf("周期需在 %d 到 %d 分钟之间", minAlertWindowMinutes, maxAlertWindowMinutes)
+	}
+	for name, value := range map[string]float64{"BTCUSDT": in.BTCUSD, "ETHUSDT": in.ETHUSD, "其他币对": in.OtherUSD} {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < minAlertThresholdUSD || value > maxAlertThresholdUSD {
+			return fmt.Errorf("%s 阈值需在 %g 到 %g 美元之间", name, float64(minAlertThresholdUSD), float64(maxAlertThresholdUSD))
+		}
+	}
+	return nil
+}
+
+func strategySettingsFromConfig(cfg alert.Config) domain.AlertStrategySettings {
+	return domain.AlertStrategySettings{
+		WindowMinutes: int(cfg.Window / time.Minute),
+		BTCUSD:        cfg.BTCUSD,
+		ETHUSD:        cfg.ETHUSD,
+		OtherUSD:      cfg.OtherUSD,
+	}
+}
+
+// restoreStrategySettings applies the page-persisted strategy values before the
+// watch list and liquidation history are replayed on startup.
+func (rtm *alertRuntime) restoreStrategySettings(ctx context.Context) {
+	stored, found, err := rtm.store.AlertStrategySettings(ctx)
+	if err != nil {
+		rtm.log.Warn("load alert strategy settings failed", "error", err)
+		return
+	}
+	if !found {
+		return
+	}
+	if err := validateAlertStrategySettings(stored); err != nil {
+		rtm.log.Warn("ignore invalid alert strategy settings", "error", err)
+		return
+	}
+	cfg := rtm.engine.Config()
+	cfg.Window = time.Duration(stored.WindowMinutes) * time.Minute
+	cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = stored.BTCUSD, stored.ETHUSD, stored.OtherUSD
+	rtm.engine.UpdateConfig(cfg)
+}
+
+func (rtm *alertRuntime) snapshotStrategySettings() domain.AlertStrategySettings {
+	return strategySettingsFromConfig(rtm.engine.Config())
+}
+
+// updateStrategySettings persists validated values and applies them to the live
+// engine without dropping the current watch list or open cycles.
+func (rtm *alertRuntime) updateStrategySettings(ctx context.Context, in domain.AlertStrategySettings) (domain.AlertStrategySettings, error) {
+	if err := validateAlertStrategySettings(in); err != nil {
+		return domain.AlertStrategySettings{}, err
+	}
+	in.UpdatedAt = time.Now().UTC()
+	if err := rtm.store.SaveAlertStrategySettings(ctx, in); err != nil {
+		return domain.AlertStrategySettings{}, err
+	}
+	cfg := rtm.engine.Config()
+	cfg.Window = time.Duration(in.WindowMinutes) * time.Minute
+	cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = in.BTCUSD, in.ETHUSD, in.OtherUSD
+	rtm.engine.UpdateConfig(cfg)
+	return rtm.snapshotStrategySettings(), nil
+}
+
 // notifierSettings is the closure the Telegram worker uses, so a settings change
 // applies to the next message without restarting the worker.
 func (r *alertRuntime) notifierSettings() (string, string, bool) {
@@ -145,6 +211,7 @@ func (r *alertRuntime) effectiveCredentials() (token, chatID string) {
 func (s *Service) startAlerts(ctx context.Context) {
 	rtm := s.alerts
 	rtm.restoreSettings(ctx)
+	rtm.restoreStrategySettings(ctx)
 	if rows, err := rtm.store.WatchSymbols(ctx); err != nil {
 		rtm.log.Warn("load alert watch list failed", "error", err)
 	} else if len(rows) > 0 {
@@ -233,7 +300,8 @@ func (rtm *alertRuntime) applyWatch(entries []alert.WatchEntry, rows []domain.Wa
 // waiting for its quiet period keeps working across a restart. Restored rows are
 // persisted but never notified again.
 func (rtm *alertRuntime) seedFromHistory(ctx context.Context) {
-	since := time.Now().UTC().Add(-alertSeedOverlap)
+	cfg := rtm.engine.Config()
+	since := time.Now().UTC().Add(-(cfg.Window + cfg.Quiet))
 	events, err := rtm.store.RecentLiquidationEvents(ctx, since, 60000)
 	if err != nil {
 		rtm.log.Warn("alert warm-up read failed", "error", err)

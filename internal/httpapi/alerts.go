@@ -90,6 +90,7 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/timeline", getOnly(s.alertTimeline))
 	mux.HandleFunc("/api/v1/alerts/klines", getOnly(s.alertKlines))
 	mux.HandleFunc("/api/v1/alerts/settings", s.alertSettings)
+	mux.HandleFunc("/api/v1/alerts/strategy-settings", s.alertStrategySettings)
 	mux.HandleFunc("/api/v1/alerts/settings/test", postOnly(s.alertSettingsTest))
 	mux.HandleFunc("/api/v1/alerts/trigger", postOnly(s.alertTrigger))
 	mux.HandleFunc("/api/v1/alerts/notify", postOnly(s.alertNotify))
@@ -356,6 +357,36 @@ func (s *Server) alertSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	in.TelegramToken = token
 	stored, err := s.svc.SaveAlertSettings(r.Context(), in)
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, stored)
+}
+
+// alertStrategySettings reads or stores the editable liquidation threshold and
+// rolling-window parameters. The endpoint is protected by the page's existing
+// authentication middleware just like the Telegram settings endpoint.
+func (s *Server) alertStrategySettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, s.svc.AlertStrategySettings())
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST")
+		problem(w, http.StatusMethodNotAllowed, fmt.Errorf("method must be GET or POST"))
+		return
+	}
+	var in domain.AlertStrategySettings
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&in); err != nil {
+		problem(w, http.StatusBadRequest, fmt.Errorf("strategy settings body must be JSON: %w", err))
+		return
+	}
+	stored, err := s.svc.SaveAlertStrategySettings(r.Context(), in)
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return

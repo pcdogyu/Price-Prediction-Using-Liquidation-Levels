@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="app-base" content="{{BASE}}"><script src="{{BASE}}assets/theme.js"></script><title>报警 · 清算墙雷达</title><link rel="stylesheet" href="{{BASE}}assets/pages.css"><link rel="stylesheet" href="{{BASE}}assets/theme.css"><link rel="stylesheet" href="{{BASE}}assets/alerts.css"><script src="{{BASE}}assets/shared.js" defer></script><script src="{{BASE}}assets/alerts.js" defer></script></head>
 <body data-page="alerts">{{NAV}}
 <main class="workspace">
-  <header class="page-heading"><div><span class="kicker">BINANCE USDⓈ-M · LIQUIDATION ALERTS</span><h1>报警</h1><p>成交额前 100 币对 · 3 分钟爆仓预警 · 激进 / 稳健下单信号</p></div></header>
+  <header class="page-heading"><div><span class="kicker">BINANCE USDⓈ-M · LIQUIDATION ALERTS</span><h1>报警</h1><p id="alerts-subtitle">成交额前 100 币对 · 爆仓预警 · 激进 / 稳健下单信号</p></div></header>
   <div id="alerts-error" class="error-box" role="alert" hidden></div>
   <section class="metric-grid six" id="alerts-metrics" aria-label="报警概要"></section>
   <section class="surface">
@@ -21,6 +21,17 @@
     <p class="muted alerts-note">预警、激进信号和稳健信号按发生时间统一排序。“顺延”表示预警后同方向继续爆仓并重算安静截止；“已过期”表示确认窗口内没有出现反向爆仓。</p>
   </section>
   <section class="surface">
+    <div class="section-head"><h2>报警参数</h2><span id="alerts-strategy-status" class="muted" role="status">读取参数</span></div>
+    <form id="alerts-strategy-settings" class="alerts-settings">
+      <label for="alerts-threshold-btc">BTCUSDT 阈值（USD）<input id="alerts-threshold-btc" type="number" min="1" max="1000000000" step="1000" inputmode="decimal"></label>
+      <label for="alerts-threshold-eth">ETHUSDT 阈值（USD）<input id="alerts-threshold-eth" type="number" min="1" max="1000000000" step="1000" inputmode="decimal"></label>
+      <label for="alerts-threshold-other">其他币对阈值（USD）<input id="alerts-threshold-other" type="number" min="1" max="1000000000" step="1000" inputmode="decimal"></label>
+      <label for="alerts-window-minutes">周期（分钟）<input id="alerts-window-minutes" type="number" min="1" max="60" step="1" inputmode="numeric"></label>
+      <div class="alerts-settings-actions"><button id="alerts-strategy-save" type="submit">保存报警参数</button></div>
+      <p class="muted">修改后立即用于实时监控；历史预警和信号保留产生时的阈值与周期。</p>
+    </form>
+  </section>
+  <section class="surface">
     <div class="section-head"><h2>Telegram 通知</h2><span id="alerts-notify-status" class="muted" role="status">读取设置</span></div>
     <form id="alerts-settings" class="alerts-settings">
       <label class="alerts-check"><input id="alerts-enabled" type="checkbox"><span>启用 Telegram 推送</span></label>
@@ -34,10 +45,10 @@
     </form>
     <p class="muted alerts-note">Token 只写入服务器数据库，页面与接口只显示掩码；留空保存会保留现有 Token。也可用环境变量 <code>APP_TELEGRAM_BOT_TOKEN</code> 与 <code>APP_TELEGRAM_CHAT_ID</code> 提供默认值。</p>
   </section>
-  <section class="surface options-notes"><h2>策略与数据口径</h2><p id="alerts-method" class="muted"></p><p class="muted">规则：某侧爆仓额在窗口内超过阈值 → 预警；预警后该侧持续爆仓只顺延安静期，不下单；安静期满 → 按预警方向发出<b>激进</b>信号；随后在确认窗口内出现反向爆仓 → 同一方向发出<b>稳健</b>信号。多单被爆仓按做多处理，空单被爆仓按做空处理，两个方向对称。</p><p class="muted">默认阈值：BTCUSDT $300,000 · ETHUSDT $250,000 · 其他币对 $300,000；安静期 10 分钟，确认窗口 30 分钟，均可用环境变量调整。预警与信号在 SQLite 保留 180 天，便于后续回测与参数调优。</p><p class="muted">来源：<a href="https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/All-Market-Liquidation-Order-Streams" target="_blank" rel="noopener">Binance 全市场强平流</a> · <a href="https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/24hr-Ticker-Price-Change-Statistics" target="_blank" rel="noopener">24 小时成交额排行</a> · <a href="https://core.telegram.org/bots/api#sendmessage" target="_blank" rel="noopener">Telegram sendMessage</a></p></section>
+  <section class="surface options-notes"><h2>策略与数据口径</h2><p id="alerts-method" class="muted"></p><p class="muted">规则：某侧爆仓额在周期内超过阈值 → 预警；预警后该侧持续爆仓只顺延安静期，不下单；安静期满 → 按预警方向发出<b>激进</b>信号；随后在确认窗口内出现反向爆仓 → 同一方向发出<b>稳健</b>信号。多单被爆仓按做多处理，空单被爆仓按做空处理，两个方向对称。</p><p class="muted">当前默认阈值：BTCUSDT $300,000 · ETHUSDT $200,000 · 其他币对 $100,000；安静期 10 分钟，确认窗口 30 分钟。预警与信号在 SQLite 保留 180 天，便于后续回测与参数调优。</p><p class="muted">来源：<a href="https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/All-Market-Liquidation-Order-Streams" target="_blank" rel="noopener">Binance 全市场强平流</a> · <a href="https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/24hr-Ticker-Price-Change-Statistics" target="_blank" rel="noopener">24 小时成交额排行</a> · <a href="https://core.telegram.org/bots/api#sendmessage" target="_blank" rel="noopener">Telegram sendMessage</a></p></section>
   <section class="surface">
-    <div class="section-head"><h2>实时监控（3 分钟滑动窗口）</h2><span id="alerts-monitor-status" class="muted" role="status">等待数据</span></div>
-    <div class="table-scroll alerts-scroll"><table class="alerts-monitor-table"><thead><tr><th>排名</th><th>币对</th><th>24H 成交额</th><th>阈值</th><th>多单爆仓</th><th>空单爆仓</th><th>状态</th><th>安静截止（北京时间）</th></tr></thead><tbody id="alerts-monitor-rows"><tr><td colspan="8">等待监控数据</td></tr></tbody></table></div>
+    <div class="section-head"><h2>实时监控（<span id="alerts-monitor-window">3</span> 分钟滑动窗口）</h2><span id="alerts-monitor-status" class="muted" role="status">等待数据</span></div>
+    <div class="table-scroll alerts-scroll"><table class="alerts-monitor-table"><thead><tr><th>排名</th><th>币对</th><th>24H 成交额</th><th>阈值</th><th>周期</th><th>多单爆仓</th><th>空单爆仓</th><th>状态</th><th>安静截止（北京时间）</th></tr></thead><tbody id="alerts-monitor-rows"><tr><td colspan="9">等待监控数据</td></tr></tbody></table></div>
     <p class="muted alerts-note" id="alerts-monitor-note"></p>
   </section>
   <footer class="page-footer">用于市场观察与研究 · 信号不构成投资建议，爆仓金额为公开采样值</footer>

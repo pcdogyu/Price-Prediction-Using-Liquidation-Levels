@@ -142,16 +142,23 @@ func TestAlertSettingsRoundTripAndRestartReplay(t *testing.T) {
 		TelegramEnabled: true, TelegramToken: "bad-token", TelegramChatID: "42"}); err == nil {
 		t.Fatal("malformed token was accepted")
 	}
+	if err = st.SaveAlertStrategySettings(ctx, domain.AlertStrategySettings{WindowMinutes: 5, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 100000}); err != nil {
+		t.Fatal(err)
+	}
 
 	// A restart builds a second service on the same database. Its warm start replays
 	// the stored liquidation, and the deterministic IDs keep the existing rows from
 	// being stored or notified a second time.
 	restarted := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	restarted.alerts.restoreSettings(ctx)
+	restarted.alerts.restoreStrategySettings(ctx)
 	restarted.alerts.engine.Watch([]alert.WatchEntry{{Symbol: "BTCUSDT", Rank: 1}})
 	restarted.alerts.seedFromHistory(ctx)
 	if got := restarted.AlertSettings(); !got.TelegramEnabled || got.TokenMask != saved.TokenMask {
 		t.Fatalf("restarted settings = %+v", got)
+	}
+	if got := restarted.AlertStrategySettings(); got.WindowMinutes != 5 || got.ETHUSD != 200000 || got.OtherUSD != 100000 {
+		t.Fatalf("restarted strategy settings = %+v", got)
 	}
 	signals, err := restarted.AlertSignals(ctx, "", "", 10, "")
 	if err != nil {

@@ -25,7 +25,8 @@ CREATE INDEX IF NOT EXISTS trade_signals_time ON trade_signals(created_ts DESC,i
 CREATE INDEX IF NOT EXISTS trade_signals_kind ON trade_signals(kind,created_ts DESC);
 CREATE INDEX IF NOT EXISTS trade_signals_symbol ON trade_signals(symbol,created_ts DESC);
 CREATE TABLE IF NOT EXISTS alert_watch_symbols(symbol TEXT PRIMARY KEY,rank INTEGER NOT NULL,quote_volume_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS alert_settings(id INTEGER PRIMARY KEY CHECK(id=1),telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,updated_ts INTEGER NOT NULL);`)
+CREATE TABLE IF NOT EXISTS alert_settings(id INTEGER PRIMARY KEY CHECK(id=1),telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);`)
 	return err
 }
 
@@ -446,6 +447,34 @@ func (s *Store) SaveAlertSettings(ctx context.Context, in domain.NotificationSet
 	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_settings(id,telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,updated_ts) VALUES(1,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,telegram_token=excluded.telegram_token,telegram_chat_id=excluded.telegram_chat_id,notify_alerts=excluded.notify_alerts,notify_aggressive=excluded.notify_aggressive,notify_steady=excluded.notify_steady,updated_ts=excluded.updated_ts`,
 		boolInt(in.TelegramEnabled), in.TelegramToken, in.TelegramChatID, boolInt(in.NotifyAlerts), boolInt(in.NotifyAggressive), boolInt(in.NotifySteady), time.Now().UTC().UnixMilli())
+	return err
+}
+
+// AlertStrategySettings reads the single persisted row managed by the alert
+// strategy form. A missing row means the environment/default values are active.
+func (s *Store) AlertStrategySettings(ctx context.Context) (domain.AlertStrategySettings, bool, error) {
+	var out domain.AlertStrategySettings
+	var window int
+	var updated int64
+	err := s.db.QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,updated_ts FROM alert_strategy_settings WHERE id=1`).
+		Scan(&window, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, false, nil
+	}
+	if err != nil {
+		return out, false, err
+	}
+	out.WindowMinutes = window
+	out.UpdatedAt = time.UnixMilli(updated).UTC()
+	return out, true, nil
+}
+
+// SaveAlertStrategySettings stores the editable threshold and rolling-window
+// parameters as a single row.
+func (s *Store) SaveAlertStrategySettings(ctx context.Context, in domain.AlertStrategySettings) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_strategy_settings(id,window_minutes,btc_usd,eth_usd,other_usd,updated_ts) VALUES(1,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,updated_ts=excluded.updated_ts`,
+		in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, time.Now().UTC().UnixMilli())
 	return err
 }
 

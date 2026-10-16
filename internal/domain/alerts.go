@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Signal kinds separate the two order recommendations produced by the
 // liquidation alert strategy. Both kinds are stored independently so a later
@@ -26,9 +29,13 @@ const (
 	AlertTopSymbolsDefault = 100
 	// AlertRetentionDays keeps alerts and signals long enough for backtesting.
 	AlertRetentionDays = 180
-	// AlertMonitorMethod documents the live 3 minute totals and the watch list.
-	AlertMonitorMethod = "监控名单为 Binance USDⓈ-M 24 小时成交额前 100 个 USDT 永续（每 10 分钟刷新，BTCUSDT/ETHUSDT 恒含）。金额为公开采样强平流在 3 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。预警方向为被爆仓的一侧：多单爆仓预警后按做多下单，空单爆仓后按做空下单。"
 )
+
+// AlertMonitorMethod describes the live monitor using the currently effective
+// strategy settings rather than hard-coding the default window.
+func AlertMonitorMethod(windowMinutes, refreshMinutes, topSymbols int) string {
+	return fmt.Sprintf("监控名单为 Binance USDⓈ-M 24 小时成交额前 %d 个 USDT 永续（每 %d 分钟刷新，BTCUSDT/ETHUSDT 恒含）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。预警方向为被爆仓的一侧：多单爆仓预警后按做多下单，空单爆仓后按做空下单。", topSymbols, refreshMinutes, windowMinutes)
+}
 
 // LiquidationAlert is one alert cycle for a symbol and the liquidated position
 // side. Side=long means long positions were liquidated, which the strategy
@@ -105,6 +112,7 @@ type AlertMonitor struct {
 	Rank           int        `json:"rank"`
 	QuoteVolumeUSD float64    `json:"quote_volume_usd"`
 	ThresholdUSD   float64    `json:"threshold_usd"`
+	WindowMinutes  int        `json:"window_minutes"`
 	LongUSD        float64    `json:"long_usd"`
 	ShortUSD       float64    `json:"short_usd"`
 	LongCount      int        `json:"long_count"`
@@ -114,6 +122,17 @@ type AlertMonitor struct {
 	QuietUntil     *time.Time `json:"quiet_until,omitempty"`
 	LastEventAt    *time.Time `json:"last_event_at,omitempty"`
 	AlertID        string     `json:"alert_id,omitempty"`
+}
+
+// AlertStrategySettings are the editable parameters exposed by the alert page.
+// Quiet/confirmation periods remain deployment settings because changing them
+// alters the lifecycle of already-open alert cycles.
+type AlertStrategySettings struct {
+	WindowMinutes int       `json:"window_minutes"`
+	BTCUSD        float64   `json:"btc_usd"`
+	ETHUSD        float64   `json:"eth_usd"`
+	OtherUSD      float64   `json:"other_usd"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // AlertThresholds describes the effective strategy parameters.
