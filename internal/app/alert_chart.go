@@ -61,17 +61,40 @@ func (rtm *alertRuntime) alertChartTaskWindow(symbol, side string, markerAt time
 				return nil, err
 			}
 			var timeline []domain.AlertTimelineItem
-			if rtm.store != nil && len(view.Candles) > 0 {
-				page, timelineErr := rtm.store.AlertTimeline(ctx, symbol, "", 200, "")
-				if timelineErr != nil {
-					rtm.log.Warn("alert chart history unavailable", "symbol", symbol, "error", timelineErr)
-				} else {
-					timeline = page.Rows
+			if len(view.Candles) > 0 {
+				timeline, err = rtm.alertChartHistory(ctx, symbol, view.Candles[0].Time.UTC().Add(-time.Minute))
+				if err != nil {
+					rtm.log.Warn("alert chart history unavailable", "symbol", symbol, "error", err)
+					timeline = nil
 				}
 			}
 			return renderAlertChartPNG(view.Candles, markerAt, referencePrice, side, symbol, timeline)
 		},
 	}
+}
+
+// alertChartHistory reads every retained alert and signal page needed for the
+// current candle window. The old single-page read silently dropped records when
+// a busy symbol had more than 200 historical items, so unrelated historical ◆,
+// aggressive, and steady markers disappeared from the chart.
+func (rtm *alertRuntime) alertChartHistory(ctx context.Context, symbol string, from time.Time) ([]domain.AlertTimelineItem, error) {
+	if rtm.store == nil {
+		return nil, nil
+	}
+	rows := []domain.AlertTimelineItem{}
+	cursor := ""
+	for {
+		page, err := rtm.store.AlertTimeline(ctx, symbol, "", 200, cursor)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, page.Rows...)
+		if page.NextCursor == "" || (len(page.Rows) > 0 && page.Rows[len(page.Rows)-1].EventAt.Before(from)) {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	return rows, nil
 }
 
 func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referencePrice float64, side, symbol string, history ...[]domain.AlertTimelineItem) ([]byte, error) {

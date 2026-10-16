@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -81,6 +82,34 @@ func TestCurrentAlertChartTaskUsesLatestKlines(t *testing.T) {
 	}
 	if alertChartCandleLimit != 720 || gotLimit != alertChartCandleLimit {
 		t.Fatalf("manual chart candle limit = %d, want %d", gotLimit, alertChartCandleLimit)
+	}
+}
+
+func TestAlertChartHistoryKeepsAllRowsInWindow(t *testing.T) {
+	svc, _, st := alertTestService(t, "chart-history.db")
+	ctx := context.Background()
+	base := time.Now().UTC().Truncate(time.Minute)
+	for i := 0; i < 205; i++ {
+		at := base.Add(-time.Duration(i) * time.Minute)
+		if _, err := st.SaveLiquidationAlert(ctx, domain.LiquidationAlert{
+			ID: fmt.Sprintf("chart-alert-%03d", i), Symbol: "BTCUSDT", Side: "long", TradeSide: "long",
+			TriggeredAt: at, ReferencePrice: 100, UpdatedAt: at,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.SaveTradeSignal(ctx, domain.TradeSignal{
+			ID: fmt.Sprintf("chart-signal-%03d", i), AlertID: fmt.Sprintf("chart-alert-%03d", i),
+			Symbol: "BTCUSDT", Kind: domain.SignalAggressive, Side: "long", CreatedAt: at.Add(30 * time.Second), ReferencePrice: 100,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := svc.alerts.alertChartHistory(ctx, "BTCUSDT", base.Add(-205*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 410 {
+		t.Fatalf("chart history rows = %d, want all 410 alerts and signals", len(rows))
 	}
 }
 
