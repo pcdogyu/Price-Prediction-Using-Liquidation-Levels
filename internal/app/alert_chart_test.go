@@ -15,7 +15,11 @@ func TestRenderAlertChartPNG(t *testing.T) {
 		{Time: base, Open: 100, High: 104, Low: 99, Close: 103, VolumeUSD: 1000},
 		{Time: base.Add(time.Minute), Open: 103, High: 105, Low: 101, Close: 102, VolumeUSD: 2000},
 		{Time: base.Add(2 * time.Minute), Open: 102, High: 106, Low: 100, Close: 105, VolumeUSD: 500},
-	}, base.Add(90*time.Second), 103, "long")
+	}, base.Add(90*time.Second), 103, "long", "BTCUSDT", []domain.AlertTimelineItem{
+		{Type: "alert", EventAt: base, Alert: &domain.LiquidationAlert{Symbol: "BTCUSDT", Side: "long", ReferencePrice: 103}},
+		{Type: domain.SignalAggressive, EventAt: base.Add(time.Minute), Signal: &domain.TradeSignal{Symbol: "BTCUSDT", Side: "long", Kind: domain.SignalAggressive, ReferencePrice: 102}},
+		{Type: domain.SignalSteady, EventAt: base.Add(2 * time.Minute), Signal: &domain.TradeSignal{Symbol: "BTCUSDT", Side: "short", Kind: domain.SignalSteady, ReferencePrice: 105}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

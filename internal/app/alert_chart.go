@@ -10,6 +10,7 @@ import (
 	"image/draw"
 	"image/png"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -39,22 +40,31 @@ func (rtm *alertRuntime) alertChartTask(symbol, side string, at time.Time, refer
 			if err != nil {
 				return nil, err
 			}
-			return renderAlertChartPNG(view.Candles, at, referencePrice, side)
+			var timeline []domain.AlertTimelineItem
+			if rtm.store != nil && len(view.Candles) > 0 {
+				page, timelineErr := rtm.store.AlertTimeline(ctx, symbol, "", 200, "")
+				if timelineErr != nil {
+					rtm.log.Warn("alert chart history unavailable", "symbol", symbol, "error", timelineErr)
+				} else {
+					timeline = page.Rows
+				}
+			}
+			return renderAlertChartPNG(view.Candles, at, referencePrice, side, symbol, timeline)
 		},
 	}
 }
 
-func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referencePrice float64, side string) ([]byte, error) {
+func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referencePrice float64, side, symbol string, history ...[]domain.AlertTimelineItem) ([]byte, error) {
 	if len(candles) == 0 {
 		return nil, errors.New("no candles available for alert chart")
 	}
 	const (
 		width      = 1280
 		height     = 720
-		left       = 72
-		right      = 24
-		top        = 28
-		bottom     = 64
+		left       = 96
+		right      = 96
+		top        = 42
+		bottom     = 78
 		volumeHigh = 112
 	)
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
@@ -84,6 +94,7 @@ func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referenceP
 		x := pricePlot.Min.X + col*(pricePlot.Dx()-1)/8
 		drawVertical(img, x, pricePlot.Min.Y, volumePlot.Max.Y, grid)
 	}
+	drawChartAxes(img, symbol, pricePlot, volumePlot, candles, low, high)
 
 	step := float64(pricePlot.Dx()) / float64(len(candles))
 	bodyWidth := int(math.Max(2, math.Min(10, step*0.68)))
@@ -113,6 +124,10 @@ func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referenceP
 		}
 	}
 
+	if len(history) > 0 {
+		drawHistoricalSignals(img, history[0], candles, pricePlot, low, high, step)
+	}
+
 	markerAt := nearestCandleIndex(candles, at)
 	if markerAt >= 0 {
 		x := pricePlot.Min.X + int((float64(markerAt)+0.5)*step)
@@ -138,6 +153,172 @@ func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referenceP
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+func drawChartAxes(img *image.RGBA, symbol string, pricePlot, volumePlot image.Rectangle, candles []domain.MarketCandle, low, high float64) {
+	ink := color.RGBA{R: 73, G: 88, B: 103, A: 255}
+	muted := color.RGBA{R: 92, G: 108, B: 123, A: 255}
+	for row := 0; row <= 5; row++ {
+		value := high - (high-low)*float64(row)/5
+		y := pricePlot.Min.Y + row*(pricePlot.Dy()-1)/5
+		label := chartPriceLabel(value)
+		drawText(img, pricePlot.Min.X-len(label)*12-8, y-7, label, 2, ink)
+		drawText(img, pricePlot.Max.X+10, y-7, label, 2, ink)
+	}
+	for col := 0; col <= 8; col++ {
+		index := col * (len(candles) - 1) / 8
+		x := pricePlot.Min.X + col*(pricePlot.Dx()-1)/8
+		label := candles[index].Time.UTC().Format("01/02 15:04")
+		textWidth := chartTextWidth(label, 2)
+		labelX := x - textWidth/2
+		labelX = maxInt(4, minInt(labelX, img.Bounds().Max.X-textWidth-4))
+		drawText(img, labelX, volumePlot.Max.Y+10, label, 2, muted)
+	}
+	if symbol != "" {
+		title := strings.ToUpper(symbol) + " 1M KLINE UTC"
+		drawText(img, pricePlot.Min.X, 12, title, 2, ink)
+	}
+	drawText(img, pricePlot.Max.X-245, 12, "WARN  AGGR  STEADY", 2, muted)
+}
+
+func drawHistoricalSignals(img *image.RGBA, items []domain.AlertTimelineItem, candles []domain.MarketCandle, pricePlot image.Rectangle, low, high, step float64) {
+	if len(candles) == 0 {
+		return
+	}
+	from := candles[0].Time.UTC().Add(-time.Minute)
+	to := candles[len(candles)-1].Time.UTC().Add(time.Minute)
+	for _, item := range items {
+		if item.EventAt.Before(from) || item.EventAt.After(to) {
+			continue
+		}
+		index := nearestCandleIndex(candles, item.EventAt)
+		if index < 0 {
+			continue
+		}
+		x := pricePlot.Min.X + int((float64(index)+0.5)*step)
+		price := candles[index].Close
+		side := ""
+		kind := item.Type
+		if item.Alert != nil {
+			price = item.Alert.ReferencePrice
+			side = item.Alert.Side
+		}
+		if item.Signal != nil {
+			price = item.Signal.ReferencePrice
+			side = item.Signal.Side
+		}
+		if price <= 0 {
+			price = candles[index].Close
+		}
+		y := priceY(price, low, high, pricePlot)
+		markerColor := signalColor(side)
+		switch kind {
+		case "alert":
+			drawDiamond(img, x, y, 5, color.RGBA{R: 225, G: 151, B: 35, A: 255})
+		case domain.SignalAggressive:
+			drawTriangle(img, x, y, 7, markerColor, false)
+		case domain.SignalSteady:
+			drawTriangle(img, x, y, 7, markerColor, true)
+		}
+	}
+}
+
+func signalColor(side string) color.RGBA {
+	if side == "short" {
+		return color.RGBA{R: 210, G: 27, B: 72, A: 255}
+	}
+	return color.RGBA{R: 14, G: 132, B: 92, A: 255}
+}
+
+func drawTriangle(img *image.RGBA, x, y, radius int, c color.Color, filled bool) {
+	for row := 0; row <= radius; row++ {
+		span := row
+		left, right := x-span, x+span
+		lineY := y - radius + row
+		if filled || row == 0 || row == radius {
+			drawHorizontal(img, left, right, lineY, c)
+		} else {
+			drawVertical(img, left, lineY, lineY, c)
+			drawVertical(img, right, lineY, lineY, c)
+		}
+	}
+}
+
+func chartPriceLabel(value float64) string {
+	abs := math.Abs(value)
+	switch {
+	case abs >= 10000:
+		return fmt.Sprintf("%.0f", value)
+	case abs >= 100:
+		return fmt.Sprintf("%.2f", value)
+	case abs >= 1:
+		return fmt.Sprintf("%.4f", value)
+	case abs >= 0.01:
+		return fmt.Sprintf("%.5f", value)
+	default:
+		return fmt.Sprintf("%.7f", value)
+	}
+}
+
+func chartTextWidth(text string, scale int) int {
+	if text == "" {
+		return 0
+	}
+	return len([]rune(text))*(5*scale+scale) - scale
+}
+
+func drawText(img *image.RGBA, x, y int, text string, scale int, c color.Color) {
+	for _, char := range strings.ToUpper(text) {
+		glyph, ok := chartGlyphs[char]
+		if !ok {
+			glyph = chartGlyphs['?']
+		}
+		for row, bits := range glyph {
+			for col, bit := range bits {
+				if bit != '1' {
+					continue
+				}
+				draw.Draw(img, image.Rect(x+col*scale, y+row*scale, x+(col+1)*scale, y+(row+1)*scale), &image.Uniform{C: c}, image.Point{}, draw.Over)
+			}
+		}
+		x += 6 * scale
+	}
+}
+
+var chartGlyphs = map[rune][]string{
+	' ': {"00000", "00000", "00000", "00000", "00000", "00000", "00000"},
+	'-': {"00000", "00000", "00000", "11111", "00000", "00000", "00000"},
+	'.': {"00000", "00000", "00000", "00000", "00000", "00110", "00110"},
+	'/': {"00001", "00010", "00100", "01000", "10000", "00000", "00000"},
+	':': {"00000", "00110", "00110", "00000", "00110", "00110", "00000"},
+	'?': {"01110", "10001", "00001", "00010", "00100", "00000", "00100"},
+	'0': {"01110", "10001", "10011", "10101", "11001", "10001", "01110"},
+	'1': {"00100", "01100", "00100", "00100", "00100", "00100", "01110"},
+	'2': {"01110", "10001", "00001", "00010", "00100", "01000", "11111"},
+	'3': {"11110", "00001", "00001", "01110", "00001", "00001", "11110"},
+	'4': {"00010", "00110", "01010", "10010", "11111", "00010", "00010"},
+	'5': {"11111", "10000", "10000", "11110", "00001", "00001", "11110"},
+	'6': {"00110", "01000", "10000", "11110", "10001", "10001", "01110"},
+	'7': {"11111", "00001", "00010", "00100", "01000", "01000", "01000"},
+	'8': {"01110", "10001", "10001", "01110", "10001", "10001", "01110"},
+	'9': {"01110", "10001", "10001", "01111", "00001", "00010", "01100"},
+	'A': {"01110", "10001", "10001", "11111", "10001", "10001", "10001"},
+	'B': {"11110", "10001", "10001", "11110", "10001", "10001", "11110"},
+	'C': {"01110", "10001", "10000", "10000", "10000", "10001", "01110"},
+	'D': {"11110", "10001", "10001", "10001", "10001", "10001", "11110"},
+	'E': {"11111", "10000", "10000", "11110", "10000", "10000", "11111"},
+	'G': {"01110", "10001", "10000", "10111", "10001", "10001", "01110"},
+	'I': {"11111", "00100", "00100", "00100", "00100", "00100", "11111"},
+	'K': {"10001", "10010", "10100", "11000", "10100", "10010", "10001"},
+	'L': {"10000", "10000", "10000", "10000", "10000", "10000", "11111"},
+	'M': {"10001", "11011", "10101", "10101", "10001", "10001", "10001"},
+	'N': {"10001", "11001", "10101", "10011", "10001", "10001", "10001"},
+	'R': {"11110", "10001", "10001", "11110", "10100", "10010", "10001"},
+	'S': {"01111", "10000", "10000", "01110", "00001", "00001", "11110"},
+	'T': {"11111", "00100", "00100", "00100", "00100", "00100", "00100"},
+	'U': {"10001", "10001", "10001", "10001", "10001", "10001", "01110"},
+	'W': {"10001", "10001", "10001", "10101", "10101", "11011", "10001"},
+	'Y': {"10001", "10001", "01010", "00100", "00100", "00100", "00100"},
 }
 
 func candleRange(candles []domain.MarketCandle) (low, high, volumePeak float64) {
@@ -243,6 +424,13 @@ func absInt(value int) int {
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b
