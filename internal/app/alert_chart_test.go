@@ -59,15 +59,18 @@ func TestAlertChartUsesUTCPlus8AndSupportsZSymbols(t *testing.T) {
 func TestCurrentAlertChartTaskUsesLatestKlines(t *testing.T) {
 	originalFetch := fetchAlertKlines
 	t.Cleanup(func() { fetchAlertKlines = originalFetch })
+	var gotLimit int
 	var gotUntil time.Time
-	fetchAlertKlines = func(_ context.Context, _ string, _ string, _ int, until time.Time) ([]domain.MarketCandle, bool, error) {
+	fetchAlertKlines = func(_ context.Context, _ string, _ string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+		gotLimit = limit
 		gotUntil = until
 		base := time.Now().UTC().Truncate(time.Minute)
 		return []domain.MarketCandle{{Time: base, Open: 100, High: 101, Low: 99, Close: 100.5, VolumeUSD: 10}}, false, nil
 	}
 	rtm := &alertRuntime{service: &Service{klineCache: make(map[string]klineCacheEntry), log: slog.Default()}}
-	task := rtm.currentAlertChartTask("BTCUSDT", "long")
-	if !strings.Contains(task.PhotoCaption, "触发报价时间") {
+	markerAt := time.Date(2026, 10, 16, 5, 0, 0, 0, time.UTC)
+	task := rtm.currentAlertChartTask("BTCUSDT", "long", markerAt, 100)
+	if !strings.Contains(task.PhotoCaption, "触发报价时间") || !strings.Contains(task.PhotoCaption, "原信号时间 2026-10-16 13:00:00 UTC+8") {
 		t.Fatalf("manual chart caption = %q", task.PhotoCaption)
 	}
 	if _, err := task.Photo(context.Background()); err != nil {
@@ -75,6 +78,9 @@ func TestCurrentAlertChartTaskUsesLatestKlines(t *testing.T) {
 	}
 	if !gotUntil.IsZero() {
 		t.Fatalf("manual chart must request the newest window, until=%v", gotUntil)
+	}
+	if alertChartCandleLimit != 720 || gotLimit != alertChartCandleLimit {
+		t.Fatalf("manual chart candle limit = %d, want %d", gotLimit, alertChartCandleLimit)
 	}
 }
 

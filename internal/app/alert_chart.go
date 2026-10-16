@@ -17,7 +17,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/notify"
 )
 
-const alertChartCandleLimit = 240
+const alertChartCandleLimit = 720
 
 var alertChartLocation = time.FixedZone("UTC+8", 8*60*60)
 
@@ -34,11 +34,17 @@ func (rtm *alertRuntime) alertChartTask(symbol, side string, at time.Time, refer
 }
 
 // currentAlertChartTask is used only by the manual "触发报价" action. The
-// alert may be hours old when the operator clicks it, so the chart must be
-// fetched as the newest Binance window instead of replaying the alert-time
-// candles. A zero until keeps Binance's currently forming candle in the view.
-func (rtm *alertRuntime) currentAlertChartTask(symbol, side string) notify.Task {
-	return rtm.alertChartTaskWindow(symbol, side, time.Now().UTC(), 0, time.Time{}, "触发报价时间")
+// alert may be hours old when the operator clicks it, so the chart is fetched
+// as the newest Binance window while the marker remains at the original alert
+// or signal time. A zero until keeps Binance's currently forming candle in the
+// view.
+func (rtm *alertRuntime) currentAlertChartTask(symbol, side string, markerAt time.Time, referencePrice float64) notify.Task {
+	clickedAt := time.Now().UTC()
+	task := rtm.alertChartTaskWindow(symbol, side, markerAt, referencePrice, time.Time{}, "原信号时间")
+	task.PhotoCaption = fmt.Sprintf("%s 1m K线 · 触发报价时间 %s · 原信号时间 %s", symbol,
+		clickedAt.In(alertChartLocation).Format("2006-01-02 15:04:05 UTC+8"),
+		markerAt.In(alertChartLocation).Format("2006-01-02 15:04:05 UTC+8"))
+	return task
 }
 
 func (rtm *alertRuntime) alertChartTaskWindow(symbol, side string, markerAt time.Time, referencePrice float64, until time.Time, captionLabel string) notify.Task {
