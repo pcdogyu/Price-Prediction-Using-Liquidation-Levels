@@ -39,6 +39,9 @@ func TestAlertChartUsesUTCPlus8AndSupportsZSymbols(t *testing.T) {
 	if got := at.In(alertChartLocation).Format("2006-01-02 15:04:05 UTC+8"); got != "2026-10-16 11:50:00 UTC+8" {
 		t.Fatalf("chart time = %q, want UTC+8 rendering", got)
 	}
+	if got := at.In(alertChartLocation).Format("15:04"); got != "11:50" {
+		t.Fatalf("chart x-axis time = %q, want time without date", got)
+	}
 	if _, ok := chartGlyphs['Z']; !ok {
 		t.Fatal("chart glyphs must include Z so ZECUSDT is not rendered as ?")
 	}

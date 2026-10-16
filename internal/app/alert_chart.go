@@ -170,7 +170,7 @@ func drawChartAxes(img *image.RGBA, symbol string, pricePlot, volumePlot image.R
 	for col := 0; col <= 8; col++ {
 		index := col * (len(candles) - 1) / 8
 		x := pricePlot.Min.X + col*(pricePlot.Dx()-1)/8
-		label := candles[index].Time.In(alertChartLocation).Format("01/02 15:04")
+		label := candles[index].Time.In(alertChartLocation).Format("15:04")
 		textWidth := chartTextWidth(label, 2)
 		labelX := x - textWidth/2
 		labelX = maxInt(4, minInt(labelX, img.Bounds().Max.X-textWidth-4))
