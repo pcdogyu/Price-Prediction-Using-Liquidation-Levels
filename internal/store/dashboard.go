@@ -387,7 +387,7 @@ func (s *Store) PruneDashboard(ctx context.Context, now time.Time) error {
 	for _, q := range []struct {
 		table string
 		days  int
-	}{{"book_snapshots", 30}, {"wall_events", 180}, {"market_metrics", 180}} {
+	}{{"book_snapshots", domain.BookSnapshotRetentionDays}, {"wall_events", domain.WallEventRetentionDays}, {"market_metrics", 180}} {
 		if _, err := s.pruneBatches(ctx, q.table, "ts", now.AddDate(0, 0, -q.days).UnixMilli()); err != nil {
 			return err
 		}

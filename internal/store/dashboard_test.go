@@ -127,13 +127,17 @@ func TestDashboardPersistenceMergeRestartAndRetention(t *testing.T) {
 	if err = s.SaveMarketMetric(ctx, domain.MarketMetric{Symbol: "ETHUSDT", Time: now, TopPositionRatio: &ratio}); err != nil {
 		t.Fatal(err)
 	}
-	for _, age := range []int{0, 31} {
+	for _, age := range []int{0, 4} {
 		b := domain.BookSnapshot{Symbol: "ETHUSDT", Time: now.AddDate(0, 0, -age), BucketWidth: .1, Bids: []domain.DepthLevel{{Price: 100, Quantity: 2, NotionalUSD: 200}}, Asks: []domain.DepthLevel{}}
 		if err = s.SaveBookSnapshot(ctx, b); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err = s.SaveWallEvent(ctx, domain.WallEvent{ID: "active", Symbol: "ETHUSDT", QualifiedAt: now, StartedAt: now, LastSeen: now, PeakUSD: 300000}); err != nil {
+		t.Fatal(err)
+	}
+	oldWallAt := now.AddDate(0, 0, -2)
+	if err = s.SaveWallEvent(ctx, domain.WallEvent{ID: "old", Symbol: "ETHUSDT", QualifiedAt: oldWallAt, StartedAt: oldWallAt, LastSeen: oldWallAt, PeakUSD: 100000, EndedAt: &oldWallAt}); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -152,7 +156,7 @@ func TestDashboardPersistenceMergeRestartAndRetention(t *testing.T) {
 	if err != nil || len(h.Snapshots) != 1 || h.Snapshots[0].Bids[0].NotionalUSD != 200 {
 		t.Fatal(h, err)
 	}
-	h, err = s.WallHistory(ctx, "ETHUSDT", "events", now.Add(-time.Hour), now.Add(time.Second), 50, "")
+	h, err = s.WallHistory(ctx, "ETHUSDT", "events", now.AddDate(0, 0, -180), now.Add(time.Second), 50, "")
 	if err != nil || len(h.Events) != 1 || h.Events[0].EndReason != "restart" || h.Events[0].EndedAt == nil {
 		t.Fatal(h, err)
 	}
