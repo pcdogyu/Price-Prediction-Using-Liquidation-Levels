@@ -30,6 +30,14 @@ type steadyWebhookPayload struct {
 }
 
 func buildSteadyWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
+	return buildWebhookPayload(signal, cfg, "steady_liquidation_confirmation", "tradingview")
+}
+
+func buildManualWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
+	return buildWebhookPayload(signal, cfg, "manual_liquidation_trigger", "liquidation_alert_manual")
+}
+
+func buildWebhookPayload(signal domain.TradeSignal, cfg config.Config, condition, source string) ([]byte, error) {
 	action, intent, err := steadyWebhookDirection(signal.Side)
 	if err != nil {
 		return nil, err
@@ -45,8 +53,8 @@ func buildSteadyWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]
 		TradeEnv: cfg.SteadyWebhookTradeEnv, Action: action,
 		Ticker: signal.Symbol, Coinpair: signal.Symbol, Price: price,
 		Exchange: cfg.SteadyWebhookExchange, Interval: interval,
-		Condition: "steady_liquidation_confirmation", Text: intent,
-		OrderIntent: intent, Source: "tradingview",
+		Condition: condition, Text: intent,
+		OrderIntent: intent, Source: source,
 		TokenNonce: cfg.SteadyWebhookTokenNonce, Token: cfg.SteadyWebhookToken,
 	}
 	return json.Marshal(payload)

@@ -77,6 +77,16 @@ func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit 
 	return s.alerts.store.AlertTimeline(ctx, symbol, kind, limit, cursor)
 }
 
+// TriggerAlert sends one manually requested order signal for a persisted alert
+// or signal. The record is read server-side so the browser cannot alter its
+// symbol, direction, or reference price.
+func (s *Service) TriggerAlert(ctx context.Context, recordType, recordID string) (any, error) {
+	if s.alerts == nil {
+		return nil, errors.New("alert engine unavailable")
+	}
+	return s.alerts.triggerWebhook(ctx, recordType, recordID)
+}
+
 // AlertSettings returns the masked notification settings.
 func (s *Service) AlertSettings() domain.NotificationSettings {
 	return s.alerts.snapshotSettings()

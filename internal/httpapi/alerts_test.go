@@ -85,8 +85,58 @@ func TestAlertPageAndAssets(t *testing.T) {
 			t.Fatalf("%s must not be empty", path)
 		}
 	}
+	script := serveAlert(srv, http.MethodGet, "/assets/alerts.js", nil).Body.String()
+	if !strings.Contains(script, "alerts-trigger") || !strings.Contains(script, "api/v1/alerts/trigger") {
+		t.Fatal("the alerts script must expose the manual order trigger")
+	}
 	if post := serveAlert(srv, http.MethodPost, "/alerts", nil); post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /alerts status=%d", post.Code)
+	}
+}
+
+func TestManualAlertTriggerEndpoint(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, logs, err := observability.New(t.TempDir()+"/application.log", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	requests := make(chan []byte, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer upstream.Close()
+	srv, st := testService(t, config.Config{
+		SteadyWebhookURL: upstream.URL, SteadyWebhookAPIID: "okx_bot", SteadyWebhookTargetExchange: "okx",
+		SteadyWebhookTradeEnv: "demo", SteadyWebhookExchange: "binance", SteadyWebhookInterval: "3m",
+		SteadyWebhookTokenNonce: "nonce-value", SteadyWebhookToken: "token-value",
+	}, logger, logs)
+	defer st.Close()
+	at := time.Now().UTC().Truncate(time.Second)
+	if _, err := st.SaveTradeSignal(context.Background(), domain.TradeSignal{ID: "manual-signal", Symbol: "BTCUSDT", Kind: domain.SignalSteady, Side: "short", LiquidationSide: "short", CreatedAt: at, ReferencePrice: 67123.45, WindowMinutes: 3}); err != nil {
+		t.Fatal(err)
+	}
+	w := serveAlert(srv, http.MethodPost, "/api/v1/alerts/trigger", strings.NewReader(`{"record_type":"steady","record_id":"manual-signal"}`))
+	if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"status":"accepted"`) {
+		t.Fatalf("trigger status=%d body=%s", w.Code, w.Body.String())
+	}
+	select {
+	case raw := <-requests:
+		var got map[string]string
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["action"] != "sell" || got["price"] != "67123.45" {
+			t.Fatalf("unexpected trigger payload: %s", raw)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("trigger endpoint did not call webhook")
+	}
+	missing := serveAlert(srv, http.MethodPost, "/api/v1/alerts/trigger", strings.NewReader(`{"record_type":"steady","record_id":"missing"}`))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing record status=%d body=%s", missing.Code, missing.Body.String())
 	}
 }
 

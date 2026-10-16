@@ -26,6 +26,7 @@ type alertRuntime struct {
 	sender                                      *notify.Telegram
 	notifier                                    *notify.Dispatcher
 	webhook                                     *notify.Dispatcher
+	webhookSender                               *notify.Webhook
 	webhookURL, webhookTokenNonce, webhookToken string
 	webhookConfig                               config.Config
 
@@ -70,7 +71,8 @@ func (s *Service) newAlertRuntime() *alertRuntime {
 	}
 	rtm.settings = rtm.defaultSettings()
 	rtm.notifier = notify.NewDispatcher(rtm.sender, rtm.notifierSettings, 128, alertNotifyCooldown, s.log)
-	rtm.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), rtm.webhookSettings, 128, alertNotifyCooldown, s.log)
+	rtm.webhookSender = notify.NewWebhook()
+	rtm.webhook = notify.NewWebhookDispatcher(rtm.webhookSender, rtm.webhookSettings, 128, alertNotifyCooldown, s.log)
 	return rtm
 }
 
@@ -318,6 +320,53 @@ func (rtm *alertRuntime) submitSteadyWebhook(signal domain.TradeSignal, allowNot
 
 func (rtm *alertRuntime) serviceConfig() config.Config {
 	return rtm.webhookConfig
+}
+
+type manualTriggerResult struct {
+	RecordType string `json:"record_type"`
+	RecordID   string `json:"record_id"`
+	Symbol     string `json:"symbol"`
+	Side       string `json:"side"`
+	Status     string `json:"status"`
+}
+
+func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordID string) (manualTriggerResult, error) {
+	if _, _, ok := rtm.webhookSettings(); !ok {
+		return manualTriggerResult{}, errors.New("steady webhook is not configured")
+	}
+	var signal domain.TradeSignal
+	switch recordType {
+	case "alert":
+		row, err := rtm.store.LiquidationAlertByID(ctx, recordID)
+		if err != nil {
+			return manualTriggerResult{}, err
+		}
+		signal = domain.TradeSignal{
+			ID: row.ID, AlertID: row.ID, Symbol: row.Symbol, Side: row.TradeSide,
+			LiquidationSide: row.Side, CreatedAt: time.Now().UTC(), ReferencePrice: row.ReferencePrice,
+			AlertNotionalUSD: row.NotionalUSD, ThresholdUSD: row.ThresholdUSD, WindowMinutes: row.WindowMinutes,
+		}
+	case domain.SignalAggressive, domain.SignalSteady:
+		row, err := rtm.store.TradeSignalByID(ctx, recordID)
+		if err != nil {
+			return manualTriggerResult{}, err
+		}
+		signal = row
+		signal.CreatedAt = time.Now().UTC()
+	default:
+		return manualTriggerResult{}, errors.New("record type must be alert, aggressive or steady")
+	}
+	if signal.Symbol == "" || signal.ReferencePrice <= 0 {
+		return manualTriggerResult{}, errors.New("record has no valid symbol or reference price")
+	}
+	payload, err := buildManualWebhookPayload(signal, rtm.serviceConfig())
+	if err != nil {
+		return manualTriggerResult{}, err
+	}
+	if err = rtm.webhookSender.Send(ctx, rtm.webhookURL, "", string(payload)); err != nil {
+		return manualTriggerResult{}, err
+	}
+	return manualTriggerResult{RecordType: recordType, RecordID: recordID, Symbol: signal.Symbol, Side: signal.Side, Status: "accepted"}, nil
 }
 
 // categoryEnabled reports whether a notification category may be sent.

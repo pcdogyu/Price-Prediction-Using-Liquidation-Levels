@@ -109,3 +109,54 @@ func TestSubmitSteadyWebhookDeliversThroughApplicationQueue(t *testing.T) {
 		t.Fatal("steady signal was not delivered to webhook")
 	}
 }
+
+func TestManualAlertTriggerUsesPersistedDirectionAndPrice(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	svc, cfg, st := alertTestService(t, "manual-trigger.db")
+	cfg.SteadyWebhookURL = server.URL
+	cfg.SteadyWebhookAPIID = "okx_bot"
+	cfg.SteadyWebhookTargetExchange = "okx"
+	cfg.SteadyWebhookTradeEnv = "demo"
+	cfg.SteadyWebhookExchange = "binance"
+	cfg.SteadyWebhookInterval = "3m"
+	cfg.SteadyWebhookTokenNonce = "nonce-value"
+	cfg.SteadyWebhookToken = "token-value"
+	svc.alerts.webhookURL = cfg.SteadyWebhookURL
+	svc.alerts.webhookConfig = cfg
+	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
+	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	created := time.Date(2026, 10, 16, 3, 4, 5, 0, time.UTC)
+	if _, err := st.SaveLiquidationAlert(context.Background(), domain.LiquidationAlert{
+		ID: "manual-alert", Symbol: "BTCUSDT", Side: "long", TradeSide: "long",
+		WindowMinutes: 3, NotionalUSD: 400000, ThresholdUSD: 300000,
+		TriggeredAt: created, ReferencePrice: 67123.45, Status: domain.AlertStateWatching, UpdatedAt: created,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.TriggerAlert(context.Background(), "alert", "manual-alert")
+	if err != nil {
+		t.Fatalf("manual trigger: %v", err)
+	}
+	if result == nil {
+		t.Fatal("manual trigger result must be returned")
+	}
+	select {
+	case raw := <-requests:
+		var got map[string]string
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("webhook body is not JSON: %v", err)
+		}
+		if got["action"] != "buy" || got["price"] != "67123.45" || got["condition"] != "manual_liquidation_trigger" || got["source"] != "liquidation_alert_manual" {
+			t.Fatalf("unexpected manual payload: %s", raw)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("manual alert trigger was not delivered to webhook")
+	}
+}

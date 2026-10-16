@@ -21,6 +21,11 @@
   // keeps its scroll position and filters while the chart opens beside it.
   const chartLink = symbol => '<a class="alerts-symbol-link" target="_blank" rel="noopener" href="' + base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '" title="在新标签页打开 ' + escape(symbol) + ' K线">' + escape(symbol) + '</a>';
 
+  const triggerLink = (recordType, recordID, symbol, side, referencePrice) => {
+    if (!recordID || !Number.isFinite(referencePrice) || referencePrice <= 0) return '<span class="muted">不可触发</span>';
+    return '<button type="button" class="alerts-trigger" data-trigger-type="' + escape(recordType) + '" data-trigger-id="' + escape(recordID) + '" data-trigger-symbol="' + escape(symbol) + '" data-trigger-side="' + escape(sideLabel(side)) + '">触发下单</button>';
+  };
+
   let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false;
 
   function error(message) { $('alerts-error').textContent = message; $('alerts-error').hidden = false; }
@@ -57,7 +62,7 @@
       '<td class="' + (signal.kind === 'steady' ? 'buy' : 'warning') + '">' + (signal.kind === 'steady' ? '稳健' : '激进') + '</td>' +
       '<td>' + escape(sideLabel(signal.side)) + '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span></td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
-      '<td>' + detail + '</td><td>' + price(signal.reference_price) + '</td>' +
+      '<td>' + detail + '</td><td>' + price(signal.reference_price) + '<span class="alerts-trigger-wrap">' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</span></td>' +
       '<td>' + escape(notifyLabels[signal.notify_status] || signal.notify_status || '未推送') + (signal.notify_error ? '<span class="muted" title="' + escape(signal.notify_error) + '"> ⓘ</span>' : '') + '</td>';
   }
 
@@ -69,7 +74,7 @@
       '<td class="warning">预警</td>' +
       '<td>' + escape(sideLabel(row.trade_side)) + '<span class="muted"> · ' + escape(liqLabel(row.side)) + '</span></td>' +
       '<td>' + money(row.notional_usd) + '<span class="muted"> / ' + money(row.threshold_usd) + '</span></td>' +
-      '<td>' + detail + '</td><td>' + price(row.reference_price) + '</td><td>—</td>';
+      '<td>' + detail + '</td><td>' + price(row.reference_price) + '<span class="alerts-trigger-wrap">' + triggerLink('alert', row.id, row.symbol, row.trade_side, row.reference_price) + '</span></td><td>—</td>';
   }
 
   function timelineRows(rows) {
@@ -213,11 +218,36 @@
     }
   }
 
+  async function triggerOrder(button) {
+    const symbol = button.dataset.triggerSymbol || '';
+    const side = button.dataset.triggerSide || '';
+    if (!window.confirm('确认发送 ' + symbol + ' ' + side + ' 下单信号？')) return;
+    button.disabled = true;
+    const original = button.textContent;
+    button.textContent = '发送中…';
+    try {
+      const response = await fetch(base + 'api/v1/alerts/trigger', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ record_type: button.dataset.triggerType, record_id: button.dataset.triggerId }) });
+      const packet = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
+      button.textContent = '已发送';
+      button.classList.add('alerts-trigger-done');
+      clearError();
+    } catch (caught) {
+      button.disabled = false;
+      button.textContent = original;
+      error('手动下单信号发送失败：' + caught.message);
+    }
+  }
+
   $('alerts-filters').addEventListener('submit', event => { event.preventDefault(); historyCursors = ['']; loadHistory('', 0); });
   $('alerts-prev').addEventListener('click', () => { if (historyPage > 0) loadHistory(historyCursors[historyPage - 1], historyPage - 1); });
   $('alerts-next').addEventListener('click', () => { if (!historyNextCursor) return; historyCursors[historyPage + 1] = historyNextCursor; loadHistory(historyNextCursor, historyPage + 1); });
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-test').addEventListener('click', testSettings);
+  $('alerts-history-rows').addEventListener('click', event => {
+    const button = event.target.closest('.alerts-trigger');
+    if (button) triggerOrder(button);
+  });
   loadOverview();
   loadHistory('', 0);
   setInterval(() => { if (!document.hidden) { loadOverview(); if (historyPage === 0 && !historyBusy) loadHistory('', 0); } }, 5000);

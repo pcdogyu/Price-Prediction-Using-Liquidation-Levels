@@ -11,4 +11,5 @@
 #alerts-symbol{width:150px}
 .alerts-symbol-link{color:var(--link);text-decoration:underline;text-underline-offset:2px;font-weight:650;white-space:nowrap}
 .alerts-symbol-link:hover,.alerts-symbol-link:focus-visible{color:var(--text);background:var(--hover-bg);border-radius:5px}
+.alerts-trigger-wrap{display:inline-flex;margin-left:8px}.alerts-trigger{padding:2px 7px;border:1px solid var(--strong-line);border-radius:999px;color:var(--link);background:transparent;cursor:pointer;font-size:12px}.alerts-trigger:hover,.alerts-trigger:focus-visible{color:var(--text);background:var(--hover-bg)}.alerts-trigger:disabled{cursor:wait;opacity:.65}.alerts-trigger-done{color:var(--buy);border-color:var(--buy)}
 @media(max-width:720px){.alerts-settings input[type=text],.alerts-settings input[type=password]{width:100%}.alerts-monitor-table,.alerts-history-table{min-width:760px}}

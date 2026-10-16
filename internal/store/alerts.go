@@ -62,6 +62,19 @@ func (s *Store) SaveLiquidationAlert(ctx context.Context, alert domain.Liquidati
 	return prior == 0, nil
 }
 
+// LiquidationAlertByID reads one persisted alert for a manual order trigger.
+func (s *Store) LiquidationAlertByID(ctx context.Context, id string) (domain.LiquidationAlert, error) {
+	var payload []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT payload FROM liquidation_alerts WHERE id=?`, id).Scan(&payload); err != nil {
+		return domain.LiquidationAlert{}, err
+	}
+	var out domain.LiquidationAlert
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return domain.LiquidationAlert{}, err
+	}
+	return out, nil
+}
+
 // LiquidationAlerts reads the alert history newest first. Side accepts long or
 // short, symbol accepts a single symbol or an empty value for all symbols.
 func (s *Store) LiquidationAlerts(ctx context.Context, symbol, side string, limit int, cursor string) (domain.AlertPage, error) {
@@ -143,6 +156,19 @@ func (s *Store) SaveTradeSignal(ctx context.Context, signal domain.TradeSignal) 
 		return false, err
 	}
 	return affected > 0, nil
+}
+
+// TradeSignalByID reads one persisted signal for a manual order trigger.
+func (s *Store) TradeSignalByID(ctx context.Context, id string) (domain.TradeSignal, error) {
+	var payload []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT payload FROM trade_signals WHERE id=?`, id).Scan(&payload); err != nil {
+		return domain.TradeSignal{}, err
+	}
+	var out domain.TradeSignal
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return domain.TradeSignal{}, err
+	}
+	return out, nil
 }
 
 // MarkTradeSignalNotified records the delivery result so the page can show whether
