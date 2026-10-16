@@ -80,6 +80,22 @@ func TestRenderAlertChartPNGDrawsCoinGlassTopThreeLines(t *testing.T) {
 	}
 }
 
+func TestCoinGlassPriceLabelsDrawAtBothLineEnds(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 120, 40))
+	background := color.RGBA{R: 248, G: 250, B: 252, A: 255}
+	draw.Draw(img, img.Bounds(), &image.Uniform{C: background}, image.Point{}, draw.Src)
+	plot := image.Rect(10, 10, 110, 30)
+	drawCoinGlassPriceLabels(img, plot, 0, 100, 50, coinGlassLongLineColor)
+	y := priceY(50, 0, 100, plot) - 4
+	if got := color.RGBAModel.Convert(img.At(plot.Min.X+3, y)).(color.RGBA); got == background {
+		t.Fatal("left CoinGlass price label was not drawn")
+	}
+	labelWidth := chartTextWidth(chartPriceLabel(50), 1)
+	if got := color.RGBAModel.Convert(img.At(plot.Max.X-labelWidth-3, y)).(color.RGBA); got == background {
+		t.Fatal("right CoinGlass price label was not drawn")
+	}
+}
+
 func TestDrawWarningDiamondIsHollow(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 20, 20))
 	background := color.RGBA{R: 248, G: 250, B: 252, A: 255}
@@ -105,8 +121,10 @@ func TestAlertChartUsesUTCPlus8AndSupportsZSymbols(t *testing.T) {
 	if _, ok := chartGlyphs['Z']; !ok {
 		t.Fatal("chart glyphs must include Z so ZECUSDT is not rendered as ?")
 	}
-	if _, ok := chartGlyphs['!']; !ok {
-		t.Fatal("chart glyphs must include ! for the warning legend")
+	for _, char := range "预警激进稳健多单空" {
+		if _, ok := chartGlyphs[char]; !ok {
+			t.Fatalf("chart glyphs must include %q for the Chinese signal legend", char)
+		}
 	}
 	if _, ok := chartGlyphs['+']; !ok {
 		t.Fatal("chart glyphs must include + for the UTC+8 title")

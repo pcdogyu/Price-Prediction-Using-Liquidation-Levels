@@ -129,7 +129,7 @@ SQLite 在线备份示例：
 sqlite3 /var/lib/liquidation-predictor/liquidation.db ".backup '/var/backups/liquidation-$(date +%F).db'"
 ```
 
-Telegram 预警截图在 CoinGlass 快照可用时叠加多单清算 Top 3 蓝色水平线和空单清算 Top 3 橙色水平线（80% 透明度、1px），预警标记使用空心菱形；快照不可用时仍发送原始 K 线截图。
+Telegram 预警截图在 CoinGlass 快照可用时叠加多单清算 Top 3 蓝色水平线和空单清算 Top 3 橙色水平线（80% 透明度、1px），每条线的左右端以较小字体标注价格，图例使用“预警／激进／稳健／多单／空单”等中文说明，预警标记使用空心菱形；快照不可用时仍发送原始 K 线截图。
 
 ## 数据与风险说明
 

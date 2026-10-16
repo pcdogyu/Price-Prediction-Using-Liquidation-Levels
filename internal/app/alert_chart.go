@@ -220,12 +220,17 @@ func includeLiquidationPrices(low, high *float64, liquidationMap *engine.MapResu
 	if liquidationMap == nil {
 		return
 	}
-	for _, peak := range append(append([]domain.LiquidationPeak{}, liquidationMap.TopLong...), liquidationMap.TopShort...) {
-		if peak.Price <= 0 {
-			continue
+	for _, peak := range liquidationMap.TopLong {
+		if coinGlassLevelVisible(peak.Price, liquidationMap.MarkPrice, true) {
+			*low = math.Min(*low, peak.Price)
+			*high = math.Max(*high, peak.Price)
 		}
-		*low = math.Min(*low, peak.Price)
-		*high = math.Max(*high, peak.Price)
+	}
+	for _, peak := range liquidationMap.TopShort {
+		if coinGlassLevelVisible(peak.Price, liquidationMap.MarkPrice, false) {
+			*low = math.Min(*low, peak.Price)
+			*high = math.Max(*high, peak.Price)
+		}
 	}
 }
 
@@ -234,17 +239,51 @@ func drawCoinGlassTopLiquidations(img *image.RGBA, liquidationMap *engine.MapRes
 		return
 	}
 	for _, peak := range liquidationMap.TopLong {
-		if peak.Price <= 0 || (liquidationMap.MarkPrice > 0 && peak.Price >= liquidationMap.MarkPrice) {
+		if !coinGlassLevelVisible(peak.Price, liquidationMap.MarkPrice, true) {
 			continue
 		}
 		drawHorizontal(img, pricePlot.Min.X, pricePlot.Max.X-1, priceY(peak.Price, low, high, pricePlot), coinGlassLongLineColor)
 	}
 	for _, peak := range liquidationMap.TopShort {
-		if peak.Price <= 0 || (liquidationMap.MarkPrice > 0 && peak.Price <= liquidationMap.MarkPrice) {
+		if !coinGlassLevelVisible(peak.Price, liquidationMap.MarkPrice, false) {
 			continue
 		}
 		drawHorizontal(img, pricePlot.Min.X, pricePlot.Max.X-1, priceY(peak.Price, low, high, pricePlot), coinGlassShortLineColor)
 	}
+	for _, peak := range liquidationMap.TopLong {
+		if coinGlassLevelVisible(peak.Price, liquidationMap.MarkPrice, true) {
+			drawCoinGlassPriceLabels(img, pricePlot, low, high, peak.Price, coinGlassLongLineColor)
+		}
+	}
+	for _, peak := range liquidationMap.TopShort {
+		if coinGlassLevelVisible(peak.Price, liquidationMap.MarkPrice, false) {
+			drawCoinGlassPriceLabels(img, pricePlot, low, high, peak.Price, coinGlassShortLineColor)
+		}
+	}
+}
+
+func coinGlassLevelVisible(price, markPrice float64, long bool) bool {
+	if price <= 0 {
+		return false
+	}
+	if markPrice <= 0 {
+		return true
+	}
+	if long {
+		return price < markPrice
+	}
+	return price > markPrice
+}
+
+func drawCoinGlassPriceLabels(img *image.RGBA, pricePlot image.Rectangle, low, high, price float64, c color.Color) {
+	label := chartPriceLabel(price)
+	// Scale 1 is intentionally smaller than the axis labels so the two endpoint
+	// labels do not cover the candles or dominate the Telegram screenshot.
+	const scale = 1
+	textWidth := chartTextWidth(label, scale)
+	y := priceY(price, low, high, pricePlot) - 4
+	drawText(img, pricePlot.Min.X+3, y, label, scale, c)
+	drawText(img, pricePlot.Max.X-textWidth-3, y, label, scale, c)
 }
 
 func drawChartAxes(img *image.RGBA, symbol string, pricePlot, volumePlot image.Rectangle, candles []domain.MarketCandle, low, high float64) {
@@ -278,19 +317,19 @@ func drawChartLegend(img *image.RGBA, x, y int) {
 	warning := color.RGBA{R: 225, G: 151, B: 35, A: 255}
 
 	drawWarningDiamond(img, x+4, y+4, 4, warning)
-	drawText(img, x+11, y, "! WARN", 1, muted)
-	x += 50
+	drawText(img, x+11, y, "预警", 1, muted)
+	x += 39
 	drawTriangle(img, x+4, y+4, 4, signalColor("long"), false, true)
-	drawText(img, x+11, y, "AGGR", 1, muted)
-	x += 49
+	drawText(img, x+11, y, "激进", 1, muted)
+	x += 39
 	drawTriangle(img, x+4, y+4, 4, signalColor("long"), true, true)
-	drawText(img, x+11, y, "STEADY", 1, muted)
-	x += 57
+	drawText(img, x+11, y, "稳健", 1, muted)
+	x += 39
 	drawTriangle(img, x+4, y+4, 4, signalColor("long"), true, true)
-	drawText(img, x+11, y, "LONG", 1, muted)
-	x += 43
+	drawText(img, x+11, y, "多单", 1, muted)
+	x += 39
 	drawTriangle(img, x+4, y+4, 4, signalColor("short"), true, false)
-	drawText(img, x+11, y, "SHORT", 1, muted)
+	drawText(img, x+11, y, "空单", 1, muted)
 }
 
 func drawHistoricalSignals(img *image.RGBA, items []domain.AlertTimelineItem, candles []domain.MarketCandle, pricePlot image.Rectangle, low, high, step float64) {
@@ -437,6 +476,16 @@ var chartGlyphs = map[rune][]string{
 	'W': {"10001", "10001", "10001", "10101", "10101", "11011", "10001"},
 	'Y': {"10001", "10001", "01010", "00100", "00100", "00100", "00100"},
 	'Z': {"11111", "00001", "00010", "00100", "01000", "10000", "11111"},
+	'预': {"11010", "00100", "11111", "00100", "10101", "00100", "01010"},
+	'警': {"11111", "10001", "10101", "10001", "11111", "00100", "11111"},
+	'告': {"01110", "10001", "10001", "11111", "00100", "01010", "11011"},
+	'激': {"10010", "11111", "00100", "10110", "01001", "10010", "00100"},
+	'进': {"00100", "00100", "11111", "00100", "10100", "00100", "00110"},
+	'稳': {"10001", "11111", "00100", "10101", "00100", "01010", "10001"},
+	'健': {"10101", "11111", "00100", "10110", "00101", "10110", "00100"},
+	'多': {"00100", "11111", "01010", "00100", "01010", "10001", "00000"},
+	'单': {"00100", "11111", "00100", "11111", "00100", "00100", "11111"},
+	'空': {"00100", "01010", "11111", "10001", "10101", "10001", "11111"},
 }
 
 func candleRange(candles []domain.MarketCandle) (low, high, volumePeak float64) {
