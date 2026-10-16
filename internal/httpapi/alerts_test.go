@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "每页 20 条", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings"} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "每页 20 条", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", `id="alerts-threshold-btc" type="number" min="1000"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
