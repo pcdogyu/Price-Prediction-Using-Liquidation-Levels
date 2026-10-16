@@ -92,6 +92,7 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/settings", s.alertSettings)
 	mux.HandleFunc("/api/v1/alerts/settings/test", postOnly(s.alertSettingsTest))
 	mux.HandleFunc("/api/v1/alerts/trigger", postOnly(s.alertTrigger))
+	mux.HandleFunc("/api/v1/alerts/notify", postOnly(s.alertNotify))
 }
 
 func (s *Server) alertTrigger(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +113,38 @@ func (s *Server) alertTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.svc.TriggerAlert(r.Context(), in.RecordType, in.RecordID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, http.StatusNotFound, errors.New("alert or signal not found"))
+			return
+		}
+		problem(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+// alertNotify sends the selected persisted alert or signal to the configured
+// Telegram group. The record is read server-side so the browser cannot alter
+// the message contents or destination.
+func (s *Server) alertNotify(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		RecordType string `json:"record_type"`
+		RecordID   string `json:"record_id"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&in); err != nil {
+		problem(w, http.StatusBadRequest, fmt.Errorf("invalid notify request: %w", err))
+		return
+	}
+	in.RecordType = strings.ToLower(strings.TrimSpace(in.RecordType))
+	in.RecordID = strings.TrimSpace(in.RecordID)
+	if (in.RecordType != "alert" && in.RecordType != domain.SignalAggressive && in.RecordType != domain.SignalSteady) || in.RecordID == "" || len(in.RecordID) > 256 {
+		problem(w, http.StatusBadRequest, errors.New("record_type and record_id are invalid"))
+		return
+	}
+	result, err := s.svc.NotifyAlert(r.Context(), in.RecordType, in.RecordID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			problem(w, http.StatusNotFound, errors.New("alert or signal not found"))

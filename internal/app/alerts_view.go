@@ -87,6 +87,15 @@ func (s *Service) TriggerAlert(ctx context.Context, recordType, recordID string)
 	return s.alerts.triggerWebhook(ctx, recordType, recordID)
 }
 
+// NotifyAlert sends one manually requested alert or signal to Telegram. The
+// record is loaded from SQLite so the browser cannot forge its contents.
+func (s *Service) NotifyAlert(ctx context.Context, recordType, recordID string) (any, error) {
+	if s.alerts == nil {
+		return nil, errors.New("alert engine unavailable")
+	}
+	return s.alerts.notifyTelegram(ctx, recordType, recordID)
+}
+
 // AlertSettings returns the masked notification settings.
 func (s *Service) AlertSettings() domain.NotificationSettings {
 	return s.alerts.snapshotSettings()

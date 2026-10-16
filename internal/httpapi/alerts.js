@@ -23,7 +23,12 @@
 
   const triggerLink = (recordType, recordID, symbol, side, referencePrice) => {
     if (!recordID || !Number.isFinite(referencePrice) || referencePrice <= 0) return '<span class="muted">不可触发</span>';
-    return '<button type="button" class="alerts-trigger" data-trigger-type="' + escape(recordType) + '" data-trigger-id="' + escape(recordID) + '" data-trigger-symbol="' + escape(symbol) + '" data-trigger-side="' + escape(sideLabel(side)) + '">触发下单</button>';
+    return '<button type="button" class="alerts-trigger alerts-action alerts-order-trigger" data-action="order" data-trigger-type="' + escape(recordType) + '" data-trigger-id="' + escape(recordID) + '" data-trigger-symbol="' + escape(symbol) + '" data-trigger-side="' + escape(sideLabel(side)) + '">触发下单</button>';
+  };
+
+  const notifyLink = (recordType, recordID) => {
+    if (!recordID) return '<span class="muted">不可触发</span>';
+    return '<button type="button" class="alerts-action alerts-notify-trigger" data-action="notify" data-trigger-type="' + escape(recordType) + '" data-trigger-id="' + escape(recordID) + '">触发报价</button>';
   };
 
   let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false;
@@ -62,7 +67,7 @@
       '<td class="' + (signal.kind === 'steady' ? 'buy' : 'warning') + '">' + (signal.kind === 'steady' ? '稳健' : '激进') + '</td>' +
       '<td>' + escape(sideLabel(signal.side)) + '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span></td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
-      '<td>' + detail + '</td><td>' + price(signal.reference_price) + '<span class="alerts-trigger-wrap">' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</span></td>' +
+      '<td>' + detail + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
       '<td>' + escape(notifyLabels[signal.notify_status] || signal.notify_status || '未推送') + (signal.notify_error ? '<span class="muted" title="' + escape(signal.notify_error) + '"> ⓘ</span>' : '') + '</td>';
   }
 
@@ -74,12 +79,12 @@
       '<td class="warning">预警</td>' +
       '<td>' + escape(sideLabel(row.trade_side)) + '<span class="muted"> · ' + escape(liqLabel(row.side)) + '</span></td>' +
       '<td>' + money(row.notional_usd) + '<span class="muted"> / ' + money(row.threshold_usd) + '</span></td>' +
-      '<td>' + detail + '</td><td>' + price(row.reference_price) + '<span class="alerts-trigger-wrap">' + triggerLink('alert', row.id, row.symbol, row.trade_side, row.reference_price) + '</span></td><td>—</td>';
+      '<td>' + detail + '</td><td>' + price(row.reference_price) + '</td><td>' + triggerLink('alert', row.id, row.symbol, row.trade_side, row.reference_price) + '</td><td>' + notifyLink('alert', row.id) + '</td><td>—</td>';
   }
 
   function timelineRows(rows) {
     const target = $('alerts-history-rows');
-    if (!rows.length) { target.innerHTML = '<tr><td colspan="8">尚无历史记录</td></tr>'; return; }
+    if (!rows.length) { target.innerHTML = '<tr><td colspan="10">尚无历史记录</td></tr>'; return; }
     target.innerHTML = rows.map(row => '<tr>' + (row.type === 'alert' ? alertCells(row.alert) : signalCells(row.signal)) + '</tr>').join('');
   }
 
@@ -236,14 +241,34 @@
     }
   }
 
+  async function triggerNotify(button) {
+    button.disabled = true;
+    const original = button.textContent;
+    button.textContent = '发送中';
+    try {
+      const response = await fetch(base + 'api/v1/alerts/notify', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ record_type: button.dataset.triggerType, record_id: button.dataset.triggerId }) });
+      const packet = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
+      button.textContent = '已发送';
+      clearError();
+      setTimeout(() => { button.textContent = original; button.disabled = false; }, 2200);
+    } catch (caught) {
+      button.disabled = false;
+      button.textContent = original;
+      error('手动报警发送失败：' + caught.message);
+    }
+  }
+
   $('alerts-filters').addEventListener('submit', event => { event.preventDefault(); historyCursors = ['']; loadHistory('', 0); });
   $('alerts-prev').addEventListener('click', () => { if (historyPage > 0) loadHistory(historyCursors[historyPage - 1], historyPage - 1); });
   $('alerts-next').addEventListener('click', () => { if (!historyNextCursor) return; historyCursors[historyPage + 1] = historyNextCursor; loadHistory(historyNextCursor, historyPage + 1); });
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-test').addEventListener('click', testSettings);
   $('alerts-history-rows').addEventListener('click', event => {
-    const button = event.target.closest('.alerts-trigger');
-    if (button) triggerOrder(button);
+    const button = event.target.closest('.alerts-action');
+    if (!button) return;
+    if (button.dataset.action === 'notify') triggerNotify(button);
+    else triggerOrder(button);
   });
   loadOverview();
   loadHistory('', 0);

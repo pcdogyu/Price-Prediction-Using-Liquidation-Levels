@@ -1,6 +1,6 @@
 .alerts-settings{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:10px}.alerts-settings label{display:flex;flex-direction:column;gap:5px;color:var(--muted);font-size:12px}.alerts-settings input[type=text],.alerts-settings input[type=password]{width:260px;max-width:100%}.alerts-check{flex-direction:row;align-items:center;gap:7px;font-size:13px;color:var(--text)}.alerts-check input{width:auto}.alerts-settings-actions{display:flex;gap:8px;flex-wrap:wrap}.alerts-settings p{width:100%;margin:2px 0 0;overflow-wrap:anywhere}
 .alerts-scroll{max-height:520px}
-.alerts-monitor-table,.alerts-history-table{min-width:880px}
+.alerts-monitor-table{min-width:880px}.alerts-history-table{min-width:1040px}
 .alerts-monitor-table th,.alerts-monitor-table td,.alerts-history-table td:nth-child(5),.alerts-history-table td:nth-child(6){white-space:nowrap}
 .alerts-monitor-table td span.muted,.alerts-history-table td span.muted{display:inline-block;margin-left:4px}
 .alerts-page-size{align-self:center}
@@ -11,5 +11,5 @@
 #alerts-symbol{width:150px}
 .alerts-symbol-link{color:var(--link);text-decoration:underline;text-underline-offset:2px;font-weight:650;white-space:nowrap}
 .alerts-symbol-link:hover,.alerts-symbol-link:focus-visible{color:var(--text);background:var(--hover-bg);border-radius:5px}
-.alerts-trigger-wrap{display:inline-flex;margin-left:8px}.alerts-trigger{padding:2px 7px;border:1px solid var(--strong-line);border-radius:999px;color:var(--link);background:transparent;cursor:pointer;font-size:12px}.alerts-trigger:hover,.alerts-trigger:focus-visible{color:var(--text);background:var(--hover-bg)}.alerts-trigger:disabled{cursor:wait;opacity:.65}
-@media(max-width:720px){.alerts-settings input[type=text],.alerts-settings input[type=password]{width:100%}.alerts-monitor-table,.alerts-history-table{min-width:760px}}
+.alerts-action{padding:2px 7px;border:1px solid var(--strong-line);border-radius:999px;color:var(--link);background:transparent;cursor:pointer;font-size:12px}.alerts-action:hover,.alerts-action:focus-visible{color:var(--text);background:var(--hover-bg)}.alerts-action:disabled{cursor:wait;opacity:.65}.alerts-order-trigger{color:var(--link)}.alerts-notify-trigger{color:var(--warning)}
+@media(max-width:720px){.alerts-settings input[type=text],.alerts-settings input[type=password]{width:100%}.alerts-monitor-table{min-width:760px}.alerts-history-table{min-width:940px}}

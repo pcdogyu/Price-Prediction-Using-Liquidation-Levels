@@ -330,6 +330,14 @@ type manualTriggerResult struct {
 	Status     string `json:"status"`
 }
 
+type manualNotifyResult struct {
+	RecordType string `json:"record_type"`
+	RecordID   string `json:"record_id"`
+	Symbol     string `json:"symbol"`
+	Side       string `json:"side"`
+	Status     string `json:"status"`
+}
+
 func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordID string) (manualTriggerResult, error) {
 	if _, _, ok := rtm.webhookSettings(); !ok {
 		return manualTriggerResult{}, errors.New("steady webhook is not configured")
@@ -367,6 +375,40 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 		return manualTriggerResult{}, err
 	}
 	return manualTriggerResult{RecordType: recordType, RecordID: recordID, Symbol: signal.Symbol, Side: signal.Side, Status: "accepted"}, nil
+}
+
+func (rtm *alertRuntime) notifyTelegram(ctx context.Context, recordType, recordID string) (manualNotifyResult, error) {
+	token, chatID, ok := rtm.notifierSettings()
+	if !ok {
+		return manualNotifyResult{}, errors.New("Telegram 通知未启用，或 Token / Chat ID 未配置")
+	}
+
+	var symbol, side, text string
+	switch recordType {
+	case "alert":
+		row, err := rtm.store.LiquidationAlertByID(ctx, recordID)
+		if err != nil {
+			return manualNotifyResult{}, err
+		}
+		symbol, side, text = row.Symbol, row.TradeSide, alertMessage(row)
+	case domain.SignalAggressive, domain.SignalSteady:
+		row, err := rtm.store.TradeSignalByID(ctx, recordID)
+		if err != nil {
+			return manualNotifyResult{}, err
+		}
+		symbol, side, text = row.Symbol, row.Side, signalMessage(row)
+	default:
+		return manualNotifyResult{}, errors.New("record type must be alert, aggressive or steady")
+	}
+	if symbol == "" || text == "" {
+		return manualNotifyResult{}, errors.New("record has no valid Telegram message")
+	}
+	send, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if err := rtm.sender.Send(send, token, chatID, "📣 手动报警\n"+text); err != nil {
+		return manualNotifyResult{}, err
+	}
+	return manualNotifyResult{RecordType: recordType, RecordID: recordID, Symbol: symbol, Side: side, Status: "accepted"}, nil
 }
 
 // categoryEnabled reports whether a notification category may be sent.

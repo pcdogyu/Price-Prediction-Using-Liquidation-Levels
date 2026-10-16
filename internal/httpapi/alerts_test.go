@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "每页 20 条", "alerts-prev", "alerts-next"} {
+	for _, want := range []string{"预警与信号历史", "每页 20 条", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -89,11 +89,60 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "alerts-trigger") || !strings.Contains(script, "api/v1/alerts/trigger") {
 		t.Fatal("the alerts script must expose the manual order trigger")
 	}
+	if !strings.Contains(script, "api/v1/alerts/notify") || !strings.Contains(script, "触发报价") {
+		t.Fatal("the alerts script must expose the manual Telegram alert trigger")
+	}
 	if !strings.Contains(script, "下单中") || !strings.Contains(script, "button.textContent = original") || strings.Contains(script, "window.confirm") {
 		t.Fatal("manual order trigger must show in-button progress without a confirmation popup")
 	}
 	if post := serveAlert(srv, http.MethodPost, "/alerts", nil); post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /alerts status=%d", post.Code)
+	}
+}
+
+func TestManualAlertNotifyEndpoint(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, logs, err := observability.New(t.TempDir()+"/application.log", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	requests := make(chan url.Values, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		values, parseErr := url.ParseQuery(string(body))
+		if parseErr == nil {
+			requests <- values
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":1}}`)
+	}))
+	defer upstream.Close()
+	srv, st := testService(t, config.Config{TelegramAPIBase: upstream.URL}, logger, logs)
+	defer st.Close()
+	ctx := context.Background()
+	if saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/settings", strings.NewReader(`{"telegram_enabled":true,"telegram_token":"12345:secretvalue","telegram_chat_id":"-1009","notify_alerts":true}`)); saved.Code != http.StatusOK {
+		t.Fatalf("Telegram settings status=%d body=%s", saved.Code, saved.Body.String())
+	}
+	at := time.Now().UTC().Truncate(time.Second)
+	if _, err := st.SaveLiquidationAlert(ctx, domain.LiquidationAlert{ID: "manual-alert", Symbol: "BTCUSDT", Side: "long", TradeSide: "long", WindowMinutes: 3, NotionalUSD: 400000, ThresholdUSD: 300000, EventCount: 2, TriggeredAt: at, QuietSeconds: 600, QuietUntil: at.Add(10 * time.Minute), Status: domain.AlertStateWatching}); err != nil {
+		t.Fatal(err)
+	}
+	w := serveAlert(srv, http.MethodPost, "/api/v1/alerts/notify", strings.NewReader(`{"record_type":"alert","record_id":"manual-alert"}`))
+	if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"status":"accepted"`) {
+		t.Fatalf("notify status=%d body=%s", w.Code, w.Body.String())
+	}
+	select {
+	case values := <-requests:
+		if values.Get("chat_id") != "-1009" || !strings.Contains(values.Get("text"), "手动报警") || !strings.Contains(values.Get("text"), "BTCUSDT") {
+			t.Fatalf("unexpected Telegram form: %v", values)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("notify endpoint did not call Telegram")
+	}
+	missing := serveAlert(srv, http.MethodPost, "/api/v1/alerts/notify", strings.NewReader(`{"record_type":"alert","record_id":"missing"}`))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing notify record status=%d body=%s", missing.Code, missing.Body.String())
 	}
 }
 
