@@ -9,21 +9,25 @@ import (
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/alert"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/notify"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 )
 
-// alertRuntime owns the alert engine, the top volume watch list, the persisted
-// notification settings and the Telegram worker.
+// alertRuntime owns the alert engine, the top volume watch list, persisted
+// notification settings, and the Telegram and steady-signal workers.
 type alertRuntime struct {
-	engine   *alert.Engine
-	store    *store.Store
-	log      *slog.Logger
-	cfg      alert.Config
-	sender   *notify.Telegram
-	notifier *notify.Dispatcher
+	engine                                      *alert.Engine
+	store                                       *store.Store
+	log                                         *slog.Logger
+	cfg                                         alert.Config
+	sender                                      *notify.Telegram
+	notifier                                    *notify.Dispatcher
+	webhook                                     *notify.Dispatcher
+	webhookURL, webhookTokenNonce, webhookToken string
+	webhookConfig                               config.Config
 
 	mu       sync.RWMutex
 	settings domain.NotificationSettings
@@ -56,10 +60,23 @@ func (s *Service) newAlertRuntime() *alertRuntime {
 		OppositeMinimumUSD: s.cfg.AlertOppositeMinimumUSD,
 		TopSymbols:         s.cfg.AlertTopSymbols,
 	}
-	rtm := &alertRuntime{engine: alert.New(cfg), store: s.store, log: s.log, cfg: cfg, sender: notify.NewTelegram(s.cfg.TelegramAPIBase), envToken: s.cfg.TelegramBotToken, envChat: s.cfg.TelegramChatID}
+	rtm := &alertRuntime{
+		engine: alert.New(cfg), store: s.store, log: s.log, cfg: cfg,
+		sender:   notify.NewTelegram(s.cfg.TelegramAPIBase),
+		envToken: s.cfg.TelegramBotToken, envChat: s.cfg.TelegramChatID,
+		webhookURL: s.cfg.SteadyWebhookURL, webhookTokenNonce: s.cfg.SteadyWebhookTokenNonce,
+		webhookToken:  s.cfg.SteadyWebhookToken,
+		webhookConfig: s.cfg,
+	}
 	rtm.settings = rtm.defaultSettings()
 	rtm.notifier = notify.NewDispatcher(rtm.sender, rtm.notifierSettings, 128, alertNotifyCooldown, s.log)
+	rtm.webhook = notify.NewDispatcher(notify.NewWebhook(), rtm.webhookSettings, 128, alertNotifyCooldown, s.log)
 	return rtm
+}
+
+func (rtm *alertRuntime) webhookSettings() (string, string, bool) {
+	ok := strings.TrimSpace(rtm.webhookURL) != "" && strings.TrimSpace(rtm.webhookTokenNonce) != "" && strings.TrimSpace(rtm.webhookToken) != ""
+	return rtm.webhookURL, "", ok
 }
 
 // defaultSettings builds the starting settings from the environment. A stored row
@@ -131,6 +148,7 @@ func (s *Service) startAlerts(ctx context.Context) {
 	rtm.refreshTopSymbols(ctx)
 	rtm.seedFromHistory(ctx)
 	go rtm.notifier.Start(ctx)
+	go rtm.webhook.Start(ctx)
 	go rtm.topSymbolLoop(ctx)
 	go rtm.tickLoop(ctx)
 	s.log.Info("liquidation alert engine started", "watch_symbols", rtm.engine.WatchCount(), "window", rtm.cfg.Window, "quiet", rtm.cfg.Quiet, "confirm", rtm.cfg.Confirm)
@@ -274,10 +292,32 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 			continue
 		}
 		status, message := rtm.submitSignal(item, allowNotify)
+		rtm.submitSteadyWebhook(item, allowNotify)
 		if err = rtm.store.MarkTradeSignalNotified(ctx, item.ID, status, message); err != nil && ctx.Err() == nil {
 			rtm.log.Warn("record signal notification status failed", "id", item.ID, "error", err)
 		}
 	}
+}
+
+func (rtm *alertRuntime) submitSteadyWebhook(signal domain.TradeSignal, allowNotify bool) {
+	if !allowNotify || signal.Kind != domain.SignalSteady {
+		return
+	}
+	if _, _, ok := rtm.webhookSettings(); !ok {
+		return
+	}
+	payload, err := buildSteadyWebhookPayload(signal, rtm.serviceConfig())
+	if err != nil {
+		rtm.log.Warn("steady webhook payload rejected", "symbol", signal.Symbol, "error", err)
+		return
+	}
+	if !rtm.webhook.Submit(notify.Task{Key: "steady-webhook|" + signal.Symbol, Text: string(payload)}) {
+		rtm.log.Warn("steady webhook delivery suppressed", "symbol", signal.Symbol)
+	}
+}
+
+func (rtm *alertRuntime) serviceConfig() config.Config {
+	return rtm.webhookConfig
 }
 
 // categoryEnabled reports whether a notification category may be sent.

@@ -37,6 +37,11 @@ type Config struct {
 	AlertThresholdOtherUSD                           float64
 	// Telegram notification defaults; the alert settings page overrides them.
 	TelegramBotToken, TelegramChatID, TelegramAPIBase string
+	// Steady signals are optionally delivered to the configured TradingView-style
+	// webhook. Credentials stay in the environment and are never persisted.
+	SteadyWebhookURL, SteadyWebhookAPIID, SteadyWebhookTargetExchange   string
+	SteadyWebhookTradeEnv, SteadyWebhookExchange, SteadyWebhookInterval string
+	SteadyWebhookTokenNonce, SteadyWebhookToken                         string
 }
 
 func Load() Config {
@@ -48,20 +53,28 @@ func Load() Config {
 		CoinGlassDebugURL: env("APP_COINGLASS_DEBUG_URL", "http://127.0.0.1:9222"), CoinGlassCaptureDir: env("APP_COINGLASS_CAPTURE_DIR", "data/coinglass-captures"), CoinGlassCaptureInterval: envDuration("APP_COINGLASS_CAPTURE_INTERVAL", 10*time.Minute),
 		LogRetentionDays: envInt("APP_LOG_RETENTION_DAYS", 7),
 		BackfillDays:     envInt("APP_BACKFILL_DAYS", 180), TrainingDays: envInt("APP_TRAINING_DAYS", 30), SnapshotInterval: envDuration("APP_SNAPSHOT_INTERVAL", 5*time.Minute),
-		StaleAfter:              envDuration("APP_STALE_AFTER", 90*time.Second),
-		AlertTopSymbols:         envInt("APP_ALERT_TOP_SYMBOLS", domain.AlertTopSymbolsDefault),
-		AlertWindow:             envDuration("APP_ALERT_WINDOW", 3*time.Minute),
-		AlertQuiet:              envDuration("APP_ALERT_QUIET", 10*time.Minute),
-		AlertConfirm:            envDuration("APP_ALERT_CONFIRM", 30*time.Minute),
-		AlertRefresh:            envDuration("APP_ALERT_REFRESH", 10*time.Minute),
-		AlertFollowUpMinimumUSD: envFloat("APP_ALERT_FOLLOW_UP_MIN_USD", 0),
-		AlertOppositeMinimumUSD: envFloat("APP_ALERT_OPPOSITE_MIN_USD", 0),
-		AlertThresholdBTCUSD:    envFloat("APP_ALERT_THRESHOLD_BTC_USD", 300000),
-		AlertThresholdETHUSD:    envFloat("APP_ALERT_THRESHOLD_ETH_USD", 250000),
-		AlertThresholdOtherUSD:  envFloat("APP_ALERT_THRESHOLD_OTHER_USD", 300000),
-		TelegramBotToken:        strings.TrimSpace(os.Getenv("APP_TELEGRAM_BOT_TOKEN")),
-		TelegramChatID:          strings.TrimSpace(os.Getenv("APP_TELEGRAM_CHAT_ID")),
-		TelegramAPIBase:         env("APP_TELEGRAM_API_BASE", "https://api.telegram.org"),
+		StaleAfter:                  envDuration("APP_STALE_AFTER", 90*time.Second),
+		AlertTopSymbols:             envInt("APP_ALERT_TOP_SYMBOLS", domain.AlertTopSymbolsDefault),
+		AlertWindow:                 envDuration("APP_ALERT_WINDOW", 3*time.Minute),
+		AlertQuiet:                  envDuration("APP_ALERT_QUIET", 10*time.Minute),
+		AlertConfirm:                envDuration("APP_ALERT_CONFIRM", 30*time.Minute),
+		AlertRefresh:                envDuration("APP_ALERT_REFRESH", 10*time.Minute),
+		AlertFollowUpMinimumUSD:     envFloat("APP_ALERT_FOLLOW_UP_MIN_USD", 0),
+		AlertOppositeMinimumUSD:     envFloat("APP_ALERT_OPPOSITE_MIN_USD", 0),
+		AlertThresholdBTCUSD:        envFloat("APP_ALERT_THRESHOLD_BTC_USD", 300000),
+		AlertThresholdETHUSD:        envFloat("APP_ALERT_THRESHOLD_ETH_USD", 250000),
+		AlertThresholdOtherUSD:      envFloat("APP_ALERT_THRESHOLD_OTHER_USD", 300000),
+		TelegramBotToken:            strings.TrimSpace(os.Getenv("APP_TELEGRAM_BOT_TOKEN")),
+		TelegramChatID:              strings.TrimSpace(os.Getenv("APP_TELEGRAM_CHAT_ID")),
+		TelegramAPIBase:             env("APP_TELEGRAM_API_BASE", "https://api.telegram.org"),
+		SteadyWebhookURL:            env("APP_STEADY_WEBHOOK_URL", "https://tvbot.lmitis.com/tvorder"),
+		SteadyWebhookAPIID:          env("APP_STEADY_WEBHOOK_API_ID", "okx_bot"),
+		SteadyWebhookTargetExchange: env("APP_STEADY_WEBHOOK_TARGET_EXCHANGE", "okx"),
+		SteadyWebhookTradeEnv:       env("APP_STEADY_WEBHOOK_TRADE_ENV", "demo"),
+		SteadyWebhookExchange:       env("APP_STEADY_WEBHOOK_EXCHANGE", "binance"),
+		SteadyWebhookInterval:       env("APP_STEADY_WEBHOOK_INTERVAL", "3m"),
+		SteadyWebhookTokenNonce:     strings.TrimSpace(os.Getenv("APP_STEADY_WEBHOOK_TOKEN_NONCE")),
+		SteadyWebhookToken:          strings.TrimSpace(os.Getenv("APP_STEADY_WEBHOOK_TOKEN")),
 	}
 }
 
