@@ -33,7 +33,6 @@ func signalMessage(signal domain.TradeSignal) string {
 		if signal.ReferencePrice > 0 {
 			fmt.Fprintf(&b, "参考价：%s\n", formatPrice(signal.ReferencePrice))
 		}
-		fmt.Fprintf(&b, "等待反向爆仓确认（%s 内）→ 稳健信号", formatDuration(time.Duration(signal.ConfirmLimitSecs)*time.Second))
 	case domain.SignalSteady:
 		fmt.Fprintf(&b, "✅ 稳健信号 · %s %s（已确认）\n", signal.Symbol, orderLabel(signal.Side))
 		fmt.Fprintf(&b, "激进信号后 %s 出现反向爆仓 %s，共 %d 笔\n", formatDuration(time.Duration(signal.OppositeSeconds)*time.Second), formatUSD(signal.OppositeUSD), signal.OppositeCount)
