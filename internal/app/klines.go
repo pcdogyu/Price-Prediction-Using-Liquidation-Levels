@@ -35,7 +35,7 @@ type klineCacheEntry struct {
 }
 
 // AlertKlines proxies Binance klines for any monitored pair. The alert strategy
-// watches the 50 busiest USDT perpetuals while only APP_SYMBOLS candles are
+// watches the 100 busiest USDT perpetuals while only APP_SYMBOLS candles are
 // stored locally, and the browser is not allowed to call Binance directly, so
 // the chart has to read them through here. A zero until asks for the newest
 // candles; passing the oldest candle time pages further into history.

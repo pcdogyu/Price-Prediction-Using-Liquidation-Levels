@@ -2,9 +2,12 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +53,28 @@ func TestAlertChartUsesUTCPlus8AndSupportsZSymbols(t *testing.T) {
 	}
 	if _, ok := chartGlyphs['+']; !ok {
 		t.Fatal("chart glyphs must include + for the UTC+8 title")
+	}
+}
+
+func TestCurrentAlertChartTaskUsesLatestKlines(t *testing.T) {
+	originalFetch := fetchAlertKlines
+	t.Cleanup(func() { fetchAlertKlines = originalFetch })
+	var gotUntil time.Time
+	fetchAlertKlines = func(_ context.Context, _ string, _ string, _ int, until time.Time) ([]domain.MarketCandle, bool, error) {
+		gotUntil = until
+		base := time.Now().UTC().Truncate(time.Minute)
+		return []domain.MarketCandle{{Time: base, Open: 100, High: 101, Low: 99, Close: 100.5, VolumeUSD: 10}}, false, nil
+	}
+	rtm := &alertRuntime{service: &Service{klineCache: make(map[string]klineCacheEntry), log: slog.Default()}}
+	task := rtm.currentAlertChartTask("BTCUSDT", "long")
+	if !strings.Contains(task.PhotoCaption, "触发报价时间") {
+		t.Fatalf("manual chart caption = %q", task.PhotoCaption)
+	}
+	if _, err := task.Photo(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !gotUntil.IsZero() {
+		t.Fatalf("manual chart must request the newest window, until=%v", gotUntil)
 	}
 }
 

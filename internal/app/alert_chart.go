@@ -21,22 +21,34 @@ const alertChartCandleLimit = 240
 
 var alertChartLocation = time.FixedZone("UTC+8", 8*60*60)
 
-// alertChartTask builds the same 1m time slice that the K-line page uses, then
-// renders it when the queued photo reaches the Telegram worker. Keeping the
-// provider call in the task preserves text-then-photo ordering without delaying
-// liquidation ingestion on an upstream K-line request.
+// alertChartTask builds the 1m time slice around the alert event, then renders it
+// when the queued photo reaches the Telegram worker. Keeping the provider call in
+// the task preserves text-then-photo ordering without delaying liquidation
+// ingestion on an upstream K-line request.
 func (rtm *alertRuntime) alertChartTask(symbol, side string, at time.Time, referencePrice float64) notify.Task {
+	until := at.UTC().Add(time.Minute)
+	if at.IsZero() {
+		until = time.Time{}
+	}
+	return rtm.alertChartTaskWindow(symbol, side, at, referencePrice, until, "报警时间")
+}
+
+// currentAlertChartTask is used only by the manual "触发报价" action. The
+// alert may be hours old when the operator clicks it, so the chart must be
+// fetched as the newest Binance window instead of replaying the alert-time
+// candles. A zero until keeps Binance's currently forming candle in the view.
+func (rtm *alertRuntime) currentAlertChartTask(symbol, side string) notify.Task {
+	return rtm.alertChartTaskWindow(symbol, side, time.Now().UTC(), 0, time.Time{}, "触发报价时间")
+}
+
+func (rtm *alertRuntime) alertChartTaskWindow(symbol, side string, markerAt time.Time, referencePrice float64, until time.Time, captionLabel string) notify.Task {
 	return notify.Task{
 		Key:          "kline-photo|" + symbol + "|" + side,
 		PhotoName:    "kline.png",
-		PhotoCaption: fmt.Sprintf("%s 1m K线 · 报警时间 %s", symbol, at.In(alertChartLocation).Format("2006-01-02 15:04:05 UTC+8")),
+		PhotoCaption: fmt.Sprintf("%s 1m K线 · %s %s", symbol, captionLabel, markerAt.In(alertChartLocation).Format("2006-01-02 15:04:05 UTC+8")),
 		Photo: func(ctx context.Context) ([]byte, error) {
 			if rtm.service == nil {
 				return nil, errors.New("alert service unavailable")
-			}
-			until := at.UTC().Add(time.Minute)
-			if at.IsZero() {
-				until = time.Time{}
 			}
 			view, err := rtm.service.AlertKlines(ctx, symbol, "1m", alertChartCandleLimit, until)
 			if err != nil {
@@ -51,7 +63,7 @@ func (rtm *alertRuntime) alertChartTask(symbol, side string, at time.Time, refer
 					timeline = page.Rows
 				}
 			}
-			return renderAlertChartPNG(view.Candles, at, referencePrice, side, symbol, timeline)
+			return renderAlertChartPNG(view.Candles, markerAt, referencePrice, side, symbol, timeline)
 		},
 	}
 }

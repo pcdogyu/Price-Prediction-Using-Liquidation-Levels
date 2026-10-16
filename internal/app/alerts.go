@@ -458,8 +458,6 @@ func (rtm *alertRuntime) notifyTelegram(ctx context.Context, recordType, recordI
 	}
 
 	var symbol, side, text string
-	var at time.Time
-	var referencePrice float64
 	switch recordType {
 	case "alert":
 		row, err := rtm.store.LiquidationAlertByID(ctx, recordID)
@@ -467,14 +465,12 @@ func (rtm *alertRuntime) notifyTelegram(ctx context.Context, recordType, recordI
 			return manualNotifyResult{}, err
 		}
 		symbol, side, text = row.Symbol, row.TradeSide, alertMessage(row)
-		at, referencePrice = row.TriggeredAt, row.ReferencePrice
 	case domain.SignalAggressive, domain.SignalSteady:
 		row, err := rtm.store.TradeSignalByID(ctx, recordID)
 		if err != nil {
 			return manualNotifyResult{}, err
 		}
 		symbol, side, text = row.Symbol, row.Side, signalMessage(row)
-		at, referencePrice = row.CreatedAt, row.ReferencePrice
 	default:
 		return manualNotifyResult{}, errors.New("record type must be alert, aggressive or steady")
 	}
@@ -483,10 +479,13 @@ func (rtm *alertRuntime) notifyTelegram(ctx context.Context, recordType, recordI
 	}
 	send, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
+	// Manual quotation is an operator action that may happen long after the
+	// alert. Capture the click-time chart task so its photo uses the newest
+	// Binance candles, including the currently forming candle.
+	photoTask := rtm.currentAlertChartTask(symbol, side)
 	if err := rtm.sender.Send(send, token, chatID, "📣 手动报警\n"+text); err != nil {
 		return manualNotifyResult{}, err
 	}
-	photoTask := rtm.alertChartTask(symbol, side, at, referencePrice)
 	photo, err := photoTask.Photo(send)
 	if err != nil {
 		return manualNotifyResult{}, fmt.Errorf("文字报警已发送，但 K 线截图生成失败: %w", err)
