@@ -34,8 +34,8 @@ func TestTokenAndChatIDValidation(t *testing.T) {
 			t.Fatalf("invalid chat id accepted: %q", chatID)
 		}
 	}
-	if MaskToken("12345:ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "12345:••••" {
-		t.Fatalf("the mask must keep only the bot id: %q", MaskToken("12345:ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+	if MaskToken("12345:ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "1234****WXYZ" {
+		t.Fatalf("the mask must keep only the first and last four characters: %q", MaskToken("12345:ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
 	}
 	if MaskToken("garbage") != "••••" || MaskToken("  ") != "" {
 		t.Fatalf("unexpected mask output: %q %q", MaskToken("garbage"), MaskToken("  "))

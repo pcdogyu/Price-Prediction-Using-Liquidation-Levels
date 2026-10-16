@@ -77,18 +77,17 @@ func ValidChatID(chatID string) bool {
 	return chatID != "-" && chatID != "+"
 }
 
-// MaskToken keeps the first token segment, which is only the bot id, and hides the
-// secret part. The full token is never returned by an API or written to a log.
+// MaskToken keeps only the first and last four characters and hides the middle
+// of the token. The full token is never returned by an API or written to a log.
 func MaskToken(token string) string {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return ""
 	}
-	split := strings.SplitN(token, ":", 2)
-	if len(split) != 2 {
+	if len(token) <= 8 {
 		return "••••"
 	}
-	return split[0] + ":••••"
+	return token[:4] + "****" + token[len(token)-4:]
 }
 
 // Settings supplies the current credentials at send time, so a settings change

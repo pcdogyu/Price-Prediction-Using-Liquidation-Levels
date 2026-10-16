@@ -367,16 +367,16 @@ func TestAlertSettingsEndpoints(t *testing.T) {
 	if !settings.TelegramEnabled || settings.TelegramChatID != "-1009" || settings.NotifyAlerts || !settings.NotifyAggressive || settings.NotifySteady {
 		t.Fatalf("the settings did not round trip: %+v", settings)
 	}
-	if !settings.HasToken || settings.TokenMask != "12345:••••" || settings.TokenSource != "database" {
+	if !settings.HasToken || settings.TokenMask != "1234****alue" || settings.TokenSource != "database" {
 		t.Fatalf("the token must only be exposed masked: %+v", settings)
 	}
 	read := serveAlert(srv, http.MethodGet, "/api/v1/alerts/settings", nil)
-	if read.Code != http.StatusOK || strings.Contains(read.Body.String(), "secretvalue") || !strings.Contains(read.Body.String(), "12345:••••") {
+	if read.Code != http.StatusOK || strings.Contains(read.Body.String(), "secretvalue") || !strings.Contains(read.Body.String(), "1234****alue") {
 		t.Fatalf("reading settings must mask the token: %d %s", read.Code, read.Body.String())
 	}
 	// Leaving the token empty keeps the stored one instead of wiping it.
 	kept := serveAlert(srv, http.MethodPost, "/api/v1/alerts/settings", strings.NewReader(`{"telegram_enabled":true,"telegram_chat_id":"-1009","telegram_token":""}`))
-	if kept.Code != http.StatusOK || !strings.Contains(kept.Body.String(), `"token_mask":"12345:••••"`) {
+	if kept.Code != http.StatusOK || !strings.Contains(kept.Body.String(), `"token_mask":"1234****alue"`) {
 		t.Fatalf("an empty token must keep the stored token: %d %s", kept.Code, kept.Body.String())
 	}
 	// Disabling notification is always allowed, even with credentials on file.
