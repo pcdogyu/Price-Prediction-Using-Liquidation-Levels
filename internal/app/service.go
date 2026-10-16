@@ -26,6 +26,7 @@ type Service struct {
 	cfg                config.Config
 	store              *store.Store
 	clients            []exchange.Client
+	cg                 *coinglass.Capturer
 	health             *exchange.HealthRegistry
 	log                *slog.Logger
 	mu                 sync.RWMutex
@@ -47,7 +48,7 @@ type Service struct {
 }
 
 func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, volumeLiveReady: make(chan struct{})}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, volumeLiveReady: make(chan struct{})}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	if a, e := ml.Load(cfg.ModelPath); e == nil {
@@ -492,6 +493,18 @@ func (s *Service) Map(symbol string) (engine.MapResult, bool) {
 	m, ok := s.maps[symbol]
 	return m, ok
 }
+
+// CoinGlassMap returns the latest recent CoinGlass map for chart overlays.
+// Keeping this read behind Service lets alert screenshots use the same capture
+// directory and freshness rule as the dashboard without exposing the capturer
+// to the notification package.
+func (s *Service) CoinGlassMap(symbol string) (engine.MapResult, error) {
+	if s == nil || s.cg == nil {
+		return engine.MapResult{}, errors.New("CoinGlass capturer unavailable")
+	}
+	return s.cg.LiquidationMap(symbol, 2*time.Hour)
+}
+
 func (s *Service) Backtest(ctx context.Context, symbol string) (domain.BacktestReport, error) {
 	return s.store.Backtest(ctx, symbol)
 }

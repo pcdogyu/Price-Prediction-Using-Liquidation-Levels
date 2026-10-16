@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/engine"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/notify"
 )
 
@@ -68,7 +69,15 @@ func (rtm *alertRuntime) alertChartTaskWindow(symbol, side string, markerAt time
 					timeline = nil
 				}
 			}
-			return renderAlertChartPNG(view.Candles, markerAt, referencePrice, side, symbol, timeline)
+			var liquidationMap *engine.MapResult
+			if latest, mapErr := rtm.service.CoinGlassMap(symbol); mapErr != nil {
+				if rtm.log != nil {
+					rtm.log.Warn("alert chart CoinGlass levels unavailable", "symbol", symbol, "error", mapErr)
+				}
+			} else {
+				liquidationMap = &latest
+			}
+			return renderAlertChartPNG(view.Candles, markerAt, referencePrice, side, symbol, timeline, liquidationMap)
 		},
 	}
 }
@@ -97,7 +106,7 @@ func (rtm *alertRuntime) alertChartHistory(ctx context.Context, symbol string, f
 	return rows, nil
 }
 
-func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referencePrice float64, side, symbol string, history ...[]domain.AlertTimelineItem) ([]byte, error) {
+func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referencePrice float64, side, symbol string, history []domain.AlertTimelineItem, liquidationMap *engine.MapResult) ([]byte, error) {
 	if len(candles) == 0 {
 		return nil, errors.New("no candles available for alert chart")
 	}
@@ -127,6 +136,7 @@ func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referenceP
 		low = math.Min(low, referencePrice-pricePadding)
 		high = math.Max(high, referencePrice+pricePadding)
 	}
+	includeLiquidationPrices(&low, &high, liquidationMap)
 
 	grid := color.RGBA{R: 213, G: 223, B: 232, A: 255}
 	for row := 0; row <= 5; row++ {
@@ -167,9 +177,8 @@ func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referenceP
 		}
 	}
 
-	if len(history) > 0 {
-		drawHistoricalSignals(img, history[0], candles, pricePlot, low, high, step)
-	}
+	drawCoinGlassTopLiquidations(img, liquidationMap, pricePlot, low, high)
+	drawHistoricalSignals(img, history, candles, pricePlot, low, high, step)
 
 	markerAt := nearestCandleIndex(candles, at)
 	if markerAt >= 0 {
@@ -184,7 +193,7 @@ func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referenceP
 		if side == "short" {
 			markerColor = color.RGBA{R: 210, G: 27, B: 72, A: 255}
 		}
-		drawDiamond(img, x, markerY, 8, markerColor)
+		drawWarningDiamond(img, x, markerY, 8, markerColor)
 	}
 	if referencePrice > 0 {
 		y := priceY(referencePrice, low, high, pricePlot)
@@ -196,6 +205,46 @@ func renderAlertChartPNG(candles []domain.MarketCandle, at time.Time, referenceP
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+const (
+	coinGlassLineAlpha = 204 // 80% opacity over the chart background.
+)
+
+var (
+	coinGlassLongLineColor  = color.NRGBA{R: 37, G: 99, B: 235, A: coinGlassLineAlpha}
+	coinGlassShortLineColor = color.NRGBA{R: 234, G: 88, B: 12, A: coinGlassLineAlpha}
+)
+
+func includeLiquidationPrices(low, high *float64, liquidationMap *engine.MapResult) {
+	if liquidationMap == nil {
+		return
+	}
+	for _, peak := range append(append([]domain.LiquidationPeak{}, liquidationMap.TopLong...), liquidationMap.TopShort...) {
+		if peak.Price <= 0 {
+			continue
+		}
+		*low = math.Min(*low, peak.Price)
+		*high = math.Max(*high, peak.Price)
+	}
+}
+
+func drawCoinGlassTopLiquidations(img *image.RGBA, liquidationMap *engine.MapResult, pricePlot image.Rectangle, low, high float64) {
+	if liquidationMap == nil {
+		return
+	}
+	for _, peak := range liquidationMap.TopLong {
+		if peak.Price <= 0 || (liquidationMap.MarkPrice > 0 && peak.Price >= liquidationMap.MarkPrice) {
+			continue
+		}
+		drawHorizontal(img, pricePlot.Min.X, pricePlot.Max.X-1, priceY(peak.Price, low, high, pricePlot), coinGlassLongLineColor)
+	}
+	for _, peak := range liquidationMap.TopShort {
+		if peak.Price <= 0 || (liquidationMap.MarkPrice > 0 && peak.Price <= liquidationMap.MarkPrice) {
+			continue
+		}
+		drawHorizontal(img, pricePlot.Min.X, pricePlot.Max.X-1, priceY(peak.Price, low, high, pricePlot), coinGlassShortLineColor)
+	}
 }
 
 func drawChartAxes(img *image.RGBA, symbol string, pricePlot, volumePlot image.Rectangle, candles []domain.MarketCandle, low, high float64) {
@@ -228,7 +277,7 @@ func drawChartLegend(img *image.RGBA, x, y int) {
 	muted := color.RGBA{R: 92, G: 108, B: 123, A: 255}
 	warning := color.RGBA{R: 225, G: 151, B: 35, A: 255}
 
-	drawDiamond(img, x+4, y+4, 4, warning)
+	drawWarningDiamond(img, x+4, y+4, 4, warning)
 	drawText(img, x+11, y, "! WARN", 1, muted)
 	x += 50
 	drawTriangle(img, x+4, y+4, 4, signalColor("long"), false, true)
@@ -277,7 +326,7 @@ func drawHistoricalSignals(img *image.RGBA, items []domain.AlertTimelineItem, ca
 		markerColor := signalColor(side)
 		switch kind {
 		case "alert":
-			drawDiamond(img, x, y, 5, color.RGBA{R: 225, G: 151, B: 35, A: 255})
+			drawWarningDiamond(img, x, y, 5, color.RGBA{R: 225, G: 151, B: 35, A: 255})
 		case domain.SignalAggressive:
 			drawTriangle(img, x, y, 7, markerColor, false, side != "short")
 		case domain.SignalSteady:
@@ -448,10 +497,15 @@ func drawDashedVertical(img *image.RGBA, x, y1, y2 int, c color.Color) {
 	}
 }
 
-func drawDiamond(img *image.RGBA, x, y, radius int, c color.Color) {
+// drawWarningDiamond renders the hollow diamond used for alert/warning markers.
+// Keeping the center transparent matches the compact marker used in the chart
+// legend and leaves the candle/reference line visible underneath it.
+func drawWarningDiamond(img *image.RGBA, x, y, radius int, c color.Color) {
 	for offset := -radius; offset <= radius; offset++ {
 		span := radius - absInt(offset)
-		drawHorizontal(img, x-span, x+span, y+offset, c)
+		lineY := y + offset
+		drawHorizontal(img, x-span, x-span, lineY, c)
+		drawHorizontal(img, x+span, x+span, lineY, c)
 	}
 }
 

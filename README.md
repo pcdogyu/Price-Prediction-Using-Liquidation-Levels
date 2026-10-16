@@ -129,6 +129,8 @@ SQLite 在线备份示例：
 sqlite3 /var/lib/liquidation-predictor/liquidation.db ".backup '/var/backups/liquidation-$(date +%F).db'"
 ```
 
+Telegram 预警截图在 CoinGlass 快照可用时叠加多单清算 Top 3 蓝色水平线和空单清算 Top 3 橙色水平线（80% 透明度、1px），预警标记使用空心菱形；快照不可用时仍发送原始 K 线截图。
+
 ## 数据与风险说明
 
 清算与行情模型读取 Binance USDⓈ-M 永续合约，期权观察页独立读取 Deribit 公开期权数据。Binance 全市场强平流对每个交易对每1000ms只推送最近一笔，因此覆盖率在 API 中按采样源标记。VAL/VAH 根据聚合成交名义额计算，POC只用于内部确定连续70%价值区域，不由API返回。
