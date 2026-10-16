@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -101,6 +102,30 @@ func TestTelegramSend(t *testing.T) {
 	}
 }
 
+func TestTelegramSendPhoto(t *testing.T) {
+	var path string
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		body, _ = io.ReadAll(r.Body)
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":2}}`)
+	}))
+	defer server.Close()
+
+	if err := NewTelegram(server.URL).SendPhoto(context.Background(), "12345:secret", "-1009", []byte("png-bytes"), "/tmp/kline.png", "BTCUSDT 1m K线"); err != nil {
+		t.Fatalf("a successful photo send must not error: %v", err)
+	}
+	if path != "/bot12345:secret/sendPhoto" {
+		t.Fatalf("unexpected photo request path: %q", path)
+	}
+	text := string(body)
+	for _, want := range []string{"name=\"chat_id\"", "-1009", "name=\"caption\"", "BTCUSDT 1m K线", "filename=\"kline.png\"", "png-bytes"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("photo multipart body is missing %q: %q", want, text)
+		}
+	}
+}
+
 // stubSender records calls and can fail on demand, which is what the retry path needs.
 type stubSender struct {
 	err   error
@@ -113,6 +138,31 @@ func (s *stubSender) Send(ctx context.Context, token, chatID, text string) error
 }
 
 func (s *stubSender) count() int { return int(atomic.LoadInt32(&s.calls)) }
+
+type photoOrderSender struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (s *photoOrderSender) Send(context.Context, string, string, string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, "text")
+	return nil
+}
+
+func (s *photoOrderSender) SendPhoto(context.Context, string, string, []byte, string, string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, "photo")
+	return nil
+}
+
+func (s *photoOrderSender) snapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.events...)
+}
 
 func newTestDispatcher(sender Sender, settings Settings, cooldown time.Duration) *Dispatcher {
 	d := NewDispatcher(sender, settings, 4, cooldown, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -181,6 +231,29 @@ func TestDispatcherDeliversAndCoalesces(t *testing.T) {
 	case <-stopped:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the worker did not stop with its context")
+	}
+}
+
+func TestDispatcherDeliversPhotoAfterText(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sender := &photoOrderSender{}
+	dispatcher := newTestDispatcher(sender, openSettings(), time.Minute)
+	go dispatcher.Start(ctx)
+	if !dispatcher.Submit(Task{Key: "alert|BTCUSDT|long", Text: "alert"}) {
+		t.Fatal("text task must be queued")
+	}
+	if !dispatcher.Submit(Task{Key: "kline-photo|BTCUSDT|long", PhotoName: "kline.png", Photo: func(context.Context) ([]byte, error) {
+		return []byte("png"), nil
+	}}) {
+		t.Fatal("photo task must be queued")
+	}
+	if !waitFor(func() bool { return len(sender.snapshot()) == 2 }) {
+		t.Fatalf("both tasks were not delivered: %v", sender.snapshot())
+	}
+	got := sender.snapshot()
+	if len(got) != 2 || got[0] != "text" || got[1] != "photo" {
+		t.Fatalf("notification order = %v, want [text photo]", got)
 	}
 }
 

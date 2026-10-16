@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 // alertRuntime owns the alert engine, the top volume watch list, persisted
 // notification settings, and the Telegram and steady-signal workers.
 type alertRuntime struct {
+	service                                     *Service
 	engine                                      *alert.Engine
 	store                                       *store.Store
 	log                                         *slog.Logger
@@ -62,7 +64,8 @@ func (s *Service) newAlertRuntime() *alertRuntime {
 		TopSymbols:         s.cfg.AlertTopSymbols,
 	}
 	rtm := &alertRuntime{
-		engine: alert.New(cfg), store: s.store, log: s.log, cfg: cfg,
+		service: s,
+		engine:  alert.New(cfg), store: s.store, log: s.log, cfg: cfg,
 		sender:   notify.NewTelegram(s.cfg.TelegramAPIBase),
 		envToken: s.cfg.TelegramBotToken, envChat: s.cfg.TelegramChatID,
 		webhookURL: s.cfg.SteadyWebhookURL, webhookTokenNonce: s.cfg.SteadyWebhookTokenNonce,
@@ -280,7 +283,10 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 			continue
 		}
 		if created && allowNotify && rtm.categoryEnabled("alert") {
-			rtm.notifier.Submit(notify.Task{Key: "alert|" + item.Symbol + "|" + item.Side, Text: alertMessage(item)})
+			textTask := notify.Task{Key: "alert|" + item.Symbol + "|" + item.Side, Text: alertMessage(item)}
+			if rtm.notifier.Submit(textTask) {
+				rtm.submitChart(item.Symbol, item.Side, item.TriggeredAt, item.ReferencePrice)
+			}
 		}
 	}
 	for _, item := range res.Signals {
@@ -384,6 +390,8 @@ func (rtm *alertRuntime) notifyTelegram(ctx context.Context, recordType, recordI
 	}
 
 	var symbol, side, text string
+	var at time.Time
+	var referencePrice float64
 	switch recordType {
 	case "alert":
 		row, err := rtm.store.LiquidationAlertByID(ctx, recordID)
@@ -391,22 +399,32 @@ func (rtm *alertRuntime) notifyTelegram(ctx context.Context, recordType, recordI
 			return manualNotifyResult{}, err
 		}
 		symbol, side, text = row.Symbol, row.TradeSide, alertMessage(row)
+		at, referencePrice = row.TriggeredAt, row.ReferencePrice
 	case domain.SignalAggressive, domain.SignalSteady:
 		row, err := rtm.store.TradeSignalByID(ctx, recordID)
 		if err != nil {
 			return manualNotifyResult{}, err
 		}
 		symbol, side, text = row.Symbol, row.Side, signalMessage(row)
+		at, referencePrice = row.CreatedAt, row.ReferencePrice
 	default:
 		return manualNotifyResult{}, errors.New("record type must be alert, aggressive or steady")
 	}
 	if symbol == "" || text == "" {
 		return manualNotifyResult{}, errors.New("record has no valid Telegram message")
 	}
-	send, cancel := context.WithTimeout(ctx, 20*time.Second)
+	send, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
 	if err := rtm.sender.Send(send, token, chatID, "📣 手动报警\n"+text); err != nil {
 		return manualNotifyResult{}, err
+	}
+	photoTask := rtm.alertChartTask(symbol, side, at, referencePrice)
+	photo, err := photoTask.Photo(send)
+	if err != nil {
+		return manualNotifyResult{}, fmt.Errorf("文字报警已发送，但 K 线截图生成失败: %w", err)
+	}
+	if err = rtm.sender.SendPhoto(send, token, chatID, photo, photoTask.PhotoName, photoTask.PhotoCaption); err != nil {
+		return manualNotifyResult{}, fmt.Errorf("文字报警已发送，但 K 线截图发送失败: %w", err)
 	}
 	return manualNotifyResult{RecordType: recordType, RecordID: recordID, Symbol: symbol, Side: side, Status: "accepted"}, nil
 }
@@ -444,7 +462,21 @@ func (rtm *alertRuntime) submitSignal(signal domain.TradeSignal, allowNotify boo
 	if !rtm.notifier.Submit(task) {
 		return "suppressed", "已抑制：冷却期内、未配置或队列已满"
 	}
+	rtm.submitChart(signal.Symbol, signal.Side, signal.CreatedAt, signal.ReferencePrice)
 	return "queued", ""
+}
+
+// submitChart queues the K-line image immediately after its corresponding text
+// task. The dispatcher renders it after the text has been delivered, preserving
+// the two-message order while keeping exchange I/O out of liquidation ingestion.
+func (rtm *alertRuntime) submitChart(symbol, side string, at time.Time, referencePrice float64) {
+	if rtm.service == nil {
+		rtm.log.Warn("alert chart skipped: service unavailable", "symbol", symbol)
+		return
+	}
+	if !rtm.notifier.Submit(rtm.alertChartTask(symbol, side, at, referencePrice)) {
+		rtm.log.Warn("alert chart notification suppressed", "symbol", symbol, "side", side)
+	}
 }
 
 // snapshotSettings returns the masked settings view. The bot token itself is never
