@@ -91,9 +91,10 @@ func MaskToken(token string) string {
 	return split[0] + ":••••"
 }
 
-// Settings supplies the current token and chat id at send time, so a settings
-// change takes effect without restarting the worker. Reporting false means Telegram
-// is not usable right now and the task should be dropped.
+// Settings supplies the current credentials at send time, so a settings change
+// takes effect without restarting the worker. Reporting false means the sender is
+// not usable right now and the task should be dropped. Telegram uses both return
+// values; webhook senders use token as the endpoint and leave chatID empty.
 type Settings func() (token, chatID string, ok bool)
 
 // Task is one queued message. Key groups duplicates, for example all aggressive
@@ -131,11 +132,26 @@ type Dispatcher struct {
 	status   Status
 	lastSend map[string]time.Time
 	depth    int
+
+	// Telegram requires both credentials, while a webhook only needs its
+	// endpoint. Keep the legacy constructor strict and expose a separate
+	// constructor for senders whose second credential is intentionally empty.
+	requireChatID bool
 }
 
 // NewDispatcher builds a worker. A capacity of zero uses 64, and zero cooldown or
 // spacing falls back to five minutes and 1.5 seconds.
 func NewDispatcher(sender Sender, settings Settings, capacity int, cooldown time.Duration, log *slog.Logger) *Dispatcher {
+	return newDispatcher(sender, settings, capacity, cooldown, log, true)
+}
+
+// NewWebhookDispatcher builds a worker for a webhook sender. The endpoint is
+// supplied as the first credential and no chat ID is required.
+func NewWebhookDispatcher(sender Sender, settings Settings, capacity int, cooldown time.Duration, log *slog.Logger) *Dispatcher {
+	return newDispatcher(sender, settings, capacity, cooldown, log, false)
+}
+
+func newDispatcher(sender Sender, settings Settings, capacity int, cooldown time.Duration, log *slog.Logger, requireChatID bool) *Dispatcher {
 	if capacity <= 0 {
 		capacity = 64
 	}
@@ -145,7 +161,7 @@ func NewDispatcher(sender Sender, settings Settings, capacity int, cooldown time
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Dispatcher{sender: sender, settings: settings, log: log, cooldown: cooldown, minSpacing: 1500 * time.Millisecond, attempts: 3, retryWait: time.Second, queue: make(chan Task, capacity), lastSend: map[string]time.Time{}}
+	return &Dispatcher{sender: sender, settings: settings, log: log, cooldown: cooldown, minSpacing: 1500 * time.Millisecond, attempts: 3, retryWait: time.Second, queue: make(chan Task, capacity), lastSend: map[string]time.Time{}, requireChatID: requireChatID}
 }
 
 // Start runs the worker until ctx is cancelled.
@@ -162,12 +178,12 @@ func (d *Dispatcher) Start(ctx context.Context) {
 	}
 }
 
-// Submit enqueues a message. It reports false when Telegram is unconfigured, when
+// Submit enqueues a message. It reports false when the sender is unconfigured, when
 // the per key cooldown still applies, or when the queue is full; the last case is
 // reported because dropping alerts is worth logging.
 func (d *Dispatcher) Submit(task Task) bool {
 	token, chatID, ok := d.settings()
-	if !ok || strings.TrimSpace(token) == "" || strings.TrimSpace(chatID) == "" {
+	if !ok || strings.TrimSpace(token) == "" || (d.requireChatID && strings.TrimSpace(chatID) == "") {
 		d.mu.Lock()
 		d.status.Suppressed++
 		d.mu.Unlock()
@@ -216,7 +232,8 @@ func (d *Dispatcher) deliver(ctx context.Context, task Task) {
 		return
 	}
 	// Telegram rate limits a bot to roughly one message per second per chat, so
-	// consecutive messages are spaced out instead of being rejected.
+	// consecutive messages are spaced out instead of being rejected. The same
+	// bounded spacing also keeps webhook bursts from overwhelming the receiver.
 	d.mu.Lock()
 	last := d.status.LastAttemptAt
 	d.mu.Unlock()
@@ -256,7 +273,7 @@ func (d *Dispatcher) deliver(ctx context.Context, task Task) {
 	if err != nil {
 		d.status.Failed++
 		d.status.LastError = err.Error()
-		d.log.Warn("telegram delivery failed", "key", task.Key, "error", err)
+		d.log.Warn("notification delivery failed", "key", task.Key, "error", err)
 		return
 	}
 	d.status.Sent++

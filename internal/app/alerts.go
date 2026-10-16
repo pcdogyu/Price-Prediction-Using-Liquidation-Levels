@@ -70,7 +70,7 @@ func (s *Service) newAlertRuntime() *alertRuntime {
 	}
 	rtm.settings = rtm.defaultSettings()
 	rtm.notifier = notify.NewDispatcher(rtm.sender, rtm.notifierSettings, 128, alertNotifyCooldown, s.log)
-	rtm.webhook = notify.NewDispatcher(notify.NewWebhook(), rtm.webhookSettings, 128, alertNotifyCooldown, s.log)
+	rtm.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), rtm.webhookSettings, 128, alertNotifyCooldown, s.log)
 	return rtm
 }
 
