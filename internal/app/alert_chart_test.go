@@ -2,6 +2,8 @@ package app
 
 import (
 	"bytes"
+	"image"
+	"image/color"
 	"image/png"
 	"testing"
 	"time"
@@ -29,5 +31,35 @@ func TestRenderAlertChartPNG(t *testing.T) {
 	}
 	if got := img.Bounds().Size(); got.X != 1280 || got.Y != 720 {
 		t.Fatalf("chart size = %v, want 1280x720", got)
+	}
+}
+
+func TestAlertChartUsesUTCPlus8AndSupportsZSymbols(t *testing.T) {
+	at := time.Date(2026, 10, 16, 3, 50, 0, 0, time.UTC)
+	if got := at.In(alertChartLocation).Format("2006-01-02 15:04:05 UTC+8"); got != "2026-10-16 11:50:00 UTC+8" {
+		t.Fatalf("chart time = %q, want UTC+8 rendering", got)
+	}
+	if _, ok := chartGlyphs['Z']; !ok {
+		t.Fatal("chart glyphs must include Z so ZECUSDT is not rendered as ?")
+	}
+	if _, ok := chartGlyphs['!']; !ok {
+		t.Fatal("chart glyphs must include ! for the warning legend")
+	}
+	if _, ok := chartGlyphs['+']; !ok {
+		t.Fatal("chart glyphs must include + for the UTC+8 title")
+	}
+}
+
+func TestDrawTriangleDirection(t *testing.T) {
+	up := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	down := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	marker := color.RGBA{R: 14, G: 132, B: 92, A: 255}
+	drawTriangle(up, 16, 16, 4, marker, true, true)
+	drawTriangle(down, 16, 16, 4, marker, true, false)
+	if up.RGBAAt(12, 16) != marker || up.RGBAAt(12, 12) == marker {
+		t.Fatal("up triangle must point upward")
+	}
+	if down.RGBAAt(12, 12) != marker || down.RGBAAt(12, 16) == marker {
+		t.Fatal("down triangle must point downward")
 	}
 }

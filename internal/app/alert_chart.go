@@ -19,6 +19,8 @@ import (
 
 const alertChartCandleLimit = 240
 
+var alertChartLocation = time.FixedZone("UTC+8", 8*60*60)
+
 // alertChartTask builds the same 1m time slice that the K-line page uses, then
 // renders it when the queued photo reaches the Telegram worker. Keeping the
 // provider call in the task preserves text-then-photo ordering without delaying
@@ -27,7 +29,7 @@ func (rtm *alertRuntime) alertChartTask(symbol, side string, at time.Time, refer
 	return notify.Task{
 		Key:          "kline-photo|" + symbol + "|" + side,
 		PhotoName:    "kline.png",
-		PhotoCaption: fmt.Sprintf("%s 1m K线 · 报警时间 %s", symbol, at.UTC().Format("2006-01-02 15:04:05 UTC")),
+		PhotoCaption: fmt.Sprintf("%s 1m K线 · 报警时间 %s", symbol, at.In(alertChartLocation).Format("2006-01-02 15:04:05 UTC+8")),
 		Photo: func(ctx context.Context) ([]byte, error) {
 			if rtm.service == nil {
 				return nil, errors.New("alert service unavailable")
@@ -168,17 +170,37 @@ func drawChartAxes(img *image.RGBA, symbol string, pricePlot, volumePlot image.R
 	for col := 0; col <= 8; col++ {
 		index := col * (len(candles) - 1) / 8
 		x := pricePlot.Min.X + col*(pricePlot.Dx()-1)/8
-		label := candles[index].Time.UTC().Format("01/02 15:04")
+		label := candles[index].Time.In(alertChartLocation).Format("01/02 15:04")
 		textWidth := chartTextWidth(label, 2)
 		labelX := x - textWidth/2
 		labelX = maxInt(4, minInt(labelX, img.Bounds().Max.X-textWidth-4))
 		drawText(img, labelX, volumePlot.Max.Y+10, label, 2, muted)
 	}
 	if symbol != "" {
-		title := strings.ToUpper(symbol) + " 1M KLINE UTC"
+		title := strings.ToUpper(symbol) + " 1M KLINE UTC+8"
 		drawText(img, pricePlot.Min.X, 12, title, 2, ink)
 	}
-	drawText(img, pricePlot.Max.X-245, 12, "WARN  AGGR  STEADY", 2, muted)
+	drawChartLegend(img, pricePlot.Max.X-295, 12)
+}
+
+func drawChartLegend(img *image.RGBA, x, y int) {
+	muted := color.RGBA{R: 92, G: 108, B: 123, A: 255}
+	warning := color.RGBA{R: 225, G: 151, B: 35, A: 255}
+
+	drawDiamond(img, x+4, y+4, 4, warning)
+	drawText(img, x+11, y, "! WARN", 1, muted)
+	x += 50
+	drawTriangle(img, x+4, y+4, 4, signalColor("long"), false, true)
+	drawText(img, x+11, y, "AGGR", 1, muted)
+	x += 49
+	drawTriangle(img, x+4, y+4, 4, signalColor("long"), true, true)
+	drawText(img, x+11, y, "STEADY", 1, muted)
+	x += 57
+	drawTriangle(img, x+4, y+4, 4, signalColor("long"), true, true)
+	drawText(img, x+11, y, "LONG", 1, muted)
+	x += 43
+	drawTriangle(img, x+4, y+4, 4, signalColor("short"), true, false)
+	drawText(img, x+11, y, "SHORT", 1, muted)
 }
 
 func drawHistoricalSignals(img *image.RGBA, items []domain.AlertTimelineItem, candles []domain.MarketCandle, pricePlot image.Rectangle, low, high, step float64) {
@@ -216,9 +238,9 @@ func drawHistoricalSignals(img *image.RGBA, items []domain.AlertTimelineItem, ca
 		case "alert":
 			drawDiamond(img, x, y, 5, color.RGBA{R: 225, G: 151, B: 35, A: 255})
 		case domain.SignalAggressive:
-			drawTriangle(img, x, y, 7, markerColor, false)
+			drawTriangle(img, x, y, 7, markerColor, false, side != "short")
 		case domain.SignalSteady:
-			drawTriangle(img, x, y, 7, markerColor, true)
+			drawTriangle(img, x, y, 7, markerColor, true, side != "short")
 		}
 	}
 }
@@ -230,9 +252,12 @@ func signalColor(side string) color.RGBA {
 	return color.RGBA{R: 14, G: 132, B: 92, A: 255}
 }
 
-func drawTriangle(img *image.RGBA, x, y, radius int, c color.Color, filled bool) {
+func drawTriangle(img *image.RGBA, x, y, radius int, c color.Color, filled, up bool) {
 	for row := 0; row <= radius; row++ {
 		span := row
+		if !up {
+			span = radius - row
+		}
 		left, right := x-span, x+span
 		lineY := y - radius + row
 		if filled || row == 0 || row == radius {
@@ -288,6 +313,7 @@ func drawText(img *image.RGBA, x, y int, text string, scale int, c color.Color) 
 var chartGlyphs = map[rune][]string{
 	' ': {"00000", "00000", "00000", "00000", "00000", "00000", "00000"},
 	'-': {"00000", "00000", "00000", "11111", "00000", "00000", "00000"},
+	'+': {"00000", "00100", "00100", "11111", "00100", "00100", "00000"},
 	'.': {"00000", "00000", "00000", "00000", "00000", "00110", "00110"},
 	'/': {"00001", "00010", "00100", "01000", "10000", "00000", "00000"},
 	':': {"00000", "00110", "00110", "00000", "00110", "00110", "00000"},
@@ -302,6 +328,7 @@ var chartGlyphs = map[rune][]string{
 	'7': {"11111", "00001", "00010", "00100", "01000", "01000", "01000"},
 	'8': {"01110", "10001", "10001", "01110", "10001", "10001", "01110"},
 	'9': {"01110", "10001", "10001", "01111", "00001", "00010", "01100"},
+	'!': {"00100", "00100", "00100", "00100", "00100", "00000", "00100"},
 	'A': {"01110", "10001", "10001", "11111", "10001", "10001", "10001"},
 	'B': {"11110", "10001", "10001", "11110", "10001", "10001", "11110"},
 	'C': {"01110", "10001", "10000", "10000", "10000", "10001", "01110"},
@@ -319,6 +346,7 @@ var chartGlyphs = map[rune][]string{
 	'U': {"10001", "10001", "10001", "10001", "10001", "10001", "01110"},
 	'W': {"10001", "10001", "10001", "10101", "10101", "11011", "10001"},
 	'Y': {"10001", "10001", "01010", "00100", "00100", "00100", "00100"},
+	'Z': {"11111", "00001", "00010", "00100", "01000", "10000", "11111"},
 }
 
 func candleRange(candles []domain.MarketCandle) (low, high, volumePeak float64) {
