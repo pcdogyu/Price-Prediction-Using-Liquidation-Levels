@@ -3,9 +3,37 @@ package app
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
+
+func TestAlertMessageOmitsQuietPeriodDetails(t *testing.T) {
+	message := alertMessage(domain.LiquidationAlert{
+		Symbol:        "BTCUSDT",
+		Side:          "long",
+		TradeSide:     "long",
+		WindowMinutes: 3,
+		NotionalUSD:   3470000,
+		PeakUSD:       3470000,
+		ThresholdUSD:  300000,
+		EventCount:    21,
+		QuietSeconds:  600,
+		QuietUntil:    time.Date(2026, 10, 16, 3, 53, 25, 0, time.UTC),
+	})
+
+	for _, unwanted := range []string{"安静观察期", "安静截止"} {
+		if strings.Contains(message, unwanted) {
+			t.Fatalf("alert contains removed text %q: %q", unwanted, message)
+		}
+	}
+
+	for _, expected := range []string{"BTCUSDT", "多单被爆仓 → 观察下单方向：做多", "3 分钟爆仓额：$3.47M（阈值 $300K）", "笔数 21 · 峰值 $3.47M"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("alert is missing %q: %q", expected, message)
+		}
+	}
+}
 
 func TestSignalMessageAggressiveOmitsSteadyConfirmationPrompt(t *testing.T) {
 	message := signalMessage(domain.TradeSignal{

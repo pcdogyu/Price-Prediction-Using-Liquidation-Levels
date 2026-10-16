@@ -18,8 +18,6 @@ func alertMessage(alert domain.LiquidationAlert) string {
 	fmt.Fprintf(&b, "%s → 观察下单方向：%s\n", liquidationLabel(alert.Side), orderLabel(alert.TradeSide))
 	fmt.Fprintf(&b, "%d 分钟爆仓额：%s（阈值 %s）\n", alert.WindowMinutes, formatUSD(alert.NotionalUSD), formatUSD(alert.ThresholdUSD))
 	fmt.Fprintf(&b, "笔数 %d · 峰值 %s\n", alert.EventCount, formatUSD(alert.PeakUSD))
-	fmt.Fprintf(&b, "安静观察期 %s，期间每笔同向爆仓都会顺延\n", formatDuration(time.Duration(alert.QuietSeconds)*time.Second))
-	fmt.Fprintf(&b, "安静截止：%s\n", alert.QuietUntil.UTC().Format("2006-01-02 15:04:05 UTC"))
 	return b.String()
 }
 
