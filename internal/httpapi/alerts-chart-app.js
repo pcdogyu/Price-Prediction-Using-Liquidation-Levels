@@ -106,7 +106,7 @@
 
   function statusText() {
     const last = newestCandle();
-    const parts = [state.candles.length + ' 根 ' + state.interval + ' K 线'];
+    const parts = [state.symbol + ' · ' + state.candles.length + ' 根 ' + state.interval + ' K 线'];
     if (last) parts.push('最新 ' + clock(last.t));
     parts.push(state.hasMore ? '左拉可读取更早数据' : '已到最早数据');
     parts.push(shownAlerts().length + ' 个预警');
@@ -293,13 +293,16 @@
     ctx.font = '11px system-ui, "Segoe UI", sans-serif';
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 1;
-    ctx.textAlign = 'left';
-    for (const tick of K.niceTicks(low, high, 6)) {
+    const ticks = K.niceTicks(low, high, 6);
+    for (const tick of ticks) {
       const py = Math.round(y(tick)) + .5;
       if (py < plot.top || py > priceBottom) continue;
       ctx.strokeStyle = colors.grid;
       ctx.beginPath(); ctx.moveTo(plot.left, py); ctx.lineTo(plot.right, py); ctx.stroke();
       ctx.fillStyle = colors.muted;
+      ctx.textAlign = 'right';
+      ctx.fillText(priceText(tick), plot.left - 9, py);
+      ctx.textAlign = 'left';
       ctx.fillText(priceText(tick), plot.right + 7, py);
     }
     ctx.textAlign = 'center';
@@ -309,7 +312,7 @@
       ctx.strokeStyle = colors.grid;
       ctx.beginPath(); ctx.moveTo(px, plot.top); ctx.lineTo(px, plot.bottom); ctx.stroke();
       ctx.fillStyle = colors.muted;
-      ctx.fillText(clock(at), px, plot.bottom + 12);
+      ctx.fillText(clock(at), px, plot.bottom + 16);
     }
     const shown = K.visibleCandles(state.candles, state.view, intervalStep);
     const slot = plot.width / Math.max(1, span / intervalStep), body = Math.max(1, Math.min(18, slot * .68));
@@ -451,6 +454,8 @@
     ctx.beginPath(); ctx.moveTo(plot.left, py); ctx.lineTo(plot.right, py); ctx.stroke();
     ctx.restore();
     ctx.fillStyle = colour;
+    ctx.textAlign = 'right';
+    ctx.fillText(priceText(last.close), plot.left - 9, py);
     ctx.textAlign = 'left';
     ctx.fillText(priceText(last.close), plot.right + 7, py);
   }
@@ -465,6 +470,8 @@
       ctx.beginPath(); ctx.moveTo(plot.left, state.hoverY); ctx.lineTo(plot.right, state.hoverY); ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = colors.muted;
+      ctx.textAlign = 'right';
+      ctx.fillText(priceText(scales.priceAt(state.hoverY)), plot.left - 9, state.hoverY);
       ctx.textAlign = 'left';
       ctx.fillText(priceText(scales.priceAt(state.hoverY)), plot.right + 7, state.hoverY);
     }
@@ -473,7 +480,7 @@
 
   // layout splits the canvas into the price area, the volume band and the axes.
   function layout(width, height) {
-    const margins = { left: 10, right: 80, top: 14, bottom: 26 };
+    const margins = { left: 78, right: 82, top: 18, bottom: 42 };
     const plot = { left: margins.left, top: margins.top, width: Math.max(60, width - margins.left - margins.right), height: Math.max(140, height - margins.top - margins.bottom) };
     plot.right = plot.left + plot.width;
     plot.bottom = plot.top + plot.height;
@@ -666,6 +673,7 @@
     resize();
     syncIntervals();
     $('kline-symbol-input').value = state.symbol;
+    $('kline-symbol-label').textContent = state.symbol || '—';
     $('kline-back').href = base + 'alerts';
     if (!state.symbol) {
       $('kline-title').textContent = '币对 K 线';

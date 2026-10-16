@@ -441,8 +441,8 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 		t.Fatalf("chart page status=%d body=%s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	for _, want := range []string{"币对 K 线", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
-		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "显示预警", "显示下单信号", "稳健实心 / 激进空心", "kline-alert-status", "回到最新", "重置缩放", "kline-signal-rows",
+	for _, want := range []string{"币对 K 线", "kline-symbol-label", "当前币对", "左右两侧价格轴", "横轴北京时间", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
+		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "显示预警", "显示下单信号", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "kline-alert-status", "回到最新", "重置缩放", "kline-signal-rows",
 		"返回报警", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the K-line page must contain %q", want)
