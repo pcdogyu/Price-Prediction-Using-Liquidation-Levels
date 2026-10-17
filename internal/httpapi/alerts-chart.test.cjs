@@ -104,16 +104,23 @@ test('filterSignals dedupes and honours the kind toggles', () => {
   assert.deepEqual(K.filterSignals(all, { aggressive: false, steady: false }), []);
 });
 
-test('markerGroups buckets by candle, kind and direction with counts', () => {
+test('markerGroups buckets by candle, kind and direction with counts and amounts', () => {
   const groups = K.markerGroups([
-    signal('a', 1500), signal('b', 1800), signal('c', 1500, 'steady'), signal('d', 1500, 'aggressive', 'short'),
+    Object.assign(signal('a', 1500), { alert_notional_usd: 10 }),
+    Object.assign(signal('b', 1800), { alert_notional_usd: 20 }),
+    Object.assign(signal('c', 1500, 'steady'), { alert_notional_usd: 30 }),
+    Object.assign(signal('d', 1500, 'aggressive', 'short'), { alert_notional_usd: 40 }),
     signal('e', 2500), { id: 'no-price', t: 5000, kind: 'steady', side: 'long' }
   ], 1000);
   assert.deepEqual(groups.map(g => [g.bucket, g.kind, g.side, g.count]),
     [[1000, 'aggressive', 'long', 2], [1000, 'steady', 'long', 1], [1000, 'aggressive', 'short', 1], [2000, 'aggressive', 'long', 1], [5000, 'steady', 'long', 1]]);
   assert.equal(groups[0].price, 100);
   assert.equal(groups[0].latest, 1800);
+  assert.equal(groups[0].notionalUSD, 30);
+  assert.equal(groups[1].notionalUSD, 30);
+  assert.equal(groups[2].notionalUSD, 40);
   assert.equal(groups[4].price, 0);
+  assert.equal(groups[4].notionalUSD, 0);
   assert.equal(K.bucketStart(2999, 1000), 2000);
 });
 

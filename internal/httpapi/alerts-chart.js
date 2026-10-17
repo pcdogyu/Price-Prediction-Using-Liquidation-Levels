@@ -108,6 +108,8 @@
 
   // markerGroups collapses the signals that fall inside the same candle, kind and
   // direction into one marker, so a busy hour stays readable and shows a count.
+  // The amount is kept alongside the group because the tooltip represents every
+  // signal collapsed into that marker, not just the first one.
   function markerGroups(signals, step) {
     const groups = new Map();
     for (const signal of signals) {
@@ -116,9 +118,15 @@
       const side = signal.side === 'short' ? 'short' : 'long';
       const key = bucket + '|' + kind + '|' + side;
       const group = groups.get(key);
-      if (group) { group.count += 1; group.latest = Math.max(group.latest, signal.t); continue; }
+      if (group) {
+        group.count += 1;
+        group.latest = Math.max(group.latest, signal.t);
+        group.notionalUSD += finite(signal.alert_notional_usd) ? signal.alert_notional_usd : 0;
+        continue;
+      }
       groups.set(key, { bucket, kind, side, count: 1, first: signal.t, latest: signal.t,
-        price: finite(signal.reference_price) && signal.reference_price > 0 ? signal.reference_price : 0 });
+        price: finite(signal.reference_price) && signal.reference_price > 0 ? signal.reference_price : 0,
+        notionalUSD: finite(signal.alert_notional_usd) ? signal.alert_notional_usd : 0 });
     }
     return Array.from(groups.values()).sort((a, b) => a.bucket - b.bucket);
   }
