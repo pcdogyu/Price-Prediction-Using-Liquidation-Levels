@@ -30,11 +30,23 @@ type steadyWebhookPayload struct {
 }
 
 func buildSteadyWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
-	return buildWebhookPayload(signal, cfg, "steady_liquidation_confirmation", "tradingview")
+	return buildSignalWebhookPayload(signal, cfg)
 }
 
 func buildManualWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
 	return buildWebhookPayload(signal, cfg, "manual_liquidation_trigger", "liquidation_alert_manual")
+}
+
+func buildSignalWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
+	condition := "steady_liquidation_confirmation"
+	if signal.Kind == domain.SignalAggressive {
+		condition = "aggressive_liquidation_signal"
+	}
+	return buildWebhookPayload(signal, cfg, condition, "liquidation_alert")
+}
+
+func buildAlertWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
+	return buildWebhookPayload(signal, cfg, "liquidation_alert", "liquidation_alert")
 }
 
 func buildWebhookPayload(signal domain.TradeSignal, cfg config.Config, condition, source string) ([]byte, error) {

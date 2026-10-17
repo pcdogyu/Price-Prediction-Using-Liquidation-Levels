@@ -19,7 +19,7 @@ import (
 )
 
 // alertRuntime owns the alert engine, the top volume watch list, persisted
-// notification settings, and the Telegram and steady-signal workers.
+// notification settings, and the Telegram and order-signal workers.
 type alertRuntime struct {
 	service                                     *Service
 	engine                                      *alert.Engine
@@ -350,6 +350,9 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 			rtm.log.Error("store liquidation alert failed", "symbol", item.Symbol, "error", err)
 			continue
 		}
+		if created {
+			rtm.submitAlertWebhook(item, allowNotify)
+		}
 		if created && allowNotify && rtm.categoryEnabled("alert") {
 			textTask := notify.Task{Key: "alert|" + item.Symbol + "|" + item.Side, Text: alertMessage(item)}
 			if rtm.notifier.Submit(textTask) {
@@ -368,27 +371,55 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 			continue
 		}
 		status, message := rtm.submitSignal(item, allowNotify)
-		rtm.submitSteadyWebhook(item, allowNotify)
+		rtm.submitSignalWebhook(item, allowNotify)
 		if err = rtm.store.MarkTradeSignalNotified(ctx, item.ID, status, message); err != nil && ctx.Err() == nil {
 			rtm.log.Warn("record signal notification status failed", "id", item.ID, "error", err)
 		}
 	}
 }
 
-func (rtm *alertRuntime) submitSteadyWebhook(signal domain.TradeSignal, allowNotify bool) {
-	if !allowNotify || signal.Kind != domain.SignalSteady {
+func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNotify bool) {
+	if !allowNotify || (signal.Kind != domain.SignalAggressive && signal.Kind != domain.SignalSteady) {
 		return
 	}
 	if _, _, ok := rtm.webhookSettings(); !ok {
 		return
 	}
-	payload, err := buildSteadyWebhookPayload(signal, rtm.serviceConfig())
+	payload, err := buildSignalWebhookPayload(signal, rtm.serviceConfig())
 	if err != nil {
-		rtm.log.Warn("steady webhook payload rejected", "symbol", signal.Symbol, "error", err)
+		rtm.log.Warn("signal webhook payload rejected", "kind", signal.Kind, "symbol", signal.Symbol, "error", err)
 		return
 	}
-	if !rtm.webhook.Submit(notify.Task{Key: "steady-webhook|" + signal.Symbol, Text: string(payload)}) {
-		rtm.log.Warn("steady webhook delivery suppressed", "symbol", signal.Symbol)
+	if !rtm.webhook.Submit(notify.Task{Key: "signal-webhook|" + signal.Kind + "|" + signal.Symbol, Text: string(payload)}) {
+		rtm.log.Warn("signal webhook delivery suppressed", "kind", signal.Kind, "symbol", signal.Symbol)
+	}
+}
+
+// submitAlertWebhook forwards the initial threshold alert as an order signal.
+// The alert page's manual trigger remains available, while live engine events
+// use the same authenticated, queued delivery path as aggressive and steady
+// signals.
+func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, allowNotify bool) {
+	if !allowNotify {
+		return
+	}
+	if _, _, ok := rtm.webhookSettings(); !ok {
+		return
+	}
+	signal := domain.TradeSignal{
+		ID: alertRow.ID, AlertID: alertRow.ID, Symbol: alertRow.Symbol,
+		Kind: "alert", Side: alertRow.TradeSide, LiquidationSide: alertRow.Side,
+		CreatedAt: alertRow.TriggeredAt, ReferencePrice: alertRow.ReferencePrice,
+		AlertNotionalUSD: alertRow.NotionalUSD, ThresholdUSD: alertRow.ThresholdUSD,
+		WindowMinutes: alertRow.WindowMinutes, FollowUps: alertRow.FollowUps,
+	}
+	payload, err := buildAlertWebhookPayload(signal, rtm.serviceConfig())
+	if err != nil {
+		rtm.log.Warn("alert webhook payload rejected", "symbol", alertRow.Symbol, "error", err)
+		return
+	}
+	if !rtm.webhook.Submit(notify.Task{Key: "signal-webhook|alert|" + alertRow.Symbol, Text: string(payload)}) {
+		rtm.log.Warn("alert webhook delivery suppressed", "symbol", alertRow.Symbol)
 	}
 }
 

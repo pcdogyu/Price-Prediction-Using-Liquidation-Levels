@@ -40,7 +40,7 @@ func TestBuildSteadyWebhookPayloadMatchesTVOrderContract(t *testing.T) {
 		"target_exchange": "okx", "trade_env": "demo", "action": "buy",
 		"ticker": "BTCUSDT", "coinpair": "BTCUSDT", "price": "67123.45",
 		"exchange": "binance", "interval": "3m", "condition": "steady_liquidation_confirmation",
-		"text": "entry_long", "order_intent": "entry_long", "source": "tradingview",
+		"text": "entry_long", "order_intent": "entry_long", "source": "liquidation_alert",
 		"token_nonce": "nonce-value", "token": "token-value",
 	}
 	for key, wantValue := range want {
@@ -91,7 +91,7 @@ func TestSubmitSteadyWebhookDeliversThroughApplicationQueue(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go svc.alerts.webhook.Start(ctx)
-	svc.alerts.submitSteadyWebhook(domain.TradeSignal{
+	svc.alerts.submitSignalWebhook(domain.TradeSignal{
 		Symbol: "BTCUSDT", Kind: domain.SignalSteady, Side: "long",
 		CreatedAt: time.Date(2026, 10, 16, 3, 4, 5, 0, time.UTC), ReferencePrice: 67123.45, WindowMinutes: 3,
 	}, true)
@@ -107,6 +107,42 @@ func TestSubmitSteadyWebhookDeliversThroughApplicationQueue(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("steady signal was not delivered to webhook")
+	}
+}
+
+func TestBuildSignalWebhookPayloadMapsAggressiveAndAlertKinds(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		build     func() ([]byte, error)
+		condition string
+		source    string
+	}{
+		{
+			name: "aggressive", condition: "aggressive_liquidation_signal", source: "liquidation_alert",
+			build: func() ([]byte, error) {
+				return buildSignalWebhookPayload(domain.TradeSignal{Kind: domain.SignalAggressive, Symbol: "ETHUSDT", Side: "short", ReferencePrice: 3200}, config.Config{})
+			},
+		},
+		{
+			name: "alert", condition: "liquidation_alert", source: "liquidation_alert",
+			build: func() ([]byte, error) {
+				return buildAlertWebhookPayload(domain.TradeSignal{Kind: "alert", Symbol: "ETHUSDT", Side: "long", ReferencePrice: 3200}, config.Config{})
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := test.build()
+			if err != nil {
+				t.Fatalf("build payload: %v", err)
+			}
+			var got map[string]string
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("payload is not JSON: %v", err)
+			}
+			if got["condition"] != test.condition || got["source"] != test.source {
+				t.Fatalf("unexpected payload: %s", raw)
+			}
+		})
 	}
 }
 
