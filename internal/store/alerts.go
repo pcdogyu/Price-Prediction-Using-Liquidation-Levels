@@ -513,6 +513,35 @@ func (s *Store) RecentLiquidationEvents(ctx context.Context, since time.Time, li
 	return out, rows.Err()
 }
 
+// LiquidationEventsForSymbol returns the raw events needed to replay one pair's
+// chart with a different strategy configuration. Rows are oldest first so the
+// alert state machine sees the same ordering as the live stream.
+func (s *Store) LiquidationEventsForSymbol(ctx context.Context, symbol string, since time.Time, limit int) ([]domain.LiquidationEvent, error) {
+	if strings.TrimSpace(symbol) == "" {
+		return nil, errors.New("symbol is required")
+	}
+	if limit < 1 || limit > 200000 {
+		return nil, errors.New("invalid liquidation replay limit")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage FROM liquidations WHERE exchange='binance' AND symbol=? AND event_ts>=? ORDER BY event_ts ASC,id ASC LIMIT ?`, strings.ToUpper(strings.TrimSpace(symbol)), since.UTC().UnixMilli(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.LiquidationEvent{}
+	for rows.Next() {
+		var event domain.LiquidationEvent
+		var eventTS, receivedTS int64
+		if err = rows.Scan(&event.ID, &event.Exchange, &event.Symbol, &event.PositionSide, &eventTS, &receivedTS, &event.Price, &event.Quantity, &event.NotionalUSD, &event.Coverage); err != nil {
+			return nil, err
+		}
+		event.EventTime = time.UnixMilli(eventTS).UTC()
+		event.ReceivedAt = time.UnixMilli(receivedTS).UTC()
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
 // PruneAlerts deletes alert and signal rows older than the retention horizon in
 // small batches, mirroring how the liquidation history is pruned.
 func (s *Store) PruneAlerts(ctx context.Context, before time.Time) error {

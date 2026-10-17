@@ -170,58 +170,32 @@
       .finally(() => { state.loadingHistory = false; note(statusText()); draw(); });
   }
 
-  // loadSignals reads the stored trade signals for this pair, paging back until
-  // the loaded range covers the visible chart window or three pages are read.
-  async function loadSignals() {
-    if (state.loadingSignals || !state.symbol) return;
+  // loadChartSignals replays this pair with the strategy parameters currently
+  // saved on the alert page. Stored history remains available for audit, while
+  // the chart always answers the user's question: "what would this pair have
+  // signalled under the parameters I just saved?"
+  async function loadChartSignals() {
+    if (state.loadingSignals || state.loadingAlerts || !state.symbol) return;
     state.loadingSignals = true;
-    try {
-      const rows = [];
-      let cursor = '', pages = 0;
-      do {
-        const packet = await json('api/v1/alerts/signals?symbol=' + encodeURIComponent(state.symbol) + '&limit=200' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''));
-        rows.push(...(packet.rows || []));
-        cursor = packet.next_cursor || '';
-        pages += 1;
-        const times = rows.map(row => Date.parse(row.created_at)).filter(Number.isFinite);
-        if (!times.length || !state.view.start || times.reduce((oldest, at) => Math.min(oldest, at), Infinity) < state.view.start) break;
-      } while (cursor && pages < 3);
-      state.signals = rows.map(row => ({ id: row.id, t: Date.parse(row.created_at), kind: row.kind, side: row.side,
-        reference_price: row.reference_price, alert_notional_usd: row.alert_notional_usd, notify_status: row.notify_status })).filter(row => Number.isFinite(row.t));
-      $('kline-signal-status').textContent = '已读取 ' + state.signals.length + ' 条 · 每 15 秒刷新';
-    } catch (error) {
-      $('kline-signal-status').textContent = '信号读取失败：' + error.message;
-    } finally {
-      state.loadingSignals = false;
-      renderSignals();
-      draw();
-    }
-  }
-
-  // loadAlerts mirrors the alerts page history feed and keeps enough pages to
-  // cover the visible chart window. The chart uses triggered_at because that is
-  // the timestamp shown for a warning on the alerts page.
-  async function loadAlerts() {
-    if (state.loadingAlerts || !state.symbol) return;
     state.loadingAlerts = true;
     try {
-      const rows = [];
-      let cursor = '', pages = 0;
-      do {
-        const packet = await json('api/v1/alerts/history?symbol=' + encodeURIComponent(state.symbol) + '&limit=200' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''));
-        rows.push(...(packet.rows || []));
-        cursor = packet.next_cursor || '';
-        pages += 1;
-        const times = rows.map(row => Date.parse(row.triggered_at)).filter(Number.isFinite);
-        if (!times.length || !state.view.start || times.reduce((oldest, at) => Math.min(oldest, at), Infinity) < state.view.start) break;
-      } while (cursor && pages < 3);
-      state.alerts = rows.map(row => ({ id: row.id, t: Date.parse(row.triggered_at), side: row.trade_side || row.side,
+      const packet = await json('api/v1/alerts/chart-signals?symbol=' + encodeURIComponent(state.symbol));
+      state.signals = (packet.signals || []).map(row => ({ id: row.id, t: Date.parse(row.created_at), kind: row.kind, side: row.side,
+        reference_price: row.reference_price, alert_notional_usd: row.alert_notional_usd, notify_status: 'replayed' })).filter(row => Number.isFinite(row.t));
+      state.alerts = (packet.alerts || []).map(row => ({ id: row.id, t: Date.parse(row.triggered_at), side: row.trade_side || row.side,
         liquidation_side: row.side, reference_price: row.reference_price, notional_usd: row.notional_usd,
         threshold_usd: row.threshold_usd, status: row.status })).filter(row => Number.isFinite(row.t));
-      $('kline-alert-status').textContent = '已读取 ' + state.alerts.length + ' 条 · 每 15 秒刷新';
+      const thresholds = packet.thresholds || {};
+      const threshold = state.symbol === 'BTCUSDT' ? thresholds.btc_usd : state.symbol === 'ETHUSDT' ? thresholds.eth_usd : thresholds.other_usd;
+      const parameterText = '当前参数：' + money(threshold) + ' · ' + (thresholds.window_minutes || '—') + ' 分钟周期';
+      $('kline-signal-status').textContent = '按当前参数重算 ' + state.signals.length + ' 条 · ' + parameterText;
+      $('kline-alert-status').textContent = '按当前参数重算 ' + state.alerts.length + ' 条 · 每 15 秒刷新';
+      clearError();
     } catch (error) {
-      $('kline-alert-status').textContent = '预警读取失败：' + error.message;
+      $('kline-signal-status').textContent = '当前参数信号读取失败：' + error.message;
+      $('kline-alert-status').textContent = '当前参数预警读取失败';
     } finally {
+      state.loadingSignals = false;
       state.loadingAlerts = false;
       renderSignals();
       draw();
@@ -229,7 +203,7 @@
   }
 
   function renderSignals() {
-    const notifyLabels = { sent: '已推送', suppressed: '已抑制', skipped: '未启用', disabled: '已关闭', invalid: '配置无效', failed: '发送失败' };
+    const notifyLabels = { sent: '已推送', suppressed: '已抑制', skipped: '未启用', disabled: '已关闭', invalid: '配置无效', failed: '发送失败', replayed: '当前参数重算' };
     const rows = shownSignals().slice().reverse().slice(0, 200);
     if (!rows.length) {
       $('kline-signal-rows').innerHTML = '<tr><td colspan="6">' + (state.toggles.signals ? '该币对暂无下单信号' : '信号图层已隐藏') + '</td></tr>';
@@ -658,7 +632,7 @@
     }
     $('kline-latest').addEventListener('click', goLatest);
     $('kline-reset').addEventListener('click', resetView);
-    $('kline-refresh').addEventListener('click', () => { loadCandles(); loadAlerts(); loadSignals(); });
+    $('kline-refresh').addEventListener('click', () => { loadCandles(); loadChartSignals(); });
     $('kline-jump').addEventListener('submit', event => {
       event.preventDefault();
       const target = $('kline-symbol-input').value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32);
@@ -688,11 +662,10 @@
     document.title = state.symbol + ' K线 · 清算墙雷达';
     note('正在读取 ' + state.symbol + ' ' + state.interval + ' K 线');
     loadCandles();
-    loadAlerts();
-    loadSignals();
+    loadChartSignals();
     setInterval(() => { if (!document.hidden && !state.drag) loadCandles(); }, CANDLE_REFRESH_MS);
-    setInterval(() => { if (!document.hidden && !state.drag) { loadAlerts(); loadSignals(); } }, SIGNAL_REFRESH_MS);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadCandles(); loadAlerts(); loadSignals(); } });
+    setInterval(() => { if (!document.hidden && !state.drag) loadChartSignals(); }, SIGNAL_REFRESH_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadCandles(); loadChartSignals(); } });
     window.addEventListener('resize', resize);
     window.addEventListener('themechange', () => { palette(); draw(); });
     if (window.ResizeObserver) new ResizeObserver(resize).observe($('kline-wrap'));

@@ -66,6 +66,7 @@ GET /api/v1/alerts
 GET /api/v1/alerts/history?symbol=BTCUSDT&side=long&limit=50&cursor=<cursor>
 GET /api/v1/alerts/signals?symbol=BTCUSDT&kind=steady&limit=50&cursor=<cursor>
 GET /api/v1/alerts/timeline?symbol=BTCUSDT&kind=all&cursor=<cursor>
+GET /api/v1/alerts/chart-signals?symbol=BTCUSDT
 GET /api/v1/alerts/klines?symbol=DOGEUSDT&interval=15m&limit=300&before=<RFC3339>
 GET|POST /api/v1/alerts/settings
 GET|POST /api/v1/alerts/order-settings

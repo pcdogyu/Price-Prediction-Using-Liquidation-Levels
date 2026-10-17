@@ -270,6 +270,14 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 	if view.Thresholds.WindowMinutes != 5 || view.Thresholds.ETHUSD != 200000 || view.Thresholds.OtherUSD != 100000 {
 		t.Fatalf("live strategy settings = %+v", view.Thresholds)
 	}
+	chart := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=BTCUSDT", nil)
+	if chart.Code != http.StatusOK || !strings.Contains(chart.Body.String(), `"btc_usd":300000`) || !strings.Contains(chart.Body.String(), `"window_minutes":5`) {
+		t.Fatalf("chart signals must expose the saved strategy settings: %d %s", chart.Code, chart.Body.String())
+	}
+	badChart := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=bad-symbol", nil)
+	if badChart.Code != http.StatusBadRequest {
+		t.Fatalf("invalid chart symbol status=%d body=%s", badChart.Code, badChart.Body.String())
+	}
 	invalid := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":0,"btc_usd":300000,"eth_usd":200000,"other_usd":100000}`))
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid strategy settings status=%d body=%s", invalid.Code, invalid.Body.String())
@@ -491,7 +499,7 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 	}
 	body := w.Body.String()
 	for _, want := range []string{"币对 K 线", "kline-symbol-label", "当前币对", "左右两侧价格轴", "横轴北京时间", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
-		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "显示预警", "显示下单信号", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "kline-alert-status", "回到最新", "重置缩放", "kline-signal-rows",
+		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "显示预警", "显示下单信号", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "kline-alert-status", "当前已保存的阈值和周期重新回放生成", "回到最新", "重置缩放", "kline-signal-rows",
 		"返回报警", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the K-line page must contain %q", want)

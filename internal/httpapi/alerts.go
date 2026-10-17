@@ -88,6 +88,7 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/history", getOnly(s.alertHistory))
 	mux.HandleFunc("/api/v1/alerts/signals", getOnly(s.alertSignals))
 	mux.HandleFunc("/api/v1/alerts/timeline", getOnly(s.alertTimeline))
+	mux.HandleFunc("/api/v1/alerts/chart-signals", getOnly(s.alertChartSignals))
 	mux.HandleFunc("/api/v1/alerts/klines", getOnly(s.alertKlines))
 	mux.HandleFunc("/api/v1/alerts/settings", s.alertSettings)
 	mux.HandleFunc("/api/v1/alerts/order-settings", s.alertOrderSettings)
@@ -280,6 +281,27 @@ func (s *Server) alertKlines(w http.ResponseWriter, r *http.Request) {
 	view, err := s.svc.AlertKlines(r.Context(), chartSymbol, chartInterval, chartLimit, chartBefore)
 	if err != nil {
 		problem(w, http.StatusBadGateway, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, view)
+}
+
+// alertChartSignals replays one pair with the current saved thresholds and
+// rolling window. The stored history endpoints remain unchanged because their
+// rows describe the settings that were active when they were generated.
+func (s *Server) alertChartSignals(w http.ResponseWriter, r *http.Request) {
+	symbol, _, err := alertFilters(r.URL.Query().Get("symbol"), "")
+	if err != nil || !alertSymbolPattern.MatchString(symbol) {
+		if err == nil {
+			err = fmt.Errorf("symbol must be 2 to 32 letters or digits")
+		}
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	view, err := s.svc.AlertChartSignals(r.Context(), symbol)
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

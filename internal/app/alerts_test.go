@@ -105,6 +105,34 @@ func TestRecordLiquidationDrivesAlertAndSignals(t *testing.T) {
 	}
 }
 
+func TestAlertChartSignalsReplayCurrentStrategySettings(t *testing.T) {
+	ctx := context.Background()
+	svc, _, st := alertTestService(t, "chart-current-settings.db")
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	if err := st.InsertLiquidation(ctx, alertTestEvent("chart-long", "BTCUSDT", "long", base, 120000)); err != nil {
+		t.Fatal(err)
+	}
+
+	view, err := svc.AlertChartSignals(ctx, "BTCUSDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Alerts) != 1 || len(view.Signals) != 1 || view.Thresholds.BTCUSD != 100000 {
+		t.Fatalf("default chart replay = %+v", view)
+	}
+
+	if _, err = svc.SaveAlertStrategySettings(ctx, domain.AlertStrategySettings{WindowMinutes: 3, BTCUSD: 200000, ETHUSD: 200000, OtherUSD: 100000}); err != nil {
+		t.Fatal(err)
+	}
+	view, err = svc.AlertChartSignals(ctx, "BTCUSDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Alerts) != 0 || len(view.Signals) != 0 || view.Thresholds.BTCUSD != 200000 {
+		t.Fatalf("chart replay did not follow saved threshold = %+v", view)
+	}
+}
+
 // TestAlertSettingsRoundTripAndRestartReplay checks that a saved form keeps the stored
 // bot token when a later submission leaves it blank, and that the restart warm start
 // replays stored liquidations without handing an existing signal to Telegram twice.

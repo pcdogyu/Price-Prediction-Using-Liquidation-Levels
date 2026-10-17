@@ -184,6 +184,18 @@ type AlertTimelinePage struct {
 	SteadyCount     int64               `json:"steady_count"`
 }
 
+// AlertChartSignals is the signal layer for a symbol chart. Unlike the stored
+// alert and signal history, these rows are replayed with the currently saved
+// strategy parameters so changing the alert form immediately changes what the
+// chart displays without rewriting historical audit records.
+type AlertChartSignals struct {
+	Symbol      string             `json:"symbol"`
+	Thresholds  AlertThresholds    `json:"thresholds"`
+	Alerts      []LiquidationAlert `json:"alerts"`
+	Signals     []TradeSignal      `json:"signals"`
+	GeneratedAt time.Time          `json:"generated_at"`
+}
+
 // KlineView backs the per symbol K-line chart on the alert page. The candles come
 // straight from the Binance USDⓈ-M klines endpoint, so every monitored pair can be
 // charted even though only the configured symbols are stored locally. NextBefore

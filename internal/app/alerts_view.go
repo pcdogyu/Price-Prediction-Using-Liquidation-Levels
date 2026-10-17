@@ -77,6 +77,15 @@ func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit 
 	return s.alerts.store.AlertTimeline(ctx, symbol, kind, limit, cursor)
 }
 
+// AlertChartSignals replays the selected symbol with the currently saved alert
+// parameters so the K-line signal layer follows the settings form immediately.
+func (s *Service) AlertChartSignals(ctx context.Context, symbol string) (domain.AlertChartSignals, error) {
+	if s.alerts == nil {
+		return domain.AlertChartSignals{}, errors.New("alert engine unavailable")
+	}
+	return s.alerts.AlertChartSignals(ctx, symbol)
+}
+
 // TriggerAlert sends one manually requested order signal for a persisted alert
 // or signal. The record is read server-side so the browser cannot alter its
 // symbol, direction, or reference price.
