@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "下单信号类别", "每页 20 条", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-order-signal-settings", `id="alerts-order-alerts" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "下单信号类别", "自动预平仓（始终开启）", "每页 20 条", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-order-signal-settings", `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -97,6 +97,9 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	if !strings.Contains(script, "api/v1/alerts/order-settings") || !strings.Contains(script, "保存下单信号设置") {
 		t.Fatal("the alerts script must expose order signal category settings")
+	}
+	if strings.Contains(body, `id="alerts-order-alerts"`) || strings.Contains(script, "alerts-order-alerts") {
+		t.Fatal("the legacy alert opening toggle must not be presented")
 	}
 	if post := serveAlert(srv, http.MethodPost, "/alerts", nil); post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /alerts status=%d", post.Code)

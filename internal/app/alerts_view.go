@@ -109,8 +109,8 @@ func (s *Service) SaveAlertSettings(ctx context.Context, in domain.NotificationS
 	return s.alerts.updateSettings(ctx, in)
 }
 
-// AlertOrderSignalSettings returns the categories currently forwarded to the
-// trading webhook.
+// AlertOrderSignalSettings returns the opening-signal switches currently used
+// by the trading webhook. Live preclose delivery is always enabled.
 func (s *Service) AlertOrderSignalSettings() domain.OrderSignalSettings {
 	return s.alerts.snapshotOrderSignalSettings()
 }

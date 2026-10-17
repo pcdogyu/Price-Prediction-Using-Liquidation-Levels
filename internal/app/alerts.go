@@ -385,10 +385,10 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if !allowNotify || (signal.Kind != domain.SignalAggressive && signal.Kind != domain.SignalSteady) {
 		return
 	}
-	if !rtm.orderSignalEnabled(signal.Kind) {
+	if !rtm.submitPrecloseWebhook(signal) {
 		return
 	}
-	if _, _, ok := rtm.webhookSettings(); !ok {
+	if !rtm.orderSignalEnabled(signal.Kind) {
 		return
 	}
 	payload, err := buildSignalWebhookPayload(signal, rtm.serviceConfig())
@@ -401,18 +401,11 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	}
 }
 
-// submitAlertWebhook forwards the initial threshold alert as an order signal.
-// The alert page's manual trigger remains available, while live engine events
-// use the same authenticated, queued delivery path as aggressive and steady
-// signals.
+// submitAlertWebhook sends the initial threshold alert as a close-only signal.
+// The alert page's manual trigger remains an explicit full open action, while
+// live engine events use the authenticated, queued delivery path.
 func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, allowNotify bool) {
 	if !allowNotify {
-		return
-	}
-	if !rtm.orderSignalEnabled("alert") {
-		return
-	}
-	if _, _, ok := rtm.webhookSettings(); !ok {
 		return
 	}
 	signal := domain.TradeSignal{
@@ -422,14 +415,27 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 		AlertNotionalUSD: alertRow.NotionalUSD, ThresholdUSD: alertRow.ThresholdUSD,
 		WindowMinutes: alertRow.WindowMinutes, FollowUps: alertRow.FollowUps,
 	}
-	payload, err := buildAlertWebhookPayload(signal, rtm.serviceConfig())
+	rtm.submitPrecloseWebhook(signal)
+}
+
+// submitPrecloseWebhook sends a close-only request before any optional opening
+// request. A failed or suppressed preclose prevents the subsequent open from
+// being queued, so a queue/backpressure issue cannot turn into an unprotected
+// direction switch.
+func (rtm *alertRuntime) submitPrecloseWebhook(signal domain.TradeSignal) bool {
+	if _, _, ok := rtm.webhookSettings(); !ok {
+		return false
+	}
+	payload, err := buildPrecloseWebhookPayload(signal, rtm.serviceConfig())
 	if err != nil {
-		rtm.log.Warn("alert webhook payload rejected", "symbol", alertRow.Symbol, "error", err)
-		return
+		rtm.log.Warn("preclose webhook payload rejected", "kind", signal.Kind, "symbol", signal.Symbol, "error", err)
+		return false
 	}
-	if !rtm.webhook.Submit(notify.Task{Key: "signal-webhook|alert|" + alertRow.Symbol, Text: string(payload)}) {
-		rtm.log.Warn("alert webhook delivery suppressed", "symbol", alertRow.Symbol)
+	if !rtm.webhook.Submit(notify.Task{Key: "position-preclose|" + signal.Kind + "|" + signal.Symbol, Text: string(payload)}) {
+		rtm.log.Warn("preclose webhook delivery suppressed", "kind", signal.Kind, "symbol", signal.Symbol)
+		return false
 	}
+	return true
 }
 
 func (rtm *alertRuntime) serviceConfig() config.Config {
@@ -559,15 +565,15 @@ func (rtm *alertRuntime) categoryEnabled(category string) bool {
 	}
 }
 
-// orderSignalEnabled reports whether a live liquidation category may be sent to
-// the trading webhook. These switches are intentionally independent from the
-// Telegram notification categories.
+// orderSignalEnabled reports whether a live liquidation category may send an
+// opening request to the trading webhook. Real-time alerts always send their
+// close-only preclose request, so the legacy alert switch is not a gate.
 func (rtm *alertRuntime) orderSignalEnabled(category string) bool {
 	rtm.mu.RLock()
 	defer rtm.mu.RUnlock()
 	switch category {
 	case "alert":
-		return rtm.settings.OrderAlerts
+		return true
 	case domain.SignalAggressive:
 		return rtm.settings.OrderAggressive
 	case domain.SignalSteady:

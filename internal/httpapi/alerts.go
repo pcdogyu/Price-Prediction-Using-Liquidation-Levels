@@ -382,8 +382,9 @@ func (s *Server) alertSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stored)
 }
 
-// alertOrderSettings reads or stores the live signal categories sent to tvbot.
-// These switches are independent from Telegram notification preferences.
+// alertOrderSettings reads or stores the live opening-signal switches sent to
+// tvbot. Every live category still sends a preclose request first; these
+// switches are independent from Telegram notification preferences.
 func (s *Server) alertOrderSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		w.Header().Set("Cache-Control", "no-store")

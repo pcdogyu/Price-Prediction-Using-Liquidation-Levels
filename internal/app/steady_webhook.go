@@ -56,6 +56,31 @@ func buildWebhookPayload(signal domain.TradeSignal, cfg config.Config, condition
 	if err != nil {
 		return nil, err
 	}
+	return buildPositionWebhookPayload(signal, cfg, condition, source, action, "open", strings.ToLower(strings.TrimSpace(signal.Side)), intent)
+}
+
+// buildPrecloseWebhookPayload creates a close-only signal for the position
+// opposite to the direction the liquidation signal would eventually open.
+// tvbot already understands these explicit position semantics and treats a
+// missing position as a harmless position_not_open result.
+func buildPrecloseWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
+	action, positionSide, intent, err := steadyWebhookCloseDirection(signal.Side)
+	if err != nil {
+		return nil, err
+	}
+	condition := "liquidation_preclose"
+	switch signal.Kind {
+	case "alert":
+		condition = "liquidation_alert_preclose"
+	case domain.SignalAggressive:
+		condition = "aggressive_liquidation_preclose"
+	case domain.SignalSteady:
+		condition = "steady_liquidation_preclose"
+	}
+	return buildPositionWebhookPayload(signal, cfg, condition, "liquidation_alert_preclose", action, "close", positionSide, intent)
+}
+
+func buildPositionWebhookPayload(signal domain.TradeSignal, cfg config.Config, condition, source, action, effect, positionSide, intent string) ([]byte, error) {
 	price := strconv.FormatFloat(signal.ReferencePrice, 'f', -1, 64)
 	interval := strings.TrimSpace(cfg.SteadyWebhookInterval)
 	if interval == "" {
@@ -65,7 +90,7 @@ func buildWebhookPayload(signal domain.TradeSignal, cfg config.Config, condition
 		SentAt: signal.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
 		APIID:  cfg.SteadyWebhookAPIID, TargetExchange: cfg.SteadyWebhookTargetExchange,
 		TradeEnv: cfg.SteadyWebhookTradeEnv, Action: action,
-		PositionEffect: "open", PositionSide: strings.ToLower(strings.TrimSpace(signal.Side)),
+		PositionEffect: effect, PositionSide: positionSide,
 		Ticker: signal.Symbol, Coinpair: signal.Symbol, Price: price,
 		Exchange: cfg.SteadyWebhookExchange, Interval: interval,
 		Condition: condition, Text: intent,
@@ -83,5 +108,16 @@ func steadyWebhookDirection(side string) (action, intent string, err error) {
 		return "sell", "entry_short", nil
 	default:
 		return "", "", fmt.Errorf("unsupported steady signal side %q", side)
+	}
+}
+
+func steadyWebhookCloseDirection(side string) (action, positionSide, intent string, err error) {
+	switch strings.ToLower(strings.TrimSpace(side)) {
+	case "long":
+		return "buy", "short", "close_short", nil
+	case "short":
+		return "sell", "long", "close_long", nil
+	default:
+		return "", "", "", fmt.Errorf("unsupported steady signal side %q", side)
 	}
 }

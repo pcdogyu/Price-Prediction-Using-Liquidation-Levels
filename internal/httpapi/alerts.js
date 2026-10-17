@@ -106,17 +106,15 @@
 
   function renderOrderSignalSummary() {
     const selected = [
-      [$('alerts-order-alerts').checked, '预警'],
-      [$('alerts-order-aggressive').checked, '激进'],
-      [$('alerts-order-steady').checked, '稳健']
+      [$('alerts-order-aggressive').checked, '激进开仓'],
+      [$('alerts-order-steady').checked, '稳健开仓']
     ].filter(item => item[0]).map(item => item[1]);
-    $('alerts-order-signal-summary').textContent = selected.length ? '已选择 ' + selected.length + ' 类：' + selected.join('、') : '当前不自动发送下单信号';
+    $('alerts-order-signal-summary').textContent = '预平仓始终开启' + (selected.length ? ' · 已开启：' + selected.join('、') : ' · 当前不自动开仓');
   }
 
   function renderOrderSignalSettings(settings) {
     if (!settings) return;
     if (!orderSignalSettingsLoaded) {
-      $('alerts-order-alerts').checked = !!settings.order_alerts;
       $('alerts-order-aggressive').checked = !!settings.order_aggressive;
       $('alerts-order-steady').checked = !!settings.order_steady;
       orderSignalSettingsLoaded = true;
@@ -213,7 +211,7 @@
       notify_alerts: $('alerts-notify-alerts').checked,
       notify_aggressive: $('alerts-notify-aggressive').checked,
       notify_steady: $('alerts-notify-steady').checked,
-      order_alerts: $('alerts-order-alerts').checked,
+      order_alerts: true,
       order_aggressive: $('alerts-order-aggressive').checked,
       order_steady: $('alerts-order-steady').checked,
       telegram_chat_id: $('alerts-chat').value.trim()
@@ -234,7 +232,7 @@
 
   function orderSignalSettingsBody() {
     return {
-      order_alerts: $('alerts-order-alerts').checked,
+      order_alerts: true,
       order_aggressive: $('alerts-order-aggressive').checked,
       order_steady: $('alerts-order-steady').checked
     };
@@ -359,7 +357,7 @@
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
   $('alerts-order-signal-settings').addEventListener('submit', saveOrderSignalSettings);
-  ['alerts-order-alerts', 'alerts-order-aggressive', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));
+  ['alerts-order-aggressive', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));
   $('alerts-test').addEventListener('click', testSettings);
   $('alerts-history-rows').addEventListener('click', event => {
     const button = event.target.closest('.alerts-action');

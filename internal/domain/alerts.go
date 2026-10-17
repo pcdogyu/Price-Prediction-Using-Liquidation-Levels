@@ -202,25 +202,26 @@ type KlineView struct {
 // NotificationSettings is persisted in SQLite. The bot token is deliberately
 // excluded from JSON so it can never leave the server in an API response.
 type NotificationSettings struct {
-	TelegramEnabled  bool      `json:"telegram_enabled"`
-	TelegramToken    string    `json:"-"`
-	TelegramChatID   string    `json:"telegram_chat_id"`
-	NotifyAlerts     bool      `json:"notify_alerts"`
-	NotifyAggressive bool      `json:"notify_aggressive"`
-	NotifySteady     bool      `json:"notify_steady"`
-	OrderAlerts      bool      `json:"order_alerts"`
-	OrderAggressive  bool      `json:"order_aggressive"`
-	OrderSteady      bool      `json:"order_steady"`
-	HasToken         bool      `json:"has_token"`
-	TokenMask        string    `json:"token_mask"`
-	TokenSource      string    `json:"token_source"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	TelegramEnabled  bool   `json:"telegram_enabled"`
+	TelegramToken    string `json:"-"`
+	TelegramChatID   string `json:"telegram_chat_id"`
+	NotifyAlerts     bool   `json:"notify_alerts"`
+	NotifyAggressive bool   `json:"notify_aggressive"`
+	NotifySteady     bool   `json:"notify_steady"`
+	// OrderAlerts is retained for API and SQLite compatibility. Live alerts now
+	// always send a close-only preclose webhook, regardless of this legacy value.
+	OrderAlerts     bool      `json:"order_alerts"`
+	OrderAggressive bool      `json:"order_aggressive"`
+	OrderSteady     bool      `json:"order_steady"`
+	HasToken        bool      `json:"has_token"`
+	TokenMask       string    `json:"token_mask"`
+	TokenSource     string    `json:"token_source"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-// OrderSignalSettings controls which live liquidation categories are forwarded
-// to the trading webhook. It is independent from the Telegram notification
-// switches, so a user can keep receiving a category without turning it into an
-// order signal (or vice versa).
+// OrderSignalSettings controls which live liquidation categories may send an
+// opening request to the trading webhook. All live categories send a preclose
+// request first; Alerts is retained only for API and storage compatibility.
 type OrderSignalSettings struct {
 	Alerts     bool      `json:"order_alerts"`
 	Aggressive bool      `json:"order_aggressive"`

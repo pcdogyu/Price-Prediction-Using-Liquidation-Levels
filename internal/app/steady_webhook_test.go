@@ -65,8 +65,37 @@ func TestBuildSteadyWebhookPayloadMapsShortAndRejectsUnknownSide(t *testing.T) {
 	}
 }
 
+func TestBuildPrecloseWebhookPayloadClosesOppositePosition(t *testing.T) {
+	for _, test := range []struct {
+		name, side, action, positionSide, intent string
+	}{
+		{name: "long entry closes short", side: "long", action: "buy", positionSide: "short", intent: "close_short"},
+		{name: "short entry closes long", side: "short", action: "sell", positionSide: "long", intent: "close_long"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := buildPrecloseWebhookPayload(domain.TradeSignal{Kind: domain.SignalSteady, Symbol: "ETHUSDT", Side: test.side}, config.Config{})
+			if err != nil {
+				t.Fatalf("build preclose payload: %v", err)
+			}
+			var got map[string]string
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("payload is not JSON: %v", err)
+			}
+			if got["action"] != test.action || got["position_effect"] != "close" || got["position_side"] != test.positionSide || got["order_intent"] != test.intent || got["text"] != test.intent {
+				t.Fatalf("unexpected preclose payload: %s", raw)
+			}
+			if got["condition"] != "steady_liquidation_preclose" || got["source"] != "liquidation_alert_preclose" {
+				t.Fatalf("preclose payload must identify its source: %s", raw)
+			}
+		})
+	}
+	if _, err := buildPrecloseWebhookPayload(domain.TradeSignal{Side: "sideways"}, config.Config{}); err == nil {
+		t.Fatal("unknown signal side must be rejected for preclose payloads")
+	}
+}
+
 func TestSubmitSteadyWebhookDeliversThroughApplicationQueue(t *testing.T) {
-	requests := make(chan []byte, 1)
+	requests := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		requests <- body
@@ -97,17 +126,114 @@ func TestSubmitSteadyWebhookDeliversThroughApplicationQueue(t *testing.T) {
 		CreatedAt: time.Date(2026, 10, 16, 3, 4, 5, 0, time.UTC), ReferencePrice: 67123.45, WindowMinutes: 3,
 	}, true)
 
+	var payloads [2]map[string]string
+	for i := range payloads {
+		select {
+		case raw := <-requests:
+			if err := json.Unmarshal(raw, &payloads[i]); err != nil {
+				t.Fatalf("webhook body is not JSON: %v", err)
+			}
+		case <-time.After(4 * time.Second):
+			t.Fatal("steady signal webhook was not delivered to webhook")
+		}
+	}
+	if payloads[0]["action"] != "buy" || payloads[0]["position_effect"] != "close" || payloads[0]["position_side"] != "short" || payloads[0]["order_intent"] != "close_short" {
+		t.Fatalf("the preclose payload must be delivered first: %#v", payloads[0])
+	}
+	if payloads[1]["action"] != "buy" || payloads[1]["position_effect"] != "open" || payloads[1]["position_side"] != "long" || payloads[1]["order_intent"] != "entry_long" || payloads[1]["token_nonce"] != "nonce-value" {
+		t.Fatalf("unexpected delivered opening payload: %#v", payloads[1])
+	}
+}
+
+func TestDisabledOpeningSignalStillSendsPreclose(t *testing.T) {
+	requests := make(chan []byte, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	svc, cfg, _ := alertTestService(t, "disabled-opening.db")
+	cfg.SteadyWebhookURL = server.URL
+	cfg.SteadyWebhookAPIID = "okx_bot"
+	cfg.SteadyWebhookTargetExchange = "okx"
+	cfg.SteadyWebhookTradeEnv = "demo"
+	cfg.SteadyWebhookExchange = "binance"
+	cfg.SteadyWebhookInterval = "3m"
+	cfg.SteadyWebhookTokenNonce = "nonce-value"
+	cfg.SteadyWebhookToken = "token-value"
+	svc.alerts.webhookURL = cfg.SteadyWebhookURL
+	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
+	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	svc.alerts.webhookConfig = cfg
+	svc.alerts.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), svc.alerts.webhookSettings, 4, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := svc.SaveAlertOrderSignalSettings(context.Background(), domain.OrderSignalSettings{Alerts: false, Aggressive: false, Steady: false}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.alerts.webhook.Start(ctx)
+	svc.alerts.submitSignalWebhook(domain.TradeSignal{Symbol: "BTCUSDT", Kind: domain.SignalAggressive, Side: "short", CreatedAt: time.Now().UTC(), ReferencePrice: 67123.45}, true)
+
 	select {
 	case raw := <-requests:
 		var got map[string]string
 		if err := json.Unmarshal(raw, &got); err != nil {
 			t.Fatalf("webhook body is not JSON: %v", err)
 		}
-		if got["action"] != "buy" || got["order_intent"] != "entry_long" || got["token_nonce"] != "nonce-value" {
-			t.Fatalf("unexpected delivered payload: %s", raw)
+		if got["position_effect"] != "close" || got["position_side"] != "long" || got["order_intent"] != "close_long" {
+			t.Fatalf("disabled opening signal must still preclose: %s", raw)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("steady signal was not delivered to webhook")
+		t.Fatal("preclose webhook was not delivered")
+	}
+	select {
+	case raw := <-requests:
+		t.Fatalf("disabled opening signal unexpectedly opened a position: %s", raw)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func TestAlertWebhookPreclosesRegardlessOfLegacyAlertSwitch(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	svc, cfg, _ := alertTestService(t, "alert-preclose.db")
+	cfg.SteadyWebhookURL = server.URL
+	cfg.SteadyWebhookTokenNonce = "nonce-value"
+	cfg.SteadyWebhookToken = "token-value"
+	svc.alerts.webhookURL = cfg.SteadyWebhookURL
+	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
+	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	svc.alerts.webhookConfig = cfg
+	svc.alerts.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), svc.alerts.webhookSettings, 4, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := svc.SaveAlertOrderSignalSettings(context.Background(), domain.OrderSignalSettings{Alerts: false, Aggressive: false, Steady: false}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.alerts.webhook.Start(ctx)
+	svc.alerts.submitAlertWebhook(domain.LiquidationAlert{ID: "alert-1", Symbol: "BTCUSDT", TradeSide: "long", TriggeredAt: time.Now().UTC(), ReferencePrice: 67123.45}, true)
+
+	select {
+	case raw := <-requests:
+		var got map[string]string
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("webhook body is not JSON: %v", err)
+		}
+		if got["position_effect"] != "close" || got["position_side"] != "short" || got["order_intent"] != "close_short" {
+			t.Fatalf("alert must preclose regardless of legacy switch: %s", raw)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("alert preclose webhook was not delivered")
 	}
 }
 

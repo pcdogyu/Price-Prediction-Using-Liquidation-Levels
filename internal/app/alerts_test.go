@@ -176,7 +176,7 @@ func TestAlertSettingsRoundTripAndRestartReplay(t *testing.T) {
 	}
 }
 
-func TestOrderSignalSettingsRoundTripAndCategoryFiltering(t *testing.T) {
+func TestOrderSignalSettingsRoundTripAndOpeningCategoryFiltering(t *testing.T) {
 	ctx := context.Background()
 	svc, _, _ := alertTestService(t, "order-signal-settings.db")
 	initial := svc.AlertOrderSignalSettings()
@@ -190,8 +190,8 @@ func TestOrderSignalSettingsRoundTripAndCategoryFiltering(t *testing.T) {
 	if saved.Alerts || !saved.Aggressive || saved.Steady {
 		t.Fatalf("saved order signal settings = %+v", saved)
 	}
-	if svc.alerts.orderSignalEnabled("alert") || !svc.alerts.orderSignalEnabled(domain.SignalAggressive) || svc.alerts.orderSignalEnabled(domain.SignalSteady) {
-		t.Fatal("order signal category filtering did not follow the saved settings")
+	if !svc.alerts.orderSignalEnabled("alert") || !svc.alerts.orderSignalEnabled(domain.SignalAggressive) || svc.alerts.orderSignalEnabled(domain.SignalSteady) {
+		t.Fatal("opening signal category filtering did not follow the saved settings")
 	}
 	restarted := New(svc.cfg, svc.store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	restarted.alerts.restoreSettings(ctx)
