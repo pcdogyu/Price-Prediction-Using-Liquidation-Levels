@@ -86,6 +86,8 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows")).to_contain_text("预警")
     expect(page.locator("#alerts-history-rows")).to_contain_text("激进")
     expect(page.locator("#alerts-history-rows")).to_contain_text("稳健")
+    expect(page.get_by_text("下单信号类别", exact=True)).to_be_visible()
+    expect(page.locator("#alerts-order-alerts")).to_be_visible()
 
     page.locator("#alerts-next").click()
     expect(page.locator("#alerts-history-rows tr")).to_have_count(5)

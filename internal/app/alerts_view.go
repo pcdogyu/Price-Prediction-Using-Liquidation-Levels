@@ -109,6 +109,20 @@ func (s *Service) SaveAlertSettings(ctx context.Context, in domain.NotificationS
 	return s.alerts.updateSettings(ctx, in)
 }
 
+// AlertOrderSignalSettings returns the categories currently forwarded to the
+// trading webhook.
+func (s *Service) AlertOrderSignalSettings() domain.OrderSignalSettings {
+	return s.alerts.snapshotOrderSignalSettings()
+}
+
+// SaveAlertOrderSignalSettings persists the live order-signal category switches.
+func (s *Service) SaveAlertOrderSignalSettings(ctx context.Context, in domain.OrderSignalSettings) (domain.OrderSignalSettings, error) {
+	if s.alerts == nil {
+		return domain.OrderSignalSettings{}, errors.New("alert engine unavailable")
+	}
+	return s.alerts.updateOrderSignalSettings(ctx, in)
+}
+
 // AlertStrategySettings returns the effective editable alert parameters.
 func (s *Service) AlertStrategySettings() domain.AlertStrategySettings {
 	return s.alerts.snapshotStrategySettings()

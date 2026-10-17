@@ -31,7 +31,7 @@
     return '<button type="button" class="alerts-action alerts-notify-trigger" data-action="notify" data-trigger-type="' + escape(recordType) + '" data-trigger-id="' + escape(recordID) + '">触发报价</button>';
   };
 
-  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, strategyLoaded = false;
+  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false;
 
   function error(message) { $('alerts-error').textContent = message; $('alerts-error').hidden = false; }
   function clearError() { $('alerts-error').hidden = true; }
@@ -99,8 +99,29 @@
       $('alerts-notify-steady').checked = !!settings.notify_steady;
       settingsLoaded = true;
     }
+    renderOrderSignalSettings(settings);
     const source = ({ database: '数据库', environment: '环境变量', unset: '未设置' })[settings.token_source] || settings.token_source;
     $('alerts-token-state').textContent = 'Token：' + (settings.has_token ? settings.token_mask : '未配置') + ' · 来源 ' + source + ' · 保持留空即沿用现有 Token' + (settings.updated_at ? ' · 更新 ' + when(settings.updated_at) : '');
+  }
+
+  function renderOrderSignalSummary() {
+    const selected = [
+      [$('alerts-order-alerts').checked, '预警'],
+      [$('alerts-order-aggressive').checked, '激进'],
+      [$('alerts-order-steady').checked, '稳健']
+    ].filter(item => item[0]).map(item => item[1]);
+    $('alerts-order-signal-summary').textContent = selected.length ? '已选择 ' + selected.length + ' 类：' + selected.join('、') : '当前不自动发送下单信号';
+  }
+
+  function renderOrderSignalSettings(settings) {
+    if (!settings) return;
+    if (!orderSignalSettingsLoaded) {
+      $('alerts-order-alerts').checked = !!settings.order_alerts;
+      $('alerts-order-aggressive').checked = !!settings.order_aggressive;
+      $('alerts-order-steady').checked = !!settings.order_steady;
+      orderSignalSettingsLoaded = true;
+    }
+    renderOrderSignalSummary();
   }
 
   function renderNotifyStatus(notifications) {
@@ -192,6 +213,9 @@
       notify_alerts: $('alerts-notify-alerts').checked,
       notify_aggressive: $('alerts-notify-aggressive').checked,
       notify_steady: $('alerts-notify-steady').checked,
+      order_alerts: $('alerts-order-alerts').checked,
+      order_aggressive: $('alerts-order-aggressive').checked,
+      order_steady: $('alerts-order-steady').checked,
       telegram_chat_id: $('alerts-chat').value.trim()
     };
     const token = $('alerts-token').value.trim();
@@ -205,6 +229,14 @@
       eth_usd: Number($('alerts-threshold-eth').value),
       other_usd: Number($('alerts-threshold-other').value),
       window_minutes: Number($('alerts-window-minutes').value)
+    };
+  }
+
+  function orderSignalSettingsBody() {
+    return {
+      order_alerts: $('alerts-order-alerts').checked,
+      order_aggressive: $('alerts-order-aggressive').checked,
+      order_steady: $('alerts-order-steady').checked
     };
   }
 
@@ -225,6 +257,25 @@
       $('alerts-strategy-status').textContent = '保存失败';
     } finally {
       $('alerts-strategy-save').disabled = false;
+    }
+  }
+
+  async function saveOrderSignalSettings(event) {
+    event.preventDefault();
+    $('alerts-order-signal-save').disabled = true;
+    $('alerts-order-signal-status').textContent = '正在保存下单信号设置…';
+    try {
+      const response = await fetch(base + 'api/v1/alerts/order-settings', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(orderSignalSettingsBody()) });
+      const packet = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
+      renderOrderSignalSettings(packet);
+      $('alerts-order-signal-status').textContent = '下单信号设置已保存并立即生效';
+      clearError();
+    } catch (caught) {
+      error('保存下单信号设置失败：' + caught.message);
+      $('alerts-order-signal-status').textContent = '保存失败';
+    } finally {
+      $('alerts-order-signal-save').disabled = false;
     }
   }
 
@@ -307,6 +358,8 @@
   $('alerts-next').addEventListener('click', () => { if (!historyNextCursor) return; historyCursors[historyPage + 1] = historyNextCursor; loadHistory(historyNextCursor, historyPage + 1); });
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
+  $('alerts-order-signal-settings').addEventListener('submit', saveOrderSignalSettings);
+  ['alerts-order-alerts', 'alerts-order-aggressive', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));
   $('alerts-test').addEventListener('click', testSettings);
   $('alerts-history-rows').addEventListener('click', event => {
     const button = event.target.closest('.alerts-action');

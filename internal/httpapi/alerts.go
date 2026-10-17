@@ -49,7 +49,7 @@ const alertKlineDefaultInterval = "15m"
 var alertSymbolPattern = regexp.MustCompile(`^[A-Z0-9]{2,32}$`)
 
 // registerAlerts exposes the liquidation alert page, its polling endpoints and the
-// Telegram settings form.
+// Telegram and order-signal settings forms.
 func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/alerts", getOnly(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -90,6 +90,7 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/timeline", getOnly(s.alertTimeline))
 	mux.HandleFunc("/api/v1/alerts/klines", getOnly(s.alertKlines))
 	mux.HandleFunc("/api/v1/alerts/settings", s.alertSettings)
+	mux.HandleFunc("/api/v1/alerts/order-settings", s.alertOrderSettings)
 	mux.HandleFunc("/api/v1/alerts/strategy-settings", s.alertStrategySettings)
 	mux.HandleFunc("/api/v1/alerts/settings/test", postOnly(s.alertSettingsTest))
 	mux.HandleFunc("/api/v1/alerts/trigger", postOnly(s.alertTrigger))
@@ -350,6 +351,22 @@ func (s *Server) alertSettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, fmt.Errorf("settings body must be JSON: %w", err))
 		return
 	}
+	// Keep the order-signal switches when an older client submits only the
+	// Telegram fields. The dedicated order-settings endpoint is the preferred UI
+	// path, but this makes the original settings API backward compatible.
+	current := s.svc.AlertSettings()
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal(body, &fields); err == nil {
+		if _, ok := fields["order_alerts"]; !ok {
+			in.OrderAlerts = current.OrderAlerts
+		}
+		if _, ok := fields["order_aggressive"]; !ok {
+			in.OrderAggressive = current.OrderAggressive
+		}
+		if _, ok := fields["order_steady"]; !ok {
+			in.OrderSteady = current.OrderSteady
+		}
+	}
 	token, err := alertTokenFromBody(body)
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
@@ -357,6 +374,35 @@ func (s *Server) alertSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	in.TelegramToken = token
 	stored, err := s.svc.SaveAlertSettings(r.Context(), in)
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, stored)
+}
+
+// alertOrderSettings reads or stores the live signal categories sent to tvbot.
+// These switches are independent from Telegram notification preferences.
+func (s *Server) alertOrderSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, s.svc.AlertOrderSignalSettings())
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST")
+		problem(w, http.StatusMethodNotAllowed, fmt.Errorf("method must be GET or POST"))
+		return
+	}
+	var in domain.OrderSignalSettings
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&in); err != nil {
+		problem(w, http.StatusBadRequest, fmt.Errorf("order settings body must be JSON: %w", err))
+		return
+	}
+	stored, err := s.svc.SaveAlertOrderSignalSettings(r.Context(), in)
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return

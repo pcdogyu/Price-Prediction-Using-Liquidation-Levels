@@ -16,7 +16,7 @@
 - 4 组扩展窗口回测、60 分钟隔离区、类别先验基线、Log Loss、Brier Score 和 ECE。
 - JSON API、SSE、Prometheus 文本指标、健康检查和内嵌网页仪表盘。
 - 报警页：成交额前 100 币对的 3 分钟爆仓窗口监控、激进/稳健下单信号、180 天预警与信号留存及 Telegram 推送。
-- 自动下单 webhook：预警、激进信号和稳健信号落库后异步发送 TradingView 风格 JSON 到 `APP_STEADY_WEBHOOK_URL`；默认目标为 `https://tvbot.lmitis.com/tvorder`，默认使用 Binance demo 市场，API ID 留空时由 tvbot 使用当前激活的 Binance API。只配置 `APP_STEADY_WEBHOOK_TOKEN_NONCE` 与 `APP_STEADY_WEBHOOK_TOKEN` 后启用，凭据不写入数据库或日志；每个币对和信号类型保留 5 分钟发送抑制。
+- 自动下单 webhook：预警、激进信号和稳健信号落库后异步发送 TradingView 风格 JSON 到 `APP_STEADY_WEBHOOK_URL`；默认目标为 `https://tvbot.lmitis.com/tvorder`，默认使用 Binance demo 市场，API ID 留空时由 tvbot 使用当前激活的 Binance API。报警页“下单信号类别”区块可分别启用或关闭三类自动下单信号，配置持久化到 SQLite；关闭只影响自动发送，不影响历史记录、Telegram 通知或手动触发下单。只配置 `APP_STEADY_WEBHOOK_TOKEN_NONCE` 与 `APP_STEADY_WEBHOOK_TOKEN` 后启用，凭据不写入数据库或日志；每个币对和信号类型保留 5 分钟发送抑制。
 - 币对 K 线页：报警页币对名点击后在新标签页打开该币对 K 线，九档周期、拖动平移、滚轮缩放并叠加下单信号标记。
 
 历史交易所 API 不提供完整的逐笔强平回放，因此回测中的真实强平特征为缺失/零值；实时强平只从服务启动后积累。成交量价值区使用 Binance 官方 USD-M `aggTrades` 日归档重建。连续30天归档完成并重新训练前，预测严格返回 `data_insufficient`。
@@ -68,6 +68,7 @@ GET /api/v1/alerts/signals?symbol=BTCUSDT&kind=steady&limit=50&cursor=<cursor>
 GET /api/v1/alerts/timeline?symbol=BTCUSDT&kind=all&cursor=<cursor>
 GET /api/v1/alerts/klines?symbol=DOGEUSDT&interval=15m&limit=300&before=<RFC3339>
 GET|POST /api/v1/alerts/settings
+GET|POST /api/v1/alerts/order-settings
 GET|POST /api/v1/alerts/strategy-settings
 POST /api/v1/alerts/settings/test
 ```

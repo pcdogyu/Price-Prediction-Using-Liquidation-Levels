@@ -90,6 +90,9 @@ func (r *alertRuntime) defaultSettings() domain.NotificationSettings {
 		NotifyAlerts:     true,
 		NotifyAggressive: true,
 		NotifySteady:     true,
+		OrderAlerts:      true,
+		OrderAggressive:  true,
+		OrderSteady:      true,
 	}
 }
 
@@ -382,6 +385,9 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if !allowNotify || (signal.Kind != domain.SignalAggressive && signal.Kind != domain.SignalSteady) {
 		return
 	}
+	if !rtm.orderSignalEnabled(signal.Kind) {
+		return
+	}
 	if _, _, ok := rtm.webhookSettings(); !ok {
 		return
 	}
@@ -401,6 +407,9 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 // signals.
 func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, allowNotify bool) {
 	if !allowNotify {
+		return
+	}
+	if !rtm.orderSignalEnabled("alert") {
 		return
 	}
 	if _, _, ok := rtm.webhookSettings(); !ok {
@@ -550,6 +559,24 @@ func (rtm *alertRuntime) categoryEnabled(category string) bool {
 	}
 }
 
+// orderSignalEnabled reports whether a live liquidation category may be sent to
+// the trading webhook. These switches are intentionally independent from the
+// Telegram notification categories.
+func (rtm *alertRuntime) orderSignalEnabled(category string) bool {
+	rtm.mu.RLock()
+	defer rtm.mu.RUnlock()
+	switch category {
+	case "alert":
+		return rtm.settings.OrderAlerts
+	case domain.SignalAggressive:
+		return rtm.settings.OrderAggressive
+	case domain.SignalSteady:
+		return rtm.settings.OrderSteady
+	default:
+		return false
+	}
+}
+
 // submitSignal queues a signal message and reports the decision the page shows.
 // The worker coalesces bursts per symbol and kind, so a suppressed submission is a
 // normal outcome rather than a failure.
@@ -612,6 +639,9 @@ func (rtm *alertRuntime) updateSettings(ctx context.Context, in domain.Notificat
 		NotifyAlerts:     in.NotifyAlerts,
 		NotifyAggressive: in.NotifyAggressive,
 		NotifySteady:     in.NotifySteady,
+		OrderAlerts:      in.OrderAlerts,
+		OrderAggressive:  in.OrderAggressive,
+		OrderSteady:      in.OrderSteady,
 		TelegramChatID:   strings.TrimSpace(in.TelegramChatID),
 		TelegramToken:    strings.TrimSpace(rtm.settings.TelegramToken),
 	}
@@ -644,6 +674,28 @@ func (rtm *alertRuntime) updateSettings(ctx context.Context, in domain.Notificat
 		return domain.NotificationSettings{}, err
 	}
 	return rtm.snapshotSettings(), nil
+}
+
+func (rtm *alertRuntime) snapshotOrderSignalSettings() domain.OrderSignalSettings {
+	rtm.mu.RLock()
+	defer rtm.mu.RUnlock()
+	return domain.OrderSignalSettings{
+		Alerts: rtm.settings.OrderAlerts, Aggressive: rtm.settings.OrderAggressive,
+		Steady: rtm.settings.OrderSteady, UpdatedAt: rtm.settings.UpdatedAt,
+	}
+}
+
+func (rtm *alertRuntime) updateOrderSignalSettings(ctx context.Context, in domain.OrderSignalSettings) (domain.OrderSignalSettings, error) {
+	rtm.mu.Lock()
+	out := rtm.settings
+	out.OrderAlerts, out.OrderAggressive, out.OrderSteady = in.Alerts, in.Aggressive, in.Steady
+	out.UpdatedAt = time.Now().UTC()
+	rtm.settings = out
+	rtm.mu.Unlock()
+	if err := rtm.store.SaveAlertSettings(ctx, out); err != nil {
+		return domain.OrderSignalSettings{}, err
+	}
+	return rtm.snapshotOrderSignalSettings(), nil
 }
 
 // sendTest posts one message synchronously so the settings form shows the real

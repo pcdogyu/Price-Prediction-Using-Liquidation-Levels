@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "每页 20 条", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", `id="alerts-threshold-btc" type="number" min="1000"`} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "下单信号类别", "每页 20 条", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-order-signal-settings", `id="alerts-order-alerts" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -94,6 +94,9 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	if !strings.Contains(script, "下单中") || !strings.Contains(script, "button.textContent = original") || strings.Contains(script, "window.confirm") {
 		t.Fatal("manual order trigger must show in-button progress without a confirmation popup")
+	}
+	if !strings.Contains(script, "api/v1/alerts/order-settings") || !strings.Contains(script, "保存下单信号设置") {
+		t.Fatal("the alerts script must expose order signal category settings")
 	}
 	if post := serveAlert(srv, http.MethodPost, "/alerts", nil); post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /alerts status=%d", post.Code)
@@ -378,7 +381,7 @@ func TestAlertSettingsEndpoints(t *testing.T) {
 	if malformed := serveAlert(srv, http.MethodPost, "/api/v1/alerts/settings", strings.NewReader(`{"telegram_enabled":`)); malformed.Code != http.StatusBadRequest {
 		t.Fatalf("malformed JSON must be rejected: %d", malformed.Code)
 	}
-	saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/settings", strings.NewReader(`{"telegram_enabled":true,"telegram_token":"12345:secretvalue","telegram_chat_id":"-1009","notify_alerts":false,"notify_aggressive":true,"notify_steady":false}`))
+	saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/settings", strings.NewReader(`{"telegram_enabled":true,"telegram_token":"12345:secretvalue","telegram_chat_id":"-1009","notify_alerts":false,"notify_aggressive":true,"notify_steady":false,"order_alerts":true,"order_aggressive":false,"order_steady":true}`))
 	if saved.Code != http.StatusOK {
 		t.Fatalf("a valid settings form must save: %d %s", saved.Code, saved.Body.String())
 	}
@@ -389,7 +392,7 @@ func TestAlertSettingsEndpoints(t *testing.T) {
 	if err := json.Unmarshal(saved.Body.Bytes(), &settings); err != nil {
 		t.Fatal(err)
 	}
-	if !settings.TelegramEnabled || settings.TelegramChatID != "-1009" || settings.NotifyAlerts || !settings.NotifyAggressive || settings.NotifySteady {
+	if !settings.TelegramEnabled || settings.TelegramChatID != "-1009" || settings.NotifyAlerts || !settings.NotifyAggressive || settings.NotifySteady || !settings.OrderAlerts || settings.OrderAggressive || !settings.OrderSteady {
 		t.Fatalf("the settings did not round trip: %+v", settings)
 	}
 	if !settings.HasToken || settings.TokenMask != "1234****alue" || settings.TokenSource != "database" {
@@ -409,8 +412,26 @@ func TestAlertSettingsEndpoints(t *testing.T) {
 	if off.Code != http.StatusOK || strings.Contains(off.Body.String(), `"telegram_enabled":true`) {
 		t.Fatalf("disabling must succeed: %d %s", off.Code, off.Body.String())
 	}
+	orderSaved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/order-settings", strings.NewReader(`{"order_alerts":false,"order_aggressive":true,"order_steady":false}`))
+	if orderSaved.Code != http.StatusOK || !strings.Contains(orderSaved.Body.String(), `"order_aggressive":true`) {
+		t.Fatalf("order signal settings must save: %d %s", orderSaved.Code, orderSaved.Body.String())
+	}
+	orderRead := serveAlert(srv, http.MethodGet, "/api/v1/alerts/order-settings", nil)
+	if orderRead.Code != http.StatusOK || !strings.Contains(orderRead.Body.String(), `"order_alerts":false`) || !strings.Contains(orderRead.Body.String(), `"order_steady":false`) {
+		t.Fatalf("order signal settings must round trip: %d %s", orderRead.Code, orderRead.Body.String())
+	}
 	if put := serveAlert(srv, http.MethodPut, "/api/v1/alerts/settings", nil); put.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("PUT settings status=%d", put.Code)
+	}
+}
+
+func TestAlertOrderSettingsMethodValidation(t *testing.T) {
+	srv, _ := alertTestServer(t)
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		w := serveAlert(srv, method, "/api/v1/alerts/order-settings", nil)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s order settings status=%d body=%s", method, w.Code, w.Body.String())
+		}
 	}
 }
 

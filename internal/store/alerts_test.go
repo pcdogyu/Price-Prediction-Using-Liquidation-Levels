@@ -247,7 +247,7 @@ func TestWatchListAndSettingsPersistence(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].Symbol != "SOLUSDT" {
 		t.Fatalf("the watch list must be replaced: %+v err %v", rows, err)
 	}
-	settings := domain.NotificationSettings{TelegramEnabled: true, TelegramToken: "123:secret", TelegramChatID: "@alerts", NotifyAlerts: false, NotifyAggressive: true, NotifySteady: false}
+	settings := domain.NotificationSettings{TelegramEnabled: true, TelegramToken: "123:secret", TelegramChatID: "@alerts", NotifyAlerts: false, NotifyAggressive: true, NotifySteady: false, OrderAlerts: false, OrderAggressive: true, OrderSteady: false}
 	if err := store.SaveAlertSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestWatchListAndSettingsPersistence(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("the settings must be stored: %v %v", found, err)
 	}
-	if !stored.TelegramEnabled || stored.TelegramToken != "123:secret" || stored.TelegramChatID != "@alerts" || stored.NotifyAlerts || !stored.NotifyAggressive || stored.NotifySteady {
+	if !stored.TelegramEnabled || stored.TelegramToken != "123:secret" || stored.TelegramChatID != "@alerts" || stored.NotifyAlerts || !stored.NotifyAggressive || stored.NotifySteady || stored.OrderAlerts || !stored.OrderAggressive || stored.OrderSteady {
 		t.Fatalf("the settings did not round trip: %+v", stored)
 	}
 	settings.TelegramEnabled = false

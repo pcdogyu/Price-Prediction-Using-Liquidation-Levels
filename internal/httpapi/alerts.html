@@ -31,6 +31,23 @@
       <p class="muted">修改后立即用于实时监控；历史预警和信号保留产生时的阈值与周期。</p>
     </form>
   </section>
+  <section class="surface alerts-order-signal-surface">
+    <div class="section-head"><div><h2>下单信号类别</h2><p class="muted alerts-section-lead">选择哪些实时状态可以作为下单信号发送到 tvbot。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>
+    <form id="alerts-order-signal-settings">
+      <div class="table-scroll">
+        <table class="alerts-order-signal-table">
+          <thead><tr><th>信号类别</th><th>触发时机</th><th>自动发送</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-alert"></span>预警信号</th><td>首次达到爆仓阈值</td><td><label class="alerts-signal-toggle"><input id="alerts-order-alerts" type="checkbox"><span>作为下单信号发送</span></label></td></tr>
+            <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-aggressive"></span>激进信号</th><td>安静期结束，等待反向确认</td><td><label class="alerts-signal-toggle"><input id="alerts-order-aggressive" type="checkbox"><span>作为下单信号发送</span></label></td></tr>
+            <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-steady"></span>稳健信号</th><td>反向爆仓确认完成</td><td><label class="alerts-signal-toggle"><input id="alerts-order-steady" type="checkbox"><span>作为下单信号发送</span></label></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="alerts-order-signal-footer"><span id="alerts-order-signal-summary" class="muted">—</span><button id="alerts-order-signal-save" type="submit">保存下单信号设置</button></div>
+      <p class="muted alerts-note">关闭某一类后，该类仍会保留在历史记录中，也不会影响 Telegram 通知；只会停止它自动发送到 tvbot。历史记录中的“触发下单”仍可手动使用。</p>
+    </form>
+  </section>
   <section class="surface">
     <div class="section-head"><h2>Telegram 通知</h2><span id="alerts-notify-status" class="muted" role="status">读取设置</span></div>
     <form id="alerts-settings" class="alerts-settings">

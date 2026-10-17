@@ -208,10 +208,24 @@ type NotificationSettings struct {
 	NotifyAlerts     bool      `json:"notify_alerts"`
 	NotifyAggressive bool      `json:"notify_aggressive"`
 	NotifySteady     bool      `json:"notify_steady"`
+	OrderAlerts      bool      `json:"order_alerts"`
+	OrderAggressive  bool      `json:"order_aggressive"`
+	OrderSteady      bool      `json:"order_steady"`
 	HasToken         bool      `json:"has_token"`
 	TokenMask        string    `json:"token_mask"`
 	TokenSource      string    `json:"token_source"`
 	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// OrderSignalSettings controls which live liquidation categories are forwarded
+// to the trading webhook. It is independent from the Telegram notification
+// switches, so a user can keep receiving a category without turning it into an
+// order signal (or vice versa).
+type OrderSignalSettings struct {
+	Alerts     bool      `json:"order_alerts"`
+	Aggressive bool      `json:"order_aggressive"`
+	Steady     bool      `json:"order_steady"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // NotificationStatus reports the state of the Telegram delivery worker.
