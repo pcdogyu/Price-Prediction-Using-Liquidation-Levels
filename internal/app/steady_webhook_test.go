@@ -38,6 +38,7 @@ func TestBuildSteadyWebhookPayloadMatchesTVOrderContract(t *testing.T) {
 	want := map[string]string{
 		"sent_at": "2026-10-15T19:04:05.123456789Z", "api_id": "okx_bot",
 		"target_exchange": "okx", "trade_env": "demo", "action": "buy",
+		"position_effect": "open", "position_side": "long",
 		"ticker": "BTCUSDT", "coinpair": "BTCUSDT", "price": "67123.45",
 		"exchange": "binance", "interval": "3m", "condition": "steady_liquidation_confirmation",
 		"text": "entry_long", "order_intent": "entry_long", "source": "liquidation_alert",
@@ -56,7 +57,7 @@ func TestBuildSteadyWebhookPayloadMapsShortAndRejectsUnknownSide(t *testing.T) {
 		t.Fatalf("build short payload: %v", err)
 	}
 	var got map[string]string
-	if err := json.Unmarshal(raw, &got); err != nil || got["action"] != "sell" || got["order_intent"] != "entry_short" {
+	if err := json.Unmarshal(raw, &got); err != nil || got["action"] != "sell" || got["order_intent"] != "entry_short" || got["position_effect"] != "open" || got["position_side"] != "short" {
 		t.Fatalf("unexpected short payload: %s", raw)
 	}
 	if _, err := buildSteadyWebhookPayload(domain.TradeSignal{Side: "sideways"}, config.Config{}); err == nil {

@@ -16,6 +16,8 @@ type steadyWebhookPayload struct {
 	TargetExchange string `json:"target_exchange"`
 	TradeEnv       string `json:"trade_env"`
 	Action         string `json:"action"`
+	PositionEffect string `json:"position_effect"`
+	PositionSide   string `json:"position_side"`
 	Ticker         string `json:"ticker"`
 	Coinpair       string `json:"coinpair"`
 	Price          string `json:"price"`
@@ -63,6 +65,7 @@ func buildWebhookPayload(signal domain.TradeSignal, cfg config.Config, condition
 		SentAt: signal.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
 		APIID:  cfg.SteadyWebhookAPIID, TargetExchange: cfg.SteadyWebhookTargetExchange,
 		TradeEnv: cfg.SteadyWebhookTradeEnv, Action: action,
+		PositionEffect: "open", PositionSide: strings.ToLower(strings.TrimSpace(signal.Side)),
 		Ticker: signal.Symbol, Coinpair: signal.Symbol, Price: price,
 		Exchange: cfg.SteadyWebhookExchange, Interval: interval,
 		Condition: condition, Text: intent,
