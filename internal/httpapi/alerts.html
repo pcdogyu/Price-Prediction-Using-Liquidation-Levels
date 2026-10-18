@@ -32,20 +32,20 @@
     </form>
   </section>
   <section class="surface alerts-order-signal-surface">
-    <div class="section-head"><div><h2>下单信号类别</h2><p class="muted alerts-section-lead">三类实时信号都会先预平仓；仅激进和稳健信号可配置是否继续开仓。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>
+    <div class="section-head"><div><h2>下单信号类别</h2><p class="muted alerts-section-lead">三类实时信号都会先预平仓，再发送当前方向的开仓 JSON；激进和稳健信号可配置。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>
     <form id="alerts-order-signal-settings">
       <div class="table-scroll">
         <table class="alerts-order-signal-table">
           <thead><tr><th>信号类别</th><th>触发时机</th><th>自动动作</th></tr></thead>
           <tbody>
-            <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-alert"></span>预警信号</th><td>首次达到爆仓阈值</td><td><span class="muted">自动预平仓（始终开启）</span></td></tr>
+            <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-alert"></span>预警信号</th><td>首次达到爆仓阈值</td><td><span class="muted">预平仓后自动开仓（始终开启）</span></td></tr>
             <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-aggressive"></span>激进信号</th><td>安静期结束，等待反向确认</td><td><label class="alerts-signal-toggle"><input id="alerts-order-aggressive" type="checkbox"><span>作为开仓信号发送</span></label></td></tr>
             <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-steady"></span>稳健信号</th><td>反向爆仓确认完成</td><td><label class="alerts-signal-toggle"><input id="alerts-order-steady" type="checkbox"><span>作为开仓信号发送</span></label></td></tr>
           </tbody>
         </table>
       </div>
       <div class="alerts-order-signal-footer"><span id="alerts-order-signal-summary" class="muted">—</span><button id="alerts-order-signal-save" type="submit">保存下单信号设置</button></div>
-      <p class="muted alerts-note">三类实时信号都会先发送反方向持仓的预平仓指令；关闭激进或稳健后，只会停止对应的后续开仓指令。历史记录仍会保留，也不会影响 Telegram 通知；历史记录中的“触发下单”仍可手动执行完整开仓。</p>
+      <p class="muted alerts-note">每类实时信号都会先发送反方向持仓的预平仓指令，再发送当前方向的开仓 JSON。关闭激进或稳健后，只会停止对应类别的自动发送；预警开仓始终开启。历史记录仍会保留，也不会影响 Telegram 通知；历史记录中的“触发下单”仍可手动执行完整开仓。</p>
     </form>
   </section>
   <section class="surface">

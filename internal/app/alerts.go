@@ -401,9 +401,12 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	}
 }
 
-// submitAlertWebhook sends the initial threshold alert as a close-only signal.
-// The alert page's manual trigger remains an explicit full open action, while
-// live engine events use the authenticated, queued delivery path.
+// submitAlertWebhook sends the initial threshold alert as a direction switch:
+// first close the opposite position, then queue the opening signal. The two
+// requests share the same FIFO webhook worker so the receiver sees the
+// preclose before the entry. The alert page's manual trigger remains an
+// explicit full open action, while live engine events use the authenticated,
+// queued delivery path.
 func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, allowNotify bool) {
 	if !allowNotify {
 		return
@@ -415,7 +418,17 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 		AlertNotionalUSD: alertRow.NotionalUSD, ThresholdUSD: alertRow.ThresholdUSD,
 		WindowMinutes: alertRow.WindowMinutes, FollowUps: alertRow.FollowUps,
 	}
-	rtm.submitPrecloseWebhook(signal)
+	if !rtm.submitPrecloseWebhook(signal) {
+		return
+	}
+	payload, err := buildAlertWebhookPayload(signal, rtm.serviceConfig())
+	if err != nil {
+		rtm.log.Warn("alert webhook payload rejected", "kind", signal.Kind, "symbol", signal.Symbol, "error", err)
+		return
+	}
+	if !rtm.webhook.Submit(notify.Task{Key: "signal-webhook|alert|" + signal.Symbol, Text: string(payload)}) {
+		rtm.log.Warn("alert webhook delivery suppressed", "kind", signal.Kind, "symbol", signal.Symbol)
+	}
 }
 
 // submitPrecloseWebhook sends a close-only request before any optional opening
@@ -566,8 +579,8 @@ func (rtm *alertRuntime) categoryEnabled(category string) bool {
 }
 
 // orderSignalEnabled reports whether a live liquidation category may send an
-// opening request to the trading webhook. Real-time alerts always send their
-// close-only preclose request, so the legacy alert switch is not a gate.
+// opening request to the trading webhook. Initial alerts always send both the
+// preclose and opening requests, so the legacy alert switch is not a gate.
 func (rtm *alertRuntime) orderSignalEnabled(category string) bool {
 	rtm.mu.RLock()
 	defer rtm.mu.RUnlock()

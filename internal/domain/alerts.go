@@ -221,7 +221,7 @@ type NotificationSettings struct {
 	NotifyAggressive bool   `json:"notify_aggressive"`
 	NotifySteady     bool   `json:"notify_steady"`
 	// OrderAlerts is retained for API and SQLite compatibility. Live alerts now
-	// always send a close-only preclose webhook, regardless of this legacy value.
+	// always send preclose and opening webhooks, regardless of this legacy value.
 	OrderAlerts     bool      `json:"order_alerts"`
 	OrderAggressive bool      `json:"order_aggressive"`
 	OrderSteady     bool      `json:"order_steady"`
@@ -233,7 +233,8 @@ type NotificationSettings struct {
 
 // OrderSignalSettings controls which live liquidation categories may send an
 // opening request to the trading webhook. All live categories send a preclose
-// request first; Alerts is retained only for API and storage compatibility.
+// request followed by an opening request; alert opening is always enabled and
+// its field is retained only for API and storage compatibility.
 type OrderSignalSettings struct {
 	Alerts     bool      `json:"order_alerts"`
 	Aggressive bool      `json:"order_aggressive"`

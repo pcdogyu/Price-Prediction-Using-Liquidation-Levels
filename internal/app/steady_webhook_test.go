@@ -196,8 +196,8 @@ func TestDisabledOpeningSignalStillSendsPreclose(t *testing.T) {
 	}
 }
 
-func TestAlertWebhookPreclosesRegardlessOfLegacyAlertSwitch(t *testing.T) {
-	requests := make(chan []byte, 1)
+func TestAlertWebhookPreclosesThenOpensRegardlessOfLegacyAlertSwitch(t *testing.T) {
+	requests := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		requests <- body
@@ -223,17 +223,22 @@ func TestAlertWebhookPreclosesRegardlessOfLegacyAlertSwitch(t *testing.T) {
 	go svc.alerts.webhook.Start(ctx)
 	svc.alerts.submitAlertWebhook(domain.LiquidationAlert{ID: "alert-1", Symbol: "BTCUSDT", TradeSide: "long", TriggeredAt: time.Now().UTC(), ReferencePrice: 67123.45}, true)
 
-	select {
-	case raw := <-requests:
-		var got map[string]string
-		if err := json.Unmarshal(raw, &got); err != nil {
-			t.Fatalf("webhook body is not JSON: %v", err)
+	var payloads [2]map[string]string
+	for i := range payloads {
+		select {
+		case raw := <-requests:
+			if err := json.Unmarshal(raw, &payloads[i]); err != nil {
+				t.Fatalf("webhook body is not JSON: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("alert webhook %d was not delivered", i+1)
 		}
-		if got["position_effect"] != "close" || got["position_side"] != "short" || got["order_intent"] != "close_short" {
-			t.Fatalf("alert must preclose regardless of legacy switch: %s", raw)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("alert preclose webhook was not delivered")
+	}
+	if payloads[0]["position_effect"] != "close" || payloads[0]["position_side"] != "short" || payloads[0]["order_intent"] != "close_short" {
+		t.Fatalf("alert must preclose first regardless of legacy switch: %#v", payloads[0])
+	}
+	if payloads[1]["position_effect"] != "open" || payloads[1]["position_side"] != "long" || payloads[1]["order_intent"] != "entry_long" {
+		t.Fatalf("alert must open after preclose regardless of legacy switch: %#v", payloads[1])
 	}
 }
 
