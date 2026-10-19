@@ -50,6 +50,7 @@ backup_file "$legacy_root/data/binance-credentials.json" tvbot-binance-credentia
 backup_file "$legacy_state/okx-credentials.json" tvbot-okx-credentials.json
 backup_file "$legacy_state/upgrade-status.json" tvbot-upgrade-status.json
 backup_file /etc/tv-okx-bot/config.json tvbot-config.json
+backup_file /etc/liquidation-predictor.env liquidation-predictor.env
 backup_file "$binary" liquidation-predictor
 sha256sum "$backup"/* > "$backup/sha256.txt"
 
@@ -73,6 +74,19 @@ if [[ -f "$legacy_root/data/binance-credentials.json" && ! -f "$data_root/binanc
 fi
 if [[ -f "$legacy_state/okx-credentials.json" && ! -f "$data_root/okx-credentials.json" ]]; then
   install -o liquidation -g liquidation -m 0600 "$legacy_state/okx-credentials.json" "$data_root/okx-credentials.json"
+fi
+
+if [[ -f "$backup/liquidation-predictor.env" ]]; then
+  for key in APP_AUTH_USERNAME APP_AUTH_PASSWORD_HASH; do
+    value="$(grep -E "^${key}=" "$backup/liquidation-predictor.env" | tail -n 1 || true)"
+    if [[ -n "$value" ]]; then
+      if grep -q -E "^${key}=" /etc/liquidation-predictor.env; then
+        sed -i "s|^${key}=.*|${value}|" /etc/liquidation-predictor.env
+      else
+        printf '%s\n' "$value" >> /etc/liquidation-predictor.env
+      fi
+    fi
+  done
 fi
 
 cd "$source_root"
