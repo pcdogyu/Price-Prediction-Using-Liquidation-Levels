@@ -544,6 +544,9 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("order-okx")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("order-status")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("width: 8.6%;")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("order-status-actions")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("flex-wrap: nowrap")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("white-space: nowrap")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("apiDisplayName")) {
 		t.Fatalf("tvbot ui should render exchange-aware API, template and order history controls")
 	}

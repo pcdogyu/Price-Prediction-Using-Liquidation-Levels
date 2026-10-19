@@ -689,7 +689,7 @@ const tvbotHTML = `<!doctype html>
     }
     th.order-status,
     td.order-status {
-      width: 7%;
+      width: 10%;
     }
     th.order-okx,
     td.order-okx {
@@ -739,7 +739,11 @@ const tvbotHTML = `<!doctype html>
       display: flex;
       align-items: center;
       gap: 6px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+      white-space: nowrap;
+    }
+    .status-cell .order-json-button {
+      flex: 0 0 auto;
     }
     .split {
       display: grid;
@@ -5829,7 +5833,7 @@ const tvbotHTML = `<!doctype html>
         const retrying = canRetry && state.retrying[order.signal_id];
         const retryButton = canRetry ? '<button class="btn small" type="button" data-retry-id="' + escapeHTML(order.signal_id) + '"' + (retrying ? " disabled" : "") + ">" + (retrying ? "重试中" : "重试") + "</button>" : "";
         const rawJSONButton = orderRawJSONText(order) ? '<button class="btn small order-json-button" type="button" data-order-json-index="' + index + '">JSON</button>' : "";
-        const statusCell = '<div class="status-cell">' + pill(orderHistoryStatusText(order.status), tone) + rawJSONButton + "</div>";
+        const statusCell = '<div class="status-cell order-status-actions">' + pill(orderHistoryStatusText(order.status), tone) + rawJSONButton + "</div>";
         return "<tr>" +
           '<td class="time">' + escapeHTML(shanghaiTime(order.accepted_at)) + "</td>" +
           '<td class="order-status">' + statusCell + "</td>" +
