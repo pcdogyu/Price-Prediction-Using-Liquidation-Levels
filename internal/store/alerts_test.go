@@ -88,6 +88,22 @@ func TestLiquidationAlertRoundTripAndPagination(t *testing.T) {
 	if len(next.Rows) != 2 || next.NextCursor != "" {
 		t.Fatalf("unexpected second page: %d rows cursor %q", len(next.Rows), next.NextCursor)
 	}
+	// The cycle payload is refreshed later, but the Gamma decision belongs to
+	// the original alert and must survive that refresh.
+	historical := alertRow("gamma-fixed", "BTCUSDT", "long", base, domain.AlertStateWatching)
+	historical.GammaIgnored = true
+	if _, err = store.SaveLiquidationAlert(ctx, historical); err != nil {
+		t.Fatal(err)
+	}
+	historical.Status = domain.AlertStateAggressive
+	historical.GammaIgnored = false
+	if _, err = store.SaveLiquidationAlert(ctx, historical); err != nil {
+		t.Fatal(err)
+	}
+	history, err := store.LiquidationAlertByID(ctx, historical.ID)
+	if err != nil || !history.GammaIgnored {
+		t.Fatalf("alert Gamma decision was rewritten: %+v err=%v", history, err)
+	}
 	short, err := store.LiquidationAlerts(ctx, "BTCUSDT", "short", 10, "")
 	if err != nil || len(short.Rows) != 2 || short.AlertCount != 2 {
 		t.Fatalf("the side filter failed: %d rows count %d err %v", len(short.Rows), short.AlertCount, err)

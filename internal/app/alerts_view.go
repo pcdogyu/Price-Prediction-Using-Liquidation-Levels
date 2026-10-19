@@ -69,7 +69,7 @@ func (s *Service) AlertHistory(ctx context.Context, symbol, side string, limit i
 	if err != nil {
 		return page, err
 	}
-	page.Gamma = s.alertGamma(ctx)
+	page.Gamma = s.alertGammaForSymbol(ctx, symbol)
 	return page, nil
 }
 
@@ -79,7 +79,7 @@ func (s *Service) AlertSignals(ctx context.Context, symbol, kind string, limit i
 	if err != nil {
 		return page, err
 	}
-	page.Gamma = s.alertGamma(ctx)
+	page.Gamma = s.alertGammaForSymbol(ctx, symbol)
 	return page, nil
 }
 
@@ -89,7 +89,7 @@ func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit 
 	if err != nil {
 		return page, err
 	}
-	page.Gamma = s.alertGamma(ctx)
+	page.Gamma = s.alertGammaForSymbol(ctx, symbol)
 	return page, nil
 }
 

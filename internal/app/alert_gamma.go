@@ -9,17 +9,34 @@ import (
 )
 
 const (
-	alertGammaAnchor = "ETHUSDT"
+	alertGammaBTCAnchor = "BTCUSDT"
+	alertGammaETHAnchor = "ETHUSDT"
 	// Gamma is collected every five minutes. Allow a few missed cycles for a
 	// usable snapshot, but never turn an old value into a fresh zero.
 	alertGammaMaxAge = 15 * time.Minute
 )
 
-// alertGamma returns the ETH options GEX regime used as the common gate for
-// every liquidation pair. It reads the in-memory snapshot first and falls back
-// to the persisted latest value during startup or after a collector restart.
+func alertGammaAnchorForSymbol(symbol string) string {
+	if strings.EqualFold(strings.TrimSpace(symbol), alertGammaBTCAnchor) {
+		return alertGammaBTCAnchor
+	}
+	return alertGammaETHAnchor
+}
+
+// alertGamma returns the ETH anchor used by the unfiltered overview. History
+// pages call alertGammaForSymbol so BTCUSDT can use its own anchor.
 func (s *Service) alertGamma(ctx context.Context) domain.AlertGamma {
-	out := domain.AlertGamma{AnchorSymbol: alertGammaAnchor, State: "unavailable"}
+	return s.alertGammaForAnchor(ctx, alertGammaETHAnchor)
+}
+
+func (s *Service) alertGammaForSymbol(ctx context.Context, symbol string) domain.AlertGamma {
+	return s.alertGammaForAnchor(ctx, alertGammaAnchorForSymbol(symbol))
+}
+
+// alertGammaForAnchor reads an anchor's in-memory snapshot first and falls back
+// to the persisted latest value during startup or after a collector restart.
+func (s *Service) alertGammaForAnchor(ctx context.Context, anchor string) domain.AlertGamma {
+	out := domain.AlertGamma{AnchorSymbol: anchor, State: "unavailable"}
 	if s == nil || s.dashboard == nil {
 		return out
 	}
@@ -27,10 +44,10 @@ func (s *Service) alertGamma(ctx context.Context) domain.AlertGamma {
 	var snapshot domain.GammaView
 	var found bool
 	s.dashboard.RLock()
-	snapshot, found = s.dashboard.gamma[alertGammaAnchor]
+	snapshot, found = s.dashboard.gamma[anchor]
 	s.dashboard.RUnlock()
 	if !found && s.store != nil {
-		if stored, err := s.store.LatestGamma(ctx, alertGammaAnchor); err == nil {
+		if stored, err := s.store.LatestGamma(ctx, anchor); err == nil {
 			snapshot = stored
 			found = true
 		}
@@ -60,9 +77,9 @@ func (s *Service) alertGamma(ctx context.Context) domain.AlertGamma {
 	return out
 }
 
-func (rtm *alertRuntime) ethGammaIgnored() bool {
+func (rtm *alertRuntime) gammaIgnored(symbol string) bool {
 	if rtm == nil || rtm.service == nil {
 		return false
 	}
-	return rtm.service.alertGamma(context.Background()).Ignored
+	return rtm.service.alertGammaForSymbol(context.Background(), symbol).Ignored
 }

@@ -64,6 +64,24 @@ func (s *Store) SaveLiquidationAlert(ctx context.Context, alert domain.Liquidati
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts WHERE id=?`, alert.ID).Scan(&prior); err != nil {
 		return false, err
 	}
+	if prior > 0 {
+		// The alert payload is refreshed as its cycle advances, but the Gamma
+		// decision belongs to the original alert time. Preserve it so a later
+		// negative/positive Gamma reading cannot rewrite history.
+		var previousPayload []byte
+		if err = tx.QueryRowContext(ctx, `SELECT payload FROM liquidation_alerts WHERE id=?`, alert.ID).Scan(&previousPayload); err != nil {
+			return false, err
+		}
+		var previous domain.LiquidationAlert
+		if err = json.Unmarshal(previousPayload, &previous); err != nil {
+			return false, err
+		}
+		alert.GammaIgnored = previous.GammaIgnored
+		payload, err = json.Marshal(alert)
+		if err != nil {
+			return false, err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO liquidation_alerts(id,symbol,side,trigger_ts,status,payload,updated_ts) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,payload=excluded.payload,updated_ts=excluded.updated_ts`,
 		alert.ID, alert.Symbol, alert.Side, alert.TriggeredAt.UnixMilli(), alert.Status, payload, updated.UnixMilli()); err != nil {
 		return false, err

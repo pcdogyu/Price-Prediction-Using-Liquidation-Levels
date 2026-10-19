@@ -76,11 +76,11 @@ func (s *Service) gammaLoop(ctx context.Context) {
 	}
 }
 
-// gammaSymbols always includes the ETH options anchor even when an operator
-// narrows APP_SYMBOLS to a smaller futures watch list.
+// gammaSymbols always includes both liquidation Gamma anchors even when an
+// operator narrows APP_SYMBOLS to a smaller futures watch list.
 func (s *Service) gammaSymbols() []string {
-	seen := make(map[string]struct{}, len(s.cfg.Symbols)+1)
-	out := make([]string, 0, len(s.cfg.Symbols)+1)
+	seen := make(map[string]struct{}, len(s.cfg.Symbols)+2)
+	out := make([]string, 0, len(s.cfg.Symbols)+2)
 	for _, symbol := range s.cfg.Symbols {
 		if _, ok := seen[symbol]; ok {
 			continue
@@ -88,8 +88,12 @@ func (s *Service) gammaSymbols() []string {
 		seen[symbol] = struct{}{}
 		out = append(out, symbol)
 	}
-	if _, ok := seen[alertGammaAnchor]; !ok {
-		out = append(out, alertGammaAnchor)
+	for _, anchor := range []string{alertGammaBTCAnchor, alertGammaETHAnchor} {
+		if _, ok := seen[anchor]; ok {
+			continue
+		}
+		seen[anchor] = struct{}{}
+		out = append(out, anchor)
 	}
 	return out
 }

@@ -60,12 +60,16 @@ type LiquidationAlert struct {
 	FollowUps      int        `json:"follow_ups"`
 	Status         string     `json:"status"`
 	ReferencePrice float64    `json:"reference_price,omitempty"`
-	AggressiveID   string     `json:"aggressive_id,omitempty"`
-	AggressiveAt   *time.Time `json:"aggressive_at,omitempty"`
-	SteadyID       string     `json:"steady_id,omitempty"`
-	SteadyAt       *time.Time `json:"steady_at,omitempty"`
-	OppositeUSD    float64    `json:"opposite_usd,omitempty"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	// GammaIgnored records whether the opening side was suppressed by the
+	// negative anchor Gamma gate when this alert was created. It is immutable
+	// for history display even though the alert row is refreshed later.
+	GammaIgnored bool       `json:"gamma_ignored"`
+	AggressiveID string     `json:"aggressive_id,omitempty"`
+	AggressiveAt *time.Time `json:"aggressive_at,omitempty"`
+	SteadyID     string     `json:"steady_id,omitempty"`
+	SteadyAt     *time.Time `json:"steady_at,omitempty"`
+	OppositeUSD  float64    `json:"opposite_usd,omitempty"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // TradeSignal is one order recommendation. Kind distinguishes the aggressive
@@ -83,6 +87,9 @@ type TradeSignal struct {
 	AlertNotionalUSD float64   `json:"alert_notional_usd"`
 	ThresholdUSD     float64   `json:"threshold_usd"`
 	WindowMinutes    int       `json:"window_minutes"`
+	// GammaIgnored records the live Gamma decision made when this signal was
+	// created; it must not be recomputed from the current Gamma for history.
+	GammaIgnored bool `json:"gamma_ignored"`
 	// QuietElapsedSeconds is how long the liquidated side stayed quiet and only
 	// applies to the aggressive signal.
 	QuietElapsedSeconds int64 `json:"quiet_elapsed_seconds,omitempty"`
@@ -187,9 +194,11 @@ type AlertTimelinePage struct {
 	Gamma           AlertGamma          `json:"gamma"`
 }
 
-// AlertGamma is the option-regime snapshot used by every liquidation pair.
-// The value comes from ETHUSDT's Binance options GEX cache; a missing or stale
-// snapshot is never treated as zero and therefore never suppresses an entry.
+// AlertGamma is the current option-regime snapshot used by every liquidation
+// pair. It is a live gate status, not a historical decision for stored rows.
+// The value comes from the BTCUSDT or ETHUSDT Binance options GEX cache; a
+// missing or stale snapshot is never treated as zero and therefore never
+// suppresses an entry.
 type AlertGamma struct {
 	AnchorSymbol string     `json:"anchor_symbol"`
 	State        string     `json:"state"`
@@ -234,9 +243,9 @@ type NotificationSettings struct {
 	NotifyAlerts     bool   `json:"notify_alerts"`
 	NotifyAggressive bool   `json:"notify_aggressive"`
 	NotifySteady     bool   `json:"notify_steady"`
-	// OrderAlerts is retained for API and SQLite compatibility. When ETH Gamma is
-	// negative, live alerts send only the preclose webhook regardless of these
-	// legacy opening switches.
+	// OrderAlerts is retained for API and SQLite compatibility. When the symbol's
+	// Gamma anchor is negative, live alerts send only the preclose webhook
+	// regardless of these legacy opening switches.
 	OrderAlerts     bool      `json:"order_alerts"`
 	OrderAggressive bool      `json:"order_aggressive"`
 	OrderSteady     bool      `json:"order_steady"`
@@ -248,8 +257,8 @@ type NotificationSettings struct {
 
 // OrderSignalSettings controls which live liquidation categories may send an
 // opening request to the trading webhook. All live categories always send a
-// preclose request first. If ETH Gamma is negative, the opening request is
-// suppressed for every category.
+// preclose request first. If the symbol's Gamma anchor is negative, the
+// opening request is suppressed for that category.
 type OrderSignalSettings struct {
 	Alerts     bool      `json:"order_alerts"`
 	Aggressive bool      `json:"order_aggressive"`

@@ -20,11 +20,12 @@
   let alertGamma = { anchor_symbol: 'ETHUSDT', state: 'unavailable', ignored: false };
   const gammaValue = gamma => gamma && Number.isFinite(Number(gamma.net_gex_usd)) ? Number(gamma.net_gex_usd) : null;
   const gammaIgnored = gamma => !!(gamma && gamma.ignored);
-  const directionLabel = (side, gamma) => {
-    if (gammaIgnored(gamma)) return side === 'long' ? '做多 gamma忽略' : side === 'short' ? '做空 gamma 忽略' : '—';
+  const historicalGammaIgnored = row => !!(row && row.gamma_ignored);
+  const directionLabel = (side, ignored) => {
+    if (ignored) return side === 'long' ? '做多 gamma忽略' : side === 'short' ? '做空 gamma 忽略' : '—';
     return sideLabel(side);
   };
-  const directionClass = (side, gamma) => gammaIgnored(gamma) && (side === 'long' || side === 'short') ? ' class="gamma-ignored"' : '';
+  const directionClass = (side, ignored) => ignored && (side === 'long' || side === 'short') ? ' class="gamma-ignored"' : '';
   // Every pair name links to its own K-line page in a new tab, so the alert page
   // keeps its scroll position and filters while the chart opens beside it.
   const chartLink = symbol => '<a class="alerts-symbol-link" target="_blank" rel="noopener" href="' + base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '" title="在新标签页打开 ' + escape(symbol) + ' K线">' + escape(symbol) + '</a>';
@@ -74,7 +75,7 @@
       : '安静 ' + span(signal.quiet_elapsed_seconds) + ' · 顺延 ' + (signal.follow_ups || 0) + ' 次';
     return '<td>' + when(signal.created_at) + '</td><td>' + chartLink(signal.symbol) + '</td>' +
       '<td class="' + (signal.kind === 'steady' ? 'buy' : 'warning') + '">' + (signal.kind === 'steady' ? '稳健' : '激进') + '</td>' +
-      '<td' + directionClass(signal.side, alertGamma) + '>' + escape(directionLabel(signal.side, alertGamma)) + '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span></td>' +
+      '<td' + directionClass(signal.side, historicalGammaIgnored(signal)) + '>' + escape(directionLabel(signal.side, historicalGammaIgnored(signal))) + '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span></td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
       '<td>' + detail + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
       '<td>' + escape(notifyLabels[signal.notify_status] || signal.notify_status || '未推送') + (signal.notify_error ? '<span class="muted" title="' + escape(signal.notify_error) + '"> ⓘ</span>' : '') + '</td>';
@@ -86,7 +87,7 @@
       (row.quiet_until ? '<span class="muted">安静至 ' + when(row.quiet_until) + '</span>' : '');
     return '<td>' + when(row.triggered_at) + '</td><td>' + chartLink(row.symbol) + '</td>' +
       '<td class="warning">预警</td>' +
-      '<td' + directionClass(row.trade_side, alertGamma) + '>' + escape(directionLabel(row.trade_side, alertGamma)) + '<span class="muted"> · ' + escape(liqLabel(row.side)) + '</span></td>' +
+      '<td' + directionClass(row.trade_side, historicalGammaIgnored(row)) + '>' + escape(directionLabel(row.trade_side, historicalGammaIgnored(row))) + '<span class="muted"> · ' + escape(liqLabel(row.side)) + '</span></td>' +
       '<td>' + money(row.notional_usd) + '<span class="muted"> / ' + money(row.threshold_usd) + '</span></td>' +
       '<td>' + detail + '</td><td>' + price(row.reference_price) + '</td><td>' + triggerLink('alert', row.id, row.symbol, row.trade_side, row.reference_price) + '</td><td>' + notifyLink('alert', row.id) + '</td><td>—</td>';
   }
@@ -101,7 +102,8 @@
     alertGamma = gamma || { anchor_symbol: 'ETHUSDT', state: 'unavailable', ignored: false };
     const value = gammaValue(alertGamma);
     const valueText = value === null ? '值不可用' : 'NetGEX ' + money(value);
-    let text = 'ETHUSDT Gamma：' + valueText;
+    const anchor = alertGamma.anchor_symbol || 'ETHUSDT';
+    let text = anchor + ' Gamma：' + valueText;
     if (alertGamma.state === 'stale') text += ' · 数据已过期，暂不抑制开仓';
     else if (gammaIgnored(alertGamma)) text += ' · < 0，预警 / 激进 / 稳健只发送平仓，方向显示 gamma 忽略';
     else if (alertGamma.state === 'ok' || alertGamma.state === 'partial') text += ' · 正常，沿用下单类别开关';

@@ -30,7 +30,7 @@ def timeline_fixture():
                 "id": f"a{index}", "symbol": "BTCUSDT", "side": "long", "trade_side": "long",
                 "triggered_at": at, "notional_usd": 420000, "threshold_usd": 300000,
                 "event_count": 4, "follow_ups": 1, "status": "watching", "quiet_until": at,
-                "reference_price": 68000,
+                "reference_price": 68000, "gamma_ignored": index == 0,
             }
         else:
             item["signal"] = {
@@ -38,7 +38,7 @@ def timeline_fixture():
                 "liquidation_side": "long", "created_at": at, "alert_notional_usd": 420000,
                 "threshold_usd": 300000, "quiet_elapsed_seconds": 600, "follow_ups": 1,
                 "opposite_usd": 120000, "opposite_count": 2, "opposite_elapsed_seconds": 90,
-                "reference_price": 68000, "notify_status": "queued",
+                "reference_price": 68000, "notify_status": "queued", "gamma_ignored": index == 0,
             }
         rows.append(item)
     return rows
@@ -89,6 +89,7 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows")).to_contain_text("稳健")
     expect(page.get_by_text("下单信号类别", exact=True)).to_be_visible()
     expect(page.locator("#alerts-history-rows")).to_contain_text("做多 gamma忽略")
+    assert page.locator(".gamma-ignored").count() == 1
     expect(page.get_by_text("ETHUSDT Gamma：NetGEX $-123", exact=False)).to_be_visible()
 
     page.locator("#alerts-next").click()

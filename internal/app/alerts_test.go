@@ -129,6 +129,91 @@ func TestAlertPagesExposeFreshETHGammaAsCommonGate(t *testing.T) {
 	}
 }
 
+func TestAlertPagesUseBTCGammaOnlyForBTC(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _ := alertTestService(t, "alert-gamma-anchors.db")
+	now := time.Now().UTC()
+	svc.dashboard.Lock()
+	svc.dashboard.gamma["BTCUSDT"] = domain.GammaView{Symbol: "BTCUSDT", State: "ok", Time: now, NetGEXUSD: -10}
+	svc.dashboard.gamma["ETHUSDT"] = domain.GammaView{Symbol: "ETHUSDT", State: "ok", Time: now, NetGEXUSD: 10}
+	svc.dashboard.Unlock()
+
+	btc, err := svc.AlertTimeline(ctx, "BTCUSDT", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if btc.Gamma.AnchorSymbol != "BTCUSDT" || !btc.Gamma.Ignored {
+		t.Fatalf("BTC timeline must use BTC Gamma: %+v", btc.Gamma)
+	}
+	other, err := svc.AlertTimeline(ctx, "SOLUSDT", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.Gamma.AnchorSymbol != "ETHUSDT" || other.Gamma.Ignored {
+		t.Fatalf("non-BTC timeline must use ETH Gamma: %+v", other.Gamma)
+	}
+}
+
+func TestAlertHistoryKeepsGammaDecisionFromSignalTime(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _ := alertTestService(t, "alert-gamma-history.db")
+	base := time.Now().UTC().Truncate(time.Second)
+	svc.alerts.engine.SetClock(func() time.Time { return base })
+	svc.alerts.applyWatch(
+		[]alert.WatchEntry{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 1e9}},
+		[]domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 1e9, UpdatedAt: base}},
+		base, "")
+
+	// The alert and aggressive signal are created while Gamma is positive.
+	svc.dashboard.Lock()
+	svc.dashboard.gamma["BTCUSDT"] = domain.GammaView{Symbol: "BTCUSDT", State: "ok", Time: time.Now().UTC(), NetGEXUSD: 1}
+	svc.dashboard.Unlock()
+	if err := svc.RecordLiquidation(ctx, alertTestEvent("gamma-long", "BTCUSDT", "long", base, 120000)); err != nil {
+		t.Fatal(err)
+	}
+	svc.alerts.persist(ctx, svc.alerts.engine.Tick(base.Add(2*time.Minute)), true)
+
+	// A later negative Gamma suppresses only the newly created steady signal.
+	later := base.Add(3 * time.Minute)
+	svc.dashboard.Lock()
+	svc.dashboard.gamma["BTCUSDT"] = domain.GammaView{Symbol: "BTCUSDT", State: "ok", Time: time.Now().UTC(), NetGEXUSD: -1}
+	svc.dashboard.Unlock()
+	if err := svc.RecordLiquidation(ctx, alertTestEvent("gamma-short", "BTCUSDT", "short", later, 5000)); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := svc.AlertTimeline(ctx, "BTCUSDT", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var alertIgnored, aggressiveIgnored, steadyIgnored *bool
+	for _, row := range page.Rows {
+		if row.Alert != nil {
+			value := row.Alert.GammaIgnored
+			alertIgnored = &value
+		}
+		if row.Signal == nil {
+			continue
+		}
+		value := row.Signal.GammaIgnored
+		switch row.Signal.Kind {
+		case domain.SignalAggressive:
+			aggressiveIgnored = &value
+		case domain.SignalSteady:
+			steadyIgnored = &value
+		}
+	}
+	if alertIgnored == nil || *alertIgnored || aggressiveIgnored == nil || *aggressiveIgnored {
+		t.Fatalf("positive-Gamma history was rewritten: alert=%v aggressive=%v", alertIgnored, aggressiveIgnored)
+	}
+	if steadyIgnored == nil || !*steadyIgnored {
+		t.Fatalf("new negative-Gamma signal was not marked ignored: %v", steadyIgnored)
+	}
+	if !page.Gamma.Ignored {
+		t.Fatalf("current Gamma should remain the live gate: %+v", page.Gamma)
+	}
+}
+
 func TestAlertChartSignalsReplayCurrentStrategySettings(t *testing.T) {
 	ctx := context.Background()
 	svc, _, st := alertTestService(t, "chart-current-settings.db")

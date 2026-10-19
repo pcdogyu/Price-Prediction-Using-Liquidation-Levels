@@ -227,7 +227,7 @@ func TestNegativeETHGammaSuppressesEveryOpeningWebhook(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go svc.alerts.webhook.Start(ctx)
-	svc.alerts.submitSignalWebhook(domain.TradeSignal{Symbol: "BTCUSDT", Kind: domain.SignalSteady, Side: "long", CreatedAt: now, ReferencePrice: 67123.45}, true)
+	svc.alerts.submitSignalWebhook(domain.TradeSignal{Symbol: "ETHUSDT", Kind: domain.SignalSteady, Side: "long", CreatedAt: now, ReferencePrice: 3210.45}, true)
 
 	select {
 	case raw := <-requests:

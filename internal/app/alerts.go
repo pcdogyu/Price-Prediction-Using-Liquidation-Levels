@@ -348,6 +348,12 @@ func (rtm *alertRuntime) observe(ctx context.Context, event domain.LiquidationEv
 // without notifying, because their moment already passed.
 func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNotify bool) {
 	for _, item := range res.Alerts {
+		if allowNotify {
+			// Capture the live decision once when the alert is produced. The store
+			// preserves it across later cycle updates and history never consults
+			// the current Gamma snapshot again.
+			item.GammaIgnored = rtm.gammaIgnored(item.Symbol)
+		}
 		created, err := rtm.store.SaveLiquidationAlert(ctx, item)
 		if err != nil {
 			rtm.log.Error("store liquidation alert failed", "symbol", item.Symbol, "error", err)
@@ -364,6 +370,9 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 		}
 	}
 	for _, item := range res.Signals {
+		if allowNotify {
+			item.GammaIgnored = rtm.gammaIgnored(item.Symbol)
+		}
 		created, err := rtm.store.SaveTradeSignal(ctx, item)
 		if err != nil {
 			rtm.log.Error("store trade signal failed", "symbol", item.Symbol, "error", err)
@@ -388,7 +397,7 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if !rtm.submitPrecloseWebhook(signal) {
 		return
 	}
-	if rtm.ethGammaIgnored() {
+	if signal.GammaIgnored || rtm.gammaIgnored(signal.Symbol) {
 		rtm.log.Info("opening signal suppressed by negative ETH gamma", "kind", signal.Kind, "symbol", signal.Symbol)
 		return
 	}
@@ -407,7 +416,7 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 
 // submitAlertWebhook sends the initial threshold alert as a direction switch:
 // first close the opposite position, then queue the opening signal unless the
-// common ETH Gamma gate is negative. The two requests share the same FIFO
+// symbol's BTC/ETH Gamma anchor is negative. The two requests share the same FIFO
 // webhook worker so the receiver sees the preclose before the entry. The alert
 // page's manual trigger remains an explicit full open action.
 func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, allowNotify bool) {
@@ -424,7 +433,7 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 	if !rtm.submitPrecloseWebhook(signal) {
 		return
 	}
-	if rtm.ethGammaIgnored() {
+	if signal.GammaIgnored || rtm.gammaIgnored(signal.Symbol) {
 		rtm.log.Info("opening signal suppressed by negative ETH gamma", "kind", signal.Kind, "symbol", signal.Symbol)
 		return
 	}
