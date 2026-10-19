@@ -20,6 +20,7 @@ func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
 	legacy := []adminMenuItem{
 		{Key: "menu", Title: "菜单管理", Href: "/admin#menu", Group: "admin"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot#positions", Group: "trading"},
+		{Key: "orders", Title: "订单", Href: "/tvbot/view/orders", Group: "trading"},
 		{Key: "analysis", Title: "分析", Href: "/tvbot#analysis", Group: "trading"},
 		{Key: "custom", Title: "自定义", Href: "/custom", Group: "custom"},
 	}
@@ -30,11 +31,11 @@ func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
 	if migrated[0].Key != "menu" || migrated[0].Title != "菜单管理" || migrated[0].Href != "/menu" || migrated[0].Group != "admin" {
 		t.Fatalf("migrated menu item=%#v", migrated[0])
 	}
-	if migrated[1].Href != "/tvbot/view/positions" || migrated[2].Href != "/tvbot/view/analysis" {
-		t.Fatalf("migrated trading menu=%#v", migrated[1:3])
+	if migrated[1].Href != "/tvbot/view/positions" || migrated[2].Title != "下单信号" || migrated[2].Href != "/tvbot/view/orders" || migrated[3].Href != "/tvbot/view/analysis" {
+		t.Fatalf("migrated trading menu=%#v", migrated[1:4])
 	}
-	if migrated[3] != legacy[3] {
-		t.Fatalf("custom menu item should remain unchanged: %#v", migrated[3])
+	if migrated[4] != legacy[4] {
+		t.Fatalf("custom menu item should remain unchanged: %#v", migrated[4])
 	}
 }
 
@@ -161,7 +162,7 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 		t.Fatalf("unified tvbot page status=%d body prefix=%s", positions.Code, positions.Body.String()[:minInt(180, positions.Body.Len())])
 	}
 	tvbotPage := positions.Body.String()
-	if strings.Count(tvbotPage, `aria-label="主菜单"`) != 1 || !strings.Contains(tvbotPage, `href="/menu">菜单管理`) || !strings.Contains(tvbotPage, `data-tab="system" href="/system">系统信息`) {
+	if strings.Count(tvbotPage, `aria-label="主菜单"`) != 1 || !strings.Contains(tvbotPage, `href="/menu">菜单管理`) || !strings.Contains(tvbotPage, `href="/tvbot/view/orders">下单信号`) || !strings.Contains(tvbotPage, `data-tab="system" href="/system">系统信息`) {
 		t.Fatalf("tvbot should render the configured single top menu: %s", tvbotPage[:minInt(1200, len(tvbotPage))])
 	}
 	if strings.Contains(tvbotPage, `/liquidation/tvbot/view/menu-settings`) {

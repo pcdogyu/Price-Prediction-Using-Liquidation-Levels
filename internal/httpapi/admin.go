@@ -45,7 +45,7 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "options", Title: "期权", Href: "/options", Group: "liquidation"},
 		{Key: "overview", Title: "总览", Href: "/tvbot/view/dashboard", Group: "trading"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions", Group: "trading"},
-		{Key: "orders", Title: "订单", Href: "/tvbot/view/orders", Group: "trading"},
+		{Key: "orders", Title: "下单信号", Href: "/tvbot/view/orders", Group: "trading"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis", Group: "trading"},
 		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot/view/trade-monitor", Group: "trading"},
 		{Key: "symbols", Title: "币对配置", Href: "/tvbot/view/symbols", Group: "trading"},
@@ -91,6 +91,12 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 				changed = true
 			}
 			continue
+		}
+		if migrated[i].Key == "orders" || migrated[i].Href == "/tvbot/view/orders" {
+			if migrated[i].Title != "下单信号" {
+				migrated[i].Title = "下单信号"
+				changed = true
+			}
 		}
 		if href, ok := tradingRoutes[migrated[i].Key]; ok && (migrated[i].Href == "/tvbot" || migrated[i].Href == "/tvbot/" || strings.HasPrefix(migrated[i].Href, "/tvbot#")) {
 			migrated[i].Href = href
