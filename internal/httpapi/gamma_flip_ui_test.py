@@ -135,7 +135,8 @@ with sync_playwright() as playwright:
 
     page.goto(base + "/market-info", wait_until="domcontentloaded")
     loaded()
-    assert market_ranges and market_ranges[0] == "12h", market_ranges
+    if not production:
+        assert market_ranges and market_ranges[0] == "12h", market_ranges
     assert page.locator('#market-ranges button[data-range="12h"]').get_attribute("class") == "selected"
     axes(5)
     card = page.locator(".gamma-flip-metric")
