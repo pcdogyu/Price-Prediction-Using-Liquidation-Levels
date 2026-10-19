@@ -19,6 +19,7 @@ new_binary="$app_root/liquidation-predictor.new"
 test -d "$source_root/.git"
 test -f "$data_root/liquidation.db"
 mkdir -p "$backup"
+git config --global --add safe.directory "$source_root" || true
 
 backup_file() {
   local source="$1" name="$2"
@@ -77,7 +78,7 @@ fi
 cd "$source_root"
 go test ./...
 go vet ./...
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=$revision -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=$build_branch" -o "$new_binary" ./cmd/server
+CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=$revision -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=$build_branch" -o "$new_binary" ./cmd/server
 install -o liquidation -g liquidation -m 0755 "$new_binary" "$binary"
 rm -f "$new_binary"
 
