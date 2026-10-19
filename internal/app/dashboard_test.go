@@ -69,7 +69,7 @@ func TestShortWallsDoNotAccumulateAcrossGaps(t *testing.T) {
 		}
 	}
 }
-func TestMarketCVDUsesWindowBaselineAndPreservesGaps(t *testing.T) {
+func TestMarketCVDUsesWindowBaselineAndRecoversAfterGaps(t *testing.T) {
 	at := time.Now().UTC().Truncate(time.Minute)
 	cs := []domain.Candle{}
 	for i := 0; i < 10; i++ {
@@ -85,7 +85,18 @@ func TestMarketCVDUsesWindowBaselineAndPreservesGaps(t *testing.T) {
 	}
 	cs = append(cs[:2], cs[3:]...)
 	series = BuildMarketSeries(cs, nil, at, at.Add(10*time.Minute), 5*time.Minute)
-	if series[0].CVDUSD != nil || series[1].CVDUSD != nil || series[1].DeltaUSD == nil {
-		t.Fatal("gap became a valid cumulative value")
+	if len(series) != 2 || series[0].CVDUSD == nil || *series[0].CVDUSD != 80 || series[1].CVDUSD == nil || *series[1].CVDUSD != 180 {
+		t.Fatal("partial bucket stopped CVD recovery", series)
+	}
+	cs = []domain.Candle{}
+	for i := 0; i < 5; i++ {
+		cs = append(cs, domain.Candle{Time: at.Add(time.Duration(i) * time.Minute), VolumeUSD: 100, TakerBuyUSD: 60})
+	}
+	for i := 10; i < 13; i++ {
+		cs = append(cs, domain.Candle{Time: at.Add(time.Duration(i) * time.Minute), VolumeUSD: 100, TakerBuyUSD: 60})
+	}
+	series = BuildMarketSeries(cs, nil, at, at.Add(15*time.Minute), 5*time.Minute)
+	if series[1].CVDUSD != nil || series[2].CVDUSD == nil || *series[2].CVDUSD != 160 {
+		t.Fatal("CVD did not resume after an empty bucket", series)
 	}
 }

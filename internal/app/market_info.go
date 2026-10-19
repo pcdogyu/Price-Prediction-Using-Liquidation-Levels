@@ -127,7 +127,6 @@ func BuildMarketSeries(candles []domain.Candle, metrics []domain.MarketMetric, f
 			p.TopPositionRatio = m.TopPositionRatio
 		}
 		buy, sell := 0., 0.
-		expected := int(end.Sub(at) / time.Minute)
 		count := 0
 		for ci < len(candles) && candles[ci].Time.Before(end) {
 			c := candles[ci]
@@ -139,26 +138,18 @@ func BuildMarketSeries(candles []domain.Candle, metrics []domain.MarketMetric, f
 			sell += math.Max(0, c.VolumeUSD-c.TakerBuyUSD)
 			count++
 		}
-		if expected > 0 && count >= expected {
+		// Keep CVD useful when an individual 1-minute candle is missing.  The
+		// exchange data we do have still represents real aggressive flow, and a
+		// later complete bucket should be able to resume from the last known
+		// cumulative value instead of losing the rest of the selected window.
+		if count > 0 {
 			p.BuyUSD = ptr(buy)
 			p.SellUSD = ptr(sell)
 			p.DeltaUSD = ptr(buy - sell)
 			cvd += buy - sell
 			p.CVDUSD = ptr(cvd)
-		} else {
-			cvd = 0
 		}
 		out = append(out, p)
-	}
-	// Once a gap occurs, subsequent cumulative values cannot claim complete CVD.
-	complete := true
-	for i := range out {
-		if out[i].DeltaUSD == nil {
-			complete = false
-		}
-		if !complete {
-			out[i].CVDUSD = nil
-		}
 	}
 	return out
 }
