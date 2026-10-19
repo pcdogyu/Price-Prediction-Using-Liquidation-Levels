@@ -41,9 +41,11 @@ func renderTVBotHTML(info BuildInfo, r *http.Request) string {
 	}
 	link := func(path string) string { return prefix + path }
 	assets := `<script src="` + html.EscapeString(link("/assets/theme.js")) + `"></script><link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `">`
-	nav := `<div class="merged-liquidation-nav"><a class="merged-brand" href="` + html.EscapeString(link("/alerts")) + `">清算墙雷达</a><div class="merged-links"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link("/tvbot#positions")) + `">持仓</a><a href="` + html.EscapeString(link("/admin")) + `">系统管理</a></div><button type="button" class="merged-theme-toggle" id="tvbot-theme" aria-label="切换主题"></button></div><style>.merged-liquidation-nav{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:18px;padding:12px 22px;background:var(--nav-bg);color:var(--text);border-bottom:1px solid var(--line)}.merged-brand{font-weight:800;color:var(--buy);text-decoration:none;white-space:nowrap}.merged-links{display:flex;flex-wrap:wrap;gap:8px}.merged-links a{color:var(--muted);text-decoration:none;padding:6px 8px;border-radius:7px}.merged-links a:hover{color:var(--text);background:var(--hover-bg)}.merged-theme-toggle{margin-left:auto;border:1px solid var(--strong-line);border-radius:7px;padding:6px 10px;background:var(--control-bg);color:var(--text);font:inherit;cursor:pointer;white-space:nowrap}.merged-theme-toggle:hover{background:var(--hover-bg)}@media(max-width:760px){.merged-liquidation-nav{align-items:flex-start;flex-wrap:wrap;gap:8px}.merged-links{gap:3px}.merged-theme-toggle{margin-left:0}}</style><script>(()=>{const button=document.getElementById('tvbot-theme');const update=()=>{const light=document.documentElement.dataset.theme==='light';button.textContent=light?'深色主题':'浅色主题';button.setAttribute('aria-label','当前'+(light?'浅色':'深色')+'主题，切换至'+(light?'深色':'浅色')+'主题')};button.addEventListener('click',()=>window.LiquidationTheme.toggle());window.addEventListener('themechange',update);update()})();</script>`
 	page := strings.Replace(tvbotHTML, "</head>", assets+"</head>", 1)
-	page = strings.Replace(page, "<body>", "<body class=\"tvbot-page\">"+nav, 1)
+	liquidationLinks := `<div class="liquidation-links" aria-label="主菜单"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link("/tvbot#positions")) + `">持仓</a><a href="` + html.EscapeString(link("/menu")) + `">菜单管理</a><a href="` + html.EscapeString(link("/admin")) + `">系统管理</a></div>`
+	themeScript := `<script>(()=>{const button=document.getElementById('tvbot-theme');const update=()=>{const light=document.documentElement.dataset.theme==='light';button.textContent=light?'深色主题':'浅色主题';button.setAttribute('aria-label','当前'+(light?'浅色':'深色')+'主题，切换至'+(light?'深色':'浅色')+'主题')};button.addEventListener('click',()=>window.LiquidationTheme.toggle());window.addEventListener('themechange',update);update()})();</script>`
+	page = strings.Replace(page, "{{LIQUIDATION_LINKS}}", liquidationLinks, 1)
+	page = strings.Replace(page, "</body>", themeScript+"</body>", 1)
 	return strings.Replace(page, "{{APP_FOOTER}}", html.EscapeString(info.FooterText()), 1)
 }
 
@@ -219,26 +221,29 @@ const tvbotHTML = `<!doctype html>
       position: sticky;
       top: 0;
       z-index: 5;
-      background: rgba(255, 255, 255, 0.96);
+      background: var(--nav-bg);
       border-bottom: 1px solid var(--line);
       box-shadow: 0 2px 12px rgba(23, 32, 51, 0.04);
     }
     .bar {
       width: 100%;
       margin: 0 auto;
-      padding: 14px 18px;
+      padding: 10px 12px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 18px;
+      gap: 10px;
+      overflow-x: auto;
+      scrollbar-width: thin;
     }
     .brand {
       display: flex;
       align-items: center;
       gap: 10px;
-      min-width: 180px;
+      flex: 0 0 auto;
+      min-width: 0;
       font-weight: 700;
       font-size: 17px;
+      white-space: nowrap;
     }
     .mark {
       width: 28px;
@@ -254,9 +259,40 @@ const tvbotHTML = `<!doctype html>
     .header-controls {
       display: flex;
       align-items: center;
-      justify-content: flex-end;
-      gap: 8px;
-      flex-wrap: wrap;
+      gap: 6px;
+      flex: 1 0 auto;
+      min-width: 0;
+      white-space: nowrap;
+    }
+    .liquidation-links {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+    .liquidation-links a {
+      color: var(--muted);
+      text-decoration: none;
+      padding: 7px 8px;
+      border-radius: 7px;
+      white-space: nowrap;
+    }
+    .liquidation-links a:hover {
+      color: var(--text);
+      background: var(--hover-bg);
+    }
+    .theme-toggle {
+      flex: 0 0 auto;
+      min-height: 34px;
+      padding: 7px 9px;
+      border: 1px solid var(--strong-line);
+      border-radius: 6px;
+      background: var(--control-bg);
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
     }
     .global-exchange-switch {
       display: inline-flex;
@@ -286,8 +322,10 @@ const tvbotHTML = `<!doctype html>
     nav {
       display: flex;
       gap: 4px;
-      flex-wrap: wrap;
-      justify-content: flex-end;
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: thin;
     }
     nav button, .btn {
       border: 1px solid var(--line);
@@ -1235,9 +1273,9 @@ const tvbotHTML = `<!doctype html>
       overflow-wrap: anywhere;
     }
     @media (max-width: 880px) {
-      .bar { align-items: flex-start; flex-direction: column; }
-      .header-controls { justify-content: flex-start; }
-      nav { justify-content: flex-start; }
+      .bar { gap: 6px; }
+      .liquidation-links { gap: 0; }
+      .liquidation-links a { padding-left: 6px; padding-right: 6px; }
       .status, .grid, .grid.two, .split, .api-key-layout, .analysis-metrics, .asset-metrics, .symbol-metrics, .position-metrics, .dashboard-balance-grid, .analysis-balance-grid, .position-monitor-grid { grid-template-columns: 1fr; }
       .template-title-row { grid-template-columns: 1fr; }
       .analysis-period-row { flex-direction: column; }
@@ -1256,7 +1294,8 @@ const tvbotHTML = `<!doctype html>
 <body>
   <header>
     <div class="bar">
-      <div class="brand"><span class="mark">TV</span><span>OKX Bot</span></div>
+      <div class="brand" aria-label="清算墙雷达"><span class="mark">TV</span><span>OKX Bot</span></div>
+      {{LIQUIDATION_LINKS}}
       <div class="header-controls">
         <div class="global-exchange-switch" role="group" aria-label="全局交易所">
           <button type="button" data-global-exchange="okx" aria-selected="true">OKX</button>
@@ -1276,6 +1315,7 @@ const tvbotHTML = `<!doctype html>
           <button type="button" data-tab="menuSettings">菜单设置</button>
           <button type="button" data-tab="upgrade">升级</button>
         </nav>
+        <button type="button" class="theme-toggle" id="tvbot-theme" aria-label="切换主题"></button>
       </div>
     </div>
   </header>
