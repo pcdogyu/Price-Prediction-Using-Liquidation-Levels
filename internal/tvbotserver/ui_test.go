@@ -56,6 +56,26 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 }
 
+func TestTVBotSystemInfoSeparatesDashboardBalance(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/system", nil))
+	dashboardStart := strings.Index(page, `<section id="dashboard"`)
+	systemStart := strings.Index(page, `<section id="system"`)
+	if dashboardStart < 0 || systemStart < 0 || dashboardStart >= systemStart {
+		t.Fatalf("dashboard and system sections are missing or out of order: dashboard=%d system=%d", dashboardStart, systemStart)
+	}
+	dashboard := page[dashboardStart:systemStart]
+	for _, removed := range []string{`id="dashboard-config"`, `id="system-config"`, `id="check-okx"`, `id="okx-output"`} {
+		if strings.Contains(dashboard, removed) {
+			t.Fatalf("dashboard should not contain system information marker %s", removed)
+		}
+	}
+	for _, want := range []string{`id="overview-okx-eq"`, `id="overview-binance-eq"`, `id="system-config"`, `id="check-okx"`, `id="okx-output"`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("tvbot page missing %s", want)
+		}
+	}
+}
+
 func TestBuildInfoFooterUsesShanghaiTimeAndShortHash(t *testing.T) {
 	footer := (BuildInfo{
 		CommitTime:   "2026-10-19T05:25:53Z",

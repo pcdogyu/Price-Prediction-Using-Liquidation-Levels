@@ -21,6 +21,7 @@ type tvbotViewRoute struct {
 
 var tvbotViewRoutes = []tvbotViewRoute{
 	{Slug: "dashboard", Tab: "dashboard", Label: "总览"},
+	{Slug: "system", Tab: "system", Label: "系统信息"},
 	{Slug: "positions", Tab: "positions", Label: "持仓"},
 	{Slug: "analysis", Tab: "analysis", Label: "订单分析"},
 	{Slug: "symbols", Tab: "symbols", Label: "币对配置"},
@@ -115,7 +116,7 @@ func renderTVBotHTML(info BuildInfo, r *http.Request) string {
 	link := func(path string) string { return prefix + path }
 	assets := `<script src="` + html.EscapeString(link("/assets/theme.js")) + `"></script><link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `">`
 	page := strings.Replace(tvbotHTML, "</head>", assets+"</head>", 1)
-	liquidationLinks := `<div class="app-links" aria-label="主菜单"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link(tvbotViewPath("dashboard"))) + `">总览</a><a href="` + html.EscapeString(link(tvbotViewPath("positions"))) + `">持仓</a><a href="` + html.EscapeString(link("/menu")) + `">菜单管理</a><a href="` + html.EscapeString(link("/admin")) + `">系统管理</a></div>`
+	liquidationLinks := `<div class="app-links" aria-label="主菜单"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link(tvbotViewPath("dashboard"))) + `">总览</a><a href="` + html.EscapeString(link(tvbotViewPath("positions"))) + `">持仓</a><a href="` + html.EscapeString(link("/system")) + `">系统信息</a><a href="` + html.EscapeString(link("/menu")) + `">菜单管理</a><a href="` + html.EscapeString(link("/admin")) + `">系统管理</a></div>`
 	var sectionLinks strings.Builder
 	for _, route := range tvbotViewRoutes {
 		sectionLinks.WriteString(`<a data-tab="` + html.EscapeString(route.Tab) + `" href="` + html.EscapeString(link("/tvbot/view/"+route.Slug)) + `">` + html.EscapeString(route.Label) + `</a>`)
@@ -1445,19 +1446,6 @@ const tvbotHTML = `<!doctype html>
         <h2>总览</h2>
         <div class="actions" style="margin-top:0">
           <button class="btn" type="button" id="refresh-all">刷新</button>
-          <button class="btn success" type="button" id="check-okx">检查交易所</button>
-        </div>
-      </div>
-      <div class="split">
-        <div>
-          <h3>运行配置</h3>
-          <table style="margin-top:10px">
-            <tbody id="dashboard-config"></tbody>
-          </table>
-        </div>
-        <div>
-          <h3>交易所检查</h3>
-          <pre id="okx-output">-</pre>
         </div>
       </div>
       <div class="dashboard-balance-grid">
@@ -1486,6 +1474,27 @@ const tvbotHTML = `<!doctype html>
             <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="overview-binance-updated">-</div></div>
           </div>
           <svg id="overview-binance-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Binance USDT balance chart"></svg>
+        </div>
+      </div>
+    </section>
+
+    <section id="system">
+      <div class="section-head">
+        <h2>系统信息</h2>
+        <div class="actions" style="margin-top:0">
+          <button class="btn success" type="button" id="check-okx">检查交易所</button>
+        </div>
+      </div>
+      <div class="split">
+        <div>
+          <h3>运行配置</h3>
+          <table style="margin-top:10px">
+            <tbody id="system-config"></tbody>
+          </table>
+        </div>
+        <div>
+          <h3>交易所检查</h3>
+          <pre id="okx-output">-</pre>
         </div>
       </div>
     </section>
@@ -2025,6 +2034,7 @@ const tvbotHTML = `<!doctype html>
     const coinpairBlockPollIntervalMs = 20000;
     const defaultMenuItems = [
       { tab: "dashboard", label: "总览" },
+      { tab: "system", label: "系统信息", locked: true },
       { tab: "positions", label: "持仓" },
       { tab: "analysis", label: "订单分析" },
       { tab: "symbols", label: "币对配置" },
@@ -3095,6 +3105,7 @@ const tvbotHTML = `<!doctype html>
 
     const tvbotViewTabBySlug = {
       dashboard: "dashboard",
+      system: "system",
       positions: "positions",
       analysis: "analysis",
       symbols: "symbols",
@@ -3111,9 +3122,12 @@ const tvbotHTML = `<!doctype html>
     function tabFromViewPath() {
       const marker = "/tvbot/view/";
       const start = location.pathname.indexOf(marker);
-      if (start < 0) return "";
-      const slug = location.pathname.slice(start + marker.length).split("/")[0];
-      return tvbotViewTabBySlug[slug] || "";
+      if (start >= 0) {
+        const slug = location.pathname.slice(start + marker.length).split("/")[0];
+        if (tvbotViewTabBySlug[slug]) return tvbotViewTabBySlug[slug];
+      }
+      const path = location.pathname.replace(/\/+$/, "");
+      return path.endsWith("/system") ? "system" : "";
     }
 
     function tvbotViewURL(slug) {
@@ -3197,7 +3211,8 @@ const tvbotHTML = `<!doctype html>
         tabLoads.push(loadTradeMonitor());
       }
       await Promise.allSettled(tabLoads);
-      renderDashboard();
+      renderSystem();
+      if (target === "dashboard") renderDashboard();
     }
 
     async function loadConfig() {
@@ -3205,6 +3220,7 @@ const tvbotHTML = `<!doctype html>
       applyMenuSettings();
       syncActiveTabAfterMenuSettings();
       renderConfig();
+      renderSystem();
       initializeSymbolMarket();
       renderOrderSettings();
       renderPositionMonitor();
@@ -3637,6 +3653,11 @@ const tvbotHTML = `<!doctype html>
     function renderDashboard() {
       if (!state.config) return;
       renderGlobalExchangeSwitch();
+      renderBalanceOverview();
+    }
+
+    function renderSystem() {
+      if (!state.config) return;
       const t = state.config.trading || {};
       const fillMonitor = t.fill_monitor || {};
       const fillMonitorExchanges = Array.isArray(fillMonitor.exchange) ? fillMonitor.exchange.join(", ") : "binance";
@@ -3669,8 +3690,7 @@ const tvbotHTML = `<!doctype html>
         ["自动补回", autoReentry.enabled ? ("enabled / " + asText(autoReentry.reentry_amount_pct) + "%") : "disabled"],
         ["持仓扫描", positionMonitorExchanges ? (positionMonitorExchanges + " / " + asText(positionMonitor.poll_interval_seconds) + "s / +" + asText(positionMonitor.take_profit_pct) + "% / -" + asText(positionMonitor.stop_loss_pct) + "%") : "disabled"]
       ];
-      $("dashboard-config").innerHTML = rows.map((row) => "<tr><th>" + escapeHTML(row[0]) + "</th><td>" + escapeHTML(asText(row[1])) + "</td></tr>").join("");
-      renderBalanceOverview();
+      $("system-config").innerHTML = rows.map((row) => "<tr><th>" + escapeHTML(row[0]) + "</th><td>" + escapeHTML(asText(row[1])) + "</td></tr>").join("");
     }
 
     function renderBalanceOverview() {

@@ -104,6 +104,10 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	if adminPage.Code != http.StatusOK || !strings.Contains(adminPage.Body.String(), `id="system-health"`) || !strings.Contains(adminPage.Body.String(), `status-ok`) || strings.Contains(adminPage.Body.String(), `<pre id="system">`) {
 		t.Fatalf("system health table missing or legacy JSON remains: status=%d body=%s", adminPage.Code, adminPage.Body.String())
 	}
+	systemPage := serve(http.MethodGet, "/system", "", rootCookie)
+	if systemPage.Code != http.StatusOK || !strings.Contains(systemPage.Body.String(), `<section id="system"`) || !strings.Contains(systemPage.Body.String(), `id="system-config"`) || !strings.Contains(systemPage.Body.String(), `id="check-okx"`) {
+		t.Fatalf("system info route status=%d body=%s", systemPage.Code, systemPage.Body.String())
+	}
 	created := serve(http.MethodPost, "/api/v1/admin/users", `{"username":"ordinary","password":"ordinary-password","role":"user"}`, rootCookie)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create user status=%d body=%s", created.Code, created.Body.String())
@@ -113,6 +117,10 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	ordinaryCookie := &http.Cookie{Name: sessionCookie, Value: ordinaryToken, Path: "/"}
+	ordinarySystem := serve(http.MethodGet, "/system", "", ordinaryCookie)
+	if ordinarySystem.Code != http.StatusOK {
+		t.Fatalf("ordinary user should be able to view system info: status=%d body=%s", ordinarySystem.Code, ordinarySystem.Body.String())
+	}
 	for _, path := range []string{"/admin", "/menu", "/api/v1/admin/users", "/api/v1/admin/menu", "/upgrade"} {
 		method := http.MethodGet
 		if path == "/api/v1/admin/menu" {

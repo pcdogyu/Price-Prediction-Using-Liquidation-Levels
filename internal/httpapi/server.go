@@ -90,6 +90,7 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.Handle("/upgrade", http.HandlerFunc(s.tvbotRoute))
 	mux.HandleFunc("/api/v1/auth/check", getOnly(s.authCheck))
 	mux.HandleFunc("/admin", getOnly(s.adminPage))
+	mux.Handle("/system", http.HandlerFunc(s.systemPage))
 	mux.HandleFunc("/api/v1/admin/users", s.adminUsers)
 	mux.HandleFunc("/api/v1/admin/users/", s.adminUsers)
 	mux.HandleFunc("/api/v1/admin/menu", s.adminMenu)
@@ -183,6 +184,18 @@ func (s *Server) tvbotRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.tvbot.ServeHTTP(w, r)
+}
+
+func (s *Server) systemPage(w http.ResponseWriter, r *http.Request) {
+	if s.tvbot == nil {
+		problem(w, http.StatusServiceUnavailable, errors.New("trading dashboard is not configured"))
+		return
+	}
+	request := r.Clone(r.Context())
+	request.URL.Path = "/tvbot/view/system"
+	request.URL.RawPath = ""
+	request.RequestURI = request.URL.RequestURI()
+	s.tvbot.ServeHTTP(w, request)
 }
 func (s *Server) ListenAndServe() error              { return s.http.ListenAndServe() }
 func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }
@@ -339,7 +352,7 @@ func (s *Server) renderLoginForRequest(w http.ResponseWriter, r *http.Request, s
 	html := strings.ReplaceAll(string(loginHTML), "{{LOGIN_ACTION}}", s.auth.BasePath()+"auth/login")
 	html = strings.ReplaceAll(html, "{{ERROR}}", message)
 	next := ""
-	if r.URL.Path == "/tvbot" || strings.HasPrefix(r.URL.Path, "/tvbot/") || r.URL.Path == "/upgrade" {
+	if r.URL.Path == "/system" || r.URL.Path == "/tvbot" || strings.HasPrefix(r.URL.Path, "/tvbot/") || r.URL.Path == "/upgrade" {
 		next = htmlEscapeAttribute(sanitizeLoginNext(r.URL.RequestURI()))
 	}
 	html = strings.ReplaceAll(html, "{{NEXT}}", next)
