@@ -76,6 +76,15 @@ if [[ -f "$legacy_state/okx-credentials.json" && ! -f "$data_root/okx-credential
   install -o liquidation -g liquidation -m 0600 "$legacy_state/okx-credentials.json" "$data_root/okx-credentials.json"
 fi
 
+cd "$source_root"
+go test ./...
+go vet ./...
+CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=$revision -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=$build_branch" -o "$new_binary" ./cmd/server
+install -o liquidation -g liquidation -m 0755 "$new_binary" "$binary"
+rm -f "$new_binary"
+
+install -o root -g root -m 0644 deploy/liquidation-predictor.service /etc/systemd/system/liquidation-predictor.service
+install -o root -g root -m 0644 deploy/liquidation-predictor.env /etc/liquidation-predictor.env
 if [[ -f "$backup/liquidation-predictor.env" ]]; then
   for key in APP_AUTH_USERNAME APP_AUTH_PASSWORD_HASH; do
     value="$(grep -E "^${key}=" "$backup/liquidation-predictor.env" | tail -n 1 || true)"
@@ -88,16 +97,6 @@ if [[ -f "$backup/liquidation-predictor.env" ]]; then
     fi
   done
 fi
-
-cd "$source_root"
-go test ./...
-go vet ./...
-CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=$revision -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=$build_branch" -o "$new_binary" ./cmd/server
-install -o liquidation -g liquidation -m 0755 "$new_binary" "$binary"
-rm -f "$new_binary"
-
-install -o root -g root -m 0644 deploy/liquidation-predictor.service /etc/systemd/system/liquidation-predictor.service
-install -o root -g root -m 0644 deploy/liquidation-predictor.env /etc/liquidation-predictor.env
 install -o root -g root -m 0440 deploy/liquidation-predictor-upgrade.sudoers /etc/sudoers.d/liquidation-predictor-upgrade
 install -o root -g root -m 0644 deploy/nginx-liquidation-locations.conf /etc/nginx/snippets/liquidation-locations.conf
 install -o root -g root -m 0644 deploy/nginx-tvbot.lmitis.com /etc/nginx/sites-enabled/tv-okx-bot.conf
