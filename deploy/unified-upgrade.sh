@@ -129,7 +129,9 @@ nginx -t
 systemctl daemon-reload
 systemctl restart liquidation-predictor.service
 
-for _ in $(seq 1 30); do
+# A first-time legacy SQLite import can take longer than the normal restart
+# while the service keeps its health port closed during the transaction.
+for _ in $(seq 1 150); do
   if systemctl is-active --quiet liquidation-predictor.service && curl -fsS http://127.0.0.1:9090/healthz >/dev/null && curl -fsS http://127.0.0.1:9090/readyz >/dev/null; then
     printf '%s\n' "$backup" > "$app_root/dashboard-backup-path"
     echo "deployed_revision=$revision"
