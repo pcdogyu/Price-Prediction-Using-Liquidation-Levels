@@ -95,6 +95,18 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 		_ = orders.Close()
 		return nil, err
 	}
+	userCredentials, err := newUserCredentialResolver(
+		credentialsDir,
+		cfg.AuthUsername,
+		okxFile,
+		binanceFile,
+		tvbotokx.Credentials{APIKey: secrets.OKXAPIKey, SecretKey: secrets.OKXSecretKey, Passphrase: secrets.OKXPassphrase},
+		tvbotbinance.Credentials{APIKey: secrets.BinanceAPIKey, SecretKey: secrets.BinanceSecretKey},
+	)
+	if err != nil {
+		_ = orders.Close()
+		return nil, err
+	}
 
 	runner, err := tvbotupgrade.NewShellRunnerFromEnv()
 	if err != nil {
@@ -131,7 +143,8 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 			Binance: tvbotbinance.Trader{CredentialProvider: binanceCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
 		},
 		OKXCredentials: okxCredentials, BinanceCredentials: binanceCredentials,
-		OKXHTTPClient: &http.Client{Timeout: 15 * time.Second}, BinanceHTTPClient: &http.Client{Timeout: 15 * time.Second},
+		UserCredentialResolver: userCredentials,
+		OKXHTTPClient:          &http.Client{Timeout: 15 * time.Second}, BinanceHTTPClient: &http.Client{Timeout: 15 * time.Second},
 		AdminToken: secrets.AdminToken, AdminUser: secrets.AdminUser, AdminPass: secrets.AdminPassword,
 		Logger: logger, Upgrade: upgrade, BuildInfo: build,
 	}

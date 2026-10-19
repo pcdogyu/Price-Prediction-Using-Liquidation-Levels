@@ -2040,8 +2040,13 @@ func (s *Server) fetchBinancePendingOrders(ctx context.Context, cfg config.Confi
 }
 
 func (s *Server) cachedPositionEntryFills(key string, now time.Time, refresh bool, fetch func() ([]positionEntryFill, error)) ([]positionEntryFill, error) {
+	cache := s.positionEntryCache
+	if cache == nil {
+		cache = &positionEntryFillCache{}
+		s.positionEntryCache = cache
+	}
 	if !refresh {
-		if fills, ok := s.positionEntryCache.get(key, now); ok {
+		if fills, ok := cache.get(key, now); ok {
 			return fills, nil
 		}
 	}
@@ -2049,7 +2054,7 @@ func (s *Server) cachedPositionEntryFills(key string, now time.Time, refresh boo
 	if err != nil {
 		return nil, err
 	}
-	s.positionEntryCache.set(key, now, fills)
+	cache.set(key, now, fills)
 	return fills, nil
 }
 

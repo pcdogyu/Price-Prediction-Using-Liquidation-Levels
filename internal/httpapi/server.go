@@ -117,9 +117,9 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 func (s *Server) SetTVBot(handler http.Handler) {
 	s.tvbot = handler
 	if setter, ok := handler.(interface {
-		SetUnifiedAuth(func(http.ResponseWriter, *http.Request) bool, func(http.ResponseWriter, *http.Request) bool, func(http.ResponseWriter, *http.Request), func(http.ResponseWriter, *http.Request))
+		SetUnifiedAuth(func(http.ResponseWriter, *http.Request) bool, func(http.ResponseWriter, *http.Request) bool, func(*http.Request) (string, bool), func(http.ResponseWriter, *http.Request), func(http.ResponseWriter, *http.Request))
 	}); ok {
-		setter.SetUnifiedAuth(s.requireUnifiedUser, s.requireUnifiedAdmin, s.redirectUnifiedLogin, s.logout)
+		setter.SetUnifiedAuth(s.requireUnifiedUser, s.requireUnifiedAdmin, s.unifiedUser, s.redirectUnifiedLogin, s.logout)
 	}
 }
 
@@ -127,8 +127,7 @@ func (s *Server) requireUnifiedUser(w http.ResponseWriter, r *http.Request) bool
 	if !s.auth.Enabled() {
 		return true
 	}
-	cookie, err := r.Cookie(sessionCookie)
-	if err == nil && s.auth.Authenticated(cookie.Value) {
+	if _, ok := s.unifiedUser(r); ok {
 		return true
 	}
 	if wantsHTML(r) {
@@ -137,6 +136,18 @@ func (s *Server) requireUnifiedUser(w http.ResponseWriter, r *http.Request) bool
 		problem(w, http.StatusUnauthorized, errors.New("authentication required"))
 	}
 	return false
+}
+
+func (s *Server) unifiedUser(r *http.Request) (string, bool) {
+	if !s.auth.Enabled() {
+		return "", false
+	}
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return "", false
+	}
+	username, _, ok := s.auth.Identity(cookie.Value)
+	return username, ok
 }
 
 func wantsHTML(r *http.Request) bool {

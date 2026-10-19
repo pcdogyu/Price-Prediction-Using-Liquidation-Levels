@@ -28,6 +28,24 @@ backup_file() {
   fi
 }
 
+backup_tree() {
+  local source="$1" target="$2"
+  if [[ ! -d "$source" ]]; then
+    return 0
+  fi
+  mkdir -p "$target"
+  cp -a "$source"/. "$target"/
+  find "$target" -type d -exec chmod 0700 {} +
+  find "$target" -type f -exec chmod 0600 {} +
+  local files=()
+  while IFS= read -r -d '' file; do
+    files+=("$file")
+  done < <(find "$target" -type f -print0)
+  if ((${#files[@]} > 0)); then
+    sha256sum "${files[@]}" > "$target.sha256"
+  fi
+}
+
 backup_sqlite() {
   local source="$1" name="$2"
   if [[ -f "$source" ]]; then
@@ -53,6 +71,7 @@ backup_file /etc/tv-okx-bot/config.json tvbot-config.json
 backup_file /etc/liquidation-predictor.env liquidation-predictor.env
 backup_file "$binary" liquidation-predictor
 sha256sum "$backup"/* > "$backup/sha256.txt"
+backup_tree "$data_root/users" "$backup/tvbot-user-credentials"
 
 git -C "$source_root" fetch origin binance
 if git -C "$source_root" show-ref --verify --quiet refs/heads/binance; then

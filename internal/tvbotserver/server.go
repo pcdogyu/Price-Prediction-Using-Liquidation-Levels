@@ -29,31 +29,43 @@ import (
 )
 
 type Server struct {
-	ConfigStore          *config.Store
-	Orders               *storage.OrderStore
-	Token                security.TokenService
-	Executor             trading.Executor
-	OKXCredentials       *okx.CredentialStore
-	BinanceCredentials   *binance.CredentialStore
-	OKXHTTPClient        *http.Client
-	BinanceHTTPClient    *http.Client
-	AdminToken           string
-	AdminUser            string
-	AdminPass            string
-	Logger               *slog.Logger
-	Now                  func() time.Time
-	Upgrade              *upgrade.Manager
-	BuildInfo            BuildInfo
-	RequireUnifiedUser   func(http.ResponseWriter, *http.Request) bool
-	RequireUnifiedAdmin  func(http.ResponseWriter, *http.Request) bool
-	RedirectUnifiedLogin func(http.ResponseWriter, *http.Request)
-	LogoutUnified        func(http.ResponseWriter, *http.Request)
-	positionEntryCache   positionEntryFillCache
+	ConfigStore            *config.Store
+	Orders                 *storage.OrderStore
+	Token                  security.TokenService
+	Executor               trading.Executor
+	OKXCredentials         *okx.CredentialStore
+	BinanceCredentials     *binance.CredentialStore
+	OKXHTTPClient          *http.Client
+	BinanceHTTPClient      *http.Client
+	AdminToken             string
+	AdminUser              string
+	AdminPass              string
+	Logger                 *slog.Logger
+	Now                    func() time.Time
+	Upgrade                *upgrade.Manager
+	BuildInfo              BuildInfo
+	RequireUnifiedUser     func(http.ResponseWriter, *http.Request) bool
+	RequireUnifiedAdmin    func(http.ResponseWriter, *http.Request) bool
+	CurrentUser            func(*http.Request) (string, bool)
+	UserCredentialResolver UserCredentialResolver
+	RedirectUnifiedLogin   func(http.ResponseWriter, *http.Request)
+	LogoutUnified          func(http.ResponseWriter, *http.Request)
+	positionEntryCache     *positionEntryFillCache
 }
 
-func (s *Server) SetUnifiedAuth(user, admin func(http.ResponseWriter, *http.Request) bool, redirect func(http.ResponseWriter, *http.Request), logout func(http.ResponseWriter, *http.Request)) {
+type UserCredentials struct {
+	OKX     *okx.CredentialStore
+	Binance *binance.CredentialStore
+}
+
+type UserCredentialResolver interface {
+	ForUser(username string) (UserCredentials, error)
+}
+
+func (s *Server) SetUnifiedAuth(user, admin func(http.ResponseWriter, *http.Request) bool, currentUser func(*http.Request) (string, bool), redirect func(http.ResponseWriter, *http.Request), logout func(http.ResponseWriter, *http.Request)) {
 	s.RequireUnifiedUser = user
 	s.RequireUnifiedAdmin = admin
+	s.CurrentUser = currentUser
 	s.RedirectUnifiedLogin = redirect
 	s.LogoutUnified = logout
 }
@@ -485,6 +497,19 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 	} else if !s.requireAdmin(w, r) {
 		return
 	}
+	if s.UserCredentialResolver != nil && s.CurrentUser != nil {
+		username, ok := s.CurrentUser(r)
+		if !ok || strings.TrimSpace(username) == "" {
+			writeError(w, http.StatusUnauthorized, "authentication_required", "authenticated user identity is required")
+			return
+		}
+		scoped, err := s.scopedForUser(username)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "user_credentials_unavailable", err.Error())
+			return
+		}
+		s = scoped
+	}
 	if path == "" || path == "/" {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
@@ -542,11 +567,14 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 }
 
 func requiresAdminEndpoint(path string, r *http.Request) bool {
+	if path == "/api-keys" || path == "/api-keys/test" {
+		return false
+	}
 	if path == "/" || path == "" || path == "/positions" || path == "/analysis" || path == "/orders" || path == "/trade-monitor" || path == "/balances/overview" || path == "/pending-orders" || path == "/symbols" || path == "/config" {
 		return r.Method != http.MethodGet || path == "/config" && r.Method != http.MethodGet || path == "/symbols" && r.Method != http.MethodGet
 	}
-	// API key writes, order actions, settings, menu changes, and upgrades are
-	// administrator-only. Read-only GET endpoints remain available to users.
+	// Order actions, settings, menu changes, and upgrades are administrator-only.
+	// API key endpoints are user-scoped and available to every authenticated user.
 	return r.Method != http.MethodGet
 }
 

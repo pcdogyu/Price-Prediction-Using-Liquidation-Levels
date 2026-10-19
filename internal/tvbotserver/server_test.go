@@ -48,6 +48,16 @@ type fakeUpgradeRunner struct {
 	done chan struct{}
 }
 
+type testUserCredentialResolver map[string]UserCredentials
+
+func (r testUserCredentialResolver) ForUser(username string) (UserCredentials, error) {
+	credentials, ok := r[username]
+	if !ok {
+		return UserCredentials{}, fmt.Errorf("unknown test user %q", username)
+	}
+	return credentials, nil
+}
+
 func (f fakeUpgradeRunner) Run(ctx context.Context) (upgrade.Result, error) {
 	f.done <- struct{}{}
 	return upgrade.Result{
@@ -2474,6 +2484,75 @@ func TestTVBotAPIKeysSaveAndMask(t *testing.T) {
 	srv.ServeHTTP(get, getReq)
 	if get.Code != http.StatusOK || bytes.Contains(get.Body.Bytes(), []byte("super-secret-value")) || bytes.Contains(get.Body.Bytes(), []byte("phrase-value")) {
 		t.Fatalf("get status=%d body=%s", get.Code, get.Body.String())
+	}
+}
+
+func TestTVBotAPIKeysAreScopedToAuthenticatedUser(t *testing.T) {
+	srv := newTestServer(t)
+	root := t.TempDir()
+	aliceOKX, err := okx.NewCredentialStore(filepath.Join(root, "alice-okx.json"), okx.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobOKX, err := okx.NewCredentialStore(filepath.Join(root, "bob-okx.json"), okx.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceBinance, err := binance.NewCredentialStore(filepath.Join(root, "alice-binance.json"), binance.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobBinance, err := binance.NewCredentialStore(filepath.Join(root, "bob-binance.json"), binance.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.UserCredentialResolver = testUserCredentialResolver{
+		"alice": {OKX: aliceOKX, Binance: aliceBinance},
+		"bob":   {OKX: bobOKX, Binance: bobBinance},
+	}
+	srv.RequireUnifiedUser = func(http.ResponseWriter, *http.Request) bool { return true }
+	adminChecks := 0
+	srv.RequireUnifiedAdmin = func(http.ResponseWriter, *http.Request) bool {
+		adminChecks++
+		return false
+	}
+	srv.CurrentUser = func(r *http.Request) (string, bool) { return r.Header.Get("X-Test-User"), true }
+
+	put := func(user, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/tvbot/api-keys?exchange=okx", strings.NewReader(body))
+		req.Header.Set("X-Test-User", user)
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+	get := func(user string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/tvbot/api-keys?exchange=okx", nil)
+		req.Header.Set("X-Test-User", user)
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+
+	if rr := put("alice", `{"id":"alice-main","api_key":"alice-okx-key","secret_key":"alice-okx-secret","passphrase":"alice-okx-pass","active":true}`); rr.Code != http.StatusOK {
+		t.Fatalf("alice save status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if adminChecks != 0 {
+		t.Fatalf("user-scoped API key save unexpectedly required administrator auth: checks=%d", adminChecks)
+	}
+	bobBefore := get("bob")
+	if bobBefore.Code != http.StatusOK || bytes.Contains(bobBefore.Body.Bytes(), []byte("alice")) || bytes.Contains(bobBefore.Body.Bytes(), []byte("alic...-key")) {
+		t.Fatalf("bob can see alice credentials: status=%d body=%s", bobBefore.Code, bobBefore.Body.String())
+	}
+	alice := get("alice")
+	if alice.Code != http.StatusOK || !bytes.Contains(alice.Body.Bytes(), []byte("alic...-key")) {
+		t.Fatalf("alice cannot see her masked credentials: status=%d body=%s", alice.Code, alice.Body.String())
+	}
+	if rr := put("bob", `{"id":"bob-main","api_key":"bob-okx-key","secret_key":"bob-okx-secret","passphrase":"bob-okx-pass","active":true}`); rr.Code != http.StatusOK {
+		t.Fatalf("bob save status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if aliceAfter := get("alice"); !bytes.Contains(aliceAfter.Body.Bytes(), []byte("alic...-key")) || bytes.Contains(aliceAfter.Body.Bytes(), []byte("bob-")) {
+		t.Fatalf("alice view changed after bob save: %s", aliceAfter.Body.String())
 	}
 }
 

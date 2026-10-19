@@ -5,12 +5,55 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
 type ExchangeExecutor struct {
 	OKX     trading.Executor
 	Binance trading.Executor
+}
+
+func (e ExchangeExecutor) WithCredentials(okxCredentials *okx.CredentialStore, binanceCredentials *binance.CredentialStore) ExchangeExecutor {
+	return ExchangeExecutor{
+		OKX:     bindOKXCredentialStore(e.OKX, okxCredentials),
+		Binance: bindBinanceCredentialStore(e.Binance, binanceCredentials),
+	}
+}
+
+func bindOKXCredentialStore(executor trading.Executor, credentials *okx.CredentialStore) trading.Executor {
+	switch trader := executor.(type) {
+	case okx.Trader:
+		trader.CredentialProvider = credentials
+		return trader
+	case *okx.Trader:
+		if trader == nil {
+			return executor
+		}
+		copy := *trader
+		copy.CredentialProvider = credentials
+		return &copy
+	default:
+		return executor
+	}
+}
+
+func bindBinanceCredentialStore(executor trading.Executor, credentials *binance.CredentialStore) trading.Executor {
+	switch trader := executor.(type) {
+	case binance.Trader:
+		trader.CredentialProvider = credentials
+		return trader
+	case *binance.Trader:
+		if trader == nil {
+			return executor
+		}
+		copy := *trader
+		copy.CredentialProvider = credentials
+		return &copy
+	default:
+		return executor
+	}
 }
 
 func (e ExchangeExecutor) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg trading.RuntimeConfig) (trading.OrderResult, error) {
