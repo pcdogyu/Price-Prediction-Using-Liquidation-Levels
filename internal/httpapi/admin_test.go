@@ -160,6 +160,13 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	if positions.Code != http.StatusOK || !strings.Contains(positions.Body.String(), "positions") || !strings.Contains(positions.Body.String(), `class="app-logo"`) {
 		t.Fatalf("unified tvbot page status=%d body prefix=%s", positions.Code, positions.Body.String()[:minInt(180, positions.Body.Len())])
 	}
+	tvbotPage := positions.Body.String()
+	if strings.Count(tvbotPage, `aria-label="主菜单"`) != 1 || !strings.Contains(tvbotPage, `href="/menu">菜单管理`) || !strings.Contains(tvbotPage, `data-tab="system" href="/system">系统信息`) {
+		t.Fatalf("tvbot should render the configured single top menu: %s", tvbotPage[:minInt(1200, len(tvbotPage))])
+	}
+	if strings.Contains(tvbotPage, `/liquidation/tvbot/view/menu-settings`) {
+		t.Fatal("tvbot should not expose the legacy second menu settings entry")
+	}
 }
 
 func minInt(a, b int) int {

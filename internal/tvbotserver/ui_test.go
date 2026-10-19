@@ -14,11 +14,11 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	if strings.Count(page, "<header") != 1 {
 		t.Fatalf("tvbot page should have one header, got %d", strings.Count(page, "<header"))
 	}
-	if strings.Contains(page, "{{LIQUIDATION_LINKS}}") || strings.Contains(page, "merged-liquidation-nav") {
+	if strings.Contains(page, "{{TVBOT_TOP_MENU}}") || strings.Contains(page, "{{LIQUIDATION_LINKS}}") || strings.Contains(page, "merged-liquidation-nav") {
 		t.Fatalf("tvbot page contains an unrendered or legacy second navigation")
 	}
 	brand := strings.Index(page, `class="app-brand"`)
-	links := strings.Index(page, `class="app-links"`)
+	links := strings.Index(page, `class="app-links tvbot-sections tvbot-top-menu"`)
 	controls := strings.Index(page, `class="header-controls"`)
 	if brand < 0 || links < 0 || controls < 0 || !(brand < links && links < controls) {
 		t.Fatalf("unified header order is wrong: brand=%d links=%d controls=%d", brand, links, controls)
@@ -31,13 +31,13 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="app-logo" aria-hidden="true"`,
-		`class="tvbot-sections" aria-label="sections"`,
+		`class="app-links tvbot-sections tvbot-top-menu" data-unified-menu="true" aria-label="主菜单"`,
 		`.app-nav.tvbot-nav .tvbot-sections a`,
 		`href="/liquidation/alerts"`,
-		`href="/liquidation/tvbot/view/dashboard">总览`,
-		`href="/liquidation/tvbot/view/positions">持仓`,
+		`data-tab="dashboard" href="/liquidation/tvbot/view/dashboard"`,
+		`data-tab="positions" href="/liquidation/tvbot/view/positions"`,
 		`href="/liquidation/admin">用户管理`,
-		`href="/liquidation/tvbot/view/api-keys">API Key`,
+		`data-tab="apiKeys" href="/liquidation/tvbot/view/api-keys"`,
 		`href="/liquidation/admin"`,
 		`class="theme-toggle" id="tvbot-theme"`,
 		`data-global-exchange="okx" aria-selected="true"`,
@@ -54,6 +54,31 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		if strings.Contains(page, removed) {
 			t.Fatalf("tvbot page still contains hash navigation marker %q", removed)
 		}
+	}
+}
+
+func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
+	req := httptest.NewRequest("GET", "/tvbot/view/dashboard", nil)
+	req.Header.Set("X-Forwarded-Prefix", "/liquidation")
+	page := renderTVBotHTMLWithMenu(BuildInfo{CommitHash: "test"}, req, []TopMenuItem{
+		{Key: "overview", Title: "总览", Href: "/tvbot/view/dashboard"},
+		{Key: "system-info", Title: "系统信息", Href: "/system"},
+		{Key: "menu", Title: "菜单管理", Href: "/menu"},
+	})
+	if strings.Count(page, `aria-label="主菜单"`) != 1 {
+		t.Fatalf("configured tvbot page should have one top menu: %s", page)
+	}
+	for _, want := range []string{
+		`data-tab="dashboard" href="/liquidation/tvbot/view/dashboard" aria-current="page">总览`,
+		`data-tab="system" href="/liquidation/system">系统信息`,
+		`href="/liquidation/menu">菜单管理`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("configured top menu missing %q", want)
+		}
+	}
+	if strings.Contains(page, `data-tab="menuSettings"`) || strings.Contains(page, `href="/liquidation/tvbot/view/menu-settings"`) {
+		t.Fatal("configured top menu should not expose the legacy tvbot menu settings entry")
 	}
 }
 

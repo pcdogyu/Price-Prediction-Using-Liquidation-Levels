@@ -20,6 +20,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/coinglass"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/observability"
+	tvbotserver "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotserver"
 )
 
 //go:embed index.html
@@ -63,6 +64,8 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 				var menu []adminMenuItem
 				if json.Unmarshal(payload, &menu) == nil {
 					menu, migrated := migrateAdminMenu(menu)
+					menu, normalized := ensureAdminMenuItems(menu)
+					migrated = migrated || normalized
 					if validateMenu(menu) == nil {
 						s.menu = menu
 						if migrated {
@@ -121,6 +124,20 @@ func (s *Server) SetTVBot(handler http.Handler) {
 		SetUnifiedAuth(func(http.ResponseWriter, *http.Request) bool, func(http.ResponseWriter, *http.Request) bool, func(*http.Request) (string, bool), func(http.ResponseWriter, *http.Request), func(http.ResponseWriter, *http.Request))
 	}); ok {
 		setter.SetUnifiedAuth(s.requireUnifiedUser, s.requireUnifiedAdmin, s.unifiedUser, s.redirectUnifiedLogin, s.logout)
+	}
+	if setter, ok := handler.(interface {
+		SetTopMenuProvider(func() []tvbotserver.TopMenuItem)
+	}); ok {
+		setter.SetTopMenuProvider(func() []tvbotserver.TopMenuItem {
+			s.menuMu.RLock()
+			menu := append([]adminMenuItem(nil), s.menu...)
+			s.menuMu.RUnlock()
+			items := make([]tvbotserver.TopMenuItem, 0, len(menu))
+			for _, item := range menu {
+				items = append(items, tvbotserver.TopMenuItem{Key: item.Key, Title: item.Title, Href: item.Href})
+			}
+			return items
+		})
 	}
 }
 

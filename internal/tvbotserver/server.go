@@ -50,6 +50,7 @@ type Server struct {
 	UserCredentialResolver UserCredentialResolver
 	RedirectUnifiedLogin   func(http.ResponseWriter, *http.Request)
 	LogoutUnified          func(http.ResponseWriter, *http.Request)
+	TopMenuProvider        func() []TopMenuItem
 	positionEntryCache     *positionEntryFillCache
 }
 
@@ -68,6 +69,10 @@ func (s *Server) SetUnifiedAuth(user, admin func(http.ResponseWriter, *http.Requ
 	s.CurrentUser = currentUser
 	s.RedirectUnifiedLogin = redirect
 	s.LogoutUnified = logout
+}
+
+func (s *Server) SetTopMenuProvider(provider func() []TopMenuItem) {
+	s.TopMenuProvider = provider
 }
 
 const (
@@ -519,7 +524,7 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "unknown /tvbot view")
 			return
 		}
-		writeHTML(w, http.StatusOK, renderTVBotHTML(s.BuildInfo, r))
+		writeHTML(w, http.StatusOK, s.renderTVBotHTML(r))
 		return
 	}
 	if path == "" || path == "/" {
@@ -527,7 +532,7 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
 			return
 		}
-		writeHTML(w, http.StatusOK, renderTVBotHTML(s.BuildInfo, r))
+		writeHTML(w, http.StatusOK, s.renderTVBotHTML(r))
 		return
 	}
 	switch {

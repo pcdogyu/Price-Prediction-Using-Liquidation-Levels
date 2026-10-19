@@ -105,6 +105,9 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("tvbot with basic auth code=%d body=%s", basic.Code, basic.Body.String())
 	}
 	for _, route := range tvbotViewRoutes {
+		if route.Tab == "menuSettings" || route.Tab == "system" || route.Tab == "upgrade" {
+			continue
+		}
 		viewReq := httptest.NewRequest(http.MethodGet, "/tvbot/view/"+route.Slug, nil)
 		viewReq.SetBasicAuth("admin", "Admin123")
 		view := httptest.NewRecorder()

@@ -53,6 +53,7 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "order-settings", Title: "下单设置", Href: "/tvbot/view/order-settings", Group: "trading"},
 		{Key: "template", Title: "告警模板", Href: "/tvbot/view/template", Group: "trading"},
 		{Key: "config", Title: "订单配置", Href: "/tvbot/view/config", Group: "trading"},
+		{Key: "system-info", Title: "系统信息", Href: "/system", Group: "admin"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"},
 		{Key: "system", Title: "用户管理", Href: "/admin", Group: "admin"},
 		{Key: "upgrade", Title: "升级", Href: "/upgrade", Group: "admin"},
@@ -97,6 +98,26 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 		}
 	}
 	return migrated, changed
+}
+
+func ensureAdminMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
+	for _, item := range menu {
+		if item.Key == "system-info" || item.Href == "/system" {
+			return menu, false
+		}
+	}
+	item := adminMenuItem{Key: "system-info", Title: "系统信息", Href: "/system", Group: "admin"}
+	insertAt := len(menu)
+	for i, candidate := range menu {
+		if candidate.Group == "admin" {
+			insertAt = i
+			break
+		}
+	}
+	menu = append(menu, adminMenuItem{})
+	copy(menu[insertAt+1:], menu[insertAt:])
+	menu[insertAt] = item
+	return menu, true
 }
 
 func (s *Server) requireAdminRequest(w http.ResponseWriter, r *http.Request) bool {

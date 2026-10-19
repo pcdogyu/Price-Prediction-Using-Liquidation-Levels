@@ -13,6 +13,12 @@ type BuildInfo struct {
 	CommitBranch string
 }
 
+type TopMenuItem struct {
+	Key   string
+	Title string
+	Href  string
+}
+
 type tvbotViewRoute struct {
 	Slug  string
 	Tab   string
@@ -108,7 +114,44 @@ func writeHTML(w http.ResponseWriter, status int, html string) {
 	_, _ = w.Write([]byte(html))
 }
 
+func (s *Server) renderTVBotHTML(r *http.Request) string {
+	menu := defaultTopMenu()
+	if s.TopMenuProvider != nil {
+		menu = s.TopMenuProvider()
+	}
+	return renderTVBotHTMLWithMenu(s.BuildInfo, r, menu)
+}
+
 func renderTVBotHTML(info BuildInfo, r *http.Request) string {
+	return renderTVBotHTMLWithMenu(info, r, defaultTopMenu())
+}
+
+func defaultTopMenu() []TopMenuItem {
+	return []TopMenuItem{
+		{Key: "alerts", Title: "报警", Href: "/alerts"},
+		{Key: "bubbles", Title: "气泡图", Href: "/bubbles"},
+		{Key: "liquidations", Title: "清算历史", Href: "/liquidations"},
+		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall"},
+		{Key: "market-info", Title: "市场信息", Href: "/market-info"},
+		{Key: "options", Title: "期权", Href: "/options"},
+		{Key: "overview", Title: "总览", Href: "/tvbot/view/dashboard"},
+		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions"},
+		{Key: "orders", Title: "订单", Href: "/tvbot/view/orders"},
+		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis"},
+		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot/view/trade-monitor"},
+		{Key: "symbols", Title: "币对配置", Href: "/tvbot/view/symbols"},
+		{Key: "api-keys", Title: "API Key", Href: "/tvbot/view/api-keys"},
+		{Key: "order-settings", Title: "下单设置", Href: "/tvbot/view/order-settings"},
+		{Key: "template", Title: "告警模板", Href: "/tvbot/view/template"},
+		{Key: "config", Title: "订单配置", Href: "/tvbot/view/config"},
+		{Key: "system-info", Title: "系统信息", Href: "/system"},
+		{Key: "menu", Title: "菜单管理", Href: "/menu"},
+		{Key: "system", Title: "用户管理", Href: "/admin"},
+		{Key: "upgrade", Title: "升级", Href: "/upgrade"},
+	}
+}
+
+func renderTVBotHTMLWithMenu(info BuildInfo, r *http.Request, menu []TopMenuItem) string {
 	prefix := strings.TrimRight(strings.TrimSpace(r.Header.Get("X-Forwarded-Prefix")), "/")
 	if prefix == "" {
 		prefix = ""
@@ -116,17 +159,46 @@ func renderTVBotHTML(info BuildInfo, r *http.Request) string {
 	link := func(path string) string { return prefix + path }
 	assets := `<script src="` + html.EscapeString(link("/assets/theme.js")) + `"></script><link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `">`
 	page := strings.Replace(tvbotHTML, "</head>", assets+"</head>", 1)
-	liquidationLinks := `<div class="app-links" aria-label="主菜单"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link(tvbotViewPath("dashboard"))) + `">总览</a><a href="` + html.EscapeString(link(tvbotViewPath("positions"))) + `">持仓</a><a href="` + html.EscapeString(link("/system")) + `">系统信息</a><a href="` + html.EscapeString(link("/menu")) + `">菜单管理</a><a href="` + html.EscapeString(link("/admin")) + `">用户管理</a></div>`
-	var sectionLinks strings.Builder
-	for _, route := range tvbotViewRoutes {
-		sectionLinks.WriteString(`<a data-tab="` + html.EscapeString(route.Tab) + `" href="` + html.EscapeString(link("/tvbot/view/"+route.Slug)) + `">` + html.EscapeString(route.Label) + `</a>`)
+	currentTab := ""
+	if path := strings.TrimPrefix(r.URL.Path, "/tvbot"); path != r.URL.Path {
+		if route, ok := tvbotViewRouteForPath(path); ok {
+			currentTab = route.Tab
+		}
 	}
+	var topMenu strings.Builder
+	topMenu.WriteString(`<nav class="app-links tvbot-sections tvbot-top-menu" data-unified-menu="true" aria-label="主菜单">`)
+	for _, item := range menu {
+		if strings.TrimSpace(item.Href) == "" || !strings.HasPrefix(item.Href, "/") {
+			continue
+		}
+		tab := topMenuTab(item)
+		tabAttr := ""
+		activeAttr := ""
+		if tab != "" {
+			tabAttr = ` data-tab="` + html.EscapeString(tab) + `"`
+			if tab == currentTab {
+				activeAttr = ` aria-current="page"`
+			}
+		}
+		topMenu.WriteString(`<a` + tabAttr + ` href="` + html.EscapeString(link(item.Href)) + `"` + activeAttr + `>` + html.EscapeString(item.Title) + `</a>`)
+	}
+	topMenu.WriteString(`</nav>`)
 	themeScript := `<script>(()=>{const button=document.getElementById('tvbot-theme');const update=()=>{const light=document.documentElement.dataset.theme==='light';button.textContent=light?'深色主题':'浅色主题';button.setAttribute('aria-label','当前'+(light?'浅色':'深色')+'主题，切换至'+(light?'深色':'浅色')+'主题')};button.addEventListener('click',()=>window.LiquidationTheme.toggle());window.addEventListener('themechange',update);update()})();</script>`
 	page = strings.Replace(page, "{{HOME_LINK}}", html.EscapeString(link("/alerts")), 1)
-	page = strings.Replace(page, "{{LIQUIDATION_LINKS}}", liquidationLinks, 1)
-	page = strings.Replace(page, "{{TVBOT_SECTION_LINKS}}", sectionLinks.String(), 1)
+	page = strings.Replace(page, "{{TVBOT_TOP_MENU}}", topMenu.String(), 1)
 	page = strings.Replace(page, "</body>", themeScript+"</body>", 1)
 	return strings.Replace(page, "{{APP_FOOTER}}", html.EscapeString(info.FooterText()), 1)
+}
+
+func topMenuTab(item TopMenuItem) string {
+	path := strings.TrimPrefix(item.Href, "/tvbot")
+	if route, ok := tvbotViewRouteForPath(path); ok {
+		return route.Tab
+	}
+	if item.Href == "/system" {
+		return "system"
+	}
+	return ""
 }
 
 func renderTVBotLoginHTML(message, next string, info BuildInfo) string {
@@ -1420,9 +1492,8 @@ const tvbotHTML = `<!doctype html>
 <body>
     <header class="app-nav tvbot-nav">
       <a class="app-brand" href="{{HOME_LINK}}" aria-label="首页"><span class="app-logo" aria-hidden="true"></span></a>
-      {{LIQUIDATION_LINKS}}
+      {{TVBOT_TOP_MENU}}
       <div class="header-controls">
-        <nav class="tvbot-sections" aria-label="sections">{{TVBOT_SECTION_LINKS}}</nav>
         <button type="button" class="theme-toggle" id="tvbot-theme" aria-label="切换主题"></button>
       </div>
   </header>
@@ -2941,6 +3012,10 @@ const tvbotHTML = `<!doctype html>
     function applyMenuSettings() {
       const nav = document.querySelector("nav");
       if (!nav) return;
+      if (nav.dataset.unifiedMenu === "true") {
+        syncOrderInfoVisibility(activeTabID() || tabFromViewPath() || "dashboard");
+        return;
+      }
       const known = {};
       currentMenuItems().forEach((item) => {
         const button = tabButton(item.tab);
