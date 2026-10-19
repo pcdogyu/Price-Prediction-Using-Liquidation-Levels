@@ -21,6 +21,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotsecurity"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotstorage"
@@ -35,8 +36,10 @@ type Server struct {
 	Executor               trading.Executor
 	OKXCredentials         *okx.CredentialStore
 	BinanceCredentials     *binance.CredentialStore
+	GateCredentials        *gate.CredentialStore
 	OKXHTTPClient          *http.Client
 	BinanceHTTPClient      *http.Client
+	GateHTTPClient         *http.Client
 	AdminToken             string
 	AdminUser              string
 	AdminPass              string
@@ -57,6 +60,7 @@ type Server struct {
 type UserCredentials struct {
 	OKX     *okx.CredentialStore
 	Binance *binance.CredentialStore
+	Gate    *gate.CredentialStore
 }
 
 type UserCredentialResolver interface {
@@ -644,6 +648,12 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeJSON(w, http.StatusOK, s.BinanceCredentials.Status())
+		case trading.ExchangeGate:
+			if s.GateCredentials == nil {
+				writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
+				return
+			}
+			writeJSON(w, http.StatusOK, s.GateCredentials.Status())
 		default:
 			if s.OKXCredentials == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
@@ -688,6 +698,18 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 					SecretKey: req.SecretKey,
 				},
 			})
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, status)
+			return
+		case trading.ExchangeGate:
+			if s.GateCredentials == nil {
+				writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
+				return
+			}
+			status, err := s.GateCredentials.UpdateAccount(gate.CredentialAccountUpdate{ID: req.ID, Name: req.Name, Active: active, PreserveMissing: true, Credentials: gate.Credentials{APIKey: req.APIKey, SecretKey: req.SecretKey}})
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
@@ -746,6 +768,18 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJSON(w, http.StatusOK, status)
 			return
+		case trading.ExchangeGate:
+			if s.GateCredentials == nil {
+				writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
+				return
+			}
+			status, err := s.GateCredentials.RenameAccount(id, req.NewID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, status)
+			return
 		default:
 			if s.OKXCredentials == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
@@ -767,6 +801,18 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			status, err := s.BinanceCredentials.DeleteAccount(id)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, status)
+			return
+		case trading.ExchangeGate:
+			if s.GateCredentials == nil {
+				writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
+				return
+			}
+			status, err := s.GateCredentials.DeleteAccount(id)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
@@ -810,6 +856,31 @@ func (s *Server) handleAPIKeyTest(w http.ResponseWriter, r *http.Request) {
 	cfg := s.ConfigStore.Get()
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
+	if exchange == trading.ExchangeGate {
+		creds := gate.Credentials{APIKey: strings.TrimSpace(req.APIKey), SecretKey: strings.TrimSpace(req.SecretKey)}
+		if gateCredentialFieldsProvided(creds) {
+			if s.GateCredentials != nil {
+				if stored, resolvedID, err := s.GateCredentials.GateCredentials(req.ID); err == nil {
+					req.ID = resolvedID
+					mergeMissingGateCredentials(&creds, stored)
+				}
+			}
+			result, err := checkGateCredentials(ctx, cfg, req.ID, creds)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, "gate_check_failed", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, result)
+			return
+		}
+		result, err := s.checkStoredGate(ctx, cfg, req.ID)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "gate_check_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	if exchange == trading.ExchangeBinance {
 		creds := binance.Credentials{APIKey: strings.TrimSpace(req.APIKey), SecretKey: strings.TrimSpace(req.SecretKey)}
 		if binanceCredentialFieldsProvided(creds) {
@@ -2049,6 +2120,17 @@ func (s *Server) handleCheckOKX(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
+	if exchange == trading.ExchangeGate {
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		result, err := s.checkStoredGate(ctx, s.ConfigStore.Get(), req.APIID)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "gate_check_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	if strings.TrimSpace(req.APIID) != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
@@ -2104,6 +2186,22 @@ func (s *Server) checkStoredBinance(ctx context.Context, cfg trading.RuntimeConf
 	return checkBinanceCredentials(ctx, cfg, resolvedID, creds)
 }
 
+func (s *Server) checkStoredGate(ctx context.Context, cfg trading.RuntimeConfig, apiID string) (map[string]any, error) {
+	if s.GateCredentials == nil {
+		return nil, errors.New("Gate credential store is not configured")
+	}
+	creds, resolvedID, err := s.GateCredentials.GateCredentials(apiID)
+	if err != nil {
+		return nil, err
+	}
+	return checkGateCredentials(ctx, cfg, resolvedID, creds)
+}
+
+func checkGateCredentials(ctx context.Context, cfg trading.RuntimeConfig, apiID string, creds gate.Credentials) (map[string]any, error) {
+	trader := gate.Trader{Credentials: creds, HTTPClient: &http.Client{Timeout: 15 * time.Second}}
+	return trader.CheckCredentials(ctx, cfg, apiID, creds)
+}
+
 func checkBinanceCredentials(ctx context.Context, cfg trading.RuntimeConfig, apiID string, creds binance.Credentials) (map[string]any, error) {
 	trader := binance.Trader{
 		Credentials: creds,
@@ -2136,6 +2234,18 @@ func binanceCredentialFieldsProvided(creds binance.Credentials) bool {
 }
 
 func mergeMissingBinanceCredentials(creds *binance.Credentials, stored binance.Credentials) {
+	if strings.TrimSpace(creds.APIKey) == "" {
+		creds.APIKey = stored.APIKey
+	}
+	if strings.TrimSpace(creds.SecretKey) == "" {
+		creds.SecretKey = stored.SecretKey
+	}
+}
+
+func gateCredentialFieldsProvided(creds gate.Credentials) bool {
+	return strings.TrimSpace(creds.APIKey) != "" || strings.TrimSpace(creds.SecretKey) != ""
+}
+func mergeMissingGateCredentials(creds *gate.Credentials, stored gate.Credentials) {
 	if strings.TrimSpace(creds.APIKey) == "" {
 		creds.APIKey = stored.APIKey
 	}

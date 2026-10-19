@@ -11,6 +11,8 @@ type Secrets struct {
 	OKXPassphrase    string
 	BinanceAPIKey    string
 	BinanceSecretKey string
+	GateAPIKey       string
+	GateSecretKey    string
 	TVTokenSecret    string
 	AdminToken       string
 	AdminUser        string
@@ -24,6 +26,8 @@ func Load() Secrets {
 		OKXPassphrase:    os.Getenv("OKX_PASSPHRASE"),
 		BinanceAPIKey:    os.Getenv("BINANCE_API_KEY"),
 		BinanceSecretKey: os.Getenv("BINANCE_SECRET_KEY"),
+		GateAPIKey:       os.Getenv("GATE_API_KEY"),
+		GateSecretKey:    os.Getenv("GATE_SECRET_KEY"),
 		TVTokenSecret:    os.Getenv("TV_TOKEN_SECRET"),
 		AdminToken:       os.Getenv("ADMIN_TOKEN"),
 		AdminUser:        os.Getenv("ADMIN_USER"),
@@ -62,6 +66,13 @@ func (s Secrets) RequireOKXCredentials() error {
 func (s Secrets) RequireBinanceCredentials() error {
 	if s.BinanceAPIKey == "" || s.BinanceSecretKey == "" {
 		return errors.New("BINANCE_API_KEY and BINANCE_SECRET_KEY are required")
+	}
+	return nil
+}
+
+func (s Secrets) RequireGateCredentials() error {
+	if s.GateAPIKey == "" || s.GateSecretKey == "" {
+		return errors.New("GATE_API_KEY and GATE_SECRET_KEY are required")
 	}
 	return nil
 }

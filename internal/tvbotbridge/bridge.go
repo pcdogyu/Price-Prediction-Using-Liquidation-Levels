@@ -14,6 +14,7 @@ import (
 	tvbotbinance "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	tvbotenv "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotenv"
+	tvbotgate "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotmigration"
 	tvbotokx "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	tvbotsecurity "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotsecurity"
@@ -65,6 +66,7 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 	}
 	okxFile := filepath.Join(credentialsDir, "okx-credentials.json")
 	binanceFile := filepath.Join(credentialsDir, "binance-credentials.json")
+	gateFile := filepath.Join(credentialsDir, "gate-credentials.json")
 	// A caller that constructs Config manually without a unified directory may
 	// still opt into the legacy environment file locations.
 	if strings.TrimSpace(cfg.TVBotCredentialsDir) == "" {
@@ -74,11 +76,17 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 		if value := strings.TrimSpace(os.Getenv("BINANCE_CREDENTIALS_FILE")); value != "" {
 			binanceFile = value
 		}
+		if value := strings.TrimSpace(os.Getenv("GATE_CREDENTIALS_FILE")); value != "" {
+			gateFile = value
+		}
 	}
 	if err := copyLegacyCredential(filepath.Join(cfg.TVBotLegacyCredentialsDir, "okx-credentials.json"), okxFile); err != nil {
 		return nil, err
 	}
 	if err := copyLegacyCredential(filepath.Join(cfg.TVBotLegacyCredentialsDir, "binance-credentials.json"), binanceFile); err != nil {
+		return nil, err
+	}
+	if err := copyLegacyCredential(filepath.Join(cfg.TVBotLegacyCredentialsDir, "gate-credentials.json"), gateFile); err != nil {
 		return nil, err
 	}
 	okxCredentials, err := tvbotokx.NewCredentialStore(okxFile, tvbotokx.Credentials{
@@ -95,13 +103,22 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 		_ = orders.Close()
 		return nil, err
 	}
+	gateCredentials, err := tvbotgate.NewCredentialStore(gateFile, tvbotgate.Credentials{
+		APIKey: secrets.GateAPIKey, SecretKey: secrets.GateSecretKey,
+	})
+	if err != nil {
+		_ = orders.Close()
+		return nil, err
+	}
 	userCredentials, err := newUserCredentialResolver(
 		credentialsDir,
 		cfg.AuthUsername,
 		okxFile,
 		binanceFile,
+		gateFile,
 		tvbotokx.Credentials{APIKey: secrets.OKXAPIKey, SecretKey: secrets.OKXSecretKey, Passphrase: secrets.OKXPassphrase},
 		tvbotbinance.Credentials{APIKey: secrets.BinanceAPIKey, SecretKey: secrets.BinanceSecretKey},
+		tvbotgate.Credentials{APIKey: secrets.GateAPIKey, SecretKey: secrets.GateSecretKey},
 	)
 	if err != nil {
 		_ = orders.Close()
@@ -141,10 +158,11 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 		Executor: tvbotserver.ExchangeExecutor{
 			OKX:     tvbotokx.Trader{CredentialProvider: okxCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
 			Binance: tvbotbinance.Trader{CredentialProvider: binanceCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
+			Gate:    tvbotgate.Trader{CredentialProvider: gateCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
 		},
-		OKXCredentials: okxCredentials, BinanceCredentials: binanceCredentials,
+		OKXCredentials: okxCredentials, BinanceCredentials: binanceCredentials, GateCredentials: gateCredentials,
 		UserCredentialResolver: userCredentials,
-		OKXHTTPClient:          &http.Client{Timeout: 15 * time.Second}, BinanceHTTPClient: &http.Client{Timeout: 15 * time.Second},
+		OKXHTTPClient:          &http.Client{Timeout: 15 * time.Second}, BinanceHTTPClient: &http.Client{Timeout: 15 * time.Second}, GateHTTPClient: &http.Client{Timeout: 15 * time.Second},
 		AdminToken: secrets.AdminToken, AdminUser: secrets.AdminUser, AdminPass: secrets.AdminPassword,
 		Logger: logger, Upgrade: upgrade, BuildInfo: build,
 	}

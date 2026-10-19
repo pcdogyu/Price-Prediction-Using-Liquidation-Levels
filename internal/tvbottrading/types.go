@@ -22,6 +22,7 @@ const (
 const (
 	ExchangeOKX     = "okx"
 	ExchangeBinance = "binance"
+	ExchangeGate    = "gate"
 )
 
 const (
@@ -176,6 +177,8 @@ type OrderResult struct {
 	OKXMsg         string            `json:"okx_msg,omitempty"`
 	BinanceCode    int               `json:"binance_code,omitempty"`
 	BinanceMsg     string            `json:"binance_msg,omitempty"`
+	GateLabel      string            `json:"gate_label,omitempty"`
+	GateMsg        string            `json:"gate_msg,omitempty"`
 	PositionEffect string            `json:"position_effect,omitempty"`
 	PositionSide   string            `json:"position_side,omitempty"`
 	RiskOrders     []RiskOrderResult `json:"risk_orders,omitempty"`
@@ -205,6 +208,8 @@ type RuntimeConfig interface {
 	LiveTradingAllowedByEnvironment() bool
 	BinanceBaseURL() string
 	BinanceLiveTradingAllowedByEnvironment() bool
+	GateBaseURL() string
+	GateLiveTradingAllowedByEnvironment() bool
 	OKXBaseURL() string
 	MarginMode() string
 	PositionMode() string
@@ -306,6 +311,8 @@ func NormalizeExchange(exchange string) string {
 		return ExchangeOKX
 	case ExchangeBinance, "binance_futures", "binance-usdm", "binance_usdm", "binance usdⓈ-m", "binance usdm":
 		return ExchangeBinance
+	case ExchangeGate, "gateio", "gate_io", "gate.io", "gate futures", "gateio futures":
+		return ExchangeGate
 	default:
 		return strings.ToLower(strings.TrimSpace(exchange))
 	}
@@ -324,6 +331,8 @@ func TargetExchangeFromSignalSource(exchange, ticker string) (string, bool) {
 	switch {
 	case strings.Contains(source, "binance"):
 		return ExchangeBinance, true
+	case strings.Contains(source, "gate"):
+		return ExchangeGate, true
 	case strings.Contains(source, "okx"), strings.Contains(source, "okex"):
 		return ExchangeOKX, true
 	default:
@@ -333,7 +342,7 @@ func TargetExchangeFromSignalSource(exchange, ticker string) (string, bool) {
 
 func ValidTargetExchange(exchange string) bool {
 	switch NormalizeExchange(exchange) {
-	case ExchangeOKX, ExchangeBinance:
+	case ExchangeOKX, ExchangeBinance, ExchangeGate:
 		return true
 	default:
 		return false
@@ -448,7 +457,7 @@ func (s Signal) Validate(now time.Time, ttl time.Duration, cfg RuntimeConfig) er
 		return fmt.Errorf("action must be %q or %q", ActionLong, ActionShort)
 	}
 	if !ValidTargetExchange(s.TargetExchange) {
-		return fmt.Errorf("target_exchange must be %q or %q", ExchangeOKX, ExchangeBinance)
+		return fmt.Errorf("target_exchange must be %q, %q or %q", ExchangeOKX, ExchangeBinance, ExchangeGate)
 	}
 	if !ValidTradeEnv(s.TradeEnv) {
 		return fmt.Errorf("trade_env must be %q or %q", TradeEnvDemo, TradeEnvLive)

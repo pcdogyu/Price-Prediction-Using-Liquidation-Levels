@@ -50,6 +50,8 @@ type TradingConfig struct {
 	BaseURL                   string                `json:"base_url"`
 	BinanceBaseURL            string                `json:"binance_base_url"`
 	BinanceDemoBaseURL        string                `json:"binance_demo_base_url"`
+	GateBaseURL               string                `json:"gate_base_url"`
+	GateDemoBaseURL           string                `json:"gate_demo_base_url"`
 	DefaultMarginMode         string                `json:"default_margin_mode"`
 	PositionMode              string                `json:"position_mode"`
 	MarketTurnoverScope       string                `json:"market_turnover_scope"`
@@ -225,6 +227,8 @@ func Default() Config {
 			BaseURL:                   "https://www.okx.com",
 			BinanceBaseURL:            "https://fapi.binance.com",
 			BinanceDemoBaseURL:        "https://demo-fapi.binance.com",
+			GateBaseURL:               "https://api.gateio.ws",
+			GateDemoBaseURL:           "https://api-testnet.gateapi.io",
 			DefaultMarginMode:         MarginIsolated,
 			PositionMode:              PositionNet,
 			MarketTurnoverScope:       DefaultMarketTurnoverScope,
@@ -348,6 +352,14 @@ func (c *Config) Normalize() {
 	c.Trading.BinanceDemoBaseURL = strings.TrimRight(strings.TrimSpace(c.Trading.BinanceDemoBaseURL), "/")
 	if c.Trading.BinanceDemoBaseURL == "" {
 		c.Trading.BinanceDemoBaseURL = "https://demo-fapi.binance.com"
+	}
+	c.Trading.GateBaseURL = strings.TrimRight(strings.TrimSpace(c.Trading.GateBaseURL), "/")
+	if c.Trading.GateBaseURL == "" {
+		c.Trading.GateBaseURL = "https://api.gateio.ws"
+	}
+	c.Trading.GateDemoBaseURL = strings.TrimRight(strings.TrimSpace(c.Trading.GateDemoBaseURL), "/")
+	if c.Trading.GateDemoBaseURL == "" {
+		c.Trading.GateDemoBaseURL = "https://api-testnet.gateapi.io"
 	}
 	c.Trading.DefaultMarginMode = strings.ToLower(strings.TrimSpace(c.Trading.DefaultMarginMode))
 	if c.Trading.DefaultMarginMode == "" {
@@ -831,6 +843,13 @@ func (c Config) BinanceBaseURL() string {
 	return c.Trading.BinanceDemoBaseURL
 }
 
+func (c Config) GateBaseURL() string {
+	if c.Trading.Env == EnvLive {
+		return c.Trading.GateBaseURL
+	}
+	return c.Trading.GateDemoBaseURL
+}
+
 func (c Config) MarginMode() string {
 	return c.Trading.DefaultMarginMode
 }
@@ -875,6 +894,15 @@ func (c Config) BinanceLiveTradingAllowedByEnvironment() bool {
 		return true
 	}
 	return strings.EqualFold(os.Getenv("BINANCE_ENV"), EnvLive) &&
+		strings.EqualFold(os.Getenv("ALLOW_LIVE_TRADING"), "true") &&
+		c.Trading.AllowLiveTrading
+}
+
+func (c Config) GateLiveTradingAllowedByEnvironment() bool {
+	if c.Trading.Env != EnvLive {
+		return true
+	}
+	return strings.EqualFold(os.Getenv("GATE_ENV"), EnvLive) &&
 		strings.EqualFold(os.Getenv("ALLOW_LIVE_TRADING"), "true") &&
 		c.Trading.AllowLiveTrading
 }

@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	tvbotbinance "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
+	tvbotgate "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	tvbotokx "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	tvbotserver "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotserver"
 )
@@ -19,14 +20,16 @@ type userCredentialResolver struct {
 	legacyOwner       string
 	legacyOKXPath     string
 	legacyBinancePath string
+	legacyGatePath    string
 	initialOKX        tvbotokx.Credentials
 	initialBinance    tvbotbinance.Credentials
+	initialGate       tvbotgate.Credentials
 
 	mu    sync.Mutex
 	users map[string]tvbotserver.UserCredentials
 }
 
-func newUserCredentialResolver(root, legacyOwner, legacyOKXPath, legacyBinancePath string, initialOKX tvbotokx.Credentials, initialBinance tvbotbinance.Credentials) (*userCredentialResolver, error) {
+func newUserCredentialResolver(root, legacyOwner, legacyOKXPath, legacyBinancePath, legacyGatePath string, initialOKX tvbotokx.Credentials, initialBinance tvbotbinance.Credentials, initialGate tvbotgate.Credentials) (*userCredentialResolver, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, errors.New("user credential root is required")
@@ -36,8 +39,10 @@ func newUserCredentialResolver(root, legacyOwner, legacyOKXPath, legacyBinancePa
 		legacyOwner:       strings.TrimSpace(legacyOwner),
 		legacyOKXPath:     strings.TrimSpace(legacyOKXPath),
 		legacyBinancePath: strings.TrimSpace(legacyBinancePath),
+		legacyGatePath:    strings.TrimSpace(legacyGatePath),
 		initialOKX:        initialOKX,
 		initialBinance:    initialBinance,
+		initialGate:       initialGate,
 		users:             make(map[string]tvbotserver.UserCredentials),
 	}, nil
 }
@@ -57,6 +62,7 @@ func (r *userCredentialResolver) ForUser(username string) (tvbotserver.UserCrede
 	userDir := filepath.Join(r.root, "users", userDirectoryName(username))
 	okxPath := filepath.Join(userDir, "okx-credentials.json")
 	binancePath := filepath.Join(userDir, "binance-credentials.json")
+	gatePath := filepath.Join(userDir, "gate-credentials.json")
 	if err := os.MkdirAll(userDir, 0o700); err != nil {
 		return tvbotserver.UserCredentials{}, err
 	}
@@ -66,6 +72,9 @@ func (r *userCredentialResolver) ForUser(username string) (tvbotserver.UserCrede
 			return tvbotserver.UserCredentials{}, err
 		}
 		if err := copyLegacyCredential(r.legacyBinancePath, binancePath); err != nil {
+			return tvbotserver.UserCredentials{}, err
+		}
+		if err := copyLegacyCredential(r.legacyGatePath, gatePath); err != nil {
 			return tvbotserver.UserCredentials{}, err
 		}
 	}
@@ -78,6 +87,10 @@ func (r *userCredentialResolver) ForUser(username string) (tvbotserver.UserCrede
 	if err != nil {
 		return tvbotserver.UserCredentials{}, err
 	}
+	gateCredentials, err := tvbotgate.NewCredentialStore(gatePath, tvbotgate.Credentials{})
+	if err != nil {
+		return tvbotserver.UserCredentials{}, err
+	}
 	if isLegacyOwner {
 		if err := seedInitialOKX(okxCredentials, r.initialOKX); err != nil {
 			return tvbotserver.UserCredentials{}, err
@@ -85,10 +98,21 @@ func (r *userCredentialResolver) ForUser(username string) (tvbotserver.UserCrede
 		if err := seedInitialBinance(binanceCredentials, r.initialBinance); err != nil {
 			return tvbotserver.UserCredentials{}, err
 		}
+		if err := seedInitialGate(gateCredentials, r.initialGate); err != nil {
+			return tvbotserver.UserCredentials{}, err
+		}
 	}
-	credentials := tvbotserver.UserCredentials{OKX: okxCredentials, Binance: binanceCredentials}
+	credentials := tvbotserver.UserCredentials{OKX: okxCredentials, Binance: binanceCredentials, Gate: gateCredentials}
 	r.users[username] = credentials
 	return credentials, nil
+}
+
+func seedInitialGate(store *tvbotgate.CredentialStore, initial tvbotgate.Credentials) error {
+	if store.Status().Configured || strings.TrimSpace(initial.APIKey) == "" || strings.TrimSpace(initial.SecretKey) == "" {
+		return nil
+	}
+	_, err := store.UpdateAccount(tvbotgate.CredentialAccountUpdate{ID: tvbotgate.DefaultCredentialID, Active: true, Credentials: initial})
+	return err
 }
 
 func seedInitialOKX(store *tvbotokx.CredentialStore, initial tvbotokx.Credentials) error {

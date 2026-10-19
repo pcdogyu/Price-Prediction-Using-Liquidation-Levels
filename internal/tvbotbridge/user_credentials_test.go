@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tvbotbinance "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
+	tvbotgate "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	tvbotokx "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 )
 
@@ -20,7 +21,7 @@ func TestUserCredentialResolverIsolatesUsersAndMigratesOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolver, err := newUserCredentialResolver(root, "admin", legacyOKX, legacyBinance, tvbotokx.Credentials{}, tvbotbinance.Credentials{})
+	resolver, err := newUserCredentialResolver(root, "admin", legacyOKX, legacyBinance, "", tvbotokx.Credentials{}, tvbotbinance.Credentials{}, tvbotgate.Credentials{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestUserCredentialResolverIsolatesUsersAndMigratesOwner(t *testing.T) {
 		t.Fatal("guest update changed owner OKX credentials")
 	}
 
-	reloaded, err := newUserCredentialResolver(root, "admin", legacyOKX, legacyBinance, tvbotokx.Credentials{}, tvbotbinance.Credentials{})
+	reloaded, err := newUserCredentialResolver(root, "admin", legacyOKX, legacyBinance, "", tvbotokx.Credentials{}, tvbotbinance.Credentials{}, tvbotgate.Credentials{})
 	if err != nil {
 		t.Fatal(err)
 	}

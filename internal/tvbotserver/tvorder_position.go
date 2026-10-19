@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
@@ -255,9 +258,66 @@ func (s *Server) closePositionFromSignal(ctx context.Context, signal trading.Sig
 		return s.closeBinancePositionFromSignal(ctx, signal, cfg)
 	case trading.ExchangeOKX:
 		return s.closeOKXPositionFromSignal(ctx, signal, cfg)
+	case trading.ExchangeGate:
+		return s.closeGatePositionFromSignal(ctx, signal, cfg)
 	default:
 		return trading.OrderResult{}, fmt.Errorf("unsupported target_exchange %q", signal.TargetExchange)
 	}
+}
+
+func (s *Server) closeGatePositionFromSignal(ctx context.Context, signal trading.Signal, cfg config.Config) (trading.OrderResult, error) {
+	if s.GateCredentials == nil {
+		return trading.OrderResult{}, errors.New("Gate credential store is not configured")
+	}
+	if !cfg.GateLiveTradingAllowedByEnvironment() {
+		return trading.OrderResult{}, errors.New("Gate live trading is not allowed by environment")
+	}
+	creds, apiID, err := s.GateCredentials.GateCredentials(signal.APIID)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	client := gate.Client{BaseURL: cfg.GateBaseURL(), Credentials: creds, HTTPClient: s.GateHTTPClient}
+	contract, err := gate.DeriveContract(signal)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	positions, err := client.Positions(ctx, contract)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	want := strings.ToLower(strings.TrimSpace(signal.PositionSide))
+	var found gate.Position
+	for _, position := range positions {
+		size, parseErr := strconv.ParseFloat(strings.TrimSpace(position.Size), 64)
+		if parseErr != nil || math.Abs(size) < 1e-12 {
+			continue
+		}
+		direction := trading.PositionSideLong
+		if size < 0 {
+			direction = trading.PositionSideShort
+		}
+		if want == "" || direction == want {
+			found = position
+			break
+		}
+	}
+	if strings.TrimSpace(found.Contract) == "" {
+		return trading.OrderResult{}, fmt.Errorf("%w: %s %s", errPositionNotOpen, contract, want)
+	}
+	marginMode := strings.ToLower(strings.TrimSpace(cfg.MarginMode()))
+	if marginMode != "cross" {
+		marginMode = "isolated"
+	}
+	textID := "t-close-" + strings.ToLower(strings.ReplaceAll(contract, "_", ""))
+	if len(textID) > 28 {
+		textID = textID[:28]
+	}
+	ack, err := client.PlaceOrder(ctx, gate.PlaceOrderRequest{Contract: contract, Size: "0", Price: "0", TIF: "ioc", Text: textID, Close: true, ReduceOnly: true, PosMarginMode: marginMode})
+	result := trading.OrderResult{APIID: apiID, TargetExchange: trading.ExchangeGate, InstID: contract, ClOrdID: textID, OrdType: "market", Px: "0", OrdID: ack.IDString(), PositionEffect: trading.PositionEffectClose, PositionSide: want}
+	if err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func (s *Server) closeOKXPositionFromSignal(ctx context.Context, signal trading.Signal, cfg config.Config) (trading.OrderResult, error) {

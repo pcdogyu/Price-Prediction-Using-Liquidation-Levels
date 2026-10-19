@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
@@ -13,12 +14,31 @@ import (
 type ExchangeExecutor struct {
 	OKX     trading.Executor
 	Binance trading.Executor
+	Gate    trading.Executor
 }
 
-func (e ExchangeExecutor) WithCredentials(okxCredentials *okx.CredentialStore, binanceCredentials *binance.CredentialStore) ExchangeExecutor {
+func (e ExchangeExecutor) WithCredentials(okxCredentials *okx.CredentialStore, binanceCredentials *binance.CredentialStore, gateCredentials *gate.CredentialStore) ExchangeExecutor {
 	return ExchangeExecutor{
 		OKX:     bindOKXCredentialStore(e.OKX, okxCredentials),
 		Binance: bindBinanceCredentialStore(e.Binance, binanceCredentials),
+		Gate:    bindGateCredentialStore(e.Gate, gateCredentials),
+	}
+}
+
+func bindGateCredentialStore(executor trading.Executor, credentials *gate.CredentialStore) trading.Executor {
+	switch trader := executor.(type) {
+	case gate.Trader:
+		trader.CredentialProvider = credentials
+		return trader
+	case *gate.Trader:
+		if trader == nil {
+			return executor
+		}
+		copy := *trader
+		copy.CredentialProvider = credentials
+		return &copy
+	default:
+		return executor
 	}
 }
 
@@ -68,6 +88,11 @@ func (e ExchangeExecutor) ExecuteSignal(ctx context.Context, signal trading.Sign
 			return trading.OrderResult{}, errors.New("OKX executor is not configured")
 		}
 		return e.OKX.ExecuteSignal(ctx, signal, cfg)
+	case trading.ExchangeGate:
+		if e.Gate == nil {
+			return trading.OrderResult{}, errors.New("Gate executor is not configured")
+		}
+		return e.Gate.ExecuteSignal(ctx, signal, cfg)
 	default:
 		return trading.OrderResult{}, errors.New("unsupported target_exchange " + strings.TrimSpace(signal.TargetExchange))
 	}

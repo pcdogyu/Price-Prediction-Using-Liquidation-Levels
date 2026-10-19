@@ -10,11 +10,12 @@ func (s *Server) scopedForUser(username string) (*Server, error) {
 	scoped := *s
 	scoped.OKXCredentials = credentials.OKX
 	scoped.BinanceCredentials = credentials.Binance
+	scoped.GateCredentials = credentials.Gate
 	scoped.positionEntryCache = &positionEntryFillCache{}
 	if executor, ok := s.Executor.(ExchangeExecutor); ok {
-		scoped.Executor = executor.WithCredentials(credentials.OKX, credentials.Binance)
+		scoped.Executor = executor.WithCredentials(credentials.OKX, credentials.Binance, credentials.Gate)
 	} else if executor, ok := s.Executor.(*ExchangeExecutor); ok && executor != nil {
-		bound := executor.WithCredentials(credentials.OKX, credentials.Binance)
+		bound := executor.WithCredentials(credentials.OKX, credentials.Binance, credentials.Gate)
 		scoped.Executor = bound
 	}
 	return &scoped, nil

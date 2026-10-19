@@ -1755,6 +1755,7 @@ const tvbotHTML = `<!doctype html>
           <div class="exchange-tabs" id="api-key-exchange-tabs">
             <button type="button" data-api-key-exchange="okx" aria-selected="true">OKX</button>
             <button type="button" data-api-key-exchange="binance">Binance</button>
+            <button type="button" data-api-key-exchange="gate">Gate</button>
           </div>
         </div>
         <div class="actions" style="margin-top:0">
@@ -1836,6 +1837,8 @@ const tvbotHTML = `<!doctype html>
         <label>OKX Base URL<input id="cfg-base-url" autocomplete="off"></label>
         <label>Binance Base URL<input id="cfg-binance-base-url" autocomplete="off"></label>
         <label>Binance Demo Base URL<input id="cfg-binance-demo-base-url" autocomplete="off"></label>
+        <label>Gate Base URL<input id="cfg-gate-base-url" autocomplete="off"></label>
+        <label>Gate Demo Base URL<input id="cfg-gate-demo-base-url" autocomplete="off"></label>
         <label>交易环境<select id="cfg-env"><option value="demo">demo</option><option value="live">live</option></select></label>
         <label>保证金模式<select id="cfg-margin"><option value="isolated">isolated</option><option value="cross">cross</option></select></label>
         <label>持仓模式<select id="cfg-position"><option value="net">net</option><option value="long_short">long_short</option></select></label>
@@ -1875,7 +1878,7 @@ const tvbotHTML = `<!doctype html>
       <div class="split">
         <div class="grid two">
           <label>Webhook URL<input id="template-webhook-url" readonly></label>
-          <label>下单去向<select id="tpl-target-exchange"><option value="okx">OKX</option><option value="binance">Binance USDⓈ-M</option></select></label>
+          <label>下单去向<select id="tpl-target-exchange"><option value="okx">OKX</option><option value="binance">Binance USDⓈ-M</option><option value="gate">Gate Futures</option></select></label>
           <label>交易环境<select id="tpl-trade-env"><option value="demo">模拟</option><option value="live">实盘</option></select></label>
           <label>交易 API<select id="tpl-api-id"></select></label>
           <label>币对<input id="tpl-coinpair" list="tpl-coinpair-list" autocomplete="off" spellcheck="false" placeholder="跟随 TradingView ({{ticker}})"><datalist id="tpl-coinpair-list"></datalist></label>
@@ -2043,10 +2046,10 @@ const tvbotHTML = `<!doctype html>
     const state = {
       config: null,
       apiKeys: null,
-      apiKeysByExchange: { okx: null, binance: null },
+      apiKeysByExchange: { okx: null, binance: null, gate: null },
       apiKeyExchange: "okx",
       selectedAPIID: "",
-      selectedAPIIDs: { okx: "", binance: "" },
+      selectedAPIIDs: { okx: "", binance: "", gate: "" },
       apiKeyTest: null,
       apiKeyTestID: "",
       apiKeyTestExchange: "okx",
@@ -2441,11 +2444,15 @@ const tvbotHTML = `<!doctype html>
     function normalizeExchange(value) {
       const raw = String(value || "").trim().toLowerCase();
       if (raw === "binance" || raw === "binance_usdm" || raw === "binance-usdm" || raw === "usdm") return "binance";
+      if (raw === "gate" || raw === "gateio" || raw === "gate_io" || raw === "gate.io" || raw === "gate futures") return "gate";
       return "okx";
     }
 
     function exchangeLabel(value) {
-      return normalizeExchange(value) === "binance" ? "Binance" : "OKX";
+      const exchange = normalizeExchange(value);
+      if (exchange === "binance") return "Binance";
+      if (exchange === "gate") return "Gate";
+      return "OKX";
     }
 
     function storedSelectedExchange() {
@@ -3307,12 +3314,14 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadAPIKeys() {
-      const [okxResult, binanceResult] = await Promise.allSettled([
+      const [okxResult, binanceResult, gateResult] = await Promise.allSettled([
         api("/tvbot/api-keys?exchange=okx"),
-        api("/tvbot/api-keys?exchange=binance")
+        api("/tvbot/api-keys?exchange=binance"),
+        api("/tvbot/api-keys?exchange=gate")
       ]);
       state.apiKeysByExchange.okx = okxResult.status === "fulfilled" ? okxResult.value : { configured: false, credentials: [], error: okxResult.reason ? okxResult.reason.message : "OKX API Key 读取失败" };
       state.apiKeysByExchange.binance = binanceResult.status === "fulfilled" ? binanceResult.value : { configured: false, credentials: [], error: binanceResult.reason ? binanceResult.reason.message : "Binance API Key 读取失败" };
+      state.apiKeysByExchange.gate = gateResult.status === "fulfilled" ? gateResult.value : { configured: false, credentials: [], error: gateResult.reason ? gateResult.reason.message : "Gate API Key 读取失败" };
       state.apiKeys = apiKeyStatus(state.apiKeyExchange);
       renderAPIKeys();
       renderTemplateAPIs();
@@ -3690,7 +3699,7 @@ const tvbotHTML = `<!doctype html>
 
     function updateMetrics() {
       $("metric-env").textContent = state.config && state.config.trading ? state.config.trading.env : "-";
-      $("metric-api-keys").textContent = "OKX " + apiMetricText("okx") + " / Binance " + apiMetricText("binance");
+      $("metric-api-keys").textContent = "OKX " + apiMetricText("okx") + " / Binance " + apiMetricText("binance") + " / Gate " + apiMetricText("gate");
       $("metric-amount").textContent = state.config && state.config.trading ? asText(state.config.trading.order_amount_usdt) + " USDT" : "-";
       $("metric-orders").textContent = Number.isFinite(Number(state.ordersTotal)) ? String(Number(state.ordersTotal || 0)) : (state.orders ? state.orders.length : "-");
     }
@@ -3749,6 +3758,8 @@ const tvbotHTML = `<!doctype html>
         ["OKX Base URL", t.base_url],
         ["Binance Base URL", t.binance_base_url],
         ["Binance Demo Base URL", t.binance_demo_base_url],
+        ["Gate Base URL", t.gate_base_url],
+        ["Gate Demo Base URL", t.gate_demo_base_url],
         ["交易环境", t.env],
         ["实盘开关", t.allow_live_trading ? "enabled" : "disabled"],
         ["保证金模式", t.default_margin_mode],
@@ -3812,6 +3823,8 @@ const tvbotHTML = `<!doctype html>
       $("cfg-base-url").value = trading.base_url || "";
       $("cfg-binance-base-url").value = trading.binance_base_url || "";
       $("cfg-binance-demo-base-url").value = trading.binance_demo_base_url || "";
+      $("cfg-gate-base-url").value = trading.gate_base_url || "";
+      $("cfg-gate-demo-base-url").value = trading.gate_demo_base_url || "";
       $("cfg-env").value = trading.env || "demo";
       $("cfg-margin").value = trading.default_margin_mode || "isolated";
       $("cfg-position").value = trading.position_mode || "net";
@@ -4315,7 +4328,7 @@ const tvbotHTML = `<!doctype html>
     function apiDisplayName(id, exchange) {
       const apiID = String(id || "").trim();
       if (!apiID) return "-";
-      const account = selectedAPIAccount(apiID, exchange) || selectedAPIAccount(apiID, "okx") || selectedAPIAccount(apiID, "binance");
+      const account = selectedAPIAccount(apiID, exchange) || selectedAPIAccount(apiID, "okx") || selectedAPIAccount(apiID, "binance") || selectedAPIAccount(apiID, "gate");
       return account && account.name ? account.name : apiID;
     }
 
@@ -5803,9 +5816,10 @@ const tvbotHTML = `<!doctype html>
         const precisionInstID = order.result && order.result.inst_id ? order.result.inst_id : order.coinpair;
         const okxResult = targetExchange === "okx" && order.result && (order.result.ord_id || order.result.okx_code) ? [order.result.ord_id, order.result.okx_code].filter(Boolean).join(" / ") : "";
         const binanceResult = targetExchange === "binance" && order.result && (order.result.ord_id || order.result.binance_code || order.result.binance_msg) ? [order.result.ord_id, order.result.binance_code, order.result.binance_msg].filter(Boolean).join(" / ") : "";
+        const gateResult = targetExchange === "gate" && order.result && (order.result.ord_id || order.result.gate_label || order.result.gate_msg) ? [order.result.ord_id, order.result.gate_label, order.result.gate_msg].filter(Boolean).join(" / ") : "";
         const errorText = [order.error_code, order.error].filter(Boolean).join(": ");
         const unsupportedMessage = unsupportedOKXInstrumentMessage(order);
-        const exchangeResult = unsupportedMessage || okxResult || binanceResult || errorText || "-";
+        const exchangeResult = unsupportedMessage || okxResult || binanceResult || gateResult || errorText || "-";
         const apiID = order.api_id || (order.result && order.result.api_id);
         const sourceExchange = order.source_exchange || "-";
         const tradeEnvText = order.trade_env === "live" ? "实盘" : "模拟";
@@ -6007,6 +6021,8 @@ const tvbotHTML = `<!doctype html>
           base_url: $("cfg-base-url").value.trim(),
           binance_base_url: $("cfg-binance-base-url").value.trim(),
           binance_demo_base_url: $("cfg-binance-demo-base-url").value.trim(),
+          gate_base_url: $("cfg-gate-base-url").value.trim(),
+          gate_demo_base_url: $("cfg-gate-demo-base-url").value.trim(),
           default_margin_mode: $("cfg-margin").value,
           position_mode: $("cfg-position").value,
           signal_ttl_seconds: Number($("cfg-ttl").value)

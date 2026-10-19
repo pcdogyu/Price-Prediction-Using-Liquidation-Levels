@@ -20,6 +20,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotsecurity"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotstorage"
@@ -501,6 +502,7 @@ func TestRoutes(t *testing.T) {
 	if !bytes.Contains(ui.Body.Bytes(), []byte("账户名称")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`data-api-key-exchange="okx"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`data-api-key-exchange="binance"`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`data-api-key-exchange="gate"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("Binance API Key")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("交易所 / 返回")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("信号来源")) ||
@@ -2626,6 +2628,44 @@ func TestTVBotBinanceAPIKeysSaveAndTest(t *testing.T) {
 	}
 	if !bytes.Contains(testRR.Body.Bytes(), []byte(`"exchange":"binance"`)) || !bytes.Contains(testRR.Body.Bytes(), []byte(`"api_id":"main"`)) || !bytes.Contains(testRR.Body.Bytes(), []byte(`"eq":"1000.25"`)) {
 		t.Fatalf("bad test response: %s", testRR.Body.String())
+	}
+}
+
+func TestTVBotGateAPIKeysSaveAndTest(t *testing.T) {
+	srv := newTestServer(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v4/futures/usdt/accounts":
+			_, _ = w.Write([]byte(`{"currency":"USDT","total":"1000.25","available":"900.25"}`))
+		case "/api/v4/futures/usdt/contracts":
+			_, _ = w.Write([]byte(`[{"name":"BTC_USDT","status":"trading"}]`))
+		default:
+			t.Fatalf("unexpected Gate path %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.GateDemoBaseURL = ts.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	store, err := gate.NewCredentialStore(filepath.Join(t.TempDir(), "gate.json"), gate.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.GateCredentials = store
+	req := httptest.NewRequest(http.MethodPut, "/tvbot/api-keys?exchange=gate", strings.NewReader(`{"exchange":"gate","id":"main","name":"Gate Main","api_key":"gateabcd12345678wxyz","secret_key":"gate-secret-value","active":true}`))
+	req.SetBasicAuth("admin", "Admin123")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || bytes.Contains(rr.Body.Bytes(), []byte("gate-secret-value")) || !bytes.Contains(rr.Body.Bytes(), []byte("gate...wxyz")) {
+		t.Fatalf("bad Gate save response: %d %s", rr.Code, rr.Body.String())
+	}
+	testReq := httptest.NewRequest(http.MethodPost, "/tvbot/api-keys/test", strings.NewReader(`{"exchange":"gate","id":"main"}`))
+	testReq.SetBasicAuth("admin", "Admin123")
+	testRR := httptest.NewRecorder()
+	srv.ServeHTTP(testRR, testReq)
+	if testRR.Code != http.StatusOK || !bytes.Contains(testRR.Body.Bytes(), []byte(`"exchange":"gate"`)) || !bytes.Contains(testRR.Body.Bytes(), []byte(`"eq":"1000.25"`)) {
+		t.Fatalf("bad Gate test response: %d %s", testRR.Code, testRR.Body.String())
 	}
 }
 
