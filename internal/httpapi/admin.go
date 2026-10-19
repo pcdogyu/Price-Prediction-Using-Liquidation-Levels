@@ -45,7 +45,7 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall", Group: "liquidation"},
 		{Key: "market-info", Title: "市场信息", Href: "/market-info", Group: "liquidation"},
 		{Key: "options", Title: "期权", Href: "/options", Group: "liquidation"},
-		{Key: "overview", Title: "总览", Href: "/tvbot/view/dashboard", Group: "trading"},
+		{Key: "overview", Title: "资金", Href: "/tvbot/view/dashboard", Group: "trading"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions", Group: "trading"},
 		{Key: "orders", Title: "下单信号", Href: "/tvbot/view/orders", Group: "trading"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis", Group: "trading"},
@@ -97,6 +97,12 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 		if migrated[i].Key == "orders" || migrated[i].Href == "/tvbot/view/orders" {
 			if migrated[i].Title != "下单信号" {
 				migrated[i].Title = "下单信号"
+				changed = true
+			}
+		}
+		if migrated[i].Key == "overview" || migrated[i].Href == "/tvbot/view/dashboard" {
+			if migrated[i].Title != "资金" {
+				migrated[i].Title = "资金"
 				changed = true
 			}
 		}

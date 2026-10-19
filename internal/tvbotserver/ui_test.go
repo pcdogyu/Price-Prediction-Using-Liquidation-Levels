@@ -61,7 +61,7 @@ func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
 	req := httptest.NewRequest("GET", "/tvbot/view/dashboard", nil)
 	req.Header.Set("X-Forwarded-Prefix", "/liquidation")
 	page := renderTVBotHTMLWithMenu(BuildInfo{CommitHash: "test"}, req, []TopMenuItem{
-		{Key: "overview", Title: "总览", Href: "/tvbot/view/dashboard"},
+		{Key: "overview", Title: "资金", Href: "/tvbot/view/dashboard"},
 		{Key: "system-info", Title: "系统信息", Href: "/system"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu"},
 	})
@@ -69,7 +69,7 @@ func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
 		t.Fatalf("configured tvbot page should have one top menu: %s", page)
 	}
 	for _, want := range []string{
-		`data-tab="dashboard" href="/liquidation/tvbot/view/dashboard" aria-current="page">总览`,
+		`data-tab="dashboard" href="/liquidation/tvbot/view/dashboard" aria-current="page">资金`,
 		`data-tab="system" href="/liquidation/system">系统信息`,
 		`href="/liquidation/menu">菜单管理`,
 	} {
@@ -79,6 +79,30 @@ func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
 	}
 	if strings.Contains(page, `data-tab="menuSettings"`) || strings.Contains(page, `href="/liquidation/tvbot/view/menu-settings"`) {
 		t.Fatal("configured top menu should not expose the legacy tvbot menu settings entry")
+	}
+}
+
+func TestRenderTVBotDashboardUsesFundingPeriods(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/dashboard", nil))
+	for _, want := range []string{
+		`<h2>资金</h2>`,
+		`id="dashboard-balance-window-label">24h</div>`,
+		`aria-label="资金回看周期"`,
+		`data-dashboard-balance-minutes="60">1h</button>`,
+		`data-dashboard-balance-minutes="240">4h</button>`,
+		`data-dashboard-balance-minutes="480">8h</button>`,
+		`data-dashboard-balance-minutes="720">12h</button>`,
+		`data-dashboard-balance-minutes="1440">24h</button>`,
+		`data-dashboard-balance-minutes="2880">2d</button>`,
+		`data-dashboard-balance-minutes="4320">3d</button>`,
+		`data-dashboard-balance-minutes="10080">7d</button>`,
+		`dashboardBalanceWindowMinutes: 1440`,
+		`function setDashboardBalanceWindow(minutes)`,
+		`loadBalanceOverview(false, parsed)`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard funding period marker missing %q", want)
+		}
 	}
 }
 

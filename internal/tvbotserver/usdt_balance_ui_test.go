@@ -173,7 +173,14 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		}
 	}
 	analysisUpdated := strings.Index(tvbotHTML, `id="analysis-updated"`)
-	windowToolbar := strings.Index(tvbotHTML, `class="balance-window-toolbar"`)
+	windowToolbarOffset := -1
+	if analysisUpdated >= 0 {
+		windowToolbarOffset = strings.Index(tvbotHTML[analysisUpdated:], `class="balance-window-toolbar"`)
+	}
+	windowToolbar := -1
+	if windowToolbarOffset >= 0 {
+		windowToolbar = analysisUpdated + windowToolbarOffset
+	}
 	analysisGrid := strings.Index(tvbotHTML, `class="analysis-balance-grid"`)
 	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 {
 		t.Fatal("analysis top layout markers are missing")

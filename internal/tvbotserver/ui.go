@@ -26,7 +26,7 @@ type tvbotViewRoute struct {
 }
 
 var tvbotViewRoutes = []tvbotViewRoute{
-	{Slug: "dashboard", Tab: "dashboard", Label: "总览"},
+	{Slug: "dashboard", Tab: "dashboard", Label: "资金"},
 	{Slug: "system", Tab: "system", Label: "系统信息"},
 	{Slug: "positions", Tab: "positions", Label: "持仓"},
 	{Slug: "analysis", Tab: "analysis", Label: "订单分析"},
@@ -134,7 +134,7 @@ func defaultTopMenu() []TopMenuItem {
 		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall"},
 		{Key: "market-info", Title: "市场信息", Href: "/market-info"},
 		{Key: "options", Title: "期权", Href: "/options"},
-		{Key: "overview", Title: "总览", Href: "/tvbot/view/dashboard"},
+		{Key: "overview", Title: "资金", Href: "/tvbot/view/dashboard"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions"},
 		{Key: "orders", Title: "订单", Href: "/tvbot/view/orders"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis"},
@@ -1518,9 +1518,25 @@ const tvbotHTML = `<!doctype html>
 
     <section id="dashboard" class="active">
       <div class="section-head">
-        <h2>总览</h2>
+        <h2>资金</h2>
         <div class="actions" style="margin-top:0">
           <button class="btn" type="button" id="refresh-all">刷新</button>
+        </div>
+      </div>
+      <div class="analysis-period-row dashboard-balance-period-row">
+        <div class="analysis-time-status">
+          <div class="label">资金回看</div>
+          <div class="value" id="dashboard-balance-window-label">24h</div>
+        </div>
+        <div class="balance-window-toolbar" role="group" aria-label="资金回看周期">
+          <button class="btn small balance-window-btn dashboard-balance-window-btn" type="button" data-dashboard-balance-minutes="60">1h</button>
+          <button class="btn small balance-window-btn dashboard-balance-window-btn" type="button" data-dashboard-balance-minutes="240">4h</button>
+          <button class="btn small balance-window-btn dashboard-balance-window-btn" type="button" data-dashboard-balance-minutes="480">8h</button>
+          <button class="btn small balance-window-btn dashboard-balance-window-btn" type="button" data-dashboard-balance-minutes="720">12h</button>
+          <button class="btn small balance-window-btn dashboard-balance-window-btn" type="button" data-dashboard-balance-minutes="1440">24h</button>
+          <button class="btn small balance-window-btn dashboard-balance-window-btn" type="button" data-dashboard-balance-minutes="2880">2d</button>
+          <button class="btn small balance-window-btn dashboard-balance-window-btn" type="button" data-dashboard-balance-minutes="4320">3d</button>
+          <button class="btn small balance-window-btn dashboard-balance-window-btn" type="button" data-dashboard-balance-minutes="10080">7d</button>
         </div>
       </div>
       <div class="dashboard-balance-grid">
@@ -2075,6 +2091,7 @@ const tvbotHTML = `<!doctype html>
       symbolPrecisions: {},
       balanceOverview: null,
       balanceOverviewError: "",
+      dashboardBalanceWindowMinutes: 1440,
       balanceWindowMinutes: 720,
       analysisPositions: null,
       analysisPositionsError: "",
@@ -2111,7 +2128,7 @@ const tvbotHTML = `<!doctype html>
     const analysisBalanceRefreshIntervalMs = 60000;
     const coinpairBlockPollIntervalMs = 20000;
     const defaultMenuItems = [
-      { tab: "dashboard", label: "总览" },
+      { tab: "dashboard", label: "资金" },
       { tab: "system", label: "系统信息", locked: true },
       { tab: "positions", label: "持仓" },
       { tab: "analysis", label: "订单分析" },
@@ -2785,8 +2802,9 @@ const tvbotHTML = `<!doctype html>
       return Math.min(minutes, 90 * 24 * 60);
     }
 
-    function balanceOverviewPath(forceRefresh) {
-      const qs = new URLSearchParams({ minutes: String(Math.max(0, Number(state.balanceWindowMinutes || 0))) });
+    function balanceOverviewPath(forceRefresh, minutes) {
+      const selectedMinutes = minutes === undefined ? state.dashboardBalanceWindowMinutes : minutes;
+      const qs = new URLSearchParams({ minutes: String(Math.max(0, Number(selectedMinutes || 0))) });
       if (forceRefresh) qs.set("refresh", "true");
       return "/tvbot/balances/overview?" + qs.toString();
     }
@@ -2796,6 +2814,16 @@ const tvbotHTML = `<!doctype html>
         const selected = Number(button.dataset.balanceMinutes || "0") === Number(state.balanceWindowMinutes || 0);
         button.setAttribute("aria-selected", selected ? "true" : "false");
       });
+    }
+
+    function updateDashboardBalanceWindowButtons() {
+      const selectedMinutes = Number(state.dashboardBalanceWindowMinutes || 0);
+      document.querySelectorAll("[data-dashboard-balance-minutes]").forEach((button) => {
+        const selected = Number(button.dataset.dashboardBalanceMinutes || "0") === selectedMinutes;
+        button.setAttribute("aria-selected", selected ? "true" : "false");
+      });
+      const label = $("dashboard-balance-window-label");
+      if (label) label.textContent = balanceWindowLabel(selectedMinutes);
     }
 
     function chartPointDate(point) {
@@ -2939,6 +2967,7 @@ const tvbotHTML = `<!doctype html>
     function menuLabel(item, def) {
       const label = item && item.label ? String(item.label).trim() : "";
       if (!label) return def ? def.label : "";
+      if (def && def.tab === "dashboard" && label === "总览") return def.label;
       const owner = defaultMenuTabByLabel(label);
       if (owner && def && owner !== def.tab) return def.label;
       return label;
@@ -3176,7 +3205,7 @@ const tvbotHTML = `<!doctype html>
       if (analysisBalanceRefreshBusy || !analysisBalanceAutoRefreshAllowed()) return;
       analysisBalanceRefreshBusy = true;
       try {
-        await Promise.all([loadBalanceOverview(true), loadAnalysisPositions(true)]);
+        await Promise.all([loadBalanceOverview(true, state.balanceWindowMinutes), loadAnalysisPositions(true)]);
         renderAnalysis();
       } finally {
         analysisBalanceRefreshBusy = false;
@@ -3334,9 +3363,9 @@ const tvbotHTML = `<!doctype html>
       updateMetrics();
     }
 
-    async function loadBalanceOverview(forceRefresh) {
+    async function loadBalanceOverview(forceRefresh, minutes) {
       try {
-        state.balanceOverview = await api(balanceOverviewPath(!!forceRefresh));
+        state.balanceOverview = await api(balanceOverviewPath(!!forceRefresh, minutes));
         state.balanceOverviewError = "";
       } catch (err) {
         state.balanceOverview = null;
@@ -3437,7 +3466,7 @@ const tvbotHTML = `<!doctype html>
     async function loadAnalysis(refresh) {
       const qs = new URLSearchParams({ price_days: "3", pnl_minutes: String(analysisPNLWindowMinutes()) });
       if (refresh) qs.set("refresh", "true");
-      await Promise.all([loadBalanceOverview(!!refresh), loadAnalysisPositions(!!refresh)]);
+      await Promise.all([loadBalanceOverview(!!refresh, state.balanceWindowMinutes), loadAnalysisPositions(!!refresh)]);
       try {
         state.analysis = await api("/tvbot/analysis?" + qs.toString());
         state.analysisError = "";
@@ -3741,6 +3770,7 @@ const tvbotHTML = `<!doctype html>
     function renderDashboard() {
       if (!state.config) return;
       renderGlobalExchangeSwitch();
+      updateDashboardBalanceWindowButtons();
       renderBalanceOverview();
     }
 
@@ -3785,6 +3815,7 @@ const tvbotHTML = `<!doctype html>
 
     function renderBalanceOverview() {
       renderGlobalExchangeSwitch();
+      updateDashboardBalanceWindowButtons();
       ["okx", "binance"].forEach((exchange) => {
         const item = balanceOverviewExchange(exchange);
         const prefix = "overview-" + exchange;
@@ -6426,6 +6457,15 @@ const tvbotHTML = `<!doctype html>
       toast("周期已切换为 " + balanceWindowLabel(parsed));
     }
 
+    async function setDashboardBalanceWindow(minutes) {
+      const parsed = Math.max(0, Number(minutes || 0));
+      if (!Number.isFinite(parsed)) return;
+      state.dashboardBalanceWindowMinutes = parsed;
+      updateDashboardBalanceWindowButtons();
+      await loadBalanceOverview(false, parsed);
+      toast("资金回看已切换为 " + balanceWindowLabel(parsed));
+    }
+
     async function resetBalanceBaseline(button) {
       const original = button ? button.textContent : "";
       if (button) {
@@ -6594,6 +6634,9 @@ const tvbotHTML = `<!doctype html>
     document.querySelectorAll("[data-balance-minutes]").forEach((button) => {
       button.addEventListener("click", () => setBalanceWindow(button.dataset.balanceMinutes).catch((err) => toast(err.message)));
     });
+    document.querySelectorAll("[data-dashboard-balance-minutes]").forEach((button) => {
+      button.addEventListener("click", () => setDashboardBalanceWindow(button.dataset.dashboardBalanceMinutes).catch((err) => toast(err.message)));
+    });
     $("reset-balance-baseline").addEventListener("click", () => resetBalanceBaseline($("reset-balance-baseline")).catch((err) => toast(err.message)));
     $("sync-balance-history").addEventListener("click", () => syncBalanceHistory($("sync-balance-history")).catch((err) => toast(err.message)));
     $("analysis-trade-prev").addEventListener("click", () => changeAnalysisTradePage(-1));
@@ -6716,6 +6759,7 @@ const tvbotHTML = `<!doctype html>
     renderTemplateWebhookURL();
     renderTemplateTitle(new Date());
     updateBalanceWindowButtons();
+    updateDashboardBalanceWindowButtons();
     initTableColumnDrag();
     initAnalysisTradeColumnDrag();
     renderPositions();

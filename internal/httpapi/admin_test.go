@@ -22,6 +22,7 @@ func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
 		{Key: "positions", Title: "持仓", Href: "/tvbot#positions", Group: "trading"},
 		{Key: "orders", Title: "订单", Href: "/tvbot/view/orders", Group: "trading"},
 		{Key: "analysis", Title: "分析", Href: "/tvbot#analysis", Group: "trading"},
+		{Key: "overview", Title: "总览", Href: "/tvbot/view/dashboard", Group: "trading"},
 		{Key: "custom", Title: "自定义", Href: "/custom", Group: "custom"},
 	}
 	migrated, changed := migrateAdminMenu(legacy)
@@ -31,11 +32,11 @@ func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
 	if migrated[0].Key != "menu" || migrated[0].Title != "菜单管理" || migrated[0].Href != "/menu" || migrated[0].Group != "admin" {
 		t.Fatalf("migrated menu item=%#v", migrated[0])
 	}
-	if migrated[1].Href != "/tvbot/view/positions" || migrated[2].Title != "下单信号" || migrated[2].Href != "/tvbot/view/orders" || migrated[3].Href != "/tvbot/view/analysis" {
+	if migrated[1].Href != "/tvbot/view/positions" || migrated[2].Title != "下单信号" || migrated[2].Href != "/tvbot/view/orders" || migrated[3].Href != "/tvbot/view/analysis" || migrated[4].Title != "资金" {
 		t.Fatalf("migrated trading menu=%#v", migrated[1:4])
 	}
-	if migrated[4] != legacy[4] {
-		t.Fatalf("custom menu item should remain unchanged: %#v", migrated[4])
+	if migrated[5] != legacy[5] {
+		t.Fatalf("custom menu item should remain unchanged: %#v", migrated[5])
 	}
 }
 

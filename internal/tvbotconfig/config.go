@@ -202,7 +202,7 @@ var DefaultSymbolTableColumns = []string{
 }
 
 var defaultMenuLabels = map[string]string{
-	"dashboard":     "总览",
+	"dashboard":     "资金",
 	"positions":     "持仓",
 	"analysis":      "订单分析",
 	"symbols":       "币对配置",
@@ -619,6 +619,9 @@ func normalizeMenuItems(items []MenuItemConfig) []MenuItemConfig {
 			item.Hidden = false
 		}
 		label := strings.TrimSpace(item.Label)
+		if tab == "dashboard" && label == "总览" {
+			label = defaultMenuLabel(tab)
+		}
 		if label == "" {
 			label = defaultMenuLabel(tab)
 		} else if owner := defaultMenuLabelOwner(label); owner != "" && owner != tab {
