@@ -7,12 +7,16 @@
   <link rel="stylesheet" href="{{BASE}}assets/pages.css"><link rel="stylesheet" href="{{BASE}}assets/theme.css">
   <script src="{{BASE}}assets/shared.js" defer></script>
   <style>
+    .page-shell{width:calc(100% - 48px);max-width:1800px;margin:0 auto;padding:24px 0 40px}
+    .page-head{margin-bottom:20px}.page-head h1{margin:4px 0;font-size:32px}.page-head p{margin:0;color:var(--muted)}
     .admin-grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
     .admin-card{border:1px solid var(--line);border-radius:14px;padding:18px;background:var(--panel)}
     .admin-card h2{margin-top:0}.admin-table{width:100%;border-collapse:collapse}
     .admin-table th,.admin-table td{padding:9px 7px;border-bottom:1px solid var(--line);text-align:left}
     .admin-form{display:grid;gap:10px}.admin-form input,.admin-form select{padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
     .admin-actions{display:flex;flex-wrap:wrap;gap:8px}.admin-actions button{padding:7px 10px}.admin-note{color:var(--muted)}.admin-error{color:#c24135;min-height:1.2em}
+    .system-table{width:100%;border-collapse:collapse;table-layout:fixed}.system-table th,.system-table td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.system-table th{color:var(--muted);font-size:12px;font-weight:650}.system-table th:nth-child(1){width:30%}.system-table th:nth-child(2){width:15%}.system-table th:nth-child(3){width:13%}.system-table th:nth-child(4){width:24%}.system-table th:nth-child(5){width:18%}.system-table td:first-child{overflow-wrap:anywhere}.system-table td:nth-child(4),.system-table td:nth-child(5){font-size:12px;color:var(--muted);overflow-wrap:anywhere}.status-badge{display:inline-flex;align-items:center;justify-content:center;min-width:52px;padding:3px 9px;border:1px solid;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap}.status-ok{color:var(--green);background:var(--long-bg);border-color:var(--long-line)}.status-bad{color:var(--red);background:var(--short-bg);border-color:var(--short-line)}
+    @media(max-width:720px){.page-shell{width:calc(100% - 24px);padding-top:18px}.admin-grid{grid-template-columns:1fr}.system-table{min-width:700px}.system-table-wrap{overflow-x:auto}}
   </style>
 </head>
 <body>{{NAV}}
@@ -23,7 +27,7 @@
       <form id="new-user" class="admin-form"><input name="username" placeholder="用户名" maxlength="128" required><input name="password" type="password" placeholder="初始密码" minlength="8" required><select name="role"><option value="user">普通用户</option><option value="admin">管理员</option></select><button type="submit">新增用户</button></form>
       <p id="user-error" class="admin-error" role="alert"></p><table class="admin-table"><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody id="users"><tr><td colspan="4">加载中</td></tr></tbody></table>
     </section>
-    <section class="admin-card"><h2>系统状态</h2><pre id="system">加载中</pre></section>
+    <section class="admin-card"><div class="section-head"><h2>系统状态</h2><span id="system-overall" class="status-badge status-bad">加载中</span></div><div class="system-table-wrap"><table class="system-table"><thead><tr><th>数据源</th><th>状态</th><th>覆盖率</th><th>最近消息</th><th>错误信息</th></tr></thead><tbody id="system-health"><tr><td colspan="5">加载中</td></tr></tbody></table></div><p id="system-meta" class="admin-note"></p></section>
   </div>
 </main>
 <script>
@@ -32,7 +36,11 @@
   const err=document.querySelector('#user-error'), users=document.querySelector('#users');
   const load=async()=>{try{const b=await j('{{BASE}}api/v1/admin/users');const rows=b.users;users.innerHTML=rows.map(u=>'<tr><td>'+u.username+'</td><td>'+u.role+'</td><td>'+(u.enabled?'启用':'停用')+'</td><td><div class="admin-actions"><button data-toggle="'+u.username+'" type="button">'+(u.enabled?'停用':'启用')+'</button><button data-role="'+u.username+'" type="button">切换角色</button><button data-reset="'+u.username+'" type="button">重置密码</button></div></td></tr>').join('')||'<tr><td colspan="4">暂无用户</td></tr>';users.querySelectorAll('button').forEach(b=>b.onclick=async()=>{try{const username=b.dataset.toggle||b.dataset.role||b.dataset.reset,row=rows.find(x=>x.username===username),body={};if(b.dataset.toggle)body.disabled=row.enabled;if(b.dataset.role)body.role=row.role==='admin'?'user':'admin';if(b.dataset.reset){const password=prompt('输入新密码（至少 8 个字符）');if(!password)return;body.password=password}await j('{{BASE}}api/v1/admin/users/'+encodeURIComponent(username),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});await load()}catch(e){err.textContent=e.message}})}catch(e){err.textContent=e.message}};
   document.querySelector('#new-user').onsubmit=async e=>{e.preventDefault();try{await j('{{BASE}}api/v1/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});e.target.reset();await load()}catch(x){err.textContent=x.message}};
-  try{const b=await j('{{BASE}}api/v1/admin/system');document.querySelector('#system').textContent=JSON.stringify(b,null,2)}catch(e){document.querySelector('#system').textContent=e.message}await load();
+  const healthLabels={binance_agg_trades:'Binance 聚合成交',binance_liquidations:'Binance 强平',binance_market:'Binance 行情'};
+  const formatTime=value=>{if(!value)return '-';const date=new Date(value);return Number.isNaN(date.getTime())?'-':date.toLocaleString('zh-CN',{hour12:false})};
+  const formatCoverage=value=>Number.isFinite(Number(value))?(Number(value)*100).toFixed(0)+'%':'-';
+  const drawSystem=b=>{const rows=Object.entries(b.health||{}).sort(([a],[z])=>a.localeCompare(z));const body=document.querySelector('#system-health');const overall=document.querySelector('#system-overall');const allOK=rows.length>0&&rows.every(([,health])=>health&&health.connected);overall.className='status-badge '+(allOK?'status-ok':'status-bad');overall.textContent=allOK?'正常':'异常';body.replaceChildren();if(!rows.length){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=5;cell.textContent='暂无数据源状态';row.append(cell);body.append(row)}else rows.forEach(([name,health])=>{const row=document.createElement('tr');const source=document.createElement('td');source.textContent=healthLabels[name]||name;const state=document.createElement('td');const badge=document.createElement('span');const ok=Boolean(health&&health.connected);badge.className='status-badge '+(ok?'status-ok':'status-bad');badge.textContent=ok?'正常':'异常';state.append(badge);const coverage=document.createElement('td');coverage.textContent=formatCoverage(health.coverage);const lastMessage=document.createElement('td');lastMessage.textContent=formatTime(health.last_message);const error=document.createElement('td');error.textContent=health.last_error||'-';row.append(source,state,coverage,lastMessage,error);body.append(row)});const build=b.build||{};document.querySelector('#system-meta').textContent='版本 '+(build.revision||'-')+' · 分支 '+(build.branch||'-')+' · 构建时间 '+(build.time||'-')};
+  try{const b=await j('{{BASE}}api/v1/admin/system');drawSystem(b)}catch(e){const overall=document.querySelector('#system-overall');overall.className='status-badge status-bad';overall.textContent='异常';const body=document.querySelector('#system-health');body.replaceChildren();const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=5;cell.textContent=e.message;row.append(cell);body.append(row)}await load();
 })();
 </script>
 </body></html>

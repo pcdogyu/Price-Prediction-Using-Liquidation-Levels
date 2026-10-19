@@ -100,6 +100,10 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	if menuPage.Code != http.StatusOK || !strings.Contains(menuPage.Body.String(), "<h1>菜单管理</h1>") || strings.Contains(menuPage.Body.String(), "id=\"new-user\"") {
 		t.Fatalf("menu page status=%d body=%s", menuPage.Code, menuPage.Body.String())
 	}
+	adminPage := serve(http.MethodGet, "/admin", "", rootCookie)
+	if adminPage.Code != http.StatusOK || !strings.Contains(adminPage.Body.String(), `id="system-health"`) || !strings.Contains(adminPage.Body.String(), `status-ok`) || strings.Contains(adminPage.Body.String(), `<pre id="system">`) {
+		t.Fatalf("system health table missing or legacy JSON remains: status=%d body=%s", adminPage.Code, adminPage.Body.String())
+	}
 	created := serve(http.MethodPost, "/api/v1/admin/users", `{"username":"ordinary","password":"ordinary-password","role":"user"}`, rootCookie)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create user status=%d body=%s", created.Code, created.Body.String())
