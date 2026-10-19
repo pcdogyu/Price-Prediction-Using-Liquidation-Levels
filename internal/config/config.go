@@ -12,6 +12,16 @@ import (
 type Config struct {
 	Address, DatabasePath, ModelPath string
 	BasePath                         string
+	TVBotConfigPath                  string
+	TVBotDataPath                    string
+	TVBotLegacyDatabasePath          string
+	TVBotLegacyDataPath              string
+	TVBotLegacyCredentialsDir        string
+	TVBotCredentialsDir              string
+	UpgradeWorkDir                   string
+	UpgradeBinaryPath                string
+	UpgradeServiceName               string
+	UpgradeStatusPath                string
 	AuthUsername                     string
 	AuthPasswordHash                 string
 	LogPath                          string
@@ -50,7 +60,17 @@ func Load() Config {
 		ModelPath: env("APP_MODEL", "models/model.json"), Symbols: split(env("APP_SYMBOLS", "BTCUSDT,ETHUSDT")),
 		BasePath: env("APP_BASE_PATH", "/"), AuthUsername: strings.TrimSpace(os.Getenv("APP_AUTH_USERNAME")),
 		AuthPasswordHash: strings.TrimSpace(os.Getenv("APP_AUTH_PASSWORD_HASH")), LogPath: strings.TrimSpace(os.Getenv("APP_LOG_PATH")),
-		CoinGlassDebugURL: env("APP_COINGLASS_DEBUG_URL", "http://127.0.0.1:9222"), CoinGlassCaptureDir: env("APP_COINGLASS_CAPTURE_DIR", "data/coinglass-captures"), CoinGlassCaptureInterval: envDuration("APP_COINGLASS_CAPTURE_INTERVAL", 10*time.Minute),
+		TVBotConfigPath:           env("APP_TVBOT_CONFIG", "data/tvbot-config.json"),
+		TVBotDataPath:             env("APP_TVBOT_DATA", "data"),
+		TVBotLegacyDatabasePath:   env("APP_TVBOT_LEGACY_DATABASE", "tvbot.db"),
+		TVBotLegacyDataPath:       env("APP_TVBOT_LEGACY_DATA", "data"),
+		TVBotLegacyCredentialsDir: env("APP_TVBOT_LEGACY_CREDENTIALS_DIR", "data"),
+		TVBotCredentialsDir:       env("APP_TVBOT_CREDENTIALS_DIR", "data"),
+		UpgradeWorkDir:            env("APP_UPGRADE_WORKDIR", ""),
+		UpgradeBinaryPath:         env("APP_UPGRADE_BINARY", ""),
+		UpgradeServiceName:        env("APP_UPGRADE_SERVICE", "liquidation-predictor.service"),
+		UpgradeStatusPath:         env("APP_UPGRADE_STATUS", ""),
+		CoinGlassDebugURL:         env("APP_COINGLASS_DEBUG_URL", "http://127.0.0.1:9222"), CoinGlassCaptureDir: env("APP_COINGLASS_CAPTURE_DIR", "data/coinglass-captures"), CoinGlassCaptureInterval: envDuration("APP_COINGLASS_CAPTURE_INTERVAL", 10*time.Minute),
 		LogRetentionDays: envInt("APP_LOG_RETENTION_DAYS", 7),
 		BackfillDays:     envInt("APP_BACKFILL_DAYS", 180), TrainingDays: envInt("APP_TRAINING_DAYS", 30), SnapshotInterval: envDuration("APP_SNAPSHOT_INTERVAL", 5*time.Minute),
 		StaleAfter:              envDuration("APP_STALE_AFTER", 90*time.Second),

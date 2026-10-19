@@ -9,6 +9,10 @@ User=liquidation
 Group=liquidation
 WorkingDirectory=/opt/Price-Prediction-Using-Liquidation-Levels
 EnvironmentFile=/etc/liquidation-predictor.env
+EnvironmentFile=-/etc/tv-okx-bot/tv-okx-bot.env
+Environment=HOME=/var/lib/liquidation-predictor
+Environment=GOCACHE=/var/lib/liquidation-predictor/.cache/go-build
+Environment=GOMODCACHE=/var/lib/liquidation-predictor/go/pkg/mod
 ExecStart=/opt/Price-Prediction-Using-Liquidation-Levels/liquidation-predictor
 Restart=on-failure
 RestartSec=5
@@ -17,7 +21,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/liquidation-predictor
+ReadWritePaths=/var/lib/liquidation-predictor /opt/Price-Prediction-Using-Liquidation-Levels
 
 [Install]
 WantedBy=multi-user.target

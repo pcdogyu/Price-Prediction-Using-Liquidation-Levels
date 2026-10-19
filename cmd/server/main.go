@@ -18,6 +18,9 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/observability"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbridge"
+	tvbotenv "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotenv"
+	tvbotserver "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotserver"
 )
 
 func main() {
@@ -42,15 +45,29 @@ func main() {
 		os.Exit(1)
 	}
 	defer st.Close()
+	if err := ensureUnifiedAccounts(context.Background(), st, cfg); err != nil {
+		log.Error("unified account migration failed", "error", err)
+		os.Exit(1)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	svc := app.New(cfg, st, log)
 	svc.Start(ctx)
+	bridge, err := tvbotbridge.New(cfg, log, tvbotserver.BuildInfo{
+		CommitTime: httpapi.BuildTime, CommitHash: httpapi.BuildRevision, CommitBranch: httpapi.BuildBranch,
+	})
+	if err != nil {
+		log.Error("initialize trading dashboard failed", "error", err)
+		os.Exit(1)
+	}
+	defer bridge.Close()
+	bridge.Start(ctx)
 	srv, err := httpapi.New(cfg, svc, log, logStore, st)
 	if err != nil {
 		log.Error("http server configuration failed", "error", err)
 		os.Exit(1)
 	}
+	srv.SetTVBot(bridge.Handler)
 	srv.StartCoinGlassScheduler(ctx, cfg.CoinGlassCaptureInterval)
 	go func() {
 		log.Info("http server listening", "address", cfg.Address)
@@ -66,6 +83,64 @@ func main() {
 		log.Error("shutdown failed", "error", err)
 	}
 	log.Info("stopped")
+}
+
+func ensureUnifiedAccounts(ctx context.Context, st *store.Store, cfg config.Config) error {
+	records, err := st.LoadAuthUserRecords(ctx)
+	if err != nil {
+		return err
+	}
+	ensureHash := func(username, hash string) error {
+		username, hash = strings.TrimSpace(username), strings.TrimSpace(hash)
+		if username == "" || hash == "" {
+			return nil
+		}
+		if current, ok := records[username]; ok {
+			if current.PasswordHash != hash {
+				return fmt.Errorf("authentication hash conflict for user %q", username)
+			}
+			if err := st.SetAuthUserState(ctx, username, "admin", false); err != nil {
+				return err
+			}
+			current.Role, current.Disabled = "admin", false
+			records[username] = current
+			return nil
+		}
+		if err := st.CreateAuthUser(ctx, username, hash, "admin"); err != nil {
+			return err
+		}
+		records[username] = authn.UserRecord{Username: username, PasswordHash: hash, Role: "admin"}
+		return nil
+	}
+	if err := ensureHash(cfg.AuthUsername, cfg.AuthPasswordHash); err != nil {
+		return err
+	}
+	_, hasTVUser := os.LookupEnv("ADMIN_USER")
+	_, hasTVPassword := os.LookupEnv("ADMIN_PASSWORD")
+	if hasTVUser || hasTVPassword {
+		secrets := tvbotenv.Load()
+		username := strings.TrimSpace(secrets.AdminUser)
+		if username == "" || secrets.AdminPassword == "" {
+			return errors.New("ADMIN_USER and ADMIN_PASSWORD are required for unified account migration")
+		}
+		if current, ok := records[username]; ok {
+			if !authn.VerifyPassword(secrets.AdminPassword, current.PasswordHash) {
+				return fmt.Errorf("authentication password conflict for user %q", username)
+			}
+			if err := st.SetAuthUserState(ctx, username, "admin", false); err != nil {
+				return err
+			}
+		} else {
+			hash, err := authn.HashPassword(secrets.AdminPassword)
+			if err != nil {
+				return err
+			}
+			if err := st.CreateAuthUser(ctx, username, hash, "admin"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func hashPassword() {

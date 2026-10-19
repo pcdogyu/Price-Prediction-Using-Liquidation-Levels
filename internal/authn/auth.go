@@ -32,7 +32,21 @@ var (
 )
 
 type session struct {
-	expires time.Time
+	expires  time.Time
+	username string
+}
+
+// UserRecord is the non-secret account metadata used by the unified login and
+// administration layer. PasswordHash is only consumed inside authn and is
+// never serialized by the HTTP admin API.
+type UserRecord struct {
+	Username     string
+	PasswordHash string
+	Role         string
+	Disabled     bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	LastLoginAt  *time.Time
 }
 
 // SessionStore persists only hashes of session tokens. The raw bearer token
@@ -47,6 +61,21 @@ type UserStore interface {
 	LoadAuthUsers(context.Context) (map[string]string, error)
 }
 
+type UserDirectory interface {
+	LoadAuthUserRecords(context.Context) (map[string]UserRecord, error)
+}
+
+type RichSessionRecord struct {
+	TokenHash string
+	Username  string
+	Expires   time.Time
+}
+
+type RichSessionStore interface {
+	LoadAuthSessionRecords(context.Context, time.Time) (map[string]RichSessionRecord, error)
+	SaveAuthSessionRecord(context.Context, RichSessionRecord) error
+}
+
 type attempt struct {
 	windowStart time.Time
 	failures    int
@@ -57,6 +86,8 @@ type Manager struct {
 	username     string
 	passwordHash string
 	credentials  map[string]string
+	roles        map[string]string
+	disabled     map[string]bool
 	basePath     string
 	now          func() time.Time
 	ttl          time.Duration
@@ -77,6 +108,8 @@ func New(username, passwordHash, basePath string, stores ...SessionStore) (*Mana
 		username:     strings.TrimSpace(username),
 		passwordHash: strings.TrimSpace(passwordHash),
 		credentials:  make(map[string]string),
+		roles:        make(map[string]string),
+		disabled:     make(map[string]bool),
 		basePath:     basePath,
 		now:          time.Now,
 		ttl:          sessionTTL,
@@ -90,7 +123,23 @@ func New(username, passwordHash, basePath string, stores ...SessionStore) (*Mana
 	if (m.username == "") != (m.passwordHash == "") {
 		return nil, errors.New("both APP_AUTH_USERNAME and APP_AUTH_PASSWORD_HASH are required")
 	}
-	if userStore, ok := m.store.(UserStore); ok {
+	if userDirectory, ok := m.store.(UserDirectory); ok {
+		storedUsers, err := userDirectory.LoadAuthUserRecords(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("load authentication users: %w", err)
+		}
+		for storedUsername, record := range storedUsers {
+			storedUsername = strings.TrimSpace(storedUsername)
+			storedHash := strings.TrimSpace(record.PasswordHash)
+			if storedUsername != "" && storedHash != "" {
+				m.roles[storedUsername] = normalizeRole(record.Role)
+				m.disabled[storedUsername] = record.Disabled
+				if !record.Disabled {
+					m.credentials[storedUsername] = storedHash
+				}
+			}
+		}
+	} else if userStore, ok := m.store.(UserStore); ok {
 		storedUsers, err := userStore.LoadAuthUsers(context.Background())
 		if err != nil {
 			return nil, fmt.Errorf("load authentication users: %w", err)
@@ -100,11 +149,14 @@ func New(username, passwordHash, basePath string, stores ...SessionStore) (*Mana
 			storedHash = strings.TrimSpace(storedHash)
 			if storedUsername != "" && storedHash != "" {
 				m.credentials[storedUsername] = storedHash
+				m.roles[storedUsername] = "user"
 			}
 		}
 	}
 	if m.username != "" {
 		m.credentials[m.username] = m.passwordHash
+		m.roles[m.username] = "admin"
+		m.disabled[m.username] = false
 	}
 	if !m.Enabled() {
 		return m, nil
@@ -126,21 +178,104 @@ func New(username, passwordHash, basePath string, stores ...SessionStore) (*Mana
 	identity := sha256.Sum256([]byte(m.username + "\x00" + m.passwordHash))
 	m.namespace = base64.RawURLEncoding.EncodeToString(identity[:16]) + "."
 	if m.store != nil {
-		stored, err := m.store.LoadAuthSessions(context.Background(), m.now().UTC())
-		if err != nil {
-			return nil, fmt.Errorf("load authentication sessions: %w", err)
-		}
-		for key, expires := range stored {
-			if strings.HasPrefix(key, m.namespace) && m.now().UTC().Before(expires) {
-				m.sessions[key] = session{expires: expires}
+		if rich, ok := m.store.(RichSessionStore); ok {
+			stored, err := rich.LoadAuthSessionRecords(context.Background(), m.now().UTC())
+			if err != nil {
+				return nil, fmt.Errorf("load authentication sessions: %w", err)
+			}
+			for key, record := range stored {
+				if strings.HasPrefix(key, m.namespace) && m.now().UTC().Before(record.Expires) {
+					m.sessions[key] = session{expires: record.Expires, username: record.Username}
+				}
+			}
+		} else {
+			stored, err := m.store.LoadAuthSessions(context.Background(), m.now().UTC())
+			if err != nil {
+				return nil, fmt.Errorf("load authentication sessions: %w", err)
+			}
+			for key, expires := range stored {
+				if strings.HasPrefix(key, m.namespace) && m.now().UTC().Before(expires) {
+					m.sessions[key] = session{expires: expires}
+				}
 			}
 		}
 	}
 	return m, nil
 }
 
-func (m *Manager) Enabled() bool    { return len(m.credentials) > 0 }
-func (m *Manager) BasePath() string { return m.basePath }
+func (m *Manager) Enabled() bool           { return len(m.credentials) > 0 }
+func (m *Manager) BasePath() string        { return m.basePath }
+func (m *Manager) PrimaryUsername() string { return m.username }
+
+func (m *Manager) Identity(token string) (string, string, bool) {
+	if !m.Enabled() {
+		return m.username, "admin", true
+	}
+	if token == "" {
+		return "", "", false
+	}
+	key := m.sessionKey(token)
+	now := m.now().UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[key]
+	if !ok || !now.Before(s.expires) || s.username == "" || m.disabled[s.username] {
+		return "", "", false
+	}
+	return s.username, normalizeRole(m.roles[s.username]), true
+}
+
+func (m *Manager) IsAdmin(token string) bool {
+	_, role, ok := m.Identity(token)
+	return ok && role == "admin"
+}
+
+// ReloadUsers refreshes account metadata after an administrator changes the
+// user directory. Active sessions remain valid, while disabled accounts stop
+// authenticating immediately.
+func (m *Manager) ReloadUsers(ctx context.Context) error {
+	directory, ok := m.store.(UserDirectory)
+	if !ok {
+		return nil
+	}
+	records, err := directory.LoadAuthUserRecords(ctx)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	credentials := make(map[string]string, len(records)+1)
+	roles := make(map[string]string, len(records)+1)
+	disabled := make(map[string]bool, len(records)+1)
+	for username, record := range records {
+		username = strings.TrimSpace(username)
+		if username == "" || strings.TrimSpace(record.PasswordHash) == "" {
+			continue
+		}
+		roles[username] = normalizeRole(record.Role)
+		disabled[username] = record.Disabled
+		if !record.Disabled {
+			credentials[username] = strings.TrimSpace(record.PasswordHash)
+		}
+	}
+	primaryHash := m.passwordHash
+	if primary, ok := records[m.username]; ok && strings.TrimSpace(primary.PasswordHash) != "" {
+		primaryHash = strings.TrimSpace(primary.PasswordHash)
+	}
+	if m.username != "" && primaryHash != "" && !disabled[m.username] {
+		credentials[m.username] = primaryHash
+		roles[m.username] = "admin"
+	}
+	m.passwordHash = primaryHash
+	m.credentials, m.roles, m.disabled = credentials, roles, disabled
+	identity := sha256.Sum256([]byte(m.username + "\x00" + m.passwordHash))
+	newNamespace := base64.RawURLEncoding.EncodeToString(identity[:16]) + "."
+	if m.namespace != newNamespace {
+		m.sessions = make(map[string]session)
+	}
+	m.namespace = newNamespace
+	return nil
+}
 
 func (m *Manager) Login(ip, username, password string) (string, time.Time, error) {
 	if !m.Enabled() {
@@ -164,12 +299,14 @@ func (m *Manager) Login(ip, username, password string) (string, time.Time, error
 	providedUser := sha256.Sum256([]byte(username))
 	selectedHash := m.passwordHash
 	validUser := 0
+	matchedUsername := ""
 	for account, encoded := range m.credentials {
 		expectedUser := sha256.Sum256([]byte(account))
 		matches := subtle.ConstantTimeCompare(providedUser[:], expectedUser[:])
 		validUser |= matches
 		if matches == 1 {
 			selectedHash = encoded
+			matchedUsername = account
 		}
 	}
 	validPassword := verifyPassword(password, selectedHash)
@@ -186,14 +323,18 @@ func (m *Manager) Login(ip, username, password string) (string, time.Time, error
 	expires := now.Add(m.ttl)
 	key := m.sessionKey(token)
 	if m.store != nil {
-		if err := m.store.SaveAuthSession(context.Background(), key, expires); err != nil {
+		if rich, ok := m.store.(RichSessionStore); ok {
+			if err := rich.SaveAuthSessionRecord(context.Background(), RichSessionRecord{TokenHash: key, Username: matchedUsername, Expires: expires}); err != nil {
+				return "", time.Time{}, fmt.Errorf("persist session: %w", err)
+			}
+		} else if err := m.store.SaveAuthSession(context.Background(), key, expires); err != nil {
 			return "", time.Time{}, fmt.Errorf("persist session: %w", err)
 		}
 	}
 	m.mu.Lock()
 	delete(m.attempts, ip)
 	m.pruneSessionsLocked(now)
-	m.sessions[key] = session{expires: expires}
+	m.sessions[key] = session{expires: expires, username: matchedUsername}
 	m.mu.Unlock()
 	return token, expires, nil
 }
@@ -225,6 +366,13 @@ func (m *Manager) Logout(token string) {
 	if m.store != nil {
 		_ = m.store.DeleteAuthSession(context.Background(), key)
 	}
+}
+
+func normalizeRole(role string) string {
+	if strings.EqualFold(strings.TrimSpace(role), "admin") {
+		return "admin"
+	}
+	return "user"
 }
 
 func (m *Manager) sessionKey(token string) string {
@@ -283,6 +431,10 @@ func HashPassword(password string) (string, error) {
 	key := argon2.IDKey([]byte(password), salt, iterations, memoryKiB, parallel, keyBytes)
 	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s", memoryKiB, iterations, parallel,
 		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
+}
+
+func VerifyPassword(password, encoded string) bool {
+	return verifyPassword(password, encoded)
 }
 
 func verifyPassword(password, encoded string) bool {

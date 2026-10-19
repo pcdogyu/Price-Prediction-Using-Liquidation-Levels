@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authn"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumeprofile"
 	_ "modernc.org/sqlite"
@@ -60,11 +61,30 @@ CREATE INDEX IF NOT EXISTS volume_profile_snapshots_symbol_ts ON volume_profile_
 CREATE INDEX IF NOT EXISTS volume_profile_snapshots_retention_time ON volume_profile_snapshots(ts);
 CREATE TABLE IF NOT EXISTS volume_archive_imports(symbol TEXT NOT NULL,day TEXT NOT NULL,status TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',updated_ts INTEGER NOT NULL,PRIMARY KEY(symbol,day));
 CREATE INDEX IF NOT EXISTS volume_archive_imports_retention_day ON volume_archive_imports(day);
-CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY,expires_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY,expires_ts INTEGER NOT NULL,username TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS auth_sessions_retention_expiry ON auth_sessions(expires_ts);
-CREATE TABLE IF NOT EXISTS auth_users(username TEXT PRIMARY KEY,password_hash TEXT NOT NULL,created_ts INTEGER NOT NULL,updated_ts INTEGER NOT NULL);`
+CREATE TABLE IF NOT EXISTS auth_users(username TEXT PRIMARY KEY,password_hash TEXT NOT NULL,created_ts INTEGER NOT NULL,updated_ts INTEGER NOT NULL,role TEXT NOT NULL DEFAULT 'user',disabled INTEGER NOT NULL DEFAULT 0,last_login_ts INTEGER);
+CREATE TABLE IF NOT EXISTS auth_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL,created_ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_audit_created ON auth_audit(created_ts DESC);
+CREATE TABLE IF NOT EXISTS admin_menu(id INTEGER PRIMARY KEY CHECK(id=1),payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
+	}
+	for column, definition := range map[string]string{
+		"role":          "TEXT NOT NULL DEFAULT 'user'",
+		"disabled":      "INTEGER NOT NULL DEFAULT 0",
+		"last_login_ts": "INTEGER",
+	} {
+		if !s.hasColumn(ctx, "auth_users", column) {
+			if _, err := s.db.ExecContext(ctx, `ALTER TABLE auth_users ADD COLUMN `+column+` `+definition); err != nil {
+				return err
+			}
+		}
+	}
+	if !s.hasColumn(ctx, "auth_sessions", "username") {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE auth_sessions ADD COLUMN username TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
 	}
 	// Databases created before source isolation do not have this column. Keep
 	// their rows with an empty source so they remain preserved but are ignored.
@@ -105,7 +125,34 @@ func (s *Store) LoadAuthSessions(ctx context.Context, now time.Time) (map[string
 }
 
 func (s *Store) SaveAuthSession(ctx context.Context, tokenHash string, expires time.Time) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_sessions(token_hash,expires_ts) VALUES(?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_ts=excluded.expires_ts`, tokenHash, expires.UTC().UnixMilli())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_sessions(token_hash,expires_ts,username) VALUES(?,?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_ts=excluded.expires_ts`, tokenHash, expires.UTC().UnixMilli(), "")
+	return err
+}
+
+func (s *Store) LoadAuthSessionRecords(ctx context.Context, now time.Time) (map[string]authn.RichSessionRecord, error) {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE expires_ts<=?`, now.UTC().UnixMilli()); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT token_hash,expires_ts,username FROM auth_sessions WHERE expires_ts>?`, now.UTC().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string]authn.RichSessionRecord)
+	for rows.Next() {
+		var record authn.RichSessionRecord
+		var expires int64
+		if err := rows.Scan(&record.TokenHash, &expires, &record.Username); err != nil {
+			return nil, err
+		}
+		record.Expires = time.UnixMilli(expires).UTC()
+		result[record.TokenHash] = record
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) SaveAuthSessionRecord(ctx context.Context, record authn.RichSessionRecord) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_sessions(token_hash,expires_ts,username) VALUES(?,?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_ts=excluded.expires_ts,username=excluded.username`, record.TokenHash, record.Expires.UTC().UnixMilli(), strings.TrimSpace(record.Username))
 	return err
 }
 
@@ -115,20 +162,57 @@ func (s *Store) DeleteAuthSession(ctx context.Context, tokenHash string) error {
 }
 
 func (s *Store) LoadAuthUsers(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT username,password_hash FROM auth_users ORDER BY username`)
+	records, err := s.LoadAuthUserRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	users := make(map[string]string, len(records))
+	for username, record := range records {
+		if !record.Disabled {
+			users[username] = record.PasswordHash
+		}
+	}
+	return users, nil
+}
+
+func (s *Store) LoadAuthUserRecords(ctx context.Context) (map[string]authn.UserRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT username,password_hash,role,disabled,created_ts,updated_ts,last_login_ts FROM auth_users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	users := make(map[string]string)
+	users := make(map[string]authn.UserRecord)
 	for rows.Next() {
-		var username, passwordHash string
-		if err = rows.Scan(&username, &passwordHash); err != nil {
+		var record authn.UserRecord
+		var disabled int
+		var created, updated int64
+		var lastLogin sql.NullInt64
+		if err = rows.Scan(&record.Username, &record.PasswordHash, &record.Role, &disabled, &created, &updated, &lastLogin); err != nil {
 			return nil, err
 		}
-		users[username] = passwordHash
+		record.Disabled = disabled != 0
+		record.CreatedAt = time.UnixMilli(created).UTC()
+		record.UpdatedAt = time.UnixMilli(updated).UTC()
+		if lastLogin.Valid {
+			value := time.UnixMilli(lastLogin.Int64).UTC()
+			record.LastLoginAt = &value
+		}
+		users[record.Username] = record
 	}
 	return users, rows.Err()
+}
+
+func (s *Store) ListAuthUsers(ctx context.Context) ([]authn.UserRecord, error) {
+	records, err := s.LoadAuthUserRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	users := make([]authn.UserRecord, 0, len(records))
+	for _, record := range records {
+		users = append(users, record)
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].Username < users[j].Username })
+	return users, nil
 }
 
 func (s *Store) UpsertAuthUser(ctx context.Context, username, passwordHash string) error {
@@ -138,8 +222,60 @@ func (s *Store) UpsertAuthUser(ctx context.Context, username, passwordHash strin
 		return errors.New("invalid authentication user")
 	}
 	now := time.Now().UTC().UnixMilli()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_users(username,password_hash,created_ts,updated_ts) VALUES(?,?,?,?)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_users(username,password_hash,created_ts,updated_ts,role,disabled) VALUES(?,?,?,?,'user',0)
 		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,updated_ts=excluded.updated_ts`, username, passwordHash, now, now)
+	return err
+}
+
+func (s *Store) CreateAuthUser(ctx context.Context, username, passwordHash, role string) error {
+	username = strings.TrimSpace(username)
+	passwordHash = strings.TrimSpace(passwordHash)
+	role = strings.TrimSpace(role)
+	if username == "" || len(username) > 128 || passwordHash == "" || (role != "admin" && role != "user") {
+		return errors.New("invalid authentication user")
+	}
+	now := time.Now().UTC().UnixMilli()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_users(username,password_hash,created_ts,updated_ts,role,disabled) VALUES(?,?,?,?,?,0)`, username, passwordHash, now, now, role)
+	return err
+}
+
+func (s *Store) SetAuthUserState(ctx context.Context, username, role string, disabled bool) error {
+	username = strings.TrimSpace(username)
+	role = strings.TrimSpace(role)
+	if username == "" || (role != "admin" && role != "user") {
+		return errors.New("invalid authentication user state")
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE auth_users SET role=?,disabled=?,updated_ts=? WHERE username=?`, role, boolInt(disabled), time.Now().UTC().UnixMilli(), username)
+	return err
+}
+
+func (s *Store) DeleteAuthUser(ctx context.Context, username string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM auth_users WHERE username=?`, strings.TrimSpace(username))
+	return err
+}
+
+func (s *Store) RecordAuthAudit(ctx context.Context, actor, action, target string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_audit(actor,action,target,created_ts) VALUES(?,?,?,?)`, strings.TrimSpace(actor), strings.TrimSpace(action), strings.TrimSpace(target), time.Now().UTC().UnixMilli())
+	return err
+}
+
+func (s *Store) LoadAdminMenu(ctx context.Context) ([]byte, bool, error) {
+	var payload []byte
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM admin_menu WHERE id=1`).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return append([]byte(nil), payload...), true, nil
+}
+
+func (s *Store) SaveAdminMenu(ctx context.Context, payload []byte) error {
+	if len(payload) == 0 {
+		return errors.New("menu payload is empty")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO admin_menu(id,payload,updated_ts) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_ts=excluded.updated_ts`, payload, time.Now().UTC().UnixMilli())
 	return err
 }
 

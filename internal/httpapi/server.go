@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,12 +34,16 @@ var dashboardJS []byte
 const sessionCookie = "liquidation_session"
 
 type Server struct {
-	http *http.Server
-	svc  *app.Service
-	log  *slog.Logger
-	auth *authn.Manager
-	logs *observability.Store
-	cg   *coinglass.Capturer
+	http      *http.Server
+	svc       *app.Service
+	log       *slog.Logger
+	auth      *authn.Manager
+	logs      *observability.Store
+	cg        *coinglass.Capturer
+	tvbot     http.Handler
+	userStore adminUserStore
+	menuMu    sync.RWMutex
+	menu      []adminMenuItem
 
 	cgScheduleMu sync.RWMutex
 	cgInterval   time.Duration
@@ -50,7 +55,19 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{svc: svc, log: log, auth: auth, logs: logs, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir)}
+	s := &Server{svc: svc, log: log, auth: auth, logs: logs, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), menu: defaultAdminMenu()}
+	for _, candidate := range sessionStores {
+		if users, ok := candidate.(adminUserStore); ok {
+			s.userStore = users
+			if payload, found, loadErr := users.LoadAdminMenu(context.Background()); loadErr == nil && found {
+				var menu []adminMenuItem
+				if json.Unmarshal(payload, &menu) == nil && validateMenu(menu) == nil {
+					s.menu = menu
+				}
+			}
+			break
+		}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", getOnly(s.index))
 	s.registerDashboard(mux)
@@ -58,7 +75,16 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.HandleFunc("/assets/dashboard.js", getOnly(s.dashboardScript))
 	mux.HandleFunc("/auth/login", postOnly(s.login))
 	mux.HandleFunc("/auth/logout", postOnly(s.logout))
+	mux.Handle("/tvbot", http.HandlerFunc(s.tvbotRoute))
+	mux.Handle("/tvbot/", http.HandlerFunc(s.tvbotRoute))
+	mux.Handle("/tvorder", http.HandlerFunc(s.tvbotRoute))
+	mux.Handle("/upgrade", http.HandlerFunc(s.tvbotRoute))
 	mux.HandleFunc("/api/v1/auth/check", getOnly(s.authCheck))
+	mux.HandleFunc("/admin", getOnly(s.adminPage))
+	mux.HandleFunc("/api/v1/admin/users", s.adminUsers)
+	mux.HandleFunc("/api/v1/admin/users/", s.adminUsers)
+	mux.HandleFunc("/api/v1/admin/menu", s.adminMenu)
+	mux.HandleFunc("/api/v1/admin/system", getOnly(s.adminSystem))
 	mux.HandleFunc("/api/v1/coinglass/capture", postOnly(s.coinGlassCapture))
 	mux.HandleFunc("/api/v1/coinglass/latest", getOnly(s.coinGlassLatest))
 	mux.HandleFunc("/api/v1/coinglass/schedule", getOnly(s.coinGlassSchedule))
@@ -74,6 +100,69 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.HandleFunc("/metrics", getOnly(s.metrics))
 	s.http = &http.Server{Addr: cfg.Address, Handler: securityHeaders(s.authorize(mux)), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	return s, nil
+}
+
+// SetTVBot attaches the merged TradingView dashboard after the core server has
+// been constructed. The route is registered during New so authentication and
+// security headers cover it exactly like the liquidation pages.
+func (s *Server) SetTVBot(handler http.Handler) {
+	s.tvbot = handler
+	if setter, ok := handler.(interface {
+		SetUnifiedAuth(func(http.ResponseWriter, *http.Request) bool, func(http.ResponseWriter, *http.Request) bool, func(http.ResponseWriter, *http.Request), func(http.ResponseWriter, *http.Request))
+	}); ok {
+		setter.SetUnifiedAuth(s.requireUnifiedUser, s.requireUnifiedAdmin, s.redirectUnifiedLogin, s.logout)
+	}
+}
+
+func (s *Server) requireUnifiedUser(w http.ResponseWriter, r *http.Request) bool {
+	if !s.auth.Enabled() {
+		return true
+	}
+	cookie, err := r.Cookie(sessionCookie)
+	if err == nil && s.auth.Authenticated(cookie.Value) {
+		return true
+	}
+	if wantsHTML(r) {
+		s.redirectUnifiedLogin(w, r)
+	} else {
+		problem(w, http.StatusUnauthorized, errors.New("authentication required"))
+	}
+	return false
+}
+
+func wantsHTML(r *http.Request) bool {
+	return r.Method == http.MethodGet && (strings.Contains(r.Header.Get("Accept"), "text/html") || r.Header.Get("Sec-Fetch-Dest") == "document" || r.URL.Path == "/tvbot" || r.URL.Path == "/tvbot/")
+}
+
+func (s *Server) requireUnifiedAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if !s.requireUnifiedUser(w, r) {
+		return false
+	}
+	cookie, err := r.Cookie(sessionCookie)
+	if err == nil && s.auth.IsAdmin(cookie.Value) {
+		return true
+	}
+	problem(w, http.StatusForbidden, errors.New("administrator role required"))
+	return false
+}
+
+func (s *Server) redirectUnifiedLogin(w http.ResponseWriter, r *http.Request) {
+	next := r.URL.RequestURI()
+	if r.URL.Path == "/tvbot/login" || r.URL.Path == "/tvbot/login/" {
+		next = s.auth.BasePath() + "alerts"
+	}
+	if next == "" || strings.HasPrefix(next, "//") || !strings.HasPrefix(next, "/") {
+		next = s.auth.BasePath() + "alerts"
+	}
+	http.Redirect(w, r, s.auth.BasePath()+"?next="+url.QueryEscape(next), http.StatusFound)
+}
+
+func (s *Server) tvbotRoute(w http.ResponseWriter, r *http.Request) {
+	if s.tvbot == nil {
+		problem(w, http.StatusServiceUnavailable, errors.New("trading dashboard is not configured"))
+		return
+	}
+	s.tvbot.ServeHTTP(w, r)
 }
 func (s *Server) ListenAndServe() error              { return s.http.ListenAndServe() }
 func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }
@@ -127,7 +216,7 @@ func (s *Server) coinGlassSchedule(w http.ResponseWriter, _ *http.Request) {
 }
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" {
-		http.Redirect(w, r, s.auth.BasePath()+"bubbles", http.StatusFound)
+		http.Redirect(w, r, s.auth.BasePath()+"alerts", http.StatusFound)
 		return
 	}
 	if r.URL.Path != "/bubbles" {
@@ -161,15 +250,19 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		s.renderLogin(w, status, "用户名或密码错误")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: s.auth.BasePath(), Expires: expires, MaxAge: int(time.Until(expires).Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+	s.setSessionCookies(w, token, expires)
 	s.log.Info("login succeeded", "client_ip", ip)
-	http.Redirect(w, r, s.auth.BasePath()+"bubbles", http.StatusSeeOther)
+	next := sanitizeLoginNext(r.FormValue("next"))
+	if next == "" {
+		next = s.auth.BasePath() + "alerts"
+	}
+	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookie); err == nil {
 		s.auth.Logout(cookie.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: s.auth.BasePath(), MaxAge: -1, Expires: time.Unix(1, 0), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+	s.clearSessionCookies(w)
 	s.log.Info("logout", "client_ip", clientIP(r))
 	http.Redirect(w, r, s.auth.BasePath(), http.StatusSeeOther)
 }
@@ -213,12 +306,60 @@ func (s *Server) coinGlassLatest(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) renderLogin(w http.ResponseWriter, status int, message string) {
 	html := strings.ReplaceAll(string(loginHTML), "{{LOGIN_ACTION}}", s.auth.BasePath()+"auth/login")
 	html = strings.ReplaceAll(html, "{{ERROR}}", message)
+	html = strings.ReplaceAll(html, "{{NEXT}}", "")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(html))
+}
+
+func (s *Server) renderLoginForRequest(w http.ResponseWriter, r *http.Request, status int, message string) {
+	html := strings.ReplaceAll(string(loginHTML), "{{LOGIN_ACTION}}", s.auth.BasePath()+"auth/login")
+	html = strings.ReplaceAll(html, "{{ERROR}}", message)
+	next := ""
+	if r.URL.Path == "/tvbot" || strings.HasPrefix(r.URL.Path, "/tvbot/") || r.URL.Path == "/upgrade" {
+		next = htmlEscapeAttribute(sanitizeLoginNext(r.URL.RequestURI()))
+	}
+	html = strings.ReplaceAll(html, "{{NEXT}}", next)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(html))
+}
+
+func htmlEscapeAttribute(value string) string {
+	return strings.NewReplacer("&", "&amp;", "\"", "&#34;", "<", "&lt;", ">", "&gt;").Replace(value)
+}
+
+func sanitizeLoginNext(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return ""
+	}
+	return raw
+}
+
+func (s *Server) setSessionCookies(w http.ResponseWriter, token string, expires time.Time) {
+	cookie := &http.Cookie{Name: sessionCookie, Value: token, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode}
+	http.SetCookie(w, cookie)
+	// Keep a second scoped cookie for old clients and the existing liquidation
+	// contract. Both values identify the same server-side session; the root
+	// cookie is what enables the /tvbot compatibility namespace.
+	if s.auth.BasePath() != "/" {
+		compat := *cookie
+		compat.Path = s.auth.BasePath()
+		http.SetCookie(w, &compat)
+	}
+}
+
+func (s *Server) clearSessionCookies(w http.ResponseWriter) {
+	for _, path := range []string{"/", s.auth.BasePath()} {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: path, MaxAge: -1, Expires: time.Unix(1, 0), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+	}
 }
 func symbol(r *http.Request) (string, error) {
 	v := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("symbol")))
@@ -451,14 +592,14 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
 
 func (s *Server) authorize(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.auth.Enabled() || (r.URL.Path == "/auth/login" && r.Method == http.MethodPost) || localProbe(r) {
+		if !s.auth.Enabled() || (r.URL.Path == "/auth/login" && r.Method == http.MethodPost) || r.URL.Path == "/tvorder" || r.URL.Path == "/tvbot/login" || localProbe(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -468,7 +609,7 @@ func (s *Server) authorize(next http.Handler) http.Handler {
 			return
 		}
 		if isDashboardPage(r.URL.Path) && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-			s.renderLogin(w, http.StatusOK, "")
+			s.renderLoginForRequest(w, r, http.StatusOK, "")
 			return
 		}
 		problem(w, http.StatusUnauthorized, errors.New("authentication required"))

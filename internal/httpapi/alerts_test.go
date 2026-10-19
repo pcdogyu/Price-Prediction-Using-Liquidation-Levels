@@ -71,10 +71,10 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if history < 0 || monitor < 0 || monitor < history {
 		t.Fatalf("实时监控 must stay below 信号历史: history %d monitor %d", history, monitor)
 	}
-	// The navigation entry has to sit to the right of the options page.
+	// The unified navigation makes 报警 the primary entry before the options page.
 	options, alerts := strings.Index(body, `href="/options"`), strings.Index(body, `href="/alerts"`)
-	if options < 0 || alerts < 0 || alerts < options {
-		t.Fatalf("报警 must follow 期权 in the navigation: options %d alerts %d", options, alerts)
+	if options < 0 || alerts < 0 || alerts > options {
+		t.Fatalf("报警 must precede 期权 in the navigation: options %d alerts %d", options, alerts)
 	}
 	for path, kind := range map[string]string{"/assets/alerts.js": "text/javascript", "/assets/alerts.css": "text/css"} {
 		asset := serveAlert(srv, http.MethodGet, path, nil)

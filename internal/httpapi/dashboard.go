@@ -50,20 +50,27 @@ var themeCSS []byte
 
 func isDashboardPage(path string) bool {
 	switch path {
-	case "/", "/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/alerts", "/alerts/chart":
+	case "/", "/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/alerts", "/alerts/chart", "/tvbot", "/tvbot/", "/admin":
 		return true
 	}
 	return false
 }
 func (s *Server) renderPage(body []byte, page, title string) []byte {
 	base := html.EscapeString(s.auth.BasePath())
-	nav := `<nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `bubbles">清算墙雷达</a><div class="app-links">`
-	for _, item := range []struct{ path, title string }{{"bubbles", "气泡图"}, {"liquidations", "清算历史"}, {"hedge-wall", "对冲墙"}, {"market-info", "市场信息"}, {"options", "期权"}, {"alerts", "报警"}} {
+	nav := `<nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `alerts">清算墙雷达</a><div class="app-links">`
+	s.menuMu.RLock()
+	menu := append([]adminMenuItem(nil), s.menu...)
+	s.menuMu.RUnlock()
+	for _, item := range menu {
 		active := ""
-		if item.path == page {
+		if item.Key == page || strings.HasPrefix(item.Key, page+"#") {
 			active = ` aria-current="page" class="selected"`
 		}
-		nav += `<a href="` + base + item.path + `"` + active + `>` + item.title + `</a>`
+		href := item.Href
+		if item.Href != "/upgrade" && strings.HasPrefix(item.Href, "/") {
+			href = base + strings.TrimPrefix(item.Href, "/")
+		}
+		nav += `<a href="` + html.EscapeString(href) + `"` + active + `>` + html.EscapeString(item.Title) + `</a>`
 	}
 	nav += `</div><button id="nav-theme" type="button">浅色主题</button><button id="nav-logs" type="button">程序日志</button><form method="post" action="` + base + `auth/logout"><button type="submit">退出</button></form></nav><dialog id="shared-logs"><div class="dialog-head"><h2>程序日志</h2><button id="shared-logs-close" type="button">关闭</button></div><select id="shared-log-level"><option value="DEBUG">全部级别</option><option value="INFO">INFO+</option><option value="WARN">WARN+</option><option value="ERROR">ERROR</option></select><button id="shared-log-refresh" type="button">刷新</button><pre id="shared-log-content">等待加载</pre></dialog>`
 	replacer := strings.NewReplacer("{{BASE}}", base, "{{NAV}}", nav, "{{PAGE}}", page, "{{TITLE}}", title, "{{VERSION}}", versionFooter())

@@ -321,7 +321,7 @@ func alertKlineQuery(query url.Values) (symbol, interval string, limit int, befo
 		interval = alertKlineDefaultInterval
 	}
 	if _, ok := exchange.KlineIntervalMinutes[interval]; !ok {
-		return "", "", 0, time.Time{}, fmt.Errorf("interval must be one of " + strings.Join(exchange.KlineIntervals, ", "))
+		return "", "", 0, time.Time{}, fmt.Errorf("interval must be one of %s", strings.Join(exchange.KlineIntervals, ", "))
 	}
 	limit = 300
 	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {

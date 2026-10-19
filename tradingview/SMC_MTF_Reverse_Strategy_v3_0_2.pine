@@ -1,0 +1,1792 @@
+//@version=6
+// SMC MTF Reverse Strategy version: 3.0.2
+// v3.0.2：tvbot订单成交消息改为entry_long/entry_short/exit_long/exit_short，避免平仓成交buy/sell被误识别为反向开仓。
+// v3.0.1：看涨与看跌订单区块使用独立填充透明度，看跌订单区块默认80%。
+// v3.0.0：FVG回补信号确认后使用strategy市价开仓，回测在下一根K线开盘成交。
+// Version rule: every future code change should increase the patch version by 0.0.1.
+
+const string SCRIPT_VERSION = "3.0.2"
+const string STRUCTURE_TIMEFRAME = "60"
+const string STRUCTURE_LABEL = "1H"
+
+strategy(
+     title = "SMC MTF Reverse BOS + OB + FVG Strategy v" + SCRIPT_VERSION,
+     shorttitle = "SMC Reverse v" + SCRIPT_VERSION,
+     overlay = true,
+     max_bars_back = 5000,
+     pyramiding = 0,
+     initial_capital = 100000,
+     default_qty_type = strategy.percent_of_equity,
+     default_qty_value = 100,
+     commission_type = strategy.commission.percent,
+     commission_value = 0.04,
+     // 市价开仓严格使用下一根K线开盘价，不额外叠加模拟滑点。
+     slippage = 0,
+     backtest_fill_limits_assumption = 1,
+
+     // VRVP在实时K线内随成交量变化即时刷新。
+     // 所有依赖收盘确认的BOS、FVG、开仓与订单块失效逻辑仍使用barstate.isconfirmed。
+     calc_on_order_fills = false,
+     calc_on_every_tick = true,
+
+     // 市价开仓订单不在信号K线收盘tick成交，回测使用下一根K线开盘价。
+     process_orders_on_close = false,
+
+     // 关闭TradingView模拟器的保证金强制清算。
+     // 避免出现非脚本止损导致的Margin call。
+     margin_long = 0,
+     margin_short = 0,
+
+     max_boxes_count = 500,
+     max_lines_count = 500,
+     max_labels_count = 500)
+
+// =============================================================================
+// 01. 1H结构
+// =============================================================================
+
+pivotLen = input.int(
+     3,
+     "1H结构长度",
+     minval = 1,
+     maxval = 20,
+     tooltip = "当前版本固定只使用1小时BOS。当前图表为5分钟时，只显示1小时结构突破。",
+     group = "01. 1H结构")
+
+// =============================================================================
+// 02. DA趋势分界线
+// =============================================================================
+
+daMode = input.string(
+     "EMA200",
+     "DA趋势分界线",
+     options = ["EMA100", "EMA200"],
+     tooltip = "价格位于1H DA上方或下方时，用于决定正向/反向交易方向。",
+     group = "02. DA趋势过滤")
+
+// =============================================================================
+// 03. 交易方向与模式
+// =============================================================================
+
+tradeMode = input.string(
+     "反向做多做空",
+     "交易模式",
+     options = ["正向做多做空", "反向做多做空"],
+     tooltip = "正向：均线上方多单信号做多，均线下方空单信号做空。\n反向：均线上方多单信号做空，均线下方空单信号做多。",
+     group = "03. 交易方向与模式")
+
+enableLong = input.bool(
+     true,
+     "允许实际做多",
+     group = "03. 交易方向与模式")
+
+enableShort = input.bool(
+     true,
+     "允许实际做空",
+     group = "03. 交易方向与模式")
+
+// =============================================================================
+// 04. 止盈止损
+// =============================================================================
+
+takeProfitPct = input.float(
+     3.0,
+     "止盈百分比 %",
+     minval = 0.1,
+     step = 0.1,
+     group = "04. 止盈止损")
+
+stopLossPct = input.float(
+     2.0,
+     "止损百分比 %",
+     minval = 0.1,
+     step = 0.1,
+     group = "04. 止盈止损")
+
+stopMode = input.string(
+     "固定百分比",
+     "止损计算方式",
+     options = ["固定百分比", "百分比+订单块"],
+     tooltip = "固定百分比：按照设置的止损百分比计算。\n百分比+订单块：取百分比止损与订单块外侧中距离开仓价更远的位置。",
+     group = "04. 止盈止损")
+
+stopBufferBps = input.float(
+     1.0,
+     "订单块止损缓冲 bps",
+     minval = 0.0,
+     step = 0.1,
+     tooltip = "仅在选择“百分比+订单块”时使用。",
+     group = "04. 止盈止损")
+
+// =============================================================================
+// 05. 持仓时间与冷静期
+// =============================================================================
+
+minHoldHours = input.float(
+     1.0,
+     "最短持仓时间（小时）",
+     minval = 0.0,
+     step = 0.25,
+     tooltip = "开仓后达到该时间之前，不创建任何止盈、止损或主动平仓订单。",
+     group = "05. 持仓时间与冷静期")
+
+stopCooldownHours = input.float(
+     24.0,
+     "止损后冷静期（小时）",
+     minval = 0.0,
+     step = 1.0,
+     tooltip = "发生亏损止损后，指定时间内禁止再次开仓。止盈不触发冷静期。",
+     group = "05. 持仓时间与冷静期")
+
+// =============================================================================
+// 06. BOS K线填充
+// =============================================================================
+
+enableBosBarFill = input.bool(
+     true,
+     "显示1H BOS K线填充",
+     group = "06. BOS K线填充")
+
+bullBosColor = input.color(
+     color.green,
+     "BOS确认阳线填充颜色",
+     group = "06. BOS K线填充")
+
+bearBosColor = input.color(
+     color.red,
+     "BOS确认阴线填充颜色",
+     group = "06. BOS K线填充")
+
+bosFillTransparency = input.int(
+     50,
+     "1H BOS K线填充透明度",
+     minval = 0,
+     maxval = 100,
+     tooltip = "0为完全不透明，100为完全透明。默认50%。",
+     group = "06. BOS K线填充")
+
+// =============================================================================
+// 07. 订单区块矩形
+// =============================================================================
+
+showObBoxes = input.bool(
+     true,
+     "显示订单区块矩形",
+     group = "07. 订单区块矩形")
+
+obHorizontalOffsetMinutes = input.int(
+     0,
+     "订单区块水平偏移分钟数",
+     minval = -10080,
+     maxval = 10080,
+     tooltip = "以1H BOS确认K线为基准整体移动订单区块。正数向右偏移，负数向左偏移，0表示不偏移。",
+     group = "07. 订单区块矩形")
+
+obLengthMinutes = input.int(
+     1440,
+     "订单区块显示长度（分钟）",
+     minval = 1,
+     maxval = 10080,
+     tooltip = "每个订单区块独立使用固定显示长度。红色和绿色订单块可以重叠，新订单块出现不会截断旧订单块。例如1440表示显示24小时。",
+     group = "07. 订单区块矩形")
+
+bullObColor = input.color(
+     color.green,
+     "看涨订单区块颜色",
+     group = "07. 订单区块矩形")
+
+bearObColor = input.color(
+     color.red,
+     "看跌订单区块颜色",
+     group = "07. 订单区块矩形")
+
+bullObTransparency = input.int(
+     80,
+     "看涨订单区块填充透明度",
+     minval = 0,
+     maxval = 100,
+     tooltip = "Pine透明度：0为完全不透明，100为完全透明。",
+     group = "07. 订单区块矩形")
+
+bearObTransparency = input.int(
+     80,
+     "看跌订单区块填充透明度",
+     minval = 0,
+     maxval = 100,
+     tooltip = "Pine透明度：0为完全不透明，100为完全透明。",
+     group = "07. 订单区块矩形")
+
+obBorderTransparency = input.int(
+     0,
+     "订单区块边框透明度",
+     minval = 0,
+     maxval = 100,
+     group = "07. 订单区块矩形")
+
+obBorderWidth = input.int(
+     1,
+     "订单区块边框宽度",
+     minval = 0,
+     maxval = 4,
+     group = "07. 订单区块矩形")
+
+const int DEFAULT_RECENT_OB_COUNT = 5
+
+recentObCount = input.int(
+     DEFAULT_RECENT_OB_COUNT,
+     "最近订单区块计算数量",
+     minval = 1,
+     maxval = 50,
+     tooltip = "脚本只保留、显示并检查最近N个订单区块；超过数量后立即删除最早的订单区块。默认值为5。",
+     group = "07. 订单区块矩形")
+
+invalidateObOnClose = input.bool(
+     true,
+     "收盘突破后提前终止订单区块",
+     tooltip = "开启后，看涨订单块在收盘跌破下沿时提前失效；看跌订单块在收盘突破上沿时提前失效。红绿订单块互相重叠不会导致失效。",
+     group = "07. 订单区块矩形")
+
+const int OB_MILLISECOND_PER_MINUTE = 60 * 1000
+
+// =============================================================================
+// 08. 图表显示
+// =============================================================================
+
+showFvg = input.bool(
+     false,
+     "显示最近FVG 50%",
+     tooltip = "默认关闭。使用线段对象绘制，不会出现在样式参数列表中。",
+     group = "08. 图表显示")
+
+showDa = input.bool(
+     true,
+     "显示DA趋势分界线",
+     group = "08. 图表显示")
+
+showLevels = input.bool(
+     false,
+     "显示持仓止盈止损线",
+     tooltip = "默认关闭。使用线段对象绘制，不会出现在样式参数列表中。",
+     group = "08. 图表显示")
+
+stopLineColor = input.color(
+     color.red,
+     "止损线颜色",
+     group = "08. 图表显示")
+
+targetLineColor = input.color(
+     color.green,
+     "止盈线颜色",
+     group = "08. 图表显示")
+
+showHoldBackground = input.bool(
+     true,
+     "最短持仓期间显示背景",
+     group = "08. 图表显示")
+
+showCooldownBackground = input.bool(
+     true,
+     "冷静期显示背景",
+     group = "08. 图表显示")
+
+showStatusLabel = input.bool(
+     true,
+     "显示持仓和冷静期状态",
+     group = "08. 图表显示")
+
+// =============================================================================
+// 09. 手续费提示
+// =============================================================================
+
+commissionHint = input.float(
+     0.04,
+     "提示：单边手续费百分比",
+     minval = 0.0,
+     step = 0.01,
+     tooltip = "该参数仅作为提示。实际手续费需要修改strategy()中的commission_value。",
+     group = "09. 手续费提示")
+
+// =============================================================================
+// 09A. tvbot Webhook订单执行消息
+// 用于后台 /tvorder 通用JSON模板。
+// 创建TradingView报警时请选择“仅订单执行”，消息框粘贴后台生成的完整JSON。
+// 入场订单会触发报警；止盈止损离场订单默认不触发。
+// 后台JSON模板需要包含 "order_intent": "{{strategy.order.alert_message}}"。
+// 若未来打开离场订单报警，exit_long/exit_short 会让tvbot按平仓处理。
+// =============================================================================
+
+enableTvbotAlert = input.bool(
+     true,
+     "启用tvbot订单执行自动下单",
+     tooltip = "开启后，策略入场订单成交时发送TradingView订单执行报警。报警消息框请粘贴tvbot后台生成的完整JSON模板。",
+     group = "09A. tvbot Webhook订单执行")
+
+const string TVBOT_ENTER_LONG_COMMENT = "entry_long"
+const string TVBOT_ENTER_SHORT_COMMENT = "entry_short"
+const string TVBOT_EXIT_LONG_COMMENT = "exit_long"
+const string TVBOT_EXIT_SHORT_COMMENT = "exit_short"
+
+// =============================================================================
+// 10. VRVP核心参数
+// VRVP仅用于绘图，不参与SMC开仓、平仓或过滤逻辑。
+// 每天以上海时间08:00作为新的统计起点，只统计今日08:00至当前。
+// 今日08:00之前不计算、不绘制VRVP、VAH、VAL或Top3区块。
+// 所有POC输入、计算和绘图均已移除。
+// =============================================================================
+
+enableVrvp = input.bool(
+     true,
+     "显示当日VRVP成交量分布",
+     group = "10. VRVP核心参数")
+
+vrvpAutoPriceRange = input.bool(
+     true,
+     "自动覆盖08:00后全部价格范围",
+     tooltip = "开启后，价格范围直接使用上海时间08:00之后全部K线的最高价和最低价，确保低点、高点及其成交量不会被截掉。开启时忽略下面的手动价格高、价格低。",
+     group = "10. VRVP核心参数")
+
+vrvpPriceHigh = input.float(
+     0.0,
+     "手动价格高",
+     tooltip = "仅在关闭自动价格范围时使用。若不高于手动价格低，则自动回退到08:00之后的真实最高价和最低价。",
+     group = "10. VRVP核心参数")
+
+vrvpPriceLow = input.float(
+     0.0,
+     "手动价格低",
+     tooltip = "仅在关闭自动价格范围时使用。若不低于手动价格高，则自动回退到08:00之后的真实最高价和最低价。",
+     group = "10. VRVP核心参数")
+
+vrvpRowSize = input.int(
+     24,
+     "价格区间数量",
+     minval = 10,
+     maxval = 100,
+     tooltip = "把今日上海时间08:00之后的VRVP价格范围划分为多少个成交量区间。",
+     group = "10. VRVP核心参数")
+
+vrvpValueAreaPercent = input.float(
+     70.0,
+     "成交量集中百分比 (%)",
+     minval = 50.0,
+     maxval = 95.0,
+     step = 1.0,
+     tooltip = "用于计算今日上海时间08:00之后VAH和VAL的成交量占比。",
+     group = "10. VRVP核心参数")
+
+// =============================================================================
+// 11. VRVP显示参数
+// =============================================================================
+
+vrvpBarWidth = input.int(
+     30,
+     "柱状图最大宽度（K线数）",
+     minval = 10,
+     maxval = 200,
+     tooltip = "最大成交量柱占用的横向K线数量；其他柱按成交量比例缩放。",
+     group = "11. VRVP显示参数")
+
+vrvpOffset = input.int(
+     40,
+     "右侧偏移（K线数）",
+     minval = 0,
+     maxval = 100,
+     tooltip = "今日08:00起算的VRVP最右边相对当前K线向右偏移的数量。",
+     group = "11. VRVP显示参数")
+
+vrvpOutsideTransparency = input.int(
+     0,
+     "VAL下方及VAH上方透明度",
+     minval = 0,
+     maxval = 100,
+     tooltip = "VAL下方及VAH上方的成交量柱透明度。默认0，表示白色完全不透明。",
+     group = "11. VRVP显示参数")
+
+vrvpInsideTransparency = input.int(
+     50,
+     "VAL与VAH之间透明度",
+     minval = 0,
+     maxval = 100,
+     tooltip = "VAL与VAH之间的成交量柱透明度。默认50%。",
+     group = "11. VRVP显示参数")
+
+vrvpShowValueArea = input.bool(
+     true,
+     "显示当日VAH / VAL",
+     tooltip = "只绘制今日上海时间08:00之后的VAH与VAL折线，08:00之前不显示。",
+     group = "11. VRVP显示参数")
+
+vrvpShowTop3Block = input.bool(
+     true,
+     "显示Top3连续密集区块",
+     tooltip = "只有今日08:00之后成交量最大的3个价格区间连续相邻时，才绘制橙色密集区块。",
+     group = "11. VRVP显示参数")
+
+// =============================================================================
+// 12. VRVP颜色参数
+// =============================================================================
+
+// 普通成交量柱使用白色；透明度由值区内外参数分别控制。
+// 成交量最大的3档使用独立颜色，并优先覆盖普通白色。
+
+vrvpTopVolumeColor = input.color(
+     color.purple,
+     "最大3档成交量颜色",
+     group = "12. VRVP颜色参数")
+
+vrvpVahColor = input.color(
+     color.red,
+     "VAH颜色",
+     group = "12. VRVP颜色参数")
+
+vrvpValColor = input.color(
+     color.green,
+     "VAL颜色",
+     group = "12. VRVP颜色参数")
+
+vrvpTop3BlockColor = input.color(
+     color.orange,
+     "Top3密集区块颜色",
+     group = "12. VRVP颜色参数")
+
+vrvpTop3Transparency = input.int(
+     70,
+     "Top3密集区块透明度",
+     minval = 0,
+     maxval = 100,
+     group = "12. VRVP颜色参数")
+
+// =============================================================================
+// 当日VRVP计算函数
+// =============================================================================
+
+const string VRVP_TIMEZONE = "Asia/Shanghai"
+const int VRVP_SESSION_START_HOUR = 8
+
+// 使用每个交易日08:00对应的起始bar_index，避免实时每个tick都向前扫描最多5000根K线。
+int vrvpSessionYear = year(time, VRVP_TIMEZONE)
+int vrvpSessionMonth = month(time, VRVP_TIMEZONE)
+int vrvpSessionDay = dayofmonth(time, VRVP_TIMEZONE)
+
+int vrvpTodaySessionStartTimestamp = timestamp(
+     VRVP_TIMEZONE,
+     vrvpSessionYear,
+     vrvpSessionMonth,
+     vrvpSessionDay,
+     VRVP_SESSION_START_HOUR,
+     0)
+
+bool vrvpInTodaySession =
+     time >= vrvpTodaySessionStartTimestamp
+
+var int vrvpSessionStartBarIndex = na
+
+// calc_on_every_tick=true时，仅在新K线第一次计算时维护会话起点。
+if barstate.isnew
+    bool vrvpFirstSessionBar =
+         vrvpInTodaySession and
+         (na(time[1]) or time[1] < vrvpTodaySessionStartTimestamp)
+
+    if vrvpFirstSessionBar
+        vrvpSessionStartBarIndex := bar_index
+    else if not vrvpInTodaySession
+        vrvpSessionStartBarIndex := na
+
+f_calculate_today_vrvp_profile(_lookbackBars, _enabled) =>
+    float valueAreaLow = na
+    float valueAreaHigh = na
+    float profileHigh = na
+    float profileLow = na
+    bool hasTop3ContiguousBlock = false
+    float top3BlockLow = na
+    float top3BlockHigh = na
+
+    // 非最后一根K线返回空数组，避免历史加载时为每根K线创建完整分布数组。
+    array<float> rowVolumes =
+         array.new_float(_enabled ? vrvpRowSize : 0, 0.0)
+
+    if _enabled and _lookbackBars > 0
+        int safeLookback =
+             math.min(_lookbackBars, bar_index + 1)
+
+        // 直接遍历上海时间08:00之后的全部K线求真实最高价和最低价。
+        float detectedHigh = na
+        float detectedLow = na
+
+        for historyIndex = 0 to safeLookback - 1
+            float rangeCandleHigh = high[historyIndex]
+            float rangeCandleLow = low[historyIndex]
+
+            if not na(rangeCandleHigh)
+                detectedHigh :=
+                     na(detectedHigh) ?
+                     rangeCandleHigh :
+                     math.max(detectedHigh, rangeCandleHigh)
+
+            if not na(rangeCandleLow)
+                detectedLow :=
+                     na(detectedLow) ?
+                     rangeCandleLow :
+                     math.min(detectedLow, rangeCandleLow)
+
+        bool validDetectedRange =
+             not na(detectedHigh) and
+             not na(detectedLow) and
+             detectedHigh >= detectedLow
+
+        bool validManualRange =
+             not vrvpAutoPriceRange and
+             vrvpPriceHigh > vrvpPriceLow
+
+        if validManualRange
+            profileHigh := vrvpPriceHigh
+            profileLow := vrvpPriceLow
+        else if validDetectedRange
+            profileHigh := detectedHigh
+            profileLow := detectedLow
+
+        // 上下各预留一个最小报价单位，使当日最高价和最低价完整落在分布范围内。
+        if not na(profileHigh) and not na(profileLow)
+            float rawRange = profileHigh - profileLow
+
+            if rawRange <= 0
+                float fallbackHalfRange =
+                     math.max(
+                         syminfo.mintick * vrvpRowSize * 0.5,
+                         syminfo.mintick)
+
+                profileHigh += fallbackHalfRange
+                profileLow -= fallbackHalfRange
+            else
+                profileHigh += syminfo.mintick
+                profileLow -= syminfo.mintick
+
+        float rowHeight =
+             not na(profileHigh) and not na(profileLow) ?
+             (profileHigh - profileLow) / vrvpRowSize :
+             na
+
+        if not na(rowHeight) and rowHeight > 0
+            for historyIndex = 0 to safeLookback - 1
+                float candleHigh = high[historyIndex]
+                float candleLow = low[historyIndex]
+                float candleVolume = volume[historyIndex]
+
+                if not na(candleHigh) and
+                   not na(candleLow) and
+                   not na(candleVolume) and
+                   candleVolume > 0
+
+                    int startRow = int(math.floor(
+                         (candleLow - profileLow) /
+                         rowHeight))
+
+                    int endRow = int(math.floor(
+                         (candleHigh - profileLow) /
+                         rowHeight))
+
+                    startRow :=
+                         math.max(
+                             0,
+                             math.min(vrvpRowSize - 1, startRow))
+
+                    endRow :=
+                         math.max(
+                             0,
+                             math.min(vrvpRowSize - 1, endRow))
+
+                    if startRow <= endRow
+                        float coveredRows =
+                             endRow - startRow + 1
+
+                        float volumePerRow =
+                             candleVolume /
+                             coveredRows
+
+                        for rowIndex = startRow to endRow
+                            array.set(
+                                 rowVolumes,
+                                 rowIndex,
+                                 array.get(rowVolumes, rowIndex) +
+                                 volumePerRow)
+
+            float totalVolume = array.sum(rowVolumes)
+
+            if totalVolume > 0
+                array<int> sortedRows =
+                     array.sort_indices(
+                         rowVolumes,
+                         order.descending)
+
+                float targetVolume =
+                     totalVolume *
+                     vrvpValueAreaPercent /
+                     100.0
+
+                float accumulatedVolume = 0.0
+                int minimumValueAreaRow = vrvpRowSize - 1
+                int maximumValueAreaRow = 0
+
+                for sortedIndex = 0 to vrvpRowSize - 1
+                    if accumulatedVolume < targetVolume
+                        int currentRow =
+                             array.get(sortedRows, sortedIndex)
+
+                        accumulatedVolume +=
+                             array.get(rowVolumes, currentRow)
+
+                        minimumValueAreaRow :=
+                             math.min(
+                                 minimumValueAreaRow,
+                                 currentRow)
+
+                        maximumValueAreaRow :=
+                             math.max(
+                                 maximumValueAreaRow,
+                                 currentRow)
+
+                valueAreaLow :=
+                     profileLow +
+                     minimumValueAreaRow * rowHeight
+
+                valueAreaHigh :=
+                     profileLow +
+                     (maximumValueAreaRow + 1) * rowHeight
+
+                if array.size(sortedRows) >= 3
+                    int topRow1 = array.get(sortedRows, 0)
+                    int topRow2 = array.get(sortedRows, 1)
+                    int topRow3 = array.get(sortedRows, 2)
+
+                    int minimumTopRow =
+                         math.min(
+                             topRow1,
+                             math.min(topRow2, topRow3))
+
+                    int maximumTopRow =
+                         math.max(
+                             topRow1,
+                             math.max(topRow2, topRow3))
+
+                    hasTop3ContiguousBlock :=
+                         maximumTopRow - minimumTopRow == 2
+
+                    if hasTop3ContiguousBlock
+                        top3BlockLow :=
+                             profileLow +
+                             minimumTopRow * rowHeight
+
+                        top3BlockHigh :=
+                             profileLow +
+                             (maximumTopRow + 1) * rowHeight
+
+    [valueAreaLow, valueAreaHigh, profileHigh, profileLow, hasTop3ContiguousBlock, top3BlockLow, top3BlockHigh, rowVolumes]
+
+// =============================================================================
+// 当日VRVP主计算
+// 仅在图表最后一根K线上执行完整分布计算，避免加载历史时逐根重复计算。
+// =============================================================================
+
+int vrvpLookbackBars =
+     enableVrvp and
+     barstate.islast and
+     vrvpInTodaySession and
+     not na(vrvpSessionStartBarIndex) ?
+     math.max(0, bar_index - vrvpSessionStartBarIndex + 1) :
+     0
+
+[vrvpVal, vrvpVah, vrvpProfileHigh, vrvpProfileLow, vrvpHasTop3Block, vrvpTop3BlockLow, vrvpTop3BlockHigh, vrvpRowVolumes] = f_calculate_today_vrvp_profile(
+     vrvpLookbackBars,
+     enableVrvp and barstate.islast and vrvpLookbackBars > 0)
+
+// =============================================================================
+// 1H SMC结构函数
+// =============================================================================
+
+f_htf_smc(_pivotLen) =>
+    ph = ta.pivothigh(high, _pivotLen, _pivotLen)
+    pl = ta.pivotlow(low, _pivotLen, _pivotLen)
+
+    var float lastSwingHigh = na
+    var float lastSwingLow = na
+
+    if not na(ph)
+        lastSwingHigh := ph
+
+    if not na(pl)
+        lastSwingLow := pl
+
+    bullBos = not na(lastSwingHigh) and ta.crossover(close, lastSwingHigh)
+    bearBos = not na(lastSwingLow) and ta.crossunder(close, lastSwingLow)
+
+    // 看涨订单块候选：最后一根1H阴线。
+    var float lastBearTop = na
+    var float lastBearBottom = na
+
+    // 看跌订单块候选：最后一根1H阳线。
+    var float lastBullTop = na
+    var float lastBullBottom = na
+
+    var int bias = 0
+    var float obTop = na
+    var float obBottom = na
+    var float bosLevel = na
+
+    // 先读取此前保存的反向K线，避免把BOS自身误作订单块。
+    if bullBos and not na(lastBearTop) and not na(lastBearBottom)
+        bias := 1
+        obTop := lastBearTop
+        obBottom := lastBearBottom
+        bosLevel := lastSwingHigh
+
+    if bearBos and not na(lastBullTop) and not na(lastBullBottom)
+        bias := -1
+        obTop := lastBullTop
+        obBottom := lastBullBottom
+        bosLevel := lastSwingLow
+
+    if close < open
+        lastBearTop := high
+        lastBearBottom := low
+
+    if close > open
+        lastBullTop := high
+        lastBullBottom := low
+
+    [bias, obTop, obBottom, bosLevel, bullBos, bearBos]
+
+// =============================================================================
+// 获取1H数据
+// =============================================================================
+
+[htfBias, htfObTop, htfObBottom, htfBosLevel, htfBullBos, htfBearBos] = request.security(
+     syminfo.tickerid,
+     STRUCTURE_TIMEFRAME,
+     f_htf_smc(pivotLen),
+     barmerge.gaps_off,
+     barmerge.lookahead_off)
+
+htfClose = request.security(
+     syminfo.tickerid,
+     STRUCTURE_TIMEFRAME,
+     close,
+     barmerge.gaps_off,
+     barmerge.lookahead_off)
+
+htfEma100 = request.security(
+     syminfo.tickerid,
+     STRUCTURE_TIMEFRAME,
+     ta.ema(close, 100),
+     barmerge.gaps_off,
+     barmerge.lookahead_off)
+
+htfEma200 = request.security(
+     syminfo.tickerid,
+     STRUCTURE_TIMEFRAME,
+     ta.ema(close, 200),
+     barmerge.gaps_off,
+     barmerge.lookahead_off)
+
+daLine = daMode == "EMA100" ? htfEma100 : htfEma200
+
+aboveDa = not na(daLine) and htfClose > daLine
+belowDa = not na(daLine) and htfClose < daLine
+
+newBullBos =
+     barstate.isconfirmed and
+     htfBullBos and
+     not htfBullBos[1]
+
+newBearBos =
+     barstate.isconfirmed and
+     htfBearBos and
+     not htfBearBos[1]
+
+// =============================================================================
+// 订单区块矩形管理
+// =============================================================================
+
+var array<box> obBoxes = array.new_box()
+var array<box> activeObBoxes = array.new_box()
+var array<int> activeObDirections = array.new_int()
+
+int currentObStartTime =
+     time +
+     obHorizontalOffsetMinutes *
+     OB_MILLISECOND_PER_MINUTE
+
+int currentObEndTime =
+     currentObStartTime +
+     obLengthMinutes *
+     OB_MILLISECOND_PER_MINUTE
+
+// 看涨1H BOS：绿色订单块。
+if showObBoxes and newBullBos and not na(htfObTop) and not na(htfObBottom)
+    box newBullObBox = box.new(
+         left = currentObStartTime,
+         top = htfObTop,
+         right = currentObEndTime,
+         bottom = htfObBottom,
+         xloc = xloc.bar_time,
+         extend = extend.none,
+         border_color = color.new(bullObColor, obBorderTransparency),
+         border_width = obBorderWidth,
+         bgcolor = color.new(bullObColor, bullObTransparency))
+
+    array.push(obBoxes, newBullObBox)
+    array.push(activeObBoxes, newBullObBox)
+    array.push(activeObDirections, 1)
+
+// 看跌1H BOS：红色订单块。
+if showObBoxes and newBearBos and not na(htfObTop) and not na(htfObBottom)
+    box newBearObBox = box.new(
+         left = currentObStartTime,
+         top = htfObTop,
+         right = currentObEndTime,
+         bottom = htfObBottom,
+         xloc = xloc.bar_time,
+         extend = extend.none,
+         border_color = color.new(bearObColor, obBorderTransparency),
+         border_width = obBorderWidth,
+         bgcolor = color.new(bearObColor, bearObTransparency))
+
+    array.push(obBoxes, newBearObBox)
+    array.push(activeObBoxes, newBearObBox)
+    array.push(activeObDirections, -1)
+
+// 仅保留并计算最近N个订单区块。
+while array.size(obBoxes) > recentObCount
+    box oldObBox = array.shift(obBoxes)
+    int oldActiveIndex = array.indexof(activeObBoxes, oldObBox)
+
+    if oldActiveIndex >= 0
+        array.remove(activeObBoxes, oldActiveIndex)
+        array.remove(activeObDirections, oldActiveIndex)
+
+    box.delete(oldObBox)
+
+// 已自然到期的活动订单块从数组头部移除。
+while array.size(activeObBoxes) > 0 and time >= box.get_right(array.get(activeObBoxes, 0))
+    array.shift(activeObBoxes)
+    array.shift(activeObDirections)
+
+// 收盘突破失效，仅检查仍处于活动状态的订单块。
+if invalidateObOnClose and barstate.isconfirmed and array.size(activeObBoxes) > 0
+    int activeObIndex = array.size(activeObBoxes) - 1
+
+    while activeObIndex >= 0
+        box currentObBox = array.get(activeObBoxes, activeObIndex)
+        int currentObLeft = box.get_left(currentObBox)
+
+        if time >= currentObLeft
+            int currentObDirection = array.get(activeObDirections, activeObIndex)
+            float currentObTop = box.get_top(currentObBox)
+            float currentObBottom = box.get_bottom(currentObBox)
+
+            bool bullObInvalid =
+                 currentObDirection == 1 and
+                 close < currentObBottom
+
+            bool bearObInvalid =
+                 currentObDirection == -1 and
+                 close > currentObTop
+
+            if bullObInvalid or bearObInvalid
+                int currentObRight = box.get_right(currentObBox)
+                int invalidRight =
+                     math.max(
+                         currentObLeft + 1,
+                         math.min(time, currentObRight))
+
+                box.set_right(currentObBox, invalidRight)
+                array.remove(activeObBoxes, activeObIndex)
+                array.remove(activeObDirections, activeObIndex)
+
+        activeObIndex -= 1
+
+// =============================================================================
+// 当前周期FVG
+// =============================================================================
+
+bullFvg = not na(high[2]) and low > high[2]
+bearFvg = not na(low[2]) and high < low[2]
+
+var int fvgDir = 0
+var float fvgTop = na
+var float fvgBottom = na
+var float fvgMid = na
+var int fvgBar = na
+var bool fvgUsed = false
+
+if barstate.isconfirmed and bullFvg
+    fvgDir := 1
+    fvgTop := low
+    fvgBottom := high[2]
+    fvgMid := (fvgTop + fvgBottom) / 2.0
+    fvgBar := bar_index
+    fvgUsed := false
+
+if barstate.isconfirmed and bearFvg
+    fvgDir := -1
+    fvgTop := low[2]
+    fvgBottom := high
+    fvgMid := (fvgTop + fvgBottom) / 2.0
+    fvgBar := bar_index
+    fvgUsed := false
+
+fvgTouched =
+     not fvgUsed and
+     not na(fvgMid) and
+     not na(fvgBar) and
+     bar_index > fvgBar and
+     low <= fvgMid and
+     high >= fvgMid
+
+longSetupSignal =
+     htfBias == 1 and
+     fvgDir == 1 and
+     fvgTouched
+
+shortSetupSignal =
+     htfBias == -1 and
+     fvgDir == -1 and
+     fvgTouched
+
+// =============================================================================
+// 时间换算
+// =============================================================================
+
+int hourMilliseconds = 60 * 60 * 1000
+int minHoldMilliseconds = int(minHoldHours * hourMilliseconds)
+int cooldownMilliseconds = int(stopCooldownHours * hourMilliseconds)
+
+// =============================================================================
+// 交易状态变量
+// =============================================================================
+
+var int cooldownUntil = na
+var float activeStop = na
+var float activeTarget = na
+var int lastProcessedClosedTrade = 0
+
+bool stopTriggeredThisBar = false
+
+if not na(cooldownUntil) and time >= cooldownUntil
+    cooldownUntil := na
+
+inCooldown =
+     not na(cooldownUntil) and
+     time < cooldownUntil
+
+entryAllowed =
+     not inCooldown and
+     strategy.position_size == 0 and
+     strategy.opentrades == 0
+
+if inCooldown
+    strategy.cancel_all()
+
+// =============================================================================
+// 正向 / 反向开仓条件
+// =============================================================================
+
+isForwardMode =
+     tradeMode == "正向做多做空"
+
+isReverseMode =
+     tradeMode == "反向做多做空"
+
+forwardLong =
+     isForwardMode and
+     aboveDa and
+     longSetupSignal
+
+forwardShort =
+     isForwardMode and
+     belowDa and
+     shortSetupSignal
+
+reverseShort =
+     isReverseMode and
+     aboveDa and
+     longSetupSignal
+
+reverseLong =
+     isReverseMode and
+     belowDa and
+     shortSetupSignal
+
+longSignal =
+     enableLong and
+     entryAllowed and
+     (forwardLong or reverseLong)
+
+shortSignal =
+     enableShort and
+     entryAllowed and
+     (forwardShort or reverseShort)
+
+validLong =
+     barstate.isconfirmed and
+     longSignal and
+     not na(fvgMid)
+
+validShort =
+     barstate.isconfirmed and
+     shortSignal and
+     not na(fvgMid)
+
+// =============================================================================
+// 提交市价开仓订单
+// process_orders_on_close=false：历史回测使用信号下一根K线开盘价成交。
+// =============================================================================
+
+if validLong
+    strategy.entry(
+         id = "做多",
+         direction = strategy.long,
+         comment = TVBOT_ENTER_LONG_COMMENT,
+         alert_message = TVBOT_ENTER_LONG_COMMENT,
+         disable_alert = not enableTvbotAlert)
+
+    fvgUsed := true
+
+if validShort
+    strategy.entry(
+         id = "做空",
+         direction = strategy.short,
+         comment = TVBOT_ENTER_SHORT_COMMENT,
+         alert_message = TVBOT_ENTER_SHORT_COMMENT,
+         disable_alert = not enableTvbotAlert)
+
+    fvgUsed := true
+
+// =============================================================================
+// 获取真实模拟成交时间和成交K线
+// =============================================================================
+
+hasOpenTrade =
+     strategy.opentrades > 0 and
+     strategy.position_size != 0
+
+int actualEntryTime = na
+int actualEntryBarIndex = na
+
+if hasOpenTrade
+    actualEntryTime :=
+         strategy.opentrades.entry_time(0)
+
+    actualEntryBarIndex :=
+         strategy.opentrades.entry_bar_index(0)
+
+heldMilliseconds =
+     hasOpenTrade and not na(actualEntryTime) ?
+     time - actualEntryTime :
+     0
+
+minimumHoldCompleted =
+     hasOpenTrade and
+     not na(actualEntryTime) and
+     not na(actualEntryBarIndex) and
+     time >= actualEntryTime + minHoldMilliseconds and
+     bar_index > actualEntryBarIndex
+
+holdingLocked =
+     hasOpenTrade and
+     not minimumHoldCompleted
+
+// =============================================================================
+// 新持仓检测和动态止盈止损价格
+// =============================================================================
+
+newLongPosition =
+     strategy.position_size > 0 and
+     strategy.position_size[1] <= 0
+
+newShortPosition =
+     strategy.position_size < 0 and
+     strategy.position_size[1] >= 0
+
+positionClosed =
+     strategy.position_size == 0 and
+     strategy.position_size[1] != 0
+
+bufferMult =
+     stopBufferBps / 10000.0
+
+var float activeOrderBlockTop = na
+var float activeOrderBlockBottom = na
+
+if newLongPosition or newShortPosition
+    activeOrderBlockTop := htfObTop
+    activeOrderBlockBottom := htfObBottom
+
+if strategy.position_size > 0
+    entryPrice =
+         strategy.position_avg_price
+
+    percentStop =
+         entryPrice *
+         (1.0 - stopLossPct / 100.0)
+
+    orderBlockStop =
+         not na(activeOrderBlockBottom) ?
+         activeOrderBlockBottom * (1.0 - bufferMult) :
+         percentStop
+
+    activeStop :=
+         stopMode == "百分比+订单块" ?
+         math.min(percentStop, orderBlockStop) :
+         percentStop
+
+    activeTarget :=
+         entryPrice *
+         (1.0 + takeProfitPct / 100.0)
+
+else if strategy.position_size < 0
+    entryPrice =
+         strategy.position_avg_price
+
+    percentStop =
+         entryPrice *
+         (1.0 + stopLossPct / 100.0)
+
+    orderBlockStop =
+         not na(activeOrderBlockTop) ?
+         activeOrderBlockTop * (1.0 + bufferMult) :
+         percentStop
+
+    activeStop :=
+         stopMode == "百分比+订单块" ?
+         math.max(percentStop, orderBlockStop) :
+         percentStop
+
+    activeTarget :=
+         entryPrice *
+         (1.0 - takeProfitPct / 100.0)
+
+// =============================================================================
+// 满一小时后才创建止盈止损订单
+// =============================================================================
+
+if strategy.position_size > 0 and
+   minimumHoldCompleted and
+   not na(activeStop) and
+   not na(activeTarget)
+
+    strategy.exit(
+         id = "多单止盈止损",
+         from_entry = "做多",
+         stop = activeStop,
+         limit = activeTarget,
+         comment = TVBOT_EXIT_LONG_COMMENT,
+         alert_message = TVBOT_EXIT_LONG_COMMENT,
+         disable_alert = true)
+
+if strategy.position_size < 0 and
+   minimumHoldCompleted and
+   not na(activeStop) and
+   not na(activeTarget)
+
+    strategy.exit(
+         id = "空单止盈止损",
+         from_entry = "做空",
+         stop = activeStop,
+         limit = activeTarget,
+         comment = TVBOT_EXIT_SHORT_COMMENT,
+         alert_message = TVBOT_EXIT_SHORT_COMMENT,
+         disable_alert = true)
+
+// =============================================================================
+// 判断止损并启动冷静期
+// =============================================================================
+
+if strategy.closedtrades > lastProcessedClosedTrade
+    lastTradeIndex =
+         strategy.closedtrades - 1
+
+    closedEntryPrice =
+         strategy.closedtrades.entry_price(lastTradeIndex)
+
+    closedExitPrice =
+         strategy.closedtrades.exit_price(lastTradeIndex)
+
+    closedEntryId =
+         strategy.closedtrades.entry_id(lastTradeIndex)
+
+    wasLongTrade =
+         closedEntryId == "做多"
+
+    wasShortTrade =
+         closedEntryId == "做空"
+
+    longStopped =
+         wasLongTrade and
+         closedExitPrice < closedEntryPrice
+
+    shortStopped =
+         wasShortTrade and
+         closedExitPrice > closedEntryPrice
+
+    stoppedOut =
+         longStopped or
+         shortStopped
+
+    if stoppedOut
+        stopTriggeredThisBar := true
+
+        if stopCooldownHours > 0
+            cooldownUntil :=
+                 time + cooldownMilliseconds
+
+        strategy.cancel_all()
+
+    lastProcessedClosedTrade :=
+         strategy.closedtrades
+
+if positionClosed
+    activeStop := na
+    activeTarget := na
+    activeOrderBlockTop := na
+    activeOrderBlockBottom := na
+
+// =============================================================================
+// 1H BOS确认K线填充
+// =============================================================================
+
+bosConfirmBar =
+     newBullBos or
+     newBearBos
+
+bosBarColor =
+     enableBosBarFill and bosConfirmBar ?
+         close >= open ?
+             color.new(bullBosColor, bosFillTransparency) :
+             color.new(bearBosColor, bosFillTransparency) :
+         na
+
+barcolor(
+     bosBarColor,
+     title = "1H BOS确认K线填充")
+
+plotcandle(
+     enableBosBarFill and bosConfirmBar ? open : na,
+     enableBosBarFill and bosConfirmBar ? high : na,
+     enableBosBarFill and bosConfirmBar ? low : na,
+     enableBosBarFill and bosConfirmBar ? close : na,
+     title = "1H BOS确认K线覆盖填充",
+     color = bosBarColor,
+     wickcolor = bosBarColor,
+     bordercolor = bosBarColor)
+
+// =============================================================================
+// FVG与DA显示
+// =============================================================================
+
+var line fvgMidDisplayLine = na
+var int displayedFvgBar = na
+
+fvgDisplayColor =
+     fvgDir == 1 ?
+     color.new(color.green, 0) :
+     color.new(color.red, 0)
+
+if showFvg and not na(fvgMid) and not na(fvgBar)
+    if na(fvgMidDisplayLine) or displayedFvgBar != fvgBar
+        if not na(fvgMidDisplayLine)
+            line.delete(fvgMidDisplayLine)
+
+        fvgMidDisplayLine := line.new(
+             x1 = fvgBar,
+             y1 = fvgMid,
+             x2 = bar_index,
+             y2 = fvgMid,
+             xloc = xloc.bar_index,
+             extend = extend.none,
+             color = fvgDisplayColor,
+             width = 2)
+
+        displayedFvgBar := fvgBar
+    else
+        line.set_x2(fvgMidDisplayLine, bar_index)
+        line.set_y1(fvgMidDisplayLine, fvgMid)
+        line.set_y2(fvgMidDisplayLine, fvgMid)
+        line.set_color(fvgMidDisplayLine, fvgDisplayColor)
+else
+    if not na(fvgMidDisplayLine)
+        line.delete(fvgMidDisplayLine)
+        fvgMidDisplayLine := na
+
+    displayedFvgBar := na
+
+plot(
+     showDa ? daLine : na,
+     title = "1H DA趋势分界线",
+     color = color.new(color.blue, 0),
+     linewidth = 2,
+     style = plot.style_linebr)
+
+// =============================================================================
+// 开仓信号
+// =============================================================================
+
+plotshape(
+     validLong,
+     title = "做多市价信号",
+     style = shape.triangleup,
+     text = "做多",
+     color = color.new(color.green, 0),
+     textcolor = color.white,
+     location = location.belowbar,
+     size = size.small)
+
+plotshape(
+     validShort,
+     title = "做空市价信号",
+     style = shape.triangledown,
+     text = "做空",
+     color = color.new(color.red, 0),
+     textcolor = color.white,
+     location = location.abovebar,
+     size = size.small)
+
+// =============================================================================
+// 止盈止损线
+// =============================================================================
+
+var line stopReferenceLine = na
+var line targetReferenceLine = na
+
+stopReferenceColor =
+     minimumHoldCompleted ?
+     color.new(stopLineColor, 0) :
+     color.new(stopLineColor, 70)
+
+targetReferenceColor =
+     minimumHoldCompleted ?
+     color.new(targetLineColor, 0) :
+     color.new(targetLineColor, 70)
+
+canDrawReferenceLevels =
+     showLevels and
+     hasOpenTrade and
+     not na(actualEntryBarIndex) and
+     not na(activeStop) and
+     not na(activeTarget)
+
+if canDrawReferenceLevels
+    if na(stopReferenceLine)
+        stopReferenceLine := line.new(
+             x1 = actualEntryBarIndex,
+             y1 = activeStop,
+             x2 = bar_index,
+             y2 = activeStop,
+             xloc = xloc.bar_index,
+             extend = extend.none,
+             color = stopReferenceColor,
+             width = 2)
+    else
+        line.set_x1(stopReferenceLine, actualEntryBarIndex)
+        line.set_x2(stopReferenceLine, bar_index)
+        line.set_y1(stopReferenceLine, activeStop)
+        line.set_y2(stopReferenceLine, activeStop)
+        line.set_color(stopReferenceLine, stopReferenceColor)
+
+    if na(targetReferenceLine)
+        targetReferenceLine := line.new(
+             x1 = actualEntryBarIndex,
+             y1 = activeTarget,
+             x2 = bar_index,
+             y2 = activeTarget,
+             xloc = xloc.bar_index,
+             extend = extend.none,
+             color = targetReferenceColor,
+             width = 2)
+    else
+        line.set_x1(targetReferenceLine, actualEntryBarIndex)
+        line.set_x2(targetReferenceLine, bar_index)
+        line.set_y1(targetReferenceLine, activeTarget)
+        line.set_y2(targetReferenceLine, activeTarget)
+        line.set_color(targetReferenceLine, targetReferenceColor)
+else
+    if not na(stopReferenceLine)
+        line.delete(stopReferenceLine)
+        stopReferenceLine := na
+
+    if not na(targetReferenceLine)
+        line.delete(targetReferenceLine)
+        targetReferenceLine := na
+
+// =============================================================================
+// 持仓锁定与冷静期背景
+// =============================================================================
+
+statusBackground =
+     showCooldownBackground and inCooldown ?
+         color.new(color.gray, 82) :
+     showHoldBackground and holdingLocked ?
+         color.new(color.orange, 90) :
+         na
+
+bgcolor(
+     statusBackground,
+     title = "持仓锁定与冷静期背景")
+
+// =============================================================================
+// 状态标签
+// =============================================================================
+
+var label statusLabel = na
+
+if barstate.islast
+    if not na(statusLabel)
+        label.delete(statusLabel)
+        statusLabel := na
+
+    if showStatusLabel and holdingLocked
+        remainingHoldMilliseconds =
+             math.max(
+                 actualEntryTime + minHoldMilliseconds - time,
+                 0)
+
+        remainingHoldMinutes =
+             remainingHoldMilliseconds / 60000.0
+
+        holdText =
+             "最短持仓锁定中\n" +
+             "剩余约 " +
+             str.tostring(remainingHoldMinutes, "#") +
+             " 分钟\n" +
+             "当前无止盈止损订单"
+
+        statusLabel := label.new(
+             x = bar_index,
+             y = high,
+             text = holdText,
+             style = label.style_label_down,
+             color = color.new(color.orange, 15),
+             textcolor = color.white,
+             size = size.small)
+
+    else if showStatusLabel and inCooldown
+        remainingCooldownMilliseconds =
+             cooldownUntil - time
+
+        remainingCooldownHours =
+             remainingCooldownMilliseconds /
+             float(hourMilliseconds)
+
+        cooldownText =
+             "止损冷静期\n剩余约 " +
+             str.tostring(remainingCooldownHours, "#.0") +
+             " 小时"
+
+        statusLabel := label.new(
+             x = bar_index,
+             y = high,
+             text = cooldownText,
+             style = label.style_label_down,
+             color = color.new(color.gray, 20),
+             textcolor = color.white,
+             size = size.small)
+
+// =============================================================================
+// 报警条件
+// =============================================================================
+
+alertcondition(
+     validLong,
+     title = "SMC做多市价信号",
+     message = "SMC做多市价信号：满足当前交易模式、1H结构、FVG触及、DA过滤，信号确认后由策略市价单在下一根K线开盘成交。")
+
+alertcondition(
+     validShort,
+     title = "SMC做空市价信号",
+     message = "SMC做空市价信号：满足当前交易模式、1H结构、FVG触及、DA过滤，信号确认后由策略市价单在下一根K线开盘成交。")
+
+alertcondition(
+     stopTriggeredThisBar,
+     title = "SMC止损进入冷静期",
+     message = "SMC策略发生止损，已经进入止损冷静期。")
+
+// =============================================================================
+// 今日08:00起算的VRVP最右侧成交量分布绘图
+// =============================================================================
+
+var array<box> vrvpProfileBoxes = array.new_box()
+var box vrvpTop3BlockBox = na
+var line vrvpValLine = na
+var line vrvpVahLine = na
+
+if barstate.islast
+    float vrvpRowHeight =
+         not na(vrvpProfileHigh) and not na(vrvpProfileLow) ?
+         (vrvpProfileHigh - vrvpProfileLow) / vrvpRowSize :
+         na
+
+    bool canDrawVrvp =
+         enableVrvp and
+         vrvpLookbackBars > 0 and
+         not na(vrvpRowHeight) and
+         vrvpRowHeight > 0 and
+         array.size(vrvpRowVolumes) == vrvpRowSize
+
+    if not canDrawVrvp
+        while array.size(vrvpProfileBoxes) > 0
+            box.delete(array.pop(vrvpProfileBoxes))
+
+        if not na(vrvpTop3BlockBox)
+            box.delete(vrvpTop3BlockBox)
+            vrvpTop3BlockBox := na
+
+        if not na(vrvpValLine)
+            line.delete(vrvpValLine)
+            vrvpValLine := na
+
+        if not na(vrvpVahLine)
+            line.delete(vrvpVahLine)
+            vrvpVahLine := na
+
+    else
+        int profileRight =
+             bar_index + vrvpOffset
+
+        int currentSessionStartBar =
+             math.max(
+                 0,
+                 vrvpSessionStartBarIndex)
+
+        // VAH与VAL线只维护现有对象，不在每个tick重复创建。
+        if vrvpShowValueArea and
+           not na(vrvpVal) and
+           not na(vrvpVah)
+
+            if na(vrvpValLine)
+                vrvpValLine := line.new(
+                     x1 = currentSessionStartBar,
+                     y1 = vrvpVal,
+                     x2 = profileRight,
+                     y2 = vrvpVal,
+                     xloc = xloc.bar_index,
+                     extend = extend.none,
+                     color = vrvpValColor,
+                     width = 2)
+            else
+                line.set_xy1(vrvpValLine, currentSessionStartBar, vrvpVal)
+                line.set_xy2(vrvpValLine, profileRight, vrvpVal)
+                line.set_color(vrvpValLine, vrvpValColor)
+                line.set_width(vrvpValLine, 2)
+
+            if na(vrvpVahLine)
+                vrvpVahLine := line.new(
+                     x1 = currentSessionStartBar,
+                     y1 = vrvpVah,
+                     x2 = profileRight,
+                     y2 = vrvpVah,
+                     xloc = xloc.bar_index,
+                     extend = extend.none,
+                     color = vrvpVahColor,
+                     width = 2)
+            else
+                line.set_xy1(vrvpVahLine, currentSessionStartBar, vrvpVah)
+                line.set_xy2(vrvpVahLine, profileRight, vrvpVah)
+                line.set_color(vrvpVahLine, vrvpVahColor)
+                line.set_width(vrvpVahLine, 2)
+        else
+            if not na(vrvpValLine)
+                line.delete(vrvpValLine)
+                vrvpValLine := na
+
+            if not na(vrvpVahLine)
+                line.delete(vrvpVahLine)
+                vrvpVahLine := na
+
+        float maximumDrawingVolume =
+             array.max(vrvpRowVolumes)
+
+        if maximumDrawingVolume > 0
+            // 对缓存后的价格档成交量进行排序。
+            // 直接取得成交量最大的3档，不重新扫描历史K线。
+            array<int> sortedDrawingRows =
+                 array.sort_indices(
+                     vrvpRowVolumes,
+                     order.descending)
+
+            int topDrawingRow1 =
+                 array.get(sortedDrawingRows, 0)
+
+            int topDrawingRow2 =
+                 array.get(sortedDrawingRows, 1)
+
+            int topDrawingRow3 =
+                 array.get(sortedDrawingRows, 2)
+
+            int valRowIndex =
+                 not na(vrvpVal) ?
+                 int(math.floor(
+                     (vrvpVal - vrvpProfileLow) /
+                     vrvpRowHeight)) :
+                 -1
+
+            // VAH是值区最后一档的上边界，因此映射回行号时需要减1。
+            int vahRowIndex =
+                 not na(vrvpVah) ?
+                 int(math.round(
+                     (vrvpVah - vrvpProfileLow) /
+                     vrvpRowHeight)) - 1 :
+                 -1
+
+            if valRowIndex >= 0
+                valRowIndex :=
+                     math.max(
+                         0,
+                         math.min(vrvpRowSize - 1, valRowIndex))
+
+            if vahRowIndex >= 0
+                vahRowIndex :=
+                     math.max(
+                         0,
+                         math.min(vrvpRowSize - 1, vahRowIndex))
+
+            color outsideValueAreaColor =
+                 color.new(
+                     color.white,
+                     vrvpOutsideTransparency)
+
+            color insideValueAreaColor =
+                 color.new(
+                     color.white,
+                     vrvpInsideTransparency)
+
+            // 最大3档成交量固定使用0透明度。
+            color topVolumeColor =
+                 color.new(
+                     vrvpTopVolumeColor,
+                     0)
+
+            while array.size(vrvpProfileBoxes) > vrvpRowSize
+                box.delete(array.pop(vrvpProfileBoxes))
+
+            for rowIndex = 0 to vrvpRowSize - 1
+                float rowBottom =
+                     vrvpProfileLow +
+                     rowIndex * vrvpRowHeight
+
+                float rowTop =
+                     rowBottom + vrvpRowHeight
+
+                float currentRowVolume =
+                     array.get(vrvpRowVolumes, rowIndex)
+
+                int rowWidth =
+                     currentRowVolume > 0 ?
+                     math.max(
+                         1,
+                         int(math.round(
+                             currentRowVolume /
+                             maximumDrawingVolume *
+                             vrvpBarWidth))) :
+                     1
+
+                int profileLeft =
+                     profileRight - rowWidth
+
+                bool isTopVolumeRow =
+                     currentRowVolume > 0 and
+                     (rowIndex == topDrawingRow1 or
+                      rowIndex == topDrawingRow2 or
+                      rowIndex == topDrawingRow3)
+
+                bool isInsideValueArea =
+                     vrvpShowValueArea and
+                     valRowIndex >= 0 and
+                     vahRowIndex >= 0 and
+                     rowIndex >= valRowIndex and
+                     rowIndex <= vahRowIndex
+
+                // 显示优先级：
+                // 1. 成交量最大的3档：紫色，透明度0。
+                // 2. VAL至VAH之间：白色，默认透明度50%。
+                // 3. VAL下方与VAH上方：白色，默认透明度0。
+                color rowColor =
+                     isTopVolumeRow ?
+                     topVolumeColor :
+                     isInsideValueArea ?
+                     insideValueAreaColor :
+                     outsideValueAreaColor
+
+                box currentProfileBox = na
+
+                if rowIndex < array.size(vrvpProfileBoxes)
+                    currentProfileBox :=
+                         array.get(vrvpProfileBoxes, rowIndex)
+                else
+                    currentProfileBox := box.new(
+                         left = profileLeft,
+                         top = rowTop,
+                         right = profileRight,
+                         bottom = rowBottom,
+                         xloc = xloc.bar_index,
+                         extend = extend.none,
+                         bgcolor = rowColor,
+                         border_color = rowColor,
+                         border_width = 0)
+
+                    array.push(
+                         vrvpProfileBoxes,
+                         currentProfileBox)
+
+                // 重用box对象，仅更新坐标和颜色。
+                box.set_left(currentProfileBox, profileLeft)
+                box.set_right(currentProfileBox, profileRight)
+                box.set_top(currentProfileBox, rowTop)
+                box.set_bottom(currentProfileBox, rowBottom)
+                box.set_bgcolor(currentProfileBox, rowColor)
+                box.set_border_color(currentProfileBox, rowColor)
+                box.set_border_width(currentProfileBox, 0)
+
+            if vrvpShowTop3Block and
+               vrvpHasTop3Block and
+               not na(vrvpTop3BlockLow) and
+               not na(vrvpTop3BlockHigh)
+
+                int top3Right =
+                     math.max(
+                         bar_index + 1,
+                         profileRight)
+
+                color top3BackgroundColor =
+                     color.new(
+                         vrvpTop3BlockColor,
+                         vrvpTop3Transparency)
+
+                if na(vrvpTop3BlockBox)
+                    vrvpTop3BlockBox := box.new(
+                         left = currentSessionStartBar,
+                         top = vrvpTop3BlockHigh,
+                         right = top3Right,
+                         bottom = vrvpTop3BlockLow,
+                         xloc = xloc.bar_index,
+                         extend = extend.none,
+                         bgcolor = top3BackgroundColor,
+                         border_color = vrvpTop3BlockColor,
+                         border_width = 1)
+                else
+                    box.set_left(vrvpTop3BlockBox, currentSessionStartBar)
+                    box.set_right(vrvpTop3BlockBox, top3Right)
+                    box.set_top(vrvpTop3BlockBox, vrvpTop3BlockHigh)
+                    box.set_bottom(vrvpTop3BlockBox, vrvpTop3BlockLow)
+                    box.set_bgcolor(vrvpTop3BlockBox, top3BackgroundColor)
+                    box.set_border_color(vrvpTop3BlockBox, vrvpTop3BlockColor)
+                    box.set_border_width(vrvpTop3BlockBox, 1)
+            else
+                if not na(vrvpTop3BlockBox)
+                    box.delete(vrvpTop3BlockBox)
+                    vrvpTop3BlockBox := na
+        else
+            while array.size(vrvpProfileBoxes) > 0
+                box.delete(array.pop(vrvpProfileBoxes))
+
+            if not na(vrvpTop3BlockBox)
+                box.delete(vrvpTop3BlockBox)
+                vrvpTop3BlockBox := na

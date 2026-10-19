@@ -339,7 +339,7 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
 	response := w.Result()
-	if w.Code != http.StatusSeeOther || response.Header.Get("Location") != "/liquidation/bubbles" {
+	if w.Code != http.StatusSeeOther || response.Header.Get("Location") != "/liquidation/alerts" {
 		t.Fatalf("login status=%d location=%s body=%s", w.Code, response.Header.Get("Location"), w.Body.String())
 	}
 	var session *http.Cookie
