@@ -17,13 +17,24 @@ import (
 )
 
 func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
-	legacy := []adminMenuItem{{Key: "menu", Title: "菜单管理", Href: "/admin#menu", Group: "admin"}}
+	legacy := []adminMenuItem{
+		{Key: "menu", Title: "菜单管理", Href: "/admin#menu", Group: "admin"},
+		{Key: "positions", Title: "持仓", Href: "/tvbot#positions", Group: "trading"},
+		{Key: "analysis", Title: "分析", Href: "/tvbot#analysis", Group: "trading"},
+		{Key: "custom", Title: "自定义", Href: "/custom", Group: "custom"},
+	}
 	migrated, changed := migrateAdminMenu(legacy)
-	if !changed || len(migrated) != 1 {
+	if !changed || len(migrated) != len(legacy) {
 		t.Fatalf("migration changed=%v menu=%#v", changed, migrated)
 	}
 	if migrated[0].Key != "menu" || migrated[0].Title != "菜单管理" || migrated[0].Href != "/menu" || migrated[0].Group != "admin" {
 		t.Fatalf("migrated menu item=%#v", migrated[0])
+	}
+	if migrated[1].Href != "/tvbot/view/positions" || migrated[2].Href != "/tvbot/view/analysis" {
+		t.Fatalf("migrated trading menu=%#v", migrated[1:3])
+	}
+	if migrated[3] != legacy[3] {
+		t.Fatalf("custom menu item should remain unchanged: %#v", migrated[3])
 	}
 }
 

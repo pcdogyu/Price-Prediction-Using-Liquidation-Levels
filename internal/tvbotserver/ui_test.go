@@ -7,7 +7,7 @@ import (
 )
 
 func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
-	req := httptest.NewRequest("GET", "/tvbot#positions", nil)
+	req := httptest.NewRequest("GET", "/tvbot/view/positions", nil)
 	req.Header.Set("X-Forwarded-Prefix", "/liquidation")
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, req)
 
@@ -26,10 +26,11 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	for _, want := range []string{
 		`class="app-logo" aria-hidden="true"`,
 		`class="tvbot-sections" aria-label="sections"`,
-		`.app-nav.tvbot-nav .tvbot-sections button`,
+		`.app-nav.tvbot-nav .tvbot-sections a`,
 		`href="/liquidation/alerts"`,
-		`href="/liquidation/tvbot">总览`,
-		`href="/liquidation/tvbot#positions"`,
+		`href="/liquidation/tvbot/view/dashboard">总览`,
+		`href="/liquidation/tvbot/view/positions">持仓`,
+		`href="/liquidation/tvbot/view/api-keys">API Key`,
 		`href="/liquidation/admin"`,
 		`class="theme-toggle" id="tvbot-theme"`,
 	} {
@@ -39,5 +40,10 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 	if strings.Contains(page, "清算墙雷达") || strings.Contains(page, `class="brand"`) || strings.Contains(page, `class="liquidation-links"`) {
 		t.Fatal("tvbot header still contains the removed product name or legacy navigation classes")
+	}
+	for _, removed := range []string{"tvbot#", "location.hash", "history.replaceState", "url.hash ="} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("tvbot page still contains hash navigation marker %q", removed)
+		}
 	}
 }

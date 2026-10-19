@@ -104,6 +104,29 @@ func TestRoutes(t *testing.T) {
 	if basic.Code != http.StatusOK {
 		t.Fatalf("tvbot with basic auth code=%d body=%s", basic.Code, basic.Body.String())
 	}
+	for _, route := range tvbotViewRoutes {
+		viewReq := httptest.NewRequest(http.MethodGet, "/tvbot/view/"+route.Slug, nil)
+		viewReq.SetBasicAuth("admin", "Admin123")
+		view := httptest.NewRecorder()
+		srv.ServeHTTP(view, viewReq)
+		if view.Code != http.StatusOK || !strings.Contains(view.Body.String(), `data-tab="`+route.Tab+`" href="/tvbot/view/`+route.Slug+`"`) {
+			t.Fatalf("tvbot view route %s code=%d body contains expected link=%v", route.Slug, view.Code, strings.Contains(view.Body.String(), `data-tab="`+route.Tab+`" href="/tvbot/view/`+route.Slug+`"`))
+		}
+	}
+	invalidViewReq := httptest.NewRequest(http.MethodGet, "/tvbot/view/not-a-page", nil)
+	invalidViewReq.SetBasicAuth("admin", "Admin123")
+	invalidView := httptest.NewRecorder()
+	srv.ServeHTTP(invalidView, invalidViewReq)
+	if invalidView.Code != http.StatusNotFound {
+		t.Fatalf("invalid tvbot view code=%d body=%s", invalidView.Code, invalidView.Body.String())
+	}
+	viewMethodReq := httptest.NewRequest(http.MethodPost, "/tvbot/view/positions", nil)
+	viewMethodReq.SetBasicAuth("admin", "Admin123")
+	viewMethod := httptest.NewRecorder()
+	srv.ServeHTTP(viewMethod, viewMethodReq)
+	if viewMethod.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("tvbot view POST code=%d body=%s", viewMethod.Code, viewMethod.Body.String())
+	}
 	monitorReq := httptest.NewRequest(http.MethodGet, "/tvbot/trade-monitor", nil)
 	monitorReq.SetBasicAuth("admin", "Admin123")
 	monitor := httptest.NewRecorder()
@@ -502,12 +525,12 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("多空都做")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("只做多")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("只做空")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("applyTemplateHashParams")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("parsedHashRoute")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("applyTemplateQueryParams")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("tabFromViewPath")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`$("tpl-target-exchange").value = normalizeExchange(params.get("target_exchange")`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`$("tpl-trade-env").value = params.get("trade_env")`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`$("tpl-coinpair").value = symbol`)) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte(`url.hash = "template?" + params.toString()`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`url.search = params.toString()`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("await makeTemplate()")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("templateCoinpairOptions")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("syncSymbols")) ||
@@ -520,8 +543,9 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("tvbot ui should render exchange-aware API, template and order history controls")
 	}
 	if !bytes.Contains(ui.Body.Bytes(), []byte("activateTab")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("location.hash")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("history.replaceState")) ||
+		bytes.Contains(ui.Body.Bytes(), []byte("location.hash")) ||
+		bytes.Contains(ui.Body.Bytes(), []byte("history.replaceState")) ||
+		bytes.Contains(ui.Body.Bytes(), []byte("tvbot#")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("configuredDefaultTab")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("effectiveDefaultTab")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("syncActiveTabAfterMenuSettings")) ||

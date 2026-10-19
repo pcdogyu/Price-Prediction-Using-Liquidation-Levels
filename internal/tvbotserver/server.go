@@ -510,6 +510,18 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 		}
 		s = scoped
 	}
+	if strings.HasPrefix(path, "/view/") {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "tvbot view pages only accept GET")
+			return
+		}
+		if _, ok := tvbotViewRouteForPath(path); !ok {
+			writeError(w, http.StatusNotFound, "not_found", "unknown /tvbot view")
+			return
+		}
+		writeHTML(w, http.StatusOK, renderTVBotHTML(s.BuildInfo, r))
+		return
+	}
 	if path == "" || path == "/" {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
@@ -567,6 +579,9 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 }
 
 func requiresAdminEndpoint(path string, r *http.Request) bool {
+	if strings.HasPrefix(path, "/view/") {
+		return false
+	}
 	if path == "/api-keys" || path == "/api-keys/test" {
 		return false
 	}

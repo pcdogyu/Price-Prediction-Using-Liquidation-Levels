@@ -43,16 +43,16 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall", Group: "liquidation"},
 		{Key: "market-info", Title: "市场信息", Href: "/market-info", Group: "liquidation"},
 		{Key: "options", Title: "期权", Href: "/options", Group: "liquidation"},
-		{Key: "overview", Title: "总览", Href: "/tvbot", Group: "trading"},
-		{Key: "positions", Title: "持仓", Href: "/tvbot#positions", Group: "trading"},
-		{Key: "orders", Title: "订单", Href: "/tvbot#orders", Group: "trading"},
-		{Key: "analysis", Title: "订单分析", Href: "/tvbot#analysis", Group: "trading"},
-		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot#tradeMonitor", Group: "trading"},
-		{Key: "symbols", Title: "币对配置", Href: "/tvbot#symbols", Group: "trading"},
-		{Key: "api-keys", Title: "API Key", Href: "/tvbot#apiKeys", Group: "trading"},
-		{Key: "order-settings", Title: "下单设置", Href: "/tvbot#orderSettings", Group: "trading"},
-		{Key: "template", Title: "告警模板", Href: "/tvbot#template", Group: "trading"},
-		{Key: "config", Title: "订单配置", Href: "/tvbot#config", Group: "trading"},
+		{Key: "overview", Title: "总览", Href: "/tvbot/view/dashboard", Group: "trading"},
+		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions", Group: "trading"},
+		{Key: "orders", Title: "订单", Href: "/tvbot/view/orders", Group: "trading"},
+		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis", Group: "trading"},
+		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot/view/trade-monitor", Group: "trading"},
+		{Key: "symbols", Title: "币对配置", Href: "/tvbot/view/symbols", Group: "trading"},
+		{Key: "api-keys", Title: "API Key", Href: "/tvbot/view/api-keys", Group: "trading"},
+		{Key: "order-settings", Title: "下单设置", Href: "/tvbot/view/order-settings", Group: "trading"},
+		{Key: "template", Title: "告警模板", Href: "/tvbot/view/template", Group: "trading"},
+		{Key: "config", Title: "订单配置", Href: "/tvbot/view/config", Group: "trading"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"},
 		{Key: "system", Title: "系统管理", Href: "/admin", Group: "admin"},
 		{Key: "upgrade", Title: "升级", Href: "/upgrade", Group: "admin"},
@@ -62,13 +62,29 @@ func defaultAdminMenu() []adminMenuItem {
 func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	migrated := append([]adminMenuItem(nil), menu...)
 	changed := false
+	tradingRoutes := map[string]string{
+		"overview":       "/tvbot/view/dashboard",
+		"positions":      "/tvbot/view/positions",
+		"orders":         "/tvbot/view/orders",
+		"analysis":       "/tvbot/view/analysis",
+		"trade-monitor":  "/tvbot/view/trade-monitor",
+		"symbols":        "/tvbot/view/symbols",
+		"api-keys":       "/tvbot/view/api-keys",
+		"order-settings": "/tvbot/view/order-settings",
+		"template":       "/tvbot/view/template",
+		"config":         "/tvbot/view/config",
+	}
 	for i := range migrated {
-		if migrated[i].Key != "menu" && migrated[i].Title != "菜单管理" && migrated[i].Href != "/admin#menu" {
+		if migrated[i].Key == "menu" || migrated[i].Title == "菜单管理" || migrated[i].Href == "/admin#menu" {
+			updated := adminMenuItem{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"}
+			if migrated[i] != updated {
+				migrated[i] = updated
+				changed = true
+			}
 			continue
 		}
-		updated := adminMenuItem{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"}
-		if migrated[i] != updated {
-			migrated[i] = updated
+		if href, ok := tradingRoutes[migrated[i].Key]; ok && (migrated[i].Href == "/tvbot" || migrated[i].Href == "/tvbot/" || strings.HasPrefix(migrated[i].Href, "/tvbot#")) {
+			migrated[i].Href = href
 			changed = true
 		}
 	}

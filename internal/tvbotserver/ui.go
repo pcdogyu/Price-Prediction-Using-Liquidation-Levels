@@ -12,6 +12,53 @@ type BuildInfo struct {
 	CommitBranch string
 }
 
+type tvbotViewRoute struct {
+	Slug  string
+	Tab   string
+	Label string
+}
+
+var tvbotViewRoutes = []tvbotViewRoute{
+	{Slug: "dashboard", Tab: "dashboard", Label: "总览"},
+	{Slug: "positions", Tab: "positions", Label: "持仓"},
+	{Slug: "analysis", Tab: "analysis", Label: "订单分析"},
+	{Slug: "symbols", Tab: "symbols", Label: "币对配置"},
+	{Slug: "config", Tab: "config", Label: "订单配置"},
+	{Slug: "api-keys", Tab: "apiKeys", Label: "API Key"},
+	{Slug: "order-settings", Tab: "orderSettings", Label: "下单设置"},
+	{Slug: "template", Tab: "template", Label: "告警模板"},
+	{Slug: "orders", Tab: "orders", Label: "订单"},
+	{Slug: "trade-monitor", Tab: "tradeMonitor", Label: "成交监听"},
+	{Slug: "menu-settings", Tab: "menuSettings", Label: "菜单设置"},
+	{Slug: "upgrade", Tab: "upgrade", Label: "升级"},
+}
+
+func tvbotViewRouteForPath(path string) (tvbotViewRoute, bool) {
+	const prefix = "/view/"
+	if !strings.HasPrefix(path, prefix) {
+		return tvbotViewRoute{}, false
+	}
+	slug := strings.TrimSuffix(strings.TrimPrefix(path, prefix), "/")
+	if slug == "" || strings.Contains(slug, "/") {
+		return tvbotViewRoute{}, false
+	}
+	for _, route := range tvbotViewRoutes {
+		if route.Slug == slug {
+			return route, true
+		}
+	}
+	return tvbotViewRoute{}, false
+}
+
+func tvbotViewPath(tab string) string {
+	for _, route := range tvbotViewRoutes {
+		if route.Tab == tab {
+			return "/tvbot/view/" + route.Slug
+		}
+	}
+	return "/tvbot/view/dashboard"
+}
+
 func (b BuildInfo) FooterText() string {
 	return "Code by Yuhao@jiansutech.com - " +
 		buildInfoValue(b.CommitTime) + " - " +
@@ -42,10 +89,15 @@ func renderTVBotHTML(info BuildInfo, r *http.Request) string {
 	link := func(path string) string { return prefix + path }
 	assets := `<script src="` + html.EscapeString(link("/assets/theme.js")) + `"></script><link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `">`
 	page := strings.Replace(tvbotHTML, "</head>", assets+"</head>", 1)
-	liquidationLinks := `<div class="app-links" aria-label="主菜单"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link("/tvbot")) + `">总览</a><a href="` + html.EscapeString(link("/tvbot#positions")) + `">持仓</a><a href="` + html.EscapeString(link("/menu")) + `">菜单管理</a><a href="` + html.EscapeString(link("/admin")) + `">系统管理</a></div>`
+	liquidationLinks := `<div class="app-links" aria-label="主菜单"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link(tvbotViewPath("dashboard"))) + `">总览</a><a href="` + html.EscapeString(link(tvbotViewPath("positions"))) + `">持仓</a><a href="` + html.EscapeString(link("/menu")) + `">菜单管理</a><a href="` + html.EscapeString(link("/admin")) + `">系统管理</a></div>`
+	var sectionLinks strings.Builder
+	for _, route := range tvbotViewRoutes {
+		sectionLinks.WriteString(`<a data-tab="` + html.EscapeString(route.Tab) + `" href="` + html.EscapeString(link("/tvbot/view/"+route.Slug)) + `">` + html.EscapeString(route.Label) + `</a>`)
+	}
 	themeScript := `<script>(()=>{const button=document.getElementById('tvbot-theme');const update=()=>{const light=document.documentElement.dataset.theme==='light';button.textContent=light?'深色主题':'浅色主题';button.setAttribute('aria-label','当前'+(light?'浅色':'深色')+'主题，切换至'+(light?'深色':'浅色')+'主题')};button.addEventListener('click',()=>window.LiquidationTheme.toggle());window.addEventListener('themechange',update);update()})();</script>`
 	page = strings.Replace(page, "{{HOME_LINK}}", html.EscapeString(link("/alerts")), 1)
 	page = strings.Replace(page, "{{LIQUIDATION_LINKS}}", liquidationLinks, 1)
+	page = strings.Replace(page, "{{TVBOT_SECTION_LINKS}}", sectionLinks.String(), 1)
 	page = strings.Replace(page, "</body>", themeScript+"</body>", 1)
 	return strings.Replace(page, "{{APP_FOOTER}}", html.EscapeString(info.FooterText()), 1)
 }
@@ -249,7 +301,7 @@ const tvbotHTML = `<!doctype html>
       background: transparent;
     }
     .app-nav.tvbot-nav .global-exchange-switch button,
-    .app-nav.tvbot-nav .tvbot-sections button {
+    .app-nav.tvbot-nav .tvbot-sections a {
       min-height: 0;
       padding: 7px 13px;
       border: 0;
@@ -259,12 +311,12 @@ const tvbotHTML = `<!doctype html>
       font-size: 14px;
     }
     .app-nav.tvbot-nav .global-exchange-switch button:hover,
-    .app-nav.tvbot-nav .tvbot-sections button:hover {
+    .app-nav.tvbot-nav .tvbot-sections a:hover {
       color: var(--text);
       background: var(--hover-bg);
     }
     .app-nav.tvbot-nav .global-exchange-switch button[aria-selected="true"],
-    .app-nav.tvbot-nav .tvbot-sections button[aria-selected="true"] {
+    .app-nav.tvbot-nav .tvbot-sections a[aria-current="page"] {
       background: var(--selected-bg);
       color: var(--buy);
       border-color: transparent;
@@ -1349,20 +1401,7 @@ const tvbotHTML = `<!doctype html>
           <button type="button" data-global-exchange="okx" aria-selected="true">OKX</button>
           <button type="button" data-global-exchange="binance">Binance</button>
         </div>
-        <nav class="tvbot-sections" aria-label="sections">
-          <button type="button" data-tab="dashboard" aria-selected="true">总览</button>
-          <button type="button" data-tab="positions">持仓</button>
-          <button type="button" data-tab="analysis">订单分析</button>
-          <button type="button" data-tab="symbols">币对配置</button>
-          <button type="button" data-tab="config">订单配置</button>
-          <button type="button" data-tab="apiKeys">API Key</button>
-          <button type="button" data-tab="orderSettings">下单设置</button>
-          <button type="button" data-tab="template">告警模板</button>
-          <button type="button" data-tab="orders">订单</button>
-          <button type="button" data-tab="tradeMonitor">成交监听</button>
-          <button type="button" data-tab="menuSettings">菜单设置</button>
-          <button type="button" data-tab="upgrade">升级</button>
-        </nav>
+        <nav class="tvbot-sections" aria-label="sections">{{TVBOT_SECTION_LINKS}}</nav>
         <button type="button" class="theme-toggle" id="tvbot-theme" aria-label="切换主题"></button>
       </div>
   </header>
@@ -2821,7 +2860,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function tabButton(tabID) {
-      return Array.from(document.querySelectorAll("nav button")).find((button) => button.dataset.tab === tabID) || null;
+      return Array.from(document.querySelectorAll("nav a[data-tab]")).find((button) => button.dataset.tab === tabID) || null;
     }
 
     function tabVisible(tabID) {
@@ -2830,7 +2869,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function firstVisibleTab() {
-      const button = Array.from(document.querySelectorAll("nav button")).find((item) => !item.hidden && $(item.dataset.tab));
+      const button = Array.from(document.querySelectorAll("nav a[data-tab]")).find((item) => !item.hidden && $(item.dataset.tab));
       return button ? button.dataset.tab : "menuSettings";
     }
 
@@ -2840,26 +2879,26 @@ const tvbotHTML = `<!doctype html>
     }
 
     function activeTabID() {
-      const active = document.querySelector('nav button[aria-selected="true"]');
+      const active = document.querySelector('nav a[data-tab][aria-current="page"]');
       return active ? active.dataset.tab : "";
     }
 
     function syncActiveTabAfterMenuSettings() {
-      const hash = location.hash ? location.hash.slice(1) : "";
+      const pathTab = tabFromViewPath();
       const active = activeTabID();
-      if (!hash && !menuSettingsSynced) {
+      if (!pathTab && !menuSettingsSynced) {
         menuSettingsSynced = true;
-        activateTab(effectiveDefaultTab(), false);
+        activateTab(effectiveDefaultTab());
         return;
       }
-      if (hash && tabVisible(hash)) {
+      if (pathTab && tabVisible(pathTab)) {
         menuSettingsSynced = true;
-        activateTab(hash, false);
+        activateTab(pathTab);
         return;
       }
       menuSettingsSynced = true;
       if (!active || !tabVisible(active)) {
-        activateTab(effectiveDefaultTab(), false);
+        activateTab(effectiveDefaultTab());
       }
     }
 
@@ -2876,12 +2915,12 @@ const tvbotHTML = `<!doctype html>
         nav.appendChild(button);
         known[item.tab] = true;
       });
-      document.querySelectorAll("nav button").forEach((button) => {
+      document.querySelectorAll("nav a[data-tab]").forEach((button) => {
         if (!known[button.dataset.tab]) button.hidden = true;
       });
-      const activeButton = document.querySelector('nav button[aria-selected="true"]');
+      const activeButton = document.querySelector('nav a[data-tab][aria-current="page"]');
       if (!activeButton || activeButton.hidden) {
-        activateTab(effectiveDefaultTab(), false);
+        activateTab(effectiveDefaultTab());
       } else {
         syncOrderInfoVisibility(activeButton.dataset.tab || activeTabID());
       }
@@ -3028,15 +3067,37 @@ const tvbotHTML = `<!doctype html>
       box.hidden = tabID !== "orderSettings";
     }
 
-    function parsedHashRoute() {
-      const raw = location.hash ? location.hash.slice(1) : "";
-      const splitAt = raw.indexOf("?");
-      const tab = splitAt >= 0 ? raw.slice(0, splitAt) : raw;
-      const query = splitAt >= 0 ? raw.slice(splitAt + 1) : "";
-      return { tab: tab, params: new URLSearchParams(query) };
+    const tvbotViewTabBySlug = {
+      dashboard: "dashboard",
+      positions: "positions",
+      analysis: "analysis",
+      symbols: "symbols",
+      config: "config",
+      "api-keys": "apiKeys",
+      "order-settings": "orderSettings",
+      template: "template",
+      orders: "orders",
+      "trade-monitor": "tradeMonitor",
+      "menu-settings": "menuSettings",
+      upgrade: "upgrade"
+    };
+
+    function tabFromViewPath() {
+      const marker = "/tvbot/view/";
+      const start = location.pathname.indexOf(marker);
+      if (start < 0) return "";
+      const slug = location.pathname.slice(start + marker.length).split("/")[0];
+      return tvbotViewTabBySlug[slug] || "";
     }
 
-    function activateTab(tabID, persist) {
+    function tvbotViewURL(slug) {
+      const marker = "/tvbot/";
+      const start = location.pathname.indexOf(marker);
+      const base = start >= 0 ? location.pathname.slice(0, start) + "/tvbot" : "/tvbot";
+      return new URL(base + "/view/" + slug, window.location.origin);
+    }
+
+    function activateTab(tabID) {
       let target = tabID || "dashboard";
       let button = tabButton(target);
       let section = $(target);
@@ -3045,18 +3106,13 @@ const tvbotHTML = `<!doctype html>
         button = tabButton(target);
         section = $(target);
       }
-      document.querySelectorAll("nav button").forEach((b) => b.setAttribute("aria-selected", "false"));
+      document.querySelectorAll("nav a[data-tab]").forEach((b) => b.removeAttribute("aria-current"));
       document.querySelectorAll("main section").forEach((s) => s.classList.remove("active"));
       if (button && section) {
-        button.setAttribute("aria-selected", "true");
+        button.setAttribute("aria-current", "page");
         section.classList.add("active");
       }
       syncOrderInfoVisibility(target);
-      if (persist) {
-        if (window.history && location.hash !== "#" + target) {
-          history.replaceState(null, "", "#" + target);
-        }
-      }
       if (target === "positions") {
         startPositionViewPolling();
       } else {
@@ -3090,9 +3146,9 @@ const tvbotHTML = `<!doctype html>
     }
 
     function initialTab() {
-      const fromHash = parsedHashRoute().tab;
-      const hashButton = tabButton(fromHash);
-      if (fromHash && hashButton && !hashButton.hidden && $(fromHash)) return fromHash;
+      const fromPath = tabFromViewPath();
+      const pathButton = tabButton(fromPath);
+      if (fromPath && pathButton && !pathButton.hidden && $(fromPath)) return fromPath;
       return effectiveDefaultTab();
     }
 
@@ -4209,8 +4265,8 @@ const tvbotHTML = `<!doctype html>
       params.set("coinpair", String(button.dataset.templateSymbol || "").trim());
       params.set("direction", "both");
       params.set("price_source", "close");
-      const url = new URL("/tvbot/", window.location.origin);
-      url.hash = "template?" + params.toString();
+      const url = tvbotViewURL("template");
+      url.search = params.toString();
       return url.toString();
     }
 
@@ -6034,10 +6090,9 @@ const tvbotHTML = `<!doctype html>
       }
     }
 
-    async function applyTemplateHashParams() {
-      const route = parsedHashRoute();
-      if (route.tab !== "template") return;
-      const params = route.params;
+    async function applyTemplateQueryParams() {
+      if (tabFromViewPath() !== "template") return;
+      const params = new URLSearchParams(location.search);
       const symbol = String(params.get("coinpair") || "").trim();
       if (!symbol) return;
       $("tpl-target-exchange").value = normalizeExchange(params.get("target_exchange") || "okx");
@@ -6285,11 +6340,6 @@ const tvbotHTML = `<!doctype html>
       }
     }
 
-    document.querySelectorAll("nav button").forEach((button) => {
-      button.addEventListener("click", () => {
-        activateTab(button.dataset.tab, true);
-      });
-    });
     document.querySelectorAll("[data-global-exchange]").forEach((button) => {
       button.addEventListener("click", () => {
         setSelectedExchange(button.dataset.globalExchange);
@@ -6529,8 +6579,8 @@ const tvbotHTML = `<!doctype html>
     initAnalysisTradeColumnDrag();
     renderPositions();
     renderPendingOrders();
-    activateTab(initialTab(), false);
-    loadAll().then(() => applyTemplateHashParams()).catch((err) => toast(err.message));
+    activateTab(initialTab());
+    loadAll().then(() => applyTemplateQueryParams()).catch((err) => toast(err.message));
   </script>
 </body>
 </html>`
