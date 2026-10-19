@@ -196,13 +196,13 @@ type AlertTimelinePage struct {
 
 // AlertGamma is the current option-regime snapshot used by every liquidation
 // pair. It is a live gate status, not a historical decision for stored rows.
-// The value comes from the BTCUSDT or ETHUSDT Binance options GEX cache; a
+// The value comes from the BTCUSDT or ETHUSDT Deribit normalized Gamma cache; a
 // missing or stale snapshot is never treated as zero and therefore never
 // suppresses an entry.
 type AlertGamma struct {
 	AnchorSymbol string     `json:"anchor_symbol"`
 	State        string     `json:"state"`
-	NetGEXUSD    *float64   `json:"net_gex_usd,omitempty"`
+	Gamma        *float64   `json:"gamma,omitempty"`
 	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
 	Ignored      bool       `json:"ignored"`
 }

@@ -110,14 +110,15 @@ func TestAlertPagesExposeFreshETHGammaAsCommonGate(t *testing.T) {
 	svc, _, _ := alertTestService(t, "alert-gamma-view.db")
 	now := time.Now().UTC()
 	svc.dashboard.Lock()
-	svc.dashboard.gamma["ETHUSDT"] = domain.GammaView{Symbol: "ETHUSDT", State: "ok", Time: now, NetGEXUSD: -123.45}
+	value := -0.12345
+	svc.dashboard.deribit["ETHUSDT"] = domain.OptionGammaPoint{Symbol: "ETHUSDT", Underlying: "ETH", Source: "deribit", State: "ok", Time: now, Gamma: &value, Contracts: 80}
 	svc.dashboard.Unlock()
 
 	view, err := svc.Alerts(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !view.Gamma.Ignored || view.Gamma.NetGEXUSD == nil || *view.Gamma.NetGEXUSD != -123.45 {
+	if !view.Gamma.Ignored || view.Gamma.Gamma == nil || *view.Gamma.Gamma != value {
 		t.Fatalf("alert overview gamma = %+v", view.Gamma)
 	}
 	page, err := svc.AlertTimeline(ctx, "", "", 20, "")
@@ -134,8 +135,9 @@ func TestAlertPagesUseBTCGammaOnlyForBTC(t *testing.T) {
 	svc, _, _ := alertTestService(t, "alert-gamma-anchors.db")
 	now := time.Now().UTC()
 	svc.dashboard.Lock()
-	svc.dashboard.gamma["BTCUSDT"] = domain.GammaView{Symbol: "BTCUSDT", State: "ok", Time: now, NetGEXUSD: -10}
-	svc.dashboard.gamma["ETHUSDT"] = domain.GammaView{Symbol: "ETHUSDT", State: "ok", Time: now, NetGEXUSD: 10}
+	btcValue, ethValue := -0.1, 0.1
+	svc.dashboard.deribit["BTCUSDT"] = domain.OptionGammaPoint{Symbol: "BTCUSDT", Underlying: "BTC", Source: "deribit", State: "ok", Time: now, Gamma: &btcValue, Contracts: 80}
+	svc.dashboard.deribit["ETHUSDT"] = domain.OptionGammaPoint{Symbol: "ETHUSDT", Underlying: "ETH", Source: "deribit", State: "ok", Time: now, Gamma: &ethValue, Contracts: 80}
 	svc.dashboard.Unlock()
 
 	btc, err := svc.AlertTimeline(ctx, "BTCUSDT", "", 20, "")
@@ -166,7 +168,8 @@ func TestAlertHistoryKeepsGammaDecisionFromSignalTime(t *testing.T) {
 
 	// The alert and aggressive signal are created while Gamma is positive.
 	svc.dashboard.Lock()
-	svc.dashboard.gamma["BTCUSDT"] = domain.GammaView{Symbol: "BTCUSDT", State: "ok", Time: time.Now().UTC(), NetGEXUSD: 1}
+	positive := 0.245033
+	svc.dashboard.deribit["BTCUSDT"] = domain.OptionGammaPoint{Symbol: "BTCUSDT", Underlying: "BTC", Source: "deribit", State: "ok", Time: time.Now().UTC(), Gamma: &positive, Contracts: 80}
 	svc.dashboard.Unlock()
 	if err := svc.RecordLiquidation(ctx, alertTestEvent("gamma-long", "BTCUSDT", "long", base, 120000)); err != nil {
 		t.Fatal(err)
@@ -176,7 +179,8 @@ func TestAlertHistoryKeepsGammaDecisionFromSignalTime(t *testing.T) {
 	// A later negative Gamma suppresses only the newly created steady signal.
 	later := base.Add(3 * time.Minute)
 	svc.dashboard.Lock()
-	svc.dashboard.gamma["BTCUSDT"] = domain.GammaView{Symbol: "BTCUSDT", State: "ok", Time: time.Now().UTC(), NetGEXUSD: -1}
+	negative := -0.245033
+	svc.dashboard.deribit["BTCUSDT"] = domain.OptionGammaPoint{Symbol: "BTCUSDT", Underlying: "BTC", Source: "deribit", State: "ok", Time: time.Now().UTC(), Gamma: &negative, Contracts: 80}
 	svc.dashboard.Unlock()
 	if err := svc.RecordLiquidation(ctx, alertTestEvent("gamma-short", "BTCUSDT", "short", later, 5000)); err != nil {
 		t.Fatal(err)

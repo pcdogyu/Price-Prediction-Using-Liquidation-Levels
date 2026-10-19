@@ -398,7 +398,7 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 		return
 	}
 	if signal.GammaIgnored || rtm.gammaIgnored(signal.Symbol) {
-		rtm.log.Info("opening signal suppressed by negative ETH gamma", "kind", signal.Kind, "symbol", signal.Symbol)
+		rtm.log.Info("opening signal suppressed by negative Deribit gamma", "kind", signal.Kind, "symbol", signal.Symbol)
 		return
 	}
 	if !rtm.orderSignalEnabled(signal.Kind) {
@@ -434,7 +434,7 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 		return
 	}
 	if signal.GammaIgnored || rtm.gammaIgnored(signal.Symbol) {
-		rtm.log.Info("opening signal suppressed by negative ETH gamma", "kind", signal.Kind, "symbol", signal.Symbol)
+		rtm.log.Info("opening signal suppressed by negative Deribit gamma", "kind", signal.Kind, "symbol", signal.Symbol)
 		return
 	}
 	payload, err := buildAlertWebhookPayload(signal, rtm.serviceConfig())

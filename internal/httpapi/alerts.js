@@ -18,7 +18,7 @@
   const notifyLabels = { queued: '已入队', suppressed: '已抑制', muted: '类别关闭', restored: '重启回放', disabled: '通知关闭' };
   const stateClass = state => state === 'watching' ? 'warning' : state === 'aggressive' || state === 'steady' ? 'buy' : 'muted';
   let alertGamma = { anchor_symbol: 'ETHUSDT', state: 'unavailable', ignored: false };
-  const gammaValue = gamma => gamma && Number.isFinite(Number(gamma.net_gex_usd)) ? Number(gamma.net_gex_usd) : null;
+  const gammaValue = gamma => gamma && Number.isFinite(Number(gamma.gamma)) ? Number(gamma.gamma) : null;
   const gammaIgnored = gamma => !!(gamma && gamma.ignored);
   const historicalGammaIgnored = row => !!(row && row.gamma_ignored);
   const directionLabel = (side, ignored) => {
@@ -101,7 +101,7 @@
   function renderGammaStatus(gamma) {
     alertGamma = gamma || { anchor_symbol: 'ETHUSDT', state: 'unavailable', ignored: false };
     const value = gammaValue(alertGamma);
-    const valueText = value === null ? '值不可用' : 'NetGEX ' + money(value);
+    const valueText = value === null ? '值不可用' : value.toFixed(6);
     const anchor = alertGamma.anchor_symbol || 'ETHUSDT';
     let text = anchor + ' Gamma：' + valueText;
     if (alertGamma.state === 'stale') text += ' · 数据已过期，暂不抑制开仓';

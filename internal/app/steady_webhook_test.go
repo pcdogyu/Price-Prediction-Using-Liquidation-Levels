@@ -221,7 +221,8 @@ func TestNegativeETHGammaSuppressesEveryOpeningWebhook(t *testing.T) {
 	svc.alerts.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), svc.alerts.webhookSettings, 4, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	now := time.Now().UTC()
 	svc.dashboard.Lock()
-	svc.dashboard.gamma["ETHUSDT"] = domain.GammaView{Symbol: "ETHUSDT", State: "ok", Time: now, NetGEXUSD: -1}
+	negative := -0.123456
+	svc.dashboard.deribit["ETHUSDT"] = domain.OptionGammaPoint{Symbol: "ETHUSDT", Underlying: "ETH", Source: "deribit", State: "ok", Time: now, Gamma: &negative, Contracts: 80}
 	svc.dashboard.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())

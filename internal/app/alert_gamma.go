@@ -11,9 +11,9 @@ import (
 const (
 	alertGammaBTCAnchor = "BTCUSDT"
 	alertGammaETHAnchor = "ETHUSDT"
-	// Gamma is collected every five minutes. Allow a few missed cycles for a
-	// usable snapshot, but never turn an old value into a fresh zero.
-	alertGammaMaxAge = 15 * time.Minute
+	// Deribit Gamma is collected every five minutes. Use the same stale window
+	// as the options page so the alert gate and the displayed value agree.
+	alertGammaMaxAge = domain.OptionGammaStaleAfter
 )
 
 func alertGammaAnchorForSymbol(symbol string) string {
@@ -33,26 +33,27 @@ func (s *Service) alertGammaForSymbol(ctx context.Context, symbol string) domain
 	return s.alertGammaForAnchor(ctx, alertGammaAnchorForSymbol(symbol))
 }
 
-// alertGammaForAnchor reads an anchor's in-memory snapshot first and falls back
-// to the persisted latest value during startup or after a collector restart.
+// alertGammaForAnchor reads an anchor's in-memory Deribit snapshot first and
+// falls back to the persisted latest value during startup or after a collector
+// restart.
 func (s *Service) alertGammaForAnchor(ctx context.Context, anchor string) domain.AlertGamma {
 	out := domain.AlertGamma{AnchorSymbol: anchor, State: "unavailable"}
 	if s == nil || s.dashboard == nil {
 		return out
 	}
 
-	var snapshot domain.GammaView
+	var snapshot domain.OptionGammaPoint
 	var found bool
 	s.dashboard.RLock()
-	snapshot, found = s.dashboard.gamma[anchor]
+	snapshot, found = s.dashboard.deribit[anchor]
 	s.dashboard.RUnlock()
 	if !found && s.store != nil {
-		if stored, err := s.store.LatestGamma(ctx, anchor); err == nil {
+		if stored, err := s.store.LatestOptionGamma(ctx, anchor); err == nil {
 			snapshot = stored
 			found = true
 		}
 	}
-	if !found || snapshot.Time.IsZero() {
+	if !found || snapshot.Time.IsZero() || snapshot.Gamma == nil {
 		return out
 	}
 
@@ -61,8 +62,8 @@ func (s *Service) alertGammaForAnchor(ctx context.Context, anchor string) domain
 		state = "ok"
 	}
 	out.State = state
-	value := snapshot.NetGEXUSD
-	out.NetGEXUSD = &value
+	value := *snapshot.Gamma
+	out.Gamma = &value
 	updated := snapshot.Time.UTC()
 	out.UpdatedAt = &updated
 
