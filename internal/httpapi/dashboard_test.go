@@ -52,7 +52,7 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 	}
 }
 
-func TestDashboardNavigationStaysOnOneRow(t *testing.T) {
+func TestDashboardNavigationWrapsWithoutHorizontalOverflow(t *testing.T) {
 	srv, st := testService(t, config.Config{BasePath: "/liquidation/"}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	defer st.Close()
 	w := httptest.NewRecorder()
@@ -62,9 +62,9 @@ func TestDashboardNavigationStaysOnOneRow(t *testing.T) {
 	}
 	body := w.Body.String()
 	for _, marker := range []string{
-		`.app-nav{flex-wrap:nowrap;overflow-x:auto}`,
-		`.app-links{order:initial;flex-basis:auto;overflow:visible}`,
-		`@media(max-width:720px){.app-nav{gap:8px;flex-wrap:nowrap}`,
+		`.app-nav{flex-wrap:wrap;overflow:hidden}`,
+		`.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;overflow:visible}`,
+		`@media(max-width:720px){.app-nav{gap:8px;flex-wrap:wrap}`,
 		`class="app-logo" aria-hidden="true"`,
 	} {
 		if !strings.Contains(body, marker) {
