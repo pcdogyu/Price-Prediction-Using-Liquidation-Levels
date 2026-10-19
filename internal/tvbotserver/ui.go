@@ -40,8 +40,10 @@ func renderTVBotHTML(info BuildInfo, r *http.Request) string {
 		prefix = ""
 	}
 	link := func(path string) string { return prefix + path }
-	nav := `<link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `"><div class="merged-liquidation-nav"><a class="merged-brand" href="` + html.EscapeString(link("/alerts")) + `">清算墙雷达</a><div class="merged-links"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link("/tvbot#positions")) + `">持仓</a><a href="` + html.EscapeString(link("/admin")) + `">系统管理</a></div></div><style>.merged-liquidation-nav{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:18px;padding:12px 22px;background:#0c1b26;color:#edf7fc;border-bottom:1px solid #274252}.merged-brand{font-weight:800;color:#2dd4bf;text-decoration:none;white-space:nowrap}.merged-links{display:flex;flex-wrap:wrap;gap:8px}.merged-links a{color:#c4d7e2;text-decoration:none;padding:6px 8px;border-radius:7px}.merged-links a:hover{color:#fff;background:#173b50}@media(max-width:760px){.merged-liquidation-nav{align-items:flex-start;flex-direction:column;gap:8px}.merged-links{gap:3px}}</style>`
-	page := strings.Replace(tvbotHTML, "<body>", "<body>"+nav, 1)
+	assets := `<script src="` + html.EscapeString(link("/assets/theme.js")) + `"></script><link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `">`
+	nav := `<div class="merged-liquidation-nav"><a class="merged-brand" href="` + html.EscapeString(link("/alerts")) + `">清算墙雷达</a><div class="merged-links"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link("/tvbot#positions")) + `">持仓</a><a href="` + html.EscapeString(link("/admin")) + `">系统管理</a></div><button type="button" class="merged-theme-toggle" id="tvbot-theme" aria-label="切换主题"></button></div><style>.merged-liquidation-nav{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:18px;padding:12px 22px;background:var(--nav-bg);color:var(--text);border-bottom:1px solid var(--line)}.merged-brand{font-weight:800;color:var(--buy);text-decoration:none;white-space:nowrap}.merged-links{display:flex;flex-wrap:wrap;gap:8px}.merged-links a{color:var(--muted);text-decoration:none;padding:6px 8px;border-radius:7px}.merged-links a:hover{color:var(--text);background:var(--hover-bg)}.merged-theme-toggle{margin-left:auto;border:1px solid var(--strong-line);border-radius:7px;padding:6px 10px;background:var(--control-bg);color:var(--text);font:inherit;cursor:pointer;white-space:nowrap}.merged-theme-toggle:hover{background:var(--hover-bg)}@media(max-width:760px){.merged-liquidation-nav{align-items:flex-start;flex-wrap:wrap;gap:8px}.merged-links{gap:3px}.merged-theme-toggle{margin-left:0}}</style><script>(()=>{const button=document.getElementById('tvbot-theme');const update=()=>{const light=document.documentElement.dataset.theme==='light';button.textContent=light?'深色主题':'浅色主题';button.setAttribute('aria-label','当前'+(light?'浅色':'深色')+'主题，切换至'+(light?'深色':'浅色')+'主题')};button.addEventListener('click',()=>window.LiquidationTheme.toggle());window.addEventListener('themechange',update);update()})();</script>`
+	page := strings.Replace(tvbotHTML, "</head>", assets+"</head>", 1)
+	page = strings.Replace(page, "<body>", "<body class=\"tvbot-page\">"+nav, 1)
 	return strings.Replace(page, "{{APP_FOOTER}}", html.EscapeString(info.FooterText()), 1)
 }
 
@@ -196,16 +198,11 @@ const tvbotHTML = `<!doctype html>
   <title>TV OKX Bot</title>
   <style>
     :root {
-      color-scheme: light;
-      --bg: #f5f7fb;
-      --panel: #ffffff;
-      --line: #d8dee9;
-      --text: #172033;
-      --muted: #647089;
-      --blue: #1f6feb;
-      --green: #138a55;
-      --red: #c24135;
-      --amber: #a16207;
+      color-scheme: light dark;
+      --blue: var(--buy);
+      --green: var(--buy);
+      --red: var(--sell);
+      --amber: var(--warning);
       --shadow: 0 8px 28px rgba(23, 32, 51, 0.08);
     }
     * { box-sizing: border-box; }
