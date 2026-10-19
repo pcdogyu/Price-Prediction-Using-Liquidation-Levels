@@ -2765,6 +2765,11 @@ const tvbotHTML = `<!doctype html>
         activateTab(effectiveDefaultTab(), false);
         return;
       }
+      if (hash && tabVisible(hash)) {
+        menuSettingsSynced = true;
+        activateTab(hash, false);
+        return;
+      }
       menuSettingsSynced = true;
       if (!active || !tabVisible(active)) {
         activateTab(effectiveDefaultTab(), false);
