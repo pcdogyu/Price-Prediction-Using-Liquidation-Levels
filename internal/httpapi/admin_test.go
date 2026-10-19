@@ -38,6 +38,18 @@ func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
 	}
 }
 
+func TestMigrateAdminMenuRenamesSystemManagement(t *testing.T) {
+	legacy := []adminMenuItem{{Key: "system", Title: "系统管理", Href: "/admin", Group: "admin"}}
+	migrated, changed := migrateAdminMenu(legacy)
+	if !changed || len(migrated) != 1 {
+		t.Fatalf("migration changed=%v menu=%#v", changed, migrated)
+	}
+	want := adminMenuItem{Key: "system", Title: "用户管理", Href: "/admin", Group: "admin"}
+	if migrated[0] != want {
+		t.Fatalf("renamed system menu item=%#v, want %#v", migrated[0], want)
+	}
+}
+
 func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	hash, err := authn.HashPassword("admin-password")
 	if err != nil {

@@ -54,7 +54,7 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "template", Title: "告警模板", Href: "/tvbot/view/template", Group: "trading"},
 		{Key: "config", Title: "订单配置", Href: "/tvbot/view/config", Group: "trading"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"},
-		{Key: "system", Title: "系统管理", Href: "/admin", Group: "admin"},
+		{Key: "system", Title: "用户管理", Href: "/admin", Group: "admin"},
 		{Key: "upgrade", Title: "升级", Href: "/upgrade", Group: "admin"},
 	}
 }
@@ -75,6 +75,14 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 		"config":         "/tvbot/view/config",
 	}
 	for i := range migrated {
+		if migrated[i].Key == "system" || migrated[i].Href == "/admin" || migrated[i].Title == "系统管理" {
+			updated := adminMenuItem{Key: "system", Title: "用户管理", Href: "/admin", Group: "admin"}
+			if migrated[i] != updated {
+				migrated[i] = updated
+				changed = true
+			}
+			continue
+		}
 		if migrated[i].Key == "menu" || migrated[i].Title == "菜单管理" || migrated[i].Href == "/admin#menu" {
 			updated := adminMenuItem{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"}
 			if migrated[i] != updated {

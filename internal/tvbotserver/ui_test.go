@@ -36,6 +36,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`href="/liquidation/alerts"`,
 		`href="/liquidation/tvbot/view/dashboard">总览`,
 		`href="/liquidation/tvbot/view/positions">持仓`,
+		`href="/liquidation/admin">用户管理`,
 		`href="/liquidation/tvbot/view/api-keys">API Key`,
 		`href="/liquidation/admin"`,
 		`class="theme-toggle" id="tvbot-theme"`,
