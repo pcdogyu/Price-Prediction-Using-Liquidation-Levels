@@ -6,6 +6,18 @@ server {
 
     include /etc/nginx/snippets/liquidation-locations.conf;
 
+    location = / {
+        return 302 /liquidation/alerts;
+    }
+
+    location = /tvbot/login {
+        return 302 /liquidation/?next=%2Fliquidation%2Falerts;
+    }
+
+    location = /tvbot/login/ {
+        return 302 /liquidation/?next=%2Fliquidation%2Falerts;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:9090;
         proxy_http_version 1.1;
