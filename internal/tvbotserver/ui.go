@@ -242,6 +242,38 @@ const tvbotHTML = `<!doctype html>
       gap: 6px;
       overflow: visible;
     }
+    .app-nav.tvbot-nav .global-exchange-switch {
+      gap: 2px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .app-nav.tvbot-nav .global-exchange-switch button,
+    .app-nav.tvbot-nav .tvbot-sections button {
+      min-height: 0;
+      padding: 7px 13px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .app-nav.tvbot-nav .global-exchange-switch button:hover,
+    .app-nav.tvbot-nav .tvbot-sections button:hover {
+      color: var(--text);
+      background: var(--hover-bg);
+    }
+    .app-nav.tvbot-nav .global-exchange-switch button[aria-selected="true"],
+    .app-nav.tvbot-nav .tvbot-sections button[aria-selected="true"] {
+      background: var(--selected-bg);
+      color: var(--buy);
+      border-color: transparent;
+    }
+    .app-nav.tvbot-nav .tvbot-sections {
+      gap: 6px;
+      flex: 0 0 auto;
+      overflow: visible;
+    }
     .bar {
       width: 100%;
       margin: 0 auto;
@@ -1317,7 +1349,7 @@ const tvbotHTML = `<!doctype html>
           <button type="button" data-global-exchange="okx" aria-selected="true">OKX</button>
           <button type="button" data-global-exchange="binance">Binance</button>
         </div>
-        <nav aria-label="sections">
+        <nav class="tvbot-sections" aria-label="sections">
           <button type="button" data-tab="dashboard" aria-selected="true">总览</button>
           <button type="button" data-tab="positions">持仓</button>
           <button type="button" data-tab="analysis">订单分析</button>

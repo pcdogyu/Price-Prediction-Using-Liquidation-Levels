@@ -25,6 +25,8 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="app-logo" aria-hidden="true"`,
+		`class="tvbot-sections" aria-label="sections"`,
+		`.app-nav.tvbot-nav .tvbot-sections button`,
 		`href="/liquidation/alerts"`,
 		`href="/liquidation/tvbot#positions"`,
 		`href="/liquidation/admin"`,
