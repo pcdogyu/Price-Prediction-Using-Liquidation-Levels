@@ -556,7 +556,7 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("usdt_balance")) {
 		t.Fatalf("tvbot ui should render USDT balance after API tests")
 	}
-	if !bytes.Contains(ui.Body.Bytes(), []byte("Code by Yuhao@jiansutech.com - 2026-07-24T03:00:00Z - testhash - testbranch")) {
+	if !bytes.Contains(ui.Body.Bytes(), []byte("Code by Yuhao@jiansutech.com - 2026-07-24 11:00:00 - testhash - testbranch")) {
 		t.Fatalf("tvbot ui should include build footer")
 	}
 	for _, removed := range [][]byte{

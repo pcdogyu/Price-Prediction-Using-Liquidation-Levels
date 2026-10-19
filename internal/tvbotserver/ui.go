@@ -4,6 +4,7 @@ import (
 	"html"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type BuildInfo struct {
@@ -61,9 +62,34 @@ func tvbotViewPath(tab string) string {
 
 func (b BuildInfo) FooterText() string {
 	return "Code by Yuhao@jiansutech.com - " +
-		buildInfoValue(b.CommitTime) + " - " +
-		buildInfoValue(b.CommitHash) + " - " +
+		formatBuildTime(b.CommitTime) + " - " +
+		formatBuildHash(b.CommitHash) + " - " +
 		buildInfoValue(b.CommitBranch)
+}
+
+var shanghaiTimeZone = time.FixedZone("UTC+8", 8*60*60)
+
+func formatBuildTime(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return value
+	}
+	return parsed.In(shanghaiTimeZone).Format("2006-01-02 15:04:05")
+}
+
+func formatBuildHash(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	if len(value) <= 8 {
+		return value
+	}
+	return value[len(value)-8:]
 }
 
 func buildInfoValue(value string) string {
@@ -294,13 +320,6 @@ const tvbotHTML = `<!doctype html>
       gap: 6px;
       overflow: visible;
     }
-    .app-nav.tvbot-nav .global-exchange-switch {
-      gap: 2px;
-      padding: 0;
-      border: 0;
-      background: transparent;
-    }
-    .app-nav.tvbot-nav .global-exchange-switch button,
     .app-nav.tvbot-nav .tvbot-sections a {
       min-height: 0;
       padding: 7px 13px;
@@ -310,12 +329,10 @@ const tvbotHTML = `<!doctype html>
       color: var(--muted);
       font-size: 14px;
     }
-    .app-nav.tvbot-nav .global-exchange-switch button:hover,
     .app-nav.tvbot-nav .tvbot-sections a:hover {
       color: var(--text);
       background: var(--hover-bg);
     }
-    .app-nav.tvbot-nav .global-exchange-switch button[aria-selected="true"],
     .app-nav.tvbot-nav .tvbot-sections a[aria-current="page"] {
       background: var(--selected-bg);
       color: var(--buy);
@@ -462,6 +479,12 @@ const tvbotHTML = `<!doctype html>
       flex: 1;
       margin: 0 auto;
       padding: 18px;
+    }
+    .tvbot-page-toolbar {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      margin: 0 0 12px;
     }
     .status {
       display: grid;
@@ -1389,6 +1412,7 @@ const tvbotHTML = `<!doctype html>
       .mini-usdt-chart { height: 240px; }
       #analysis .mini-usdt-chart { height: 346px; }
       .exchange-balance-metrics { min-height: 0; }
+      .tvbot-page-toolbar { justify-content: flex-start; }
     }
   </style>
 </head>
@@ -1397,16 +1421,18 @@ const tvbotHTML = `<!doctype html>
       <a class="app-brand" href="{{HOME_LINK}}" aria-label="首页"><span class="app-logo" aria-hidden="true"></span></a>
       {{LIQUIDATION_LINKS}}
       <div class="header-controls">
-        <div class="global-exchange-switch" role="group" aria-label="全局交易所">
-          <button type="button" data-global-exchange="okx" aria-selected="true">OKX</button>
-          <button type="button" data-global-exchange="binance">Binance</button>
-        </div>
         <nav class="tvbot-sections" aria-label="sections">{{TVBOT_SECTION_LINKS}}</nav>
         <button type="button" class="theme-toggle" id="tvbot-theme" aria-label="切换主题"></button>
       </div>
   </header>
 
   <main>
+    <div class="tvbot-page-toolbar">
+      <div class="global-exchange-switch" role="group" aria-label="全局交易所">
+        <button type="button" data-global-exchange="okx" aria-selected="true">OKX</button>
+        <button type="button" data-global-exchange="binance">Binance</button>
+      </div>
+    </div>
     <div class="status" id="order-info-status" hidden>
       <div class="metric"><div class="label">交易环境</div><div class="value" id="metric-env">-</div></div>
       <div class="metric"><div class="label">交易 API</div><div class="value" id="metric-api-keys">-</div></div>
