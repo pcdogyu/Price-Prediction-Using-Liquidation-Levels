@@ -16,6 +16,17 @@ import (
 	tvbotserver "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotserver"
 )
 
+func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
+	legacy := []adminMenuItem{{Key: "menu", Title: "菜单管理", Href: "/admin#menu", Group: "admin"}}
+	migrated, changed := migrateAdminMenu(legacy)
+	if !changed || len(migrated) != 1 {
+		t.Fatalf("migration changed=%v menu=%#v", changed, migrated)
+	}
+	if migrated[0].Key != "menu" || migrated[0].Title != "菜单管理" || migrated[0].Href != "/menu" || migrated[0].Group != "admin" {
+		t.Fatalf("migrated menu item=%#v", migrated[0])
+	}
+}
+
 func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	hash, err := authn.HashPassword("admin-password")
 	if err != nil {
@@ -74,6 +85,10 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	if users.Code != http.StatusOK || strings.Contains(users.Body.String(), "argon2") {
 		t.Fatalf("admin user response leaked secret or failed: %d %s", users.Code, users.Body.String())
 	}
+	menuPage := serve(http.MethodGet, "/menu", "", rootCookie)
+	if menuPage.Code != http.StatusOK || !strings.Contains(menuPage.Body.String(), "<h1>菜单管理</h1>") || strings.Contains(menuPage.Body.String(), "id=\"new-user\"") {
+		t.Fatalf("menu page status=%d body=%s", menuPage.Code, menuPage.Body.String())
+	}
 	created := serve(http.MethodPost, "/api/v1/admin/users", `{"username":"ordinary","password":"ordinary-password","role":"user"}`, rootCookie)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create user status=%d body=%s", created.Code, created.Body.String())
@@ -83,7 +98,7 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	ordinaryCookie := &http.Cookie{Name: sessionCookie, Value: ordinaryToken, Path: "/"}
-	for _, path := range []string{"/admin", "/api/v1/admin/users", "/api/v1/admin/menu", "/upgrade"} {
+	for _, path := range []string{"/admin", "/menu", "/api/v1/admin/users", "/api/v1/admin/menu", "/upgrade"} {
 		method := http.MethodGet
 		if path == "/api/v1/admin/menu" {
 			method = http.MethodPut

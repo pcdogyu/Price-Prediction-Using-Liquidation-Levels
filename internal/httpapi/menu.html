@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="app-base" content="{{BASE}}"><script src="{{BASE}}assets/theme.js"></script>
+  <title>菜单管理 · 清算墙雷达</title>
+  <link rel="stylesheet" href="{{BASE}}assets/pages.css"><link rel="stylesheet" href="{{BASE}}assets/theme.css">
+  <script src="{{BASE}}assets/shared.js" defer></script>
+  <style>
+    .menu-card{max-width:760px;border:1px solid var(--line);border-radius:14px;padding:18px;background:var(--panel)}
+    .menu-card h2{margin-top:0}.menu-list{margin:0;padding-left:28px}.menu-list li{padding:8px 0}
+    .menu-item{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.menu-title{min-width:120px;font-weight:600}
+    .menu-href{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
+    .menu-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.menu-actions button,.menu-item button{padding:7px 10px}
+    .menu-note{color:var(--muted)}.menu-error{color:#c24135;min-height:1.2em}
+  </style>
+</head>
+<body>{{NAV}}
+<main class="page-shell">
+  <header class="page-head"><p class="eyebrow">NAVIGATION</p><h1>菜单管理</h1><p>调整统一导航的显示顺序；保存后立即应用到各页面。</p></header>
+  <section class="menu-card">
+    <h2>导航菜单</h2><p class="menu-note">菜单项仅支持站内路径，系统会保留当前配置中的项目。</p>
+    <ol id="menu-list" class="menu-list"><li>加载中</li></ol>
+    <p id="menu-error" class="menu-error" role="alert"></p>
+    <div class="menu-actions"><button id="save-menu" type="button">保存当前顺序</button><button id="reload-menu" type="button">恢复读取</button></div>
+  </section>
+</main>
+<script>
+(async()=>{
+  const request=async(u,o)=>{const r=await fetch(u,Object.assign({credentials:'same-origin'},o||{}));const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.detail||b.error||('HTTP '+r.status));return b};
+  const list=document.querySelector('#menu-list'), error=document.querySelector('#menu-error');
+  let menu=[];
+  const draw=()=>{
+    list.replaceChildren();
+    menu.forEach((item,index)=>{
+      const row=document.createElement('li'), content=document.createElement('div');
+      content.className='menu-item';
+      const title=document.createElement('span'); title.className='menu-title'; title.textContent=item.title;
+      const href=document.createElement('span'); href.className='menu-href'; href.textContent=item.href;
+      const up=document.createElement('button'); up.type='button'; up.textContent='上移'; up.disabled=index===0;
+      const down=document.createElement('button'); down.type='button'; down.textContent='下移'; down.disabled=index===menu.length-1;
+      up.onclick=()=>{[menu[index-1],menu[index]]=[menu[index],menu[index-1]];draw()};
+      down.onclick=()=>{[menu[index],menu[index+1]]=[menu[index+1],menu[index]];draw()};
+      content.append(title,href,up,down); row.append(content); list.append(row);
+    });
+  };
+  const load=async()=>{try{const b=await request('{{BASE}}api/v1/admin/menu');menu=b.menu;draw();error.textContent=''}catch(e){error.textContent=e.message}};
+  document.querySelector('#save-menu').onclick=async()=>{try{await request('{{BASE}}api/v1/admin/menu',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu})});await load()}catch(e){error.textContent=e.message}};
+  document.querySelector('#reload-menu').onclick=load;
+  await load();
+})();
+</script>
+</body></html>

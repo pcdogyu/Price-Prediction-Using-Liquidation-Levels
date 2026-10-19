@@ -53,10 +53,26 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "order-settings", Title: "下单设置", Href: "/tvbot#orderSettings", Group: "trading"},
 		{Key: "template", Title: "告警模板", Href: "/tvbot#template", Group: "trading"},
 		{Key: "config", Title: "订单配置", Href: "/tvbot#config", Group: "trading"},
-		{Key: "menu", Title: "菜单管理", Href: "/admin#menu", Group: "admin"},
+		{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"},
 		{Key: "system", Title: "系统管理", Href: "/admin", Group: "admin"},
 		{Key: "upgrade", Title: "升级", Href: "/upgrade", Group: "admin"},
 	}
+}
+
+func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
+	migrated := append([]adminMenuItem(nil), menu...)
+	changed := false
+	for i := range migrated {
+		if migrated[i].Key != "menu" && migrated[i].Title != "菜单管理" && migrated[i].Href != "/admin#menu" {
+			continue
+		}
+		updated := adminMenuItem{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"}
+		if migrated[i] != updated {
+			migrated[i] = updated
+			changed = true
+		}
+	}
+	return migrated, changed
 }
 
 func (s *Server) requireAdminRequest(w http.ResponseWriter, r *http.Request) bool {

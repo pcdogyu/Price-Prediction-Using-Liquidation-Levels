@@ -61,8 +61,16 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 			s.userStore = users
 			if payload, found, loadErr := users.LoadAdminMenu(context.Background()); loadErr == nil && found {
 				var menu []adminMenuItem
-				if json.Unmarshal(payload, &menu) == nil && validateMenu(menu) == nil {
-					s.menu = menu
+				if json.Unmarshal(payload, &menu) == nil {
+					menu, migrated := migrateAdminMenu(menu)
+					if validateMenu(menu) == nil {
+						s.menu = menu
+						if migrated {
+							if normalized, marshalErr := json.Marshal(menu); marshalErr == nil {
+								_ = users.SaveAdminMenu(context.Background(), normalized)
+							}
+						}
+					}
 				}
 			}
 			break
@@ -72,6 +80,7 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.HandleFunc("/", getOnly(s.index))
 	s.registerDashboard(mux)
 	s.registerAlerts(mux)
+	mux.HandleFunc("/menu", getOnly(s.menuPage))
 	mux.HandleFunc("/assets/dashboard.js", getOnly(s.dashboardScript))
 	mux.HandleFunc("/auth/login", postOnly(s.login))
 	mux.HandleFunc("/auth/logout", postOnly(s.logout))

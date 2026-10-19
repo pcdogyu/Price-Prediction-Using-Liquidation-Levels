@@ -620,7 +620,7 @@ func TestAlertKlineEndpointRejectsBadRequests(t *testing.T) {
 // TestIsDashboardPageCoversChartRoute keeps the K-line page behind the login form
 // like the other pages instead of a bare JSON 401.
 func TestIsDashboardPageCoversChartRoute(t *testing.T) {
-	for _, path := range []string{"/", "/bubbles", "/options", "/alerts", "/alerts/chart"} {
+	for _, path := range []string{"/", "/bubbles", "/options", "/alerts", "/alerts/chart", "/menu"} {
 		if !isDashboardPage(path) {
 			t.Fatalf("%s must render the login page when unauthenticated", path)
 		}

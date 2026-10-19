@@ -26,7 +26,7 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 	if w.Code != 302 || w.Header().Get("Location") != "/liquidation/alerts" {
 		t.Fatal(w.Code, w.Header())
 	}
-	for _, path := range []string{"/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options"} {
+	for _, path := range []string{"/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/menu"} {
 		w = httptest.NewRecorder()
 		srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `href="/liquidation/options"`) || !strings.Contains(w.Body.String(), `content="/liquidation/"`) {

@@ -17,13 +17,12 @@
 </head>
 <body>{{NAV}}
 <main class="page-shell">
-  <header class="page-head"><p class="eyebrow">ADMINISTRATION</p><h1>系统管理</h1><p>统一账号、菜单和升级状态。</p></header>
+  <header class="page-head"><p class="eyebrow">ADMINISTRATION</p><h1>系统管理</h1><p>统一账号和运行状态。</p></header>
   <div class="admin-grid">
     <section class="admin-card"><h2>用户管理</h2><p class="admin-note">密码只在提交时使用，页面和接口不会返回密码哈希。</p>
       <form id="new-user" class="admin-form"><input name="username" placeholder="用户名" maxlength="128" required><input name="password" type="password" placeholder="初始密码" minlength="8" required><select name="role"><option value="user">普通用户</option><option value="admin">管理员</option></select><button type="submit">新增用户</button></form>
       <p id="user-error" class="admin-error" role="alert"></p><table class="admin-table"><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody id="users"><tr><td colspan="4">加载中</td></tr></tbody></table>
     </section>
-    <section class="admin-card" id="menu"><h2>菜单管理</h2><p class="admin-note">默认顺序以报警页风格为主；调整后仅影响统一导航配置。</p><ol id="menu-list"></ol><div class="admin-actions"><button id="save-menu" type="button">保存当前顺序</button><button id="reload-menu" type="button">恢复读取</button></div></section>
     <section class="admin-card"><h2>系统状态</h2><pre id="system">加载中</pre></section>
   </div>
 </main>
@@ -33,8 +32,7 @@
   const err=document.querySelector('#user-error'), users=document.querySelector('#users');
   const load=async()=>{try{const b=await j('{{BASE}}api/v1/admin/users');const rows=b.users;users.innerHTML=rows.map(u=>'<tr><td>'+u.username+'</td><td>'+u.role+'</td><td>'+(u.enabled?'启用':'停用')+'</td><td><div class="admin-actions"><button data-toggle="'+u.username+'" type="button">'+(u.enabled?'停用':'启用')+'</button><button data-role="'+u.username+'" type="button">切换角色</button><button data-reset="'+u.username+'" type="button">重置密码</button></div></td></tr>').join('')||'<tr><td colspan="4">暂无用户</td></tr>';users.querySelectorAll('button').forEach(b=>b.onclick=async()=>{try{const username=b.dataset.toggle||b.dataset.role||b.dataset.reset,row=rows.find(x=>x.username===username),body={};if(b.dataset.toggle)body.disabled=row.enabled;if(b.dataset.role)body.role=row.role==='admin'?'user':'admin';if(b.dataset.reset){const password=prompt('输入新密码（至少 8 个字符）');if(!password)return;body.password=password}await j('{{BASE}}api/v1/admin/users/'+encodeURIComponent(username),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});await load()}catch(e){err.textContent=e.message}})}catch(e){err.textContent=e.message}};
   document.querySelector('#new-user').onsubmit=async e=>{e.preventDefault();try{await j('{{BASE}}api/v1/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});e.target.reset();await load()}catch(x){err.textContent=x.message}};
-  const list=document.querySelector('#menu-list');let menu=[];const draw=()=>{list.innerHTML=menu.map((x,i)=>'<li>'+x.title+' <button type="button" data-up="'+i+'" '+(i?'':'disabled')+'>上移</button><button type="button" data-down="'+i+'" '+(i===menu.length-1?'disabled':'')+'>下移</button></li>').join('');list.querySelectorAll('button').forEach(b=>b.onclick=()=>{const i=Number(b.dataset.up||b.dataset.down),d=b.dataset.up?-1:1;[menu[i],menu[i+d]]=[menu[i+d],menu[i]];draw()})};const loadMenu=async()=>{const b=await j('{{BASE}}api/v1/admin/menu');menu=b.menu;draw()};document.querySelector('#save-menu').onclick=async()=>{try{await j('{{BASE}}api/v1/admin/menu',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu})});await loadMenu()}catch(e){err.textContent=e.message}};document.querySelector('#reload-menu').onclick=loadMenu;
-  try{const b=await j('{{BASE}}api/v1/admin/system');document.querySelector('#system').textContent=JSON.stringify(b,null,2)}catch(e){document.querySelector('#system').textContent=e.message}await load();await loadMenu();
+  try{const b=await j('{{BASE}}api/v1/admin/system');document.querySelector('#system').textContent=JSON.stringify(b,null,2)}catch(e){document.querySelector('#system').textContent=e.message}await load();
 })();
 </script>
 </body></html>
