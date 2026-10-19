@@ -57,7 +57,7 @@ func isDashboardPage(path string) bool {
 }
 func (s *Server) renderPage(body []byte, page, title string) []byte {
 	base := html.EscapeString(s.auth.BasePath())
-	nav := `<nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `alerts">清算墙雷达</a><div class="app-links">`
+	nav := `<style>.app-nav{flex-wrap:nowrap;overflow-x:auto}.app-nav>.app-brand,.app-nav>.app-links,.app-nav>button,.app-nav>form{flex:0 0 auto}.app-links{order:initial;flex-basis:auto;overflow:visible}@media(max-width:720px){.app-nav{gap:8px;flex-wrap:nowrap}.app-brand{flex:0 0 auto}.app-links{order:initial;flex-basis:auto}}</style><nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `alerts">清算墙雷达</a><div class="app-links">`
 	s.menuMu.RLock()
 	menu := append([]adminMenuItem(nil), s.menu...)
 	s.menuMu.RUnlock()

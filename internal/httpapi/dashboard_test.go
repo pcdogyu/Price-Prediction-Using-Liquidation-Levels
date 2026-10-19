@@ -52,6 +52,26 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 	}
 }
 
+func TestDashboardNavigationStaysOnOneRow(t *testing.T) {
+	srv, st := testService(t, config.Config{BasePath: "/liquidation/"}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	defer st.Close()
+	w := httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/alerts", nil))
+	if w.Code != 200 {
+		t.Fatalf("alerts status=%d", w.Code)
+	}
+	body := w.Body.String()
+	for _, marker := range []string{
+		`.app-nav{flex-wrap:nowrap;overflow-x:auto}`,
+		`.app-links{order:initial;flex-basis:auto;overflow:visible}`,
+		`@media(max-width:720px){.app-nav{gap:8px;flex-wrap:nowrap}`,
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("alerts navigation missing one-row override %q", marker)
+		}
+	}
+}
+
 func TestLiquidationAnalysisRules(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
