@@ -9,9 +9,9 @@ import (
 var menuHTML []byte
 
 func (s *Server) menuPage(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdminRequest(w, r) {
+	if !s.requireUnifiedUser(w, r) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(s.renderPage(menuHTML, "menu", "菜单管理"))
+	_, _ = w.Write(s.renderPage(menuHTML, "menu", "菜单管理", r))
 }

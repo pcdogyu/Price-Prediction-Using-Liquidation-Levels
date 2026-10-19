@@ -55,12 +55,10 @@ func isDashboardPage(path string) bool {
 	}
 	return false
 }
-func (s *Server) renderPage(body []byte, page, title string) []byte {
+func (s *Server) renderPage(body []byte, page, title string, r *http.Request) []byte {
 	base := html.EscapeString(s.auth.BasePath())
 	nav := `<style>.app-nav{flex-wrap:wrap;overflow:hidden}.app-nav>.app-brand{flex:0 0 auto}.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;overflow:visible}.app-nav>button,.app-nav>form{flex:0 0 auto}.app-links{order:initial;flex-basis:auto}@media(max-width:720px){.app-nav{gap:8px;flex-wrap:wrap}.app-brand{flex:0 0 auto}.app-links{order:3;flex:1 0 100%;flex-basis:100%}}</style><nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `alerts" aria-label="首页"><span class="app-logo" aria-hidden="true"></span></a><div class="app-links">`
-	s.menuMu.RLock()
-	menu := append([]adminMenuItem(nil), s.menu...)
-	s.menuMu.RUnlock()
+	menu := s.menuForRequest(r)
 	for _, item := range menu {
 		active := ""
 		if item.Key == page || strings.HasPrefix(item.Key, page+"#") {
@@ -80,13 +78,13 @@ func (s *Server) registerDashboard(mux *http.ServeMux) {
 	mux.HandleFunc("/bubbles", getOnly(s.index))
 	mux.HandleFunc("/options", getOnly(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(s.renderPage(optionsHTML, "options", "期权"))
+		_, _ = w.Write(s.renderPage(optionsHTML, "options", "期权", r))
 	}))
 	for path, title := range map[string]string{"/liquidations": "清算历史", "/hedge-wall": "对冲墙", "/market-info": "市场信息"} {
 		p, t := path, title
 		mux.HandleFunc(p, getOnly(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write(s.renderPage(pagesHTML, strings.TrimPrefix(p, "/"), t))
+			_, _ = w.Write(s.renderPage(pagesHTML, strings.TrimPrefix(p, "/"), t, r))
 		}))
 	}
 	for path, data := range map[string][]byte{"/assets/pages.css": pagesCSS, "/assets/pages.js": pagesJS, "/assets/options.js": optionsJS, "/assets/options.css": optionsCSS, "/assets/liquidation-analysis.js": liquidationAnalysisJS, "/assets/bubble-chart.js": bubbleChartJS, "/assets/shared.js": sharedJS, "/assets/theme.js": themeJS, "/assets/theme.css": themeCSS} {

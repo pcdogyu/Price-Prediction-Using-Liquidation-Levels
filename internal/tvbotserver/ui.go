@@ -117,7 +117,7 @@ func writeHTML(w http.ResponseWriter, status int, html string) {
 func (s *Server) renderTVBotHTML(r *http.Request) string {
 	menu := defaultTopMenu()
 	if s.TopMenuProvider != nil {
-		menu = s.TopMenuProvider()
+		menu = s.TopMenuProvider(r)
 	}
 	return renderTVBotHTMLWithMenu(s.BuildInfo, r, menu)
 }

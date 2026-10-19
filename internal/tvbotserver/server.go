@@ -50,7 +50,7 @@ type Server struct {
 	UserCredentialResolver UserCredentialResolver
 	RedirectUnifiedLogin   func(http.ResponseWriter, *http.Request)
 	LogoutUnified          func(http.ResponseWriter, *http.Request)
-	TopMenuProvider        func() []TopMenuItem
+	TopMenuProvider        func(*http.Request) []TopMenuItem
 	positionEntryCache     *positionEntryFillCache
 }
 
@@ -71,7 +71,7 @@ func (s *Server) SetUnifiedAuth(user, admin func(http.ResponseWriter, *http.Requ
 	s.LogoutUnified = logout
 }
 
-func (s *Server) SetTopMenuProvider(provider func() []TopMenuItem) {
+func (s *Server) SetTopMenuProvider(provider func(*http.Request) []TopMenuItem) {
 	s.TopMenuProvider = provider
 }
 

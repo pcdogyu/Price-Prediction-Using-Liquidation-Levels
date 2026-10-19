@@ -53,11 +53,11 @@ var alertSymbolPattern = regexp.MustCompile(`^[A-Z0-9]{2,32}$`)
 func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/alerts", getOnly(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(s.renderPage(alertsHTML, "alerts", "报警"))
+		_, _ = w.Write(s.renderPage(alertsHTML, "alerts", "报警", r))
 	}))
 	mux.HandleFunc("/alerts/chart", getOnly(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(s.renderPage(alertsChartHTML, "alerts", "币对K线"))
+		_, _ = w.Write(s.renderPage(alertsChartHTML, "alerts", "币对K线", r))
 	}))
 	mux.HandleFunc("/assets/alerts.js", getOnly(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")

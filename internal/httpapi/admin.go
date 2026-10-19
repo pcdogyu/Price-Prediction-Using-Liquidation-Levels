@@ -26,6 +26,8 @@ type adminUserStore interface {
 	RecordAuthAudit(context.Context, string, string, string) error
 	LoadAdminMenu(context.Context) ([]byte, bool, error)
 	SaveAdminMenu(context.Context, []byte) error
+	LoadUserMenu(context.Context, string) ([]byte, bool, error)
+	SaveUserMenu(context.Context, string, []byte) error
 }
 
 type adminMenuItem struct {
@@ -126,6 +128,51 @@ func ensureAdminMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	return menu, true
 }
 
+func (s *Server) menuUsername(r *http.Request) (string, bool) {
+	if r == nil || !s.auth.Enabled() {
+		return "", false
+	}
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return "", false
+	}
+	username, _, ok := s.auth.Identity(cookie.Value)
+	return username, ok && strings.TrimSpace(username) != ""
+}
+
+func (s *Server) defaultMenu() []adminMenuItem {
+	s.menuMu.RLock()
+	defer s.menuMu.RUnlock()
+	return append([]adminMenuItem(nil), s.menu...)
+}
+
+func (s *Server) menuForRequest(r *http.Request) []adminMenuItem {
+	menu := s.defaultMenu()
+	username, ok := s.menuUsername(r)
+	if !ok || s.userStore == nil {
+		return menu
+	}
+	payload, found, err := s.userStore.LoadUserMenu(r.Context(), username)
+	if err != nil || !found {
+		return menu
+	}
+	var userMenu []adminMenuItem
+	if json.Unmarshal(payload, &userMenu) != nil {
+		return menu
+	}
+	userMenu, migrated := migrateAdminMenu(userMenu)
+	userMenu, normalized := ensureAdminMenuItems(userMenu)
+	if validateMenu(userMenu) != nil {
+		return menu
+	}
+	if migrated || normalized {
+		if normalizedPayload, marshalErr := json.Marshal(userMenu); marshalErr == nil {
+			_ = s.userStore.SaveUserMenu(r.Context(), username, normalizedPayload)
+		}
+	}
+	return userMenu
+}
+
 func (s *Server) requireAdminRequest(w http.ResponseWriter, r *http.Request) bool {
 	if !s.auth.Enabled() {
 		return true
@@ -147,7 +194,7 @@ func (s *Server) adminPage(w http.ResponseWriter, r *http.Request) {
 	*/
 	body := string(adminHTML)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(s.renderPage([]byte(body), "admin", "系统管理"))
+	_, _ = w.Write(s.renderPage([]byte(body), "admin", "系统管理", r))
 }
 
 func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) {
@@ -310,12 +357,10 @@ func (s *Server) authPrimaryUsername() string {
 }
 
 func (s *Server) adminMenu(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdminRequest(w, r) {
+	if !s.requireUnifiedUser(w, r) {
 		return
 	}
-	s.menuMu.RLock()
-	menu := append([]adminMenuItem(nil), s.menu...)
-	s.menuMu.RUnlock()
+	menu := s.menuForRequest(r)
 	if r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, map[string]any{"menu": menu})
 		return
@@ -323,6 +368,10 @@ func (s *Server) adminMenu(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		w.Header().Set("Allow", "GET, PUT")
 		problem(w, http.StatusMethodNotAllowed, errors.New("only GET and PUT are allowed"))
+		return
+	}
+	if s.userStore == nil {
+		problem(w, http.StatusServiceUnavailable, errors.New("menu store is not configured"))
 		return
 	}
 	var req struct {
@@ -335,15 +384,22 @@ func (s *Server) adminMenu(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err)
 		return
 	}
-	s.menuMu.Lock()
-	s.menu = append([]adminMenuItem(nil), req.Menu...)
-	s.menuMu.Unlock()
 	payload, _ := json.Marshal(req.Menu)
-	if err := s.userStore.SaveAdminMenu(r.Context(), payload); err != nil {
-		problem(w, http.StatusInternalServerError, err)
-		return
+	if username, ok := s.menuUsername(r); ok {
+		if err := s.userStore.SaveUserMenu(r.Context(), username, payload); err != nil {
+			problem(w, http.StatusInternalServerError, err)
+			return
+		}
+	} else {
+		if err := s.userStore.SaveAdminMenu(r.Context(), payload); err != nil {
+			problem(w, http.StatusInternalServerError, err)
+			return
+		}
+		s.menuMu.Lock()
+		s.menu = append([]adminMenuItem(nil), req.Menu...)
+		s.menuMu.Unlock()
 	}
-	s.audit(r.Context(), r, "update_menu", "merged-navigation")
+	s.audit(r.Context(), r, "update_menu", "personal-navigation")
 	writeJSON(w, http.StatusOK, map[string]any{"menu": req.Menu})
 }
 

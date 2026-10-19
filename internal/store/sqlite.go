@@ -66,7 +66,8 @@ CREATE INDEX IF NOT EXISTS auth_sessions_retention_expiry ON auth_sessions(expir
 CREATE TABLE IF NOT EXISTS auth_users(username TEXT PRIMARY KEY,password_hash TEXT NOT NULL,created_ts INTEGER NOT NULL,updated_ts INTEGER NOT NULL,role TEXT NOT NULL DEFAULT 'user',disabled INTEGER NOT NULL DEFAULT 0,last_login_ts INTEGER);
 CREATE TABLE IF NOT EXISTS auth_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL,created_ts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS auth_audit_created ON auth_audit(created_ts DESC);
-CREATE TABLE IF NOT EXISTS admin_menu(id INTEGER PRIMARY KEY CHECK(id=1),payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);`
+CREATE TABLE IF NOT EXISTS admin_menu(id INTEGER PRIMARY KEY CHECK(id=1),payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS user_menu(username TEXT PRIMARY KEY,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
@@ -276,6 +277,34 @@ func (s *Store) SaveAdminMenu(ctx context.Context, payload []byte) error {
 		return errors.New("menu payload is empty")
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO admin_menu(id,payload,updated_ts) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_ts=excluded.updated_ts`, payload, time.Now().UTC().UnixMilli())
+	return err
+}
+
+func (s *Store) LoadUserMenu(ctx context.Context, username string) ([]byte, bool, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil, false, errors.New("menu username is empty")
+	}
+	var payload []byte
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM user_menu WHERE username=?`, username).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return append([]byte(nil), payload...), true, nil
+}
+
+func (s *Store) SaveUserMenu(ctx context.Context, username string, payload []byte) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("menu username is empty")
+	}
+	if len(payload) == 0 {
+		return errors.New("menu payload is empty")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO user_menu(username,payload,updated_ts) VALUES(?,?,?) ON CONFLICT(username) DO UPDATE SET payload=excluded.payload,updated_ts=excluded.updated_ts`, username, payload, time.Now().UTC().UnixMilli())
 	return err
 }
 

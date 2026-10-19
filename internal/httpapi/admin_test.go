@@ -134,15 +134,41 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	if ordinarySystem.Code != http.StatusOK {
 		t.Fatalf("ordinary user should be able to view system info: status=%d body=%s", ordinarySystem.Code, ordinarySystem.Body.String())
 	}
-	for _, path := range []string{"/admin", "/menu", "/api/v1/admin/users", "/api/v1/admin/menu", "/upgrade"} {
-		method := http.MethodGet
-		if path == "/api/v1/admin/menu" {
-			method = http.MethodPut
-		}
-		response := serve(method, path, map[bool]string{true: `{"menu":[]}`, false: ""}[method == http.MethodPut], ordinaryCookie)
+	for _, path := range []string{"/admin", "/api/v1/admin/users", "/upgrade"} {
+		response := serve(http.MethodGet, path, "", ordinaryCookie)
 		if response.Code != http.StatusForbidden {
 			t.Fatalf("ordinary user path=%s status=%d body=%s", path, response.Code, response.Body.String())
 		}
+	}
+	ordinaryMenuPage := serve(http.MethodGet, "/menu", "", ordinaryCookie)
+	if ordinaryMenuPage.Code != http.StatusOK || !strings.Contains(ordinaryMenuPage.Body.String(), "我的导航菜单") {
+		t.Fatalf("ordinary user menu page status=%d body=%s", ordinaryMenuPage.Code, ordinaryMenuPage.Body.String())
+	}
+	ordinaryMenuResponse := serve(http.MethodGet, "/api/v1/admin/menu", "", ordinaryCookie)
+	if ordinaryMenuResponse.Code != http.StatusOK {
+		t.Fatalf("ordinary user menu read status=%d body=%s", ordinaryMenuResponse.Code, ordinaryMenuResponse.Body.String())
+	}
+	var ordinaryMenu struct {
+		Menu []adminMenuItem `json:"menu"`
+	}
+	if err := json.Unmarshal(ordinaryMenuResponse.Body.Bytes(), &ordinaryMenu); err != nil || len(ordinaryMenu.Menu) < 2 {
+		t.Fatalf("ordinary user menu payload=%s err=%v", ordinaryMenuResponse.Body.String(), err)
+	}
+	ordinaryMenu.Menu[0], ordinaryMenu.Menu[1] = ordinaryMenu.Menu[1], ordinaryMenu.Menu[0]
+	personalPayload, err := json.Marshal(map[string]any{"menu": ordinaryMenu.Menu})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinaryMenuSaved := serve(http.MethodPut, "/api/v1/admin/menu", string(personalPayload), ordinaryCookie)
+	if ordinaryMenuSaved.Code != http.StatusOK {
+		t.Fatalf("ordinary user menu save status=%d body=%s", ordinaryMenuSaved.Code, ordinaryMenuSaved.Body.String())
+	}
+	rootMenuResponse := serve(http.MethodGet, "/api/v1/admin/menu", "", rootCookie)
+	var rootMenu struct {
+		Menu []adminMenuItem `json:"menu"`
+	}
+	if rootMenuResponse.Code != http.StatusOK || json.Unmarshal(rootMenuResponse.Body.Bytes(), &rootMenu) != nil || len(rootMenu.Menu) < 2 || rootMenu.Menu[0].Key == ordinaryMenu.Menu[0].Key {
+		t.Fatalf("personal menu should not change admin menu: %s", rootMenuResponse.Body.String())
 	}
 	lastAdmin := serve(http.MethodPatch, "/api/v1/admin/users/admin", `{"disabled":true}`, rootCookie)
 	if lastAdmin.Code != http.StatusConflict {
@@ -164,6 +190,11 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	tvbotPage := positions.Body.String()
 	if strings.Count(tvbotPage, `aria-label="主菜单"`) != 1 || !strings.Contains(tvbotPage, `href="/menu">菜单管理`) || !strings.Contains(tvbotPage, `href="/tvbot/view/orders">下单信号`) || !strings.Contains(tvbotPage, `data-tab="system" href="/system">系统信息`) {
 		t.Fatalf("tvbot should render the configured single top menu: %s", tvbotPage[:minInt(1200, len(tvbotPage))])
+	}
+	menuStart := strings.Index(tvbotPage, `data-unified-menu="true"`)
+	personalTopMenu := tvbotPage[menuStart:]
+	if menuStart < 0 || strings.Index(personalTopMenu, `href="/bubbles"`) > strings.Index(personalTopMenu, `href="/alerts"`) {
+		t.Fatal("tvbot should render the ordinary user's personal menu order")
 	}
 	if strings.Contains(tvbotPage, `/liquidation/tvbot/view/menu-settings`) {
 		t.Fatal("tvbot should not expose the legacy second menu settings entry")

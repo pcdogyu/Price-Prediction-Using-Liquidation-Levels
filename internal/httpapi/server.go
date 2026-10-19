@@ -126,12 +126,10 @@ func (s *Server) SetTVBot(handler http.Handler) {
 		setter.SetUnifiedAuth(s.requireUnifiedUser, s.requireUnifiedAdmin, s.unifiedUser, s.redirectUnifiedLogin, s.logout)
 	}
 	if setter, ok := handler.(interface {
-		SetTopMenuProvider(func() []tvbotserver.TopMenuItem)
+		SetTopMenuProvider(func(*http.Request) []tvbotserver.TopMenuItem)
 	}); ok {
-		setter.SetTopMenuProvider(func() []tvbotserver.TopMenuItem {
-			s.menuMu.RLock()
-			menu := append([]adminMenuItem(nil), s.menu...)
-			s.menuMu.RUnlock()
+		setter.SetTopMenuProvider(func(r *http.Request) []tvbotserver.TopMenuItem {
+			menu := s.menuForRequest(r)
 			items := make([]tvbotserver.TopMenuItem, 0, len(menu))
 			for _, item := range menu {
 				items = append(items, tvbotserver.TopMenuItem{Key: item.Key, Title: item.Title, Href: item.Href})
@@ -274,7 +272,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(s.renderPage(indexHTML, "bubbles", "气泡图"))
+	_, _ = w.Write(s.renderPage(indexHTML, "bubbles", "气泡图", r))
 }
 func (s *Server) dashboardScript(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
