@@ -28,6 +28,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`class="tvbot-sections" aria-label="sections"`,
 		`.app-nav.tvbot-nav .tvbot-sections button`,
 		`href="/liquidation/alerts"`,
+		`href="/liquidation/tvbot">总览`,
 		`href="/liquidation/tvbot#positions"`,
 		`href="/liquidation/admin"`,
 		`class="theme-toggle" id="tvbot-theme"`,
