@@ -388,6 +388,10 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if !rtm.submitPrecloseWebhook(signal) {
 		return
 	}
+	if rtm.ethGammaIgnored() {
+		rtm.log.Info("opening signal suppressed by negative ETH gamma", "kind", signal.Kind, "symbol", signal.Symbol)
+		return
+	}
 	if !rtm.orderSignalEnabled(signal.Kind) {
 		return
 	}
@@ -402,11 +406,10 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 }
 
 // submitAlertWebhook sends the initial threshold alert as a direction switch:
-// first close the opposite position, then queue the opening signal. The two
-// requests share the same FIFO webhook worker so the receiver sees the
-// preclose before the entry. The alert page's manual trigger remains an
-// explicit full open action, while live engine events use the authenticated,
-// queued delivery path.
+// first close the opposite position, then queue the opening signal unless the
+// common ETH Gamma gate is negative. The two requests share the same FIFO
+// webhook worker so the receiver sees the preclose before the entry. The alert
+// page's manual trigger remains an explicit full open action.
 func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, allowNotify bool) {
 	if !allowNotify {
 		return
@@ -419,6 +422,10 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 		WindowMinutes: alertRow.WindowMinutes, FollowUps: alertRow.FollowUps,
 	}
 	if !rtm.submitPrecloseWebhook(signal) {
+		return
+	}
+	if rtm.ethGammaIgnored() {
+		rtm.log.Info("opening signal suppressed by negative ETH gamma", "kind", signal.Kind, "symbol", signal.Symbol)
 		return
 	}
 	payload, err := buildAlertWebhookPayload(signal, rtm.serviceConfig())

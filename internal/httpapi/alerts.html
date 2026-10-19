@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="app-base" content="{{BASE}}"><script src="{{BASE}}assets/theme.js"></script><title>报警 · 清算墙雷达</title><link rel="stylesheet" href="{{BASE}}assets/pages.css"><link rel="stylesheet" href="{{BASE}}assets/theme.css"><link rel="stylesheet" href="{{BASE}}assets/alerts.css"><script src="{{BASE}}assets/shared.js" defer></script><script src="{{BASE}}assets/alerts.js" defer></script></head>
 <body data-page="alerts">{{NAV}}
 <main class="workspace">
-  <header class="page-heading"><div><span class="kicker">BINANCE USDⓈ-M · LIQUIDATION ALERTS</span><h1>报警</h1><p id="alerts-subtitle">成交额前 100 币对 · 爆仓预警 · 预平仓 · 激进 / 稳健下单信号</p></div></header>
+  <header class="page-heading"><div><span class="kicker">BINANCE USDⓈ-M · LIQUIDATION ALERTS</span><h1>报警</h1><p id="alerts-subtitle">成交额前 100 币对 · 爆仓预警 · 预平仓 · 激进 / 稳健下单信号</p><p id="alerts-gamma-status" class="muted" role="status">ETHUSDT Gamma：读取中</p></div></header>
   <div id="alerts-error" class="error-box" role="alert" hidden></div>
   <section class="metric-grid six" id="alerts-metrics" aria-label="报警概要"></section>
   <section class="surface">
@@ -32,7 +32,7 @@
     </form>
   </section>
   <section class="surface alerts-order-signal-surface">
-    <div class="section-head"><div><h2>下单信号类别</h2><p class="muted alerts-section-lead">三类实时信号都会先预平仓，再发送当前方向的开仓 JSON；激进和稳健信号可配置。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>
+    <div class="section-head"><div><h2>下单信号类别</h2><p class="muted alerts-section-lead">三类实时信号都会先预平仓；当 ETHUSDT Gamma 小于 0 时，三类信号只发送平仓，不发送开仓 JSON。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>
     <form id="alerts-order-signal-settings">
       <div class="table-scroll">
         <table class="alerts-order-signal-table">
@@ -45,7 +45,7 @@
         </table>
       </div>
       <div class="alerts-order-signal-footer"><span id="alerts-order-signal-summary" class="muted">—</span><button id="alerts-order-signal-save" type="submit">保存下单信号设置</button></div>
-      <p class="muted alerts-note">每类实时信号都会先发送反方向持仓的预平仓指令，再发送当前方向的开仓 JSON。关闭激进或稳健后，只会停止对应类别的自动发送；预警开仓始终开启。历史记录仍会保留，也不会影响 Telegram 通知；历史记录中的“触发下单”仍可手动执行完整开仓。</p>
+      <p class="muted alerts-note">每类实时信号都会先发送反方向持仓的预平仓指令。ETHUSDT Gamma 小于 0 时，预警、激进、稳健都不会发送开仓 JSON；Gamma 正常时按本页开关决定激进和稳健是否开仓。历史记录仍会保留，也不会影响 Telegram 通知；历史记录中的“触发下单”仍可手动执行完整开仓。</p>
     </form>
   </section>
   <section class="surface">
@@ -62,7 +62,7 @@
     </form>
     <p class="muted alerts-note">Token 只写入服务器数据库，页面与接口只显示掩码；留空保存会保留现有 Token。也可用环境变量 <code>APP_TELEGRAM_BOT_TOKEN</code> 与 <code>APP_TELEGRAM_CHAT_ID</code> 提供默认值。</p>
   </section>
-  <section class="surface options-notes"><h2>策略与数据口径</h2><p id="alerts-method" class="muted"></p><p class="muted">规则：某侧爆仓额在周期内超过阈值 → 预警并预平仓；预警后该侧持续爆仓只顺延安静期，不发出开仓信号；安静期满 → 按预警方向发出<b>激进</b>信号；随后在确认窗口内出现反向爆仓 → 同一方向发出<b>稳健</b>信号。激进和稳健信号都会先预平仓，再按页面开关决定是否开仓。多单被爆仓按做多处理，空单被爆仓按做空处理，两个方向对称。</p><p class="muted">当前默认阈值：BTCUSDT $300,000 · ETHUSDT $200,000 · 其他币对 $100,000；安静期 10 分钟，确认窗口 30 分钟。预警与信号在 SQLite 保留 180 天，便于后续回测与参数调优。</p><p class="muted">来源：<a href="https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/All-Market-Liquidation-Order-Streams" target="_blank" rel="noopener">Binance 全市场强平流</a> · <a href="https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/24hr-Ticker-Price-Change-Statistics" target="_blank" rel="noopener">24 小时成交额排行</a> · <a href="https://core.telegram.org/bots/api#sendmessage" target="_blank" rel="noopener">Telegram sendMessage</a></p></section>
+  <section class="surface options-notes"><h2>策略与数据口径</h2><p id="alerts-method" class="muted"></p><p class="muted">规则：某侧爆仓额在周期内超过阈值 → 预警并预平仓；预警后该侧持续爆仓只顺延安静期，不发出开仓信号；安静期满 → 按预警方向发出<b>激进</b>信号；随后在确认窗口内出现反向爆仓 → 同一方向发出<b>稳健</b>信号。所有币对统一锚定 ETHUSDT 的 Binance 期权 NetGEX；当值小于 0 时，预警、激进、稳健只发平仓，方向栏显示 gamma 忽略。Gamma 正常时，激进和稳健按页面开关决定是否开仓。多单被爆仓按做多处理，空单被爆仓按做空处理，两个方向对称。</p><p class="muted">当前默认阈值：BTCUSDT $300,000 · ETHUSDT $200,000 · 其他币对 $100,000；安静期 10 分钟，确认窗口 30 分钟。预警与信号在 SQLite 保留 180 天，便于后续回测与参数调优。</p><p class="muted">来源：<a href="https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/All-Market-Liquidation-Order-Streams" target="_blank" rel="noopener">Binance 全市场强平流</a> · <a href="https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/24hr-Ticker-Price-Change-Statistics" target="_blank" rel="noopener">24 小时成交额排行</a> · <a href="https://core.telegram.org/bots/api#sendmessage" target="_blank" rel="noopener">Telegram sendMessage</a></p></section>
   <section class="surface">
     <div class="section-head"><h2>实时监控（<span id="alerts-monitor-window">3</span> 分钟滑动窗口）</h2><span id="alerts-monitor-status" class="muted" role="status">等待数据</span></div>
     <div class="table-scroll alerts-scroll"><table class="alerts-monitor-table"><thead><tr><th>排名</th><th>币对</th><th>24H 成交额</th><th>阈值</th><th>周期</th><th>多单爆仓</th><th>空单爆仓</th><th>状态</th><th>安静截止（北京时间）</th></tr></thead><tbody id="alerts-monitor-rows"><tr><td colspan="9">等待监控数据</td></tr></tbody></table></div>

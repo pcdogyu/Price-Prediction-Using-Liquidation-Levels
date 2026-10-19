@@ -196,6 +196,58 @@ func TestDisabledOpeningSignalStillSendsPreclose(t *testing.T) {
 	}
 }
 
+func TestNegativeETHGammaSuppressesEveryOpeningWebhook(t *testing.T) {
+	requests := make(chan []byte, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	svc, cfg, _ := alertTestService(t, "negative-eth-gamma.db")
+	cfg.SteadyWebhookURL = server.URL
+	cfg.SteadyWebhookAPIID = "okx_bot"
+	cfg.SteadyWebhookTargetExchange = "okx"
+	cfg.SteadyWebhookTradeEnv = "demo"
+	cfg.SteadyWebhookExchange = "binance"
+	cfg.SteadyWebhookInterval = "3m"
+	cfg.SteadyWebhookTokenNonce = "nonce-value"
+	cfg.SteadyWebhookToken = "token-value"
+	svc.alerts.webhookURL = cfg.SteadyWebhookURL
+	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
+	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	svc.alerts.webhookConfig = cfg
+	svc.alerts.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), svc.alerts.webhookSettings, 4, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	now := time.Now().UTC()
+	svc.dashboard.Lock()
+	svc.dashboard.gamma["ETHUSDT"] = domain.GammaView{Symbol: "ETHUSDT", State: "ok", Time: now, NetGEXUSD: -1}
+	svc.dashboard.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.alerts.webhook.Start(ctx)
+	svc.alerts.submitSignalWebhook(domain.TradeSignal{Symbol: "BTCUSDT", Kind: domain.SignalSteady, Side: "long", CreatedAt: now, ReferencePrice: 67123.45}, true)
+
+	select {
+	case raw := <-requests:
+		var got map[string]string
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("webhook body is not JSON: %v", err)
+		}
+		if got["position_effect"] != "close" || got["position_side"] != "short" || got["order_intent"] != "close_short" {
+			t.Fatalf("negative ETH gamma must send only preclose: %s", raw)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("preclose webhook was not delivered")
+	}
+	select {
+	case raw := <-requests:
+		t.Fatalf("negative ETH gamma unexpectedly opened a position: %s", raw)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
 func TestAlertWebhookPreclosesThenOpensRegardlessOfLegacyAlertSwitch(t *testing.T) {
 	requests := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

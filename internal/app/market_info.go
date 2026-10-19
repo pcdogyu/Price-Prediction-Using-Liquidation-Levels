@@ -47,7 +47,7 @@ func (s *Service) gammaLoop(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for {
-		for _, sym := range s.cfg.Symbols {
+		for _, sym := range s.gammaSymbols() {
 			cc, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			g, err := exchange.BinanceGamma(cc, sym)
 			cancel()
@@ -75,6 +75,25 @@ func (s *Service) gammaLoop(ctx context.Context) {
 		}
 	}
 }
+
+// gammaSymbols always includes the ETH options anchor even when an operator
+// narrows APP_SYMBOLS to a smaller futures watch list.
+func (s *Service) gammaSymbols() []string {
+	seen := make(map[string]struct{}, len(s.cfg.Symbols)+1)
+	out := make([]string, 0, len(s.cfg.Symbols)+1)
+	for _, symbol := range s.cfg.Symbols {
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		out = append(out, symbol)
+	}
+	if _, ok := seen[alertGammaAnchor]; !ok {
+		out = append(out, alertGammaAnchor)
+	}
+	return out
+}
+
 func (s *Service) backfillMarketMetrics(ctx context.Context) {
 	for _, symbol := range s.cfg.Symbols {
 		if err := exchange.BinanceMetricHistory(ctx, symbol, s.store.SaveMarketMetric); err != nil && ctx.Err() == nil {

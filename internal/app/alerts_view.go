@@ -16,6 +16,7 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 	view := domain.AlertsView{
 		State:       "waiting_watch_list",
 		Thresholds:  rtm.engine.Thresholds(),
+		Gamma:       s.alertGamma(ctx),
 		Monitor:     []domain.AlertMonitor{},
 		Watch:       []domain.WatchSymbol{},
 		Alerts:      []domain.LiquidationAlert{},
@@ -64,17 +65,32 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 
 // AlertHistory reads stored alerts.
 func (s *Service) AlertHistory(ctx context.Context, symbol, side string, limit int, cursor string) (domain.AlertPage, error) {
-	return s.alerts.store.LiquidationAlerts(ctx, symbol, side, limit, cursor)
+	page, err := s.alerts.store.LiquidationAlerts(ctx, symbol, side, limit, cursor)
+	if err != nil {
+		return page, err
+	}
+	page.Gamma = s.alertGamma(ctx)
+	return page, nil
 }
 
 // AlertSignals reads stored order signals.
 func (s *Service) AlertSignals(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.SignalPage, error) {
-	return s.alerts.store.TradeSignals(ctx, symbol, kind, limit, cursor)
+	page, err := s.alerts.store.TradeSignals(ctx, symbol, kind, limit, cursor)
+	if err != nil {
+		return page, err
+	}
+	page.Gamma = s.alertGamma(ctx)
+	return page, nil
 }
 
 // AlertTimeline reads the unified alert and signal history.
 func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.AlertTimelinePage, error) {
-	return s.alerts.store.AlertTimeline(ctx, symbol, kind, limit, cursor)
+	page, err := s.alerts.store.AlertTimeline(ctx, symbol, kind, limit, cursor)
+	if err != nil {
+		return page, err
+	}
+	page.Gamma = s.alertGamma(ctx)
+	return page, nil
 }
 
 // AlertChartSignals replays the selected symbol with the currently saved alert

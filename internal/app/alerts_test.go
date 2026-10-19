@@ -105,6 +105,30 @@ func TestRecordLiquidationDrivesAlertAndSignals(t *testing.T) {
 	}
 }
 
+func TestAlertPagesExposeFreshETHGammaAsCommonGate(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _ := alertTestService(t, "alert-gamma-view.db")
+	now := time.Now().UTC()
+	svc.dashboard.Lock()
+	svc.dashboard.gamma["ETHUSDT"] = domain.GammaView{Symbol: "ETHUSDT", State: "ok", Time: now, NetGEXUSD: -123.45}
+	svc.dashboard.Unlock()
+
+	view, err := svc.Alerts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.Gamma.Ignored || view.Gamma.NetGEXUSD == nil || *view.Gamma.NetGEXUSD != -123.45 {
+		t.Fatalf("alert overview gamma = %+v", view.Gamma)
+	}
+	page, err := svc.AlertTimeline(ctx, "", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !page.Gamma.Ignored || page.Gamma.AnchorSymbol != "ETHUSDT" {
+		t.Fatalf("timeline gamma = %+v", page.Gamma)
+	}
+}
+
 func TestAlertChartSignalsReplayCurrentStrategySettings(t *testing.T) {
 	ctx := context.Background()
 	svc, _, st := alertTestService(t, "chart-current-settings.db")

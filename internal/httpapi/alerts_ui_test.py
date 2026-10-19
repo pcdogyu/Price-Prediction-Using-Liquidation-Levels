@@ -71,6 +71,7 @@ with sync_playwright() as playwright:
             "alert_count": 9,
             "aggressive_count": 8,
             "steady_count": 8,
+            "gamma": {"anchor_symbol": "ETHUSDT", "state": "ok", "net_gex_usd": -123.45, "ignored": True},
         }
         if offset + 20 < len(selected):
             packet["next_cursor"] = "page-2"
@@ -87,7 +88,8 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows")).to_contain_text("激进")
     expect(page.locator("#alerts-history-rows")).to_contain_text("稳健")
     expect(page.get_by_text("下单信号类别", exact=True)).to_be_visible()
-    expect(page.get_by_text("预平仓后自动开仓（始终开启）", exact=True)).to_be_visible()
+    expect(page.locator("#alerts-history-rows")).to_contain_text("做多 gamma忽略")
+    expect(page.get_by_text("ETHUSDT Gamma：NetGEX $-123", exact=False)).to_be_visible()
 
     page.locator("#alerts-next").click()
     expect(page.locator("#alerts-history-rows tr")).to_have_count(5)

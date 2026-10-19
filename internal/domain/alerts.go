@@ -154,6 +154,7 @@ type AlertPage struct {
 	Rows       []LiquidationAlert `json:"rows"`
 	NextCursor string             `json:"next_cursor,omitempty"`
 	AlertCount int64              `json:"alert_count"`
+	Gamma      AlertGamma         `json:"gamma"`
 }
 type SignalPage struct {
 	Rows            []TradeSignal `json:"rows"`
@@ -161,6 +162,7 @@ type SignalPage struct {
 	SignalCount     int64         `json:"signal_count"`
 	AggressiveCount int64         `json:"aggressive_count"`
 	SteadyCount     int64         `json:"steady_count"`
+	Gamma           AlertGamma    `json:"gamma"`
 }
 
 // AlertTimelineItem is one row in the unified alert and signal history. Type is
@@ -182,6 +184,18 @@ type AlertTimelinePage struct {
 	AlertCount      int64               `json:"alert_count"`
 	AggressiveCount int64               `json:"aggressive_count"`
 	SteadyCount     int64               `json:"steady_count"`
+	Gamma           AlertGamma          `json:"gamma"`
+}
+
+// AlertGamma is the option-regime snapshot used by every liquidation pair.
+// The value comes from ETHUSDT's Binance options GEX cache; a missing or stale
+// snapshot is never treated as zero and therefore never suppresses an entry.
+type AlertGamma struct {
+	AnchorSymbol string     `json:"anchor_symbol"`
+	State        string     `json:"state"`
+	NetGEXUSD    *float64   `json:"net_gex_usd,omitempty"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+	Ignored      bool       `json:"ignored"`
 }
 
 // AlertChartSignals is the signal layer for a symbol chart. Unlike the stored
@@ -220,8 +234,9 @@ type NotificationSettings struct {
 	NotifyAlerts     bool   `json:"notify_alerts"`
 	NotifyAggressive bool   `json:"notify_aggressive"`
 	NotifySteady     bool   `json:"notify_steady"`
-	// OrderAlerts is retained for API and SQLite compatibility. Live alerts now
-	// always send preclose and opening webhooks, regardless of this legacy value.
+	// OrderAlerts is retained for API and SQLite compatibility. When ETH Gamma is
+	// negative, live alerts send only the preclose webhook regardless of these
+	// legacy opening switches.
 	OrderAlerts     bool      `json:"order_alerts"`
 	OrderAggressive bool      `json:"order_aggressive"`
 	OrderSteady     bool      `json:"order_steady"`
@@ -232,9 +247,9 @@ type NotificationSettings struct {
 }
 
 // OrderSignalSettings controls which live liquidation categories may send an
-// opening request to the trading webhook. All live categories send a preclose
-// request followed by an opening request; alert opening is always enabled and
-// its field is retained only for API and storage compatibility.
+// opening request to the trading webhook. All live categories always send a
+// preclose request first. If ETH Gamma is negative, the opening request is
+// suppressed for every category.
 type OrderSignalSettings struct {
 	Alerts     bool      `json:"order_alerts"`
 	Aggressive bool      `json:"order_aggressive"`
@@ -261,6 +276,7 @@ type AlertsView struct {
 	State           string             `json:"state"`
 	Thresholds      AlertThresholds    `json:"thresholds"`
 	Method          string             `json:"method"`
+	Gamma           AlertGamma         `json:"gamma"`
 	Monitor         []AlertMonitor     `json:"monitor"`
 	Watch           []WatchSymbol      `json:"watch"`
 	WatchUpdatedAt  *time.Time         `json:"watch_updated_at"`
