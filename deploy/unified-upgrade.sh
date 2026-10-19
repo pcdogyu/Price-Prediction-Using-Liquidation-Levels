@@ -62,8 +62,8 @@ PY
 }
 
 backup_sqlite "$data_root/liquidation.db" liquidation.db
-backup_sqlite "$legacy_root/data/tvbot.db" tvbot.db
-backup_file "$legacy_root/data/orders.json" tvbot-orders.json
+backup_sqlite /etc/tv-okx-bot/data/tvbot.db tvbot.db
+backup_file /etc/tv-okx-bot/data/orders.json tvbot-orders.json
 backup_file "$legacy_root/data/binance-credentials.json" tvbot-binance-credentials.json
 backup_file "$legacy_state/okx-credentials.json" tvbot-okx-credentials.json
 backup_file "$legacy_state/upgrade-status.json" tvbot-upgrade-status.json
@@ -72,6 +72,11 @@ backup_file /etc/liquidation-predictor.env liquidation-predictor.env
 backup_file "$binary" liquidation-predictor
 sha256sum "$backup"/* > "$backup/sha256.txt"
 backup_tree "$data_root/users" "$backup/tvbot-user-credentials"
+
+# The legacy database is owned by tvokx and mode 0600. Keep the original
+# untouched and expose only a consistent backup snapshot to the liquidation
+# service, which runs as the liquidation user and imports it at startup.
+install -o liquidation -g liquidation -m 0600 "$backup/tvbot.db" "$data_root/tvbot-legacy-migration.db"
 
 git -C "$source_root" fetch origin binance
 if git -C "$source_root" show-ref --verify --quiet refs/heads/binance; then
