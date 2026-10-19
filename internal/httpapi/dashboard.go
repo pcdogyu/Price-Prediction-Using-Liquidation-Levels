@@ -57,7 +57,7 @@ func isDashboardPage(path string) bool {
 }
 func (s *Server) renderPage(body []byte, page, title string) []byte {
 	base := html.EscapeString(s.auth.BasePath())
-	nav := `<style>.app-nav{flex-wrap:nowrap;overflow-x:auto}.app-nav>.app-brand,.app-nav>.app-links,.app-nav>button,.app-nav>form{flex:0 0 auto}.app-links{order:initial;flex-basis:auto;overflow:visible}@media(max-width:720px){.app-nav{gap:8px;flex-wrap:nowrap}.app-brand{flex:0 0 auto}.app-links{order:initial;flex-basis:auto}}</style><nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `alerts" aria-label="清算墙雷达首页"><span class="app-logo" aria-hidden="true"></span><span class="app-brand-name">清算墙雷达</span></a><div class="app-links">`
+	nav := `<style>.app-nav{flex-wrap:nowrap;overflow-x:auto}.app-nav>.app-brand,.app-nav>.app-links,.app-nav>button,.app-nav>form{flex:0 0 auto}.app-links{order:initial;flex-basis:auto;overflow:visible}@media(max-width:720px){.app-nav{gap:8px;flex-wrap:nowrap}.app-brand{flex:0 0 auto}.app-links{order:initial;flex-basis:auto}}</style><nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `alerts" aria-label="首页"><span class="app-logo" aria-hidden="true"></span></a><div class="app-links">`
 	s.menuMu.RLock()
 	menu := append([]adminMenuItem(nil), s.menu...)
 	s.menuMu.RUnlock()

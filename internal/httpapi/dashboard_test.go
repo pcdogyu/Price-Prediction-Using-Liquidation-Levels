@@ -66,11 +66,13 @@ func TestDashboardNavigationStaysOnOneRow(t *testing.T) {
 		`.app-links{order:initial;flex-basis:auto;overflow:visible}`,
 		`@media(max-width:720px){.app-nav{gap:8px;flex-wrap:nowrap}`,
 		`class="app-logo" aria-hidden="true"`,
-		`class="app-brand-name">清算墙雷达</span>`,
 	} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("alerts navigation missing one-row override %q", marker)
 		}
+	}
+	if strings.Contains(body, `class="app-brand-name"`) || strings.Contains(body, `aria-label="清算墙雷达首页"`) {
+		t.Fatal("alerts navigation still contains the removed product name")
 	}
 }
 

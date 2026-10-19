@@ -42,8 +42,9 @@ func renderTVBotHTML(info BuildInfo, r *http.Request) string {
 	link := func(path string) string { return prefix + path }
 	assets := `<script src="` + html.EscapeString(link("/assets/theme.js")) + `"></script><link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `">`
 	page := strings.Replace(tvbotHTML, "</head>", assets+"</head>", 1)
-	liquidationLinks := `<div class="liquidation-links" aria-label="主菜单"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link("/tvbot#positions")) + `">持仓</a><a href="` + html.EscapeString(link("/menu")) + `">菜单管理</a><a href="` + html.EscapeString(link("/admin")) + `">系统管理</a></div>`
+	liquidationLinks := `<div class="app-links" aria-label="主菜单"><a href="` + html.EscapeString(link("/alerts")) + `">报警</a><a href="` + html.EscapeString(link("/bubbles")) + `">气泡图</a><a href="` + html.EscapeString(link("/liquidations")) + `">清算历史</a><a href="` + html.EscapeString(link("/hedge-wall")) + `">对冲墙</a><a href="` + html.EscapeString(link("/market-info")) + `">市场信息</a><a href="` + html.EscapeString(link("/options")) + `">期权</a><a href="` + html.EscapeString(link("/tvbot#positions")) + `">持仓</a><a href="` + html.EscapeString(link("/menu")) + `">菜单管理</a><a href="` + html.EscapeString(link("/admin")) + `">系统管理</a></div>`
 	themeScript := `<script>(()=>{const button=document.getElementById('tvbot-theme');const update=()=>{const light=document.documentElement.dataset.theme==='light';button.textContent=light?'深色主题':'浅色主题';button.setAttribute('aria-label','当前'+(light?'浅色':'深色')+'主题，切换至'+(light?'深色':'浅色')+'主题')};button.addEventListener('click',()=>window.LiquidationTheme.toggle());window.addEventListener('themechange',update);update()})();</script>`
+	page = strings.Replace(page, "{{HOME_LINK}}", html.EscapeString(link("/alerts")), 1)
 	page = strings.Replace(page, "{{LIQUIDATION_LINKS}}", liquidationLinks, 1)
 	page = strings.Replace(page, "</body>", themeScript+"</body>", 1)
 	return strings.Replace(page, "{{APP_FOOTER}}", html.EscapeString(info.FooterText()), 1)
@@ -224,6 +225,22 @@ const tvbotHTML = `<!doctype html>
       background: var(--nav-bg);
       border-bottom: 1px solid var(--line);
       box-shadow: 0 2px 12px rgba(23, 32, 51, 0.04);
+    }
+    .app-nav.tvbot-nav {
+      gap: 10px;
+      padding: 10px 12px;
+      overflow-x: auto;
+      flex-wrap: nowrap;
+      scrollbar-width: thin;
+    }
+    .app-nav.tvbot-nav > .app-brand,
+    .app-nav.tvbot-nav > .app-links,
+    .app-nav.tvbot-nav > .header-controls {
+      flex: 0 0 auto;
+    }
+    .app-nav.tvbot-nav > .app-links {
+      gap: 6px;
+      overflow: visible;
     }
     .bar {
       width: 100%;
@@ -1292,9 +1309,8 @@ const tvbotHTML = `<!doctype html>
   </style>
 </head>
 <body>
-  <header>
-    <div class="bar">
-      <div class="brand" aria-label="清算墙雷达"><span class="mark">TV</span><span>OKX Bot</span></div>
+    <header class="app-nav tvbot-nav">
+      <a class="app-brand" href="{{HOME_LINK}}" aria-label="首页"><span class="app-logo" aria-hidden="true"></span></a>
       {{LIQUIDATION_LINKS}}
       <div class="header-controls">
         <div class="global-exchange-switch" role="group" aria-label="全局交易所">
@@ -1317,7 +1333,6 @@ const tvbotHTML = `<!doctype html>
         </nav>
         <button type="button" class="theme-toggle" id="tvbot-theme" aria-label="切换主题"></button>
       </div>
-    </div>
   </header>
 
   <main>

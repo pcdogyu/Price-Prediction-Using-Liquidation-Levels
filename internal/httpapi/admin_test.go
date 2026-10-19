@@ -122,7 +122,7 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	}
 
 	positions := serve(http.MethodGet, "/tvbot", "", ordinaryCookie)
-	if positions.Code != http.StatusOK || !strings.Contains(positions.Body.String(), "positions") || !strings.Contains(positions.Body.String(), "清算墙雷达") {
+	if positions.Code != http.StatusOK || !strings.Contains(positions.Body.String(), "positions") || !strings.Contains(positions.Body.String(), `class="app-logo"`) {
 		t.Fatalf("unified tvbot page status=%d body prefix=%s", positions.Code, positions.Body.String()[:minInt(180, positions.Body.Len())])
 	}
 }
