@@ -52,7 +52,7 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 	}
 }
 
-func TestDashboardNavigationWrapsWithoutHorizontalOverflow(t *testing.T) {
+func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 	srv, st := testService(t, config.Config{BasePath: "/liquidation/"}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	defer st.Close()
 	w := httptest.NewRecorder()
@@ -63,12 +63,13 @@ func TestDashboardNavigationWrapsWithoutHorizontalOverflow(t *testing.T) {
 	body := w.Body.String()
 	for _, marker := range []string{
 		`.app-nav{flex-wrap:wrap;overflow:hidden}`,
-		`.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;overflow:visible}`,
+		`.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}`,
 		`@media(max-width:720px){.app-nav{gap:8px;flex-wrap:wrap}`,
+		`.app-links{order:3;flex:1 0 100%;flex-basis:100%;min-width:0;scrollbar-width:thin}.app-links a{flex:0 0 auto}`,
 		`class="app-logo" aria-hidden="true"`,
 	} {
 		if !strings.Contains(body, marker) {
-			t.Fatalf("alerts navigation missing one-row override %q", marker)
+			t.Fatalf("alerts navigation missing mobile scroll override %q", marker)
 		}
 	}
 	if strings.Contains(body, `class="app-brand-name"`) || strings.Contains(body, `aria-label="清算墙雷达首页"`) {

@@ -1490,6 +1490,56 @@ const tvbotHTML = `<!doctype html>
       #analysis .mini-usdt-chart { height: 346px; }
       .exchange-balance-metrics { min-height: 0; }
       .tvbot-page-toolbar { justify-content: flex-start; }
+      .app-nav.tvbot-nav {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-rows: auto auto;
+        gap: 4px 8px;
+        padding: 6px 8px;
+        overflow: visible;
+      }
+      .app-nav.tvbot-nav > .app-brand {
+        grid-column: 1;
+        grid-row: 1;
+        align-self: center;
+      }
+      .app-nav.tvbot-nav > .header-controls {
+        grid-column: 2;
+        grid-row: 1;
+        justify-content: flex-end;
+        min-width: 0;
+        flex: 0 0 auto;
+      }
+      .app-nav.tvbot-nav > .app-links {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        width: 100%;
+        min-width: 0;
+        flex: 0 0 auto;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: thin;
+        -webkit-overflow-scrolling: touch;
+      }
+      .app-nav.tvbot-nav .tvbot-sections {
+        width: max-content;
+        min-width: max-content;
+        flex-wrap: nowrap;
+      }
+      .app-nav.tvbot-nav .tvbot-sections a {
+        flex: 0 0 auto;
+        padding: 6px 9px;
+        font-size: 13px;
+      }
+      .app-nav.tvbot-nav .header-controls .theme-toggle {
+        min-height: 30px;
+        padding: 5px 8px;
+        font-size: 12px;
+      }
+      .balance-window-toolbar { gap: 5px; }
+      .balance-window-toolbar .balance-window-btn { min-height: 32px; padding: 6px 8px; font-size: 13px; }
+      .chart-wrap { min-height: 0; padding: 6px; }
+      .section-head { gap: 8px; }
     }
   </style>
 </head>

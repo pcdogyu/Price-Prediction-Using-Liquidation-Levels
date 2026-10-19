@@ -57,7 +57,7 @@ func isDashboardPage(path string) bool {
 }
 func (s *Server) renderPage(body []byte, page, title string, r *http.Request) []byte {
 	base := html.EscapeString(s.auth.BasePath())
-	nav := `<style>.app-nav{flex-wrap:wrap;overflow:hidden}.app-nav>.app-brand{flex:0 0 auto}.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;overflow:visible}.app-nav>button,.app-nav>form{flex:0 0 auto}.app-links{order:initial;flex-basis:auto}@media(max-width:720px){.app-nav{gap:8px;flex-wrap:wrap}.app-brand{flex:0 0 auto}.app-links{order:3;flex:1 0 100%;flex-basis:100%}}</style><nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `alerts" aria-label="首页"><span class="app-logo" aria-hidden="true"></span></a><div class="app-links">`
+	nav := `<style>.app-nav{flex-wrap:wrap;overflow:hidden}.app-nav>.app-brand{flex:0 0 auto}.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.app-nav>button,.app-nav>form{flex:0 0 auto}.app-links{order:initial;flex-basis:auto}@media(max-width:720px){.app-nav{gap:8px;flex-wrap:wrap}.app-brand{flex:0 0 auto}.app-links{order:3;flex:1 0 100%;flex-basis:100%;min-width:0;scrollbar-width:thin}.app-links a{flex:0 0 auto}}</style><nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `alerts" aria-label="首页"><span class="app-logo" aria-hidden="true"></span></a><div class="app-links">`
 	menu := s.menuForRequest(r)
 	for _, item := range menu {
 		active := ""
