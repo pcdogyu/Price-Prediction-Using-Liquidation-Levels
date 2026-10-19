@@ -12,6 +12,12 @@
     .menu-item{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.menu-title{min-width:120px;font-weight:600}
     .menu-href{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
     .menu-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.menu-actions button,.menu-item button{padding:7px 10px}
+    #save-menu{transition:color .2s ease,background-color .2s ease,border-color .2s ease,transform .2s ease}
+    #save-menu.is-saving{cursor:wait;opacity:.85}
+    #save-menu.is-saving::before{content:"";display:inline-block;width:12px;height:12px;margin-right:7px;border:2px solid var(--link);border-top-color:transparent;border-radius:50%;vertical-align:-2px;animation:menu-save-spin .7s linear infinite}
+    #save-menu.is-saved{color:var(--green);background:var(--long-bg);border-color:var(--long-line);transform:translateY(-1px)}
+    #save-menu.is-error{color:var(--red);background:var(--short-bg);border-color:var(--short-line)}
+    @keyframes menu-save-spin{to{transform:rotate(360deg)}}
     .menu-note{color:var(--muted)}.menu-error{color:#c24135;min-height:1.2em}
   </style>
 </head>
@@ -28,8 +34,11 @@
 <script>
 (async()=>{
   const request=async(u,o)=>{const r=await fetch(u,Object.assign({credentials:'same-origin'},o||{}));const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.detail||b.error||('HTTP '+r.status));return b};
-  const list=document.querySelector('#menu-list'), error=document.querySelector('#menu-error');
+  const list=document.querySelector('#menu-list'), error=document.querySelector('#menu-error'), saveButton=document.querySelector('#save-menu'), reloadButton=document.querySelector('#reload-menu');
   let menu=[];
+  let saveResetTimer;
+  const resetSaveButton=()=>{clearTimeout(saveResetTimer);saveButton.disabled=false;saveButton.className='';saveButton.textContent='保存当前顺序';saveButton.removeAttribute('aria-busy')};
+  const showSaveState=(state,text)=>{saveButton.className=state?'is-'+state:'';saveButton.textContent=text;saveButton.setAttribute('aria-busy',state==='saving'?'true':'false')};
   const draw=()=>{
     list.replaceChildren();
     menu.forEach((item,index)=>{
@@ -45,7 +54,7 @@
     });
   };
   const load=async()=>{try{const b=await request('{{BASE}}api/v1/admin/menu');menu=b.menu;draw();error.textContent=''}catch(e){error.textContent=e.message}};
-  document.querySelector('#save-menu').onclick=async()=>{try{await request('{{BASE}}api/v1/admin/menu',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu})});await load()}catch(e){error.textContent=e.message}};
+  saveButton.onclick=async()=>{if(saveButton.disabled)return;clearTimeout(saveResetTimer);saveButton.disabled=true;reloadButton.disabled=true;error.textContent='';showSaveState('saving','保存中...');try{await request('{{BASE}}api/v1/admin/menu',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu})});await load();showSaveState('saved','保存成功 ✓');reloadButton.disabled=false;saveResetTimer=setTimeout(resetSaveButton,1600)}catch(e){error.textContent=e.message;showSaveState('error','保存失败，重试');reloadButton.disabled=false;saveButton.disabled=false;saveResetTimer=setTimeout(resetSaveButton,2400)}};
   document.querySelector('#reload-menu').onclick=load;
   await load();
 })();

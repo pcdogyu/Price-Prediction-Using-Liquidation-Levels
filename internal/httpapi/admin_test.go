@@ -113,6 +113,11 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	if menuPage.Code != http.StatusOK || !strings.Contains(menuPage.Body.String(), "<h1>菜单管理</h1>") || strings.Contains(menuPage.Body.String(), "id=\"new-user\"") {
 		t.Fatalf("menu page status=%d body=%s", menuPage.Code, menuPage.Body.String())
 	}
+	for _, marker := range []string{`id="save-menu"`, `is-saving`, `保存中...`, `保存成功 ✓`, `保存失败，重试`, `menu-save-spin`} {
+		if !strings.Contains(menuPage.Body.String(), marker) {
+			t.Fatalf("menu page must include save feedback marker %q", marker)
+		}
+	}
 	adminPage := serve(http.MethodGet, "/admin", "", rootCookie)
 	if adminPage.Code != http.StatusOK || !strings.Contains(adminPage.Body.String(), `id="system-health"`) || !strings.Contains(adminPage.Body.String(), `status-ok`) || strings.Contains(adminPage.Body.String(), `<pre id="system">`) {
 		t.Fatalf("system health table missing or legacy JSON remains: status=%d body=%s", adminPage.Code, adminPage.Body.String())
