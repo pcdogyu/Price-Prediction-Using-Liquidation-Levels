@@ -3,7 +3,10 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/liquidation-predictor ./cmd/server
+ARG VERSION_BUILD_TIME=unknown
+ARG VERSION_BUILD_REVISION=unknown
+ARG VERSION_BUILD_BRANCH=unknown
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=${VERSION_BUILD_TIME} -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=${VERSION_BUILD_REVISION} -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=${VERSION_BUILD_BRANCH}" -o /out/liquidation-predictor ./cmd/server
 RUN mkdir -p /out/data /out/models
 
 FROM gcr.io/distroless/static-debian12:nonroot

@@ -116,7 +116,10 @@ GET /metrics
 构建：
 
 ```bash
-CGO_ENABLED=0 go build -trimpath -o liquidation-predictor ./cmd/server
+BUILD_TIME="$(TZ=Asia/Shanghai date --iso-8601=seconds)"
+BUILD_REVISION="$(git rev-parse --short HEAD)"
+BUILD_BRANCH="$(git branch --show-current)"
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=${BUILD_TIME} -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=${BUILD_REVISION} -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=${BUILD_BRANCH}" -o liquidation-predictor ./cmd/server
 ```
 
 代码和二进制部署到 `/opt/Price-Prediction-Using-Liquidation-Levels`，数据和模型目录配置到 `/var/lib/liquidation-predictor`，然后参考 [systemd 单元](deploy/liquidation-predictor.service) 和 [nginx 子路径配置](deploy/nginx-liquidation-location.conf)。生产部署目标仅为 `tvbot.lmitis.com`，服务只监听 `127.0.0.1:9090`，通过 `/liquidation/` 反向代理对外访问；`mm.lmitis.com` 不部署本项目，也不应安装本项目的 systemd、CoinGlass 浏览器或 Nginx 路由。

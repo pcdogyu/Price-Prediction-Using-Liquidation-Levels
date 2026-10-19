@@ -44,6 +44,28 @@ func testService(t *testing.T, cfg config.Config, logger *slog.Logger, logs *obs
 	return srv, st
 }
 
+func TestBusinessPagesRenderVersionFooter(t *testing.T) {
+	originalTime, originalRevision, originalBranch := BuildTime, BuildRevision, BuildBranch
+	t.Cleanup(func() {
+		BuildTime, BuildRevision, BuildBranch = originalTime, originalRevision, originalBranch
+	})
+	BuildTime = "2026-10-17T20:26:29+08:00"
+	BuildRevision = "ec01b5c"
+	BuildBranch = "main"
+
+	srv, st := testService(t, config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	defer st.Close()
+	wantVersion := "Code by Yuhao@jiansutech.com · 2026-10-17T20:26:29+08:00 · ec01b5c · main"
+	for _, path := range []string{"/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/alerts", "/alerts/chart?symbol=BTCUSDT"} {
+		w := httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		body := w.Body.String()
+		if w.Code != http.StatusOK || strings.Count(body, wantVersion) != 1 || strings.Count(body, `class="page-footer"`) != 1 {
+			t.Fatalf("path=%s status=%d version_count=%d footer_count=%d", path, w.Code, strings.Count(body, wantVersion), strings.Count(body, `class="page-footer"`))
+		}
+	}
+}
+
 func TestRoutesAndDashboardAssets(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	_, logs, err := observability.New(filepath.Join(t.TempDir(), "application.log"), 7)

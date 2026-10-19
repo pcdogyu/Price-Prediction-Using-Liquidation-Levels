@@ -66,7 +66,7 @@ func (s *Server) renderPage(body []byte, page, title string) []byte {
 		nav += `<a href="` + base + item.path + `"` + active + `>` + item.title + `</a>`
 	}
 	nav += `</div><button id="nav-theme" type="button">浅色主题</button><button id="nav-logs" type="button">程序日志</button><form method="post" action="` + base + `auth/logout"><button type="submit">退出</button></form></nav><dialog id="shared-logs"><div class="dialog-head"><h2>程序日志</h2><button id="shared-logs-close" type="button">关闭</button></div><select id="shared-log-level"><option value="DEBUG">全部级别</option><option value="INFO">INFO+</option><option value="WARN">WARN+</option><option value="ERROR">ERROR</option></select><button id="shared-log-refresh" type="button">刷新</button><pre id="shared-log-content">等待加载</pre></dialog>`
-	replacer := strings.NewReplacer("{{BASE}}", base, "{{NAV}}", nav, "{{PAGE}}", page, "{{TITLE}}", title)
+	replacer := strings.NewReplacer("{{BASE}}", base, "{{NAV}}", nav, "{{PAGE}}", page, "{{TITLE}}", title, "{{VERSION}}", versionFooter())
 	return []byte(replacer.Replace(string(body)))
 }
 func (s *Server) registerDashboard(mux *http.ServeMux) {

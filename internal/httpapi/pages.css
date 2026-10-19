@@ -21,3 +21,4 @@ body[data-page="liquidations"] .page-controls #symbol{display:none}
 .symbol-options li{padding:8px 10px;border-radius:5px;cursor:pointer;overflow-wrap:anywhere}
 .symbol-options [aria-selected="true"]{font-weight:700;color:var(--buy)}
 .symbol-options li:hover,.symbol-options [data-active="true"]{background:var(--selected-bg)}
+.page-footer{display:flex;align-items:flex-start;justify-content:space-between;gap:8px 24px;flex-wrap:wrap}.page-version{overflow-wrap:anywhere;text-align:right}
