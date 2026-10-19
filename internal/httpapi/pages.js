@@ -14,7 +14,7 @@
   const when = value => value && !String(value).startsWith('0001-') ? new Date(value).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false}) : '—';
   const tone = value => !valid(value) ? '' : value > 0 ? 'buy' : value < 0 ? 'sell' : '';
   const stateLabel = value => ({ok:'正常',partial:'部分数据缺失',stale:'数据已过期',unavailable:'等待采集'})[value] || value;
-  let busy = false, marketRange = '1h', latest = null, liqCursor = '', liqStack = [], liqNext = '', liqAnchor = '';
+  let busy = false, marketRange = '12h', latest = null, liqCursor = '', liqStack = [], liqNext = '', liqAnchor = '';
   let liqSymbol = 'ETHUSDT', liqSymbols = [], symbolActive = -1, pendingLoad = false;
   let liqAnalysisAnchor = '';
   let historyCursor = '', historyRows = [], historyNext = '', historyAnchor = '', frozenBook = null, historyKind = 'events';

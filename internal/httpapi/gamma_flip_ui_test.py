@@ -17,6 +17,7 @@ root = pathlib.Path(__file__).resolve().parents[2]
 artifacts = root / "build"
 artifacts.mkdir(exist_ok=True)
 errors, evidence = [], []
+market_ranges = []
 
 with sync_playwright() as playwright:
     launch = {"headless": True}
@@ -74,6 +75,7 @@ with sync_playwright() as playwright:
             route.fulfill(status=503, json={"detail": "fixture unavailable"})
             return
         query = parse_qs(urlsplit(route.request.url).query)
+        market_ranges.append(query.get("range", [""])[0])
         symbol = query["symbol"][0]
         packet = copy.deepcopy(baseline)
         packet["symbol"] = symbol
@@ -133,6 +135,8 @@ with sync_playwright() as playwright:
 
     page.goto(base + "/market-info", wait_until="domcontentloaded")
     loaded()
+    assert market_ranges and market_ranges[0] == "12h", market_ranges
+    assert page.locator('#market-ranges button[data-range="12h"]').get_attribute("class") == "selected"
     axes(5)
     card = page.locator(".gamma-flip-metric")
     expect(card.locator(".label")).to_have_text("Gamma Flip 价格")
