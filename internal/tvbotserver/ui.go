@@ -1237,6 +1237,15 @@ const tvbotHTML = `<!doctype html>
       stroke: #d8dee9;
       stroke-width: 1;
     }
+    .chart-zero-line {
+      stroke: #7c8da5;
+      stroke-width: 1.5;
+      stroke-dasharray: 5 4;
+    }
+    .chart-zero-label {
+      fill: #43536b;
+      font-weight: 700;
+    }
     .chart-label {
       fill: #647089;
       font-size: 12px;
@@ -5634,7 +5643,6 @@ const tvbotHTML = `<!doctype html>
     function drawUSDTChart(points, svgID, emptyText, strokeColor) {
       const svg = $(svgID || "usdt-chart");
       if (!svg) return;
-      const lineColor = strokeColor || "#1f6feb";
       const rect = svg.getBoundingClientRect();
       const parentWidth = svg.parentElement ? svg.parentElement.clientWidth : 0;
       const isMini = svg.classList.contains("mini-usdt-chart");
@@ -5653,23 +5661,27 @@ const tvbotHTML = `<!doctype html>
         svg.innerHTML = '<text x="' + (width / 2) + '" y="' + (height / 2) + '" text-anchor="middle" fill="#647089">' + escapeHTML(emptyText || "暂无 USDT 权益数据") + '</text>';
         return;
       }
-      const chartPoints = points.map((point, index) => {
+      let chartPoints = points.map((point, index) => {
         return { point: point, index: index, value: Number(point.value), date: chartPointDate(point) };
       }).filter((point) => Number.isFinite(point.value));
       if (!chartPoints.length) {
         svg.innerHTML = '<text x="' + (width / 2) + '" y="' + (height / 2) + '" text-anchor="middle" fill="#647089">' + escapeHTML(emptyText || "暂无 USDT 权益数据") + '</text>';
         return;
       }
+      if (chartPoints.some((point) => point.date)) {
+        chartPoints = chartPoints.slice().sort((left, right) => {
+          if (!left.date) return 1;
+          if (!right.date) return -1;
+          const byDate = left.date.getTime() - right.date.getTime();
+          return byDate || left.index - right.index;
+        });
+      }
+      chartPoints.forEach((point, index) => { point.index = index; });
       const values = chartPoints.map((point) => point.value);
       const min = Math.min.apply(null, values);
       const max = Math.max.apply(null, values);
       const span = max - min || 0.0001;
-      const baselinePoint = chartPoints.reduce((earliest, point) => {
-        if (!earliest) return point;
-        if (point.date && (!earliest.date || point.date.getTime() < earliest.date.getTime())) return point;
-        return earliest;
-      }, null);
-      const baselineValue = baselinePoint ? baselinePoint.value : chartPoints[0].value;
+      const baselineValue = chartPoints[0].value;
       const timed = chartPoints.filter((point) => point.date);
       const timeValues = timed.map((point) => point.date.getTime());
       const minTime = timeValues.length ? Math.min.apply(null, timeValues) : 0;
@@ -5681,12 +5693,53 @@ const tvbotHTML = `<!doctype html>
         return pad.left + point.index * plotWidth / Math.max(1, points.length - 1);
       };
       const y = (v) => pad.top + (max - v) * plotHeight / span;
-      const path = chartPoints.map((point, i) => (i === 0 ? "M" : "L") + x(point).toFixed(2) + " " + y(point.value).toFixed(2)).join(" ");
+      const positiveColor = "#138a55";
+      const negativeColor = "#d64545";
+      const colorForDelta = (delta) => Number(delta) < 0 ? negativeColor : positiveColor;
+      const pathSegments = [];
+      for (let i = 1; i < chartPoints.length; i++) {
+        const start = chartPoints[i - 1];
+        const end = chartPoints[i];
+        const startX = x(start);
+        const startY = y(start.value);
+        const endX = x(end);
+        const endY = y(end.value);
+        const startDelta = start.value - baselineValue;
+        const endDelta = end.value - baselineValue;
+        if (startDelta === 0 || endDelta === 0 || (startDelta < 0) === (endDelta < 0)) {
+          const delta = startDelta === 0 ? endDelta : startDelta;
+          pathSegments.push({
+            color: colorForDelta(delta),
+            path: "M" + startX.toFixed(2) + " " + startY.toFixed(2) + " L" + endX.toFixed(2) + " " + endY.toFixed(2)
+          });
+          continue;
+        }
+        const crossingRatio = (baselineValue - start.value) / (end.value - start.value);
+        const crossingX = startX + (endX - startX) * crossingRatio;
+        const crossingY = y(baselineValue);
+        pathSegments.push({
+          color: colorForDelta(startDelta),
+          path: "M" + startX.toFixed(2) + " " + startY.toFixed(2) + " L" + crossingX.toFixed(2) + " " + crossingY.toFixed(2)
+        });
+        pathSegments.push({
+          color: colorForDelta(endDelta),
+          path: "M" + crossingX.toFixed(2) + " " + crossingY.toFixed(2) + " L" + endX.toFixed(2) + " " + endY.toFixed(2)
+        });
+      }
+      if (chartPoints.length === 1) {
+        pathSegments.push({
+          color: positiveColor,
+          path: "M" + x(chartPoints[0]).toFixed(2) + " " + y(chartPoints[0].value).toFixed(2)
+        });
+      }
+      const paths = pathSegments.map((segment) => '<path d="' + segment.path + '" fill="none" stroke="' + segment.color + '" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>').join("");
       let grid = "";
       const yTickCount = 5;
+      const zeroY = y(baselineValue);
       for (let i = 0; i < yTickCount; i++) {
         const ratio = yTickCount === 1 ? 0 : i / (yTickCount - 1);
         const lineY = pad.top + ratio * plotHeight;
+        if (Math.abs(lineY - zeroY) < 14) continue;
         const labelValue = max - ratio * span;
         grid += '<line class="chart-grid" x1="' + pad.left + '" y1="' + lineY.toFixed(2) + '" x2="' + (width - pad.right) + '" y2="' + lineY.toFixed(2) + '"/>';
         grid += '<text class="chart-label" x="8" y="' + (lineY + 4).toFixed(2) + '">' + chartAxisPercentValue(labelValue, baselineValue) + '</text>';
@@ -5703,13 +5756,15 @@ const tvbotHTML = `<!doctype html>
       const last = chartPoints[chartPoints.length - 1];
       svg.innerHTML =
         grid +
+        '<line class="chart-zero-line" x1="' + pad.left + '" y1="' + zeroY.toFixed(2) + '" x2="' + (width - pad.right) + '" y2="' + zeroY.toFixed(2) + '"/>' +
+        '<text class="chart-label chart-zero-label" x="8" y="' + (zeroY + 4).toFixed(2) + '">0.00%</text>' +
         '<line class="chart-axis" x1="' + pad.left + '" y1="' + pad.top + '" x2="' + pad.left + '" y2="' + plotBottom + '"/>' +
         '<line class="chart-axis" x1="' + (width - pad.right) + '" y1="' + pad.top + '" x2="' + (width - pad.right) + '" y2="' + plotBottom + '"/>' +
         '<line class="chart-axis" x1="' + pad.left + '" y1="' + plotBottom + '" x2="' + (width - pad.right) + '" y2="' + plotBottom + '"/>' +
         '<text class="chart-axis-title" x="' + pad.left + '" y="12">涨跌幅 (%)</text>' +
         '<text class="chart-axis-title" x="' + (width - 8) + '" y="12" text-anchor="end">估值 (USDT)</text>' +
-        '<path d="' + path + '" fill="none" stroke="' + lineColor + '" stroke-width="2.4"/>' +
-        '<circle cx="' + x(last).toFixed(2) + '" cy="' + y(last.value).toFixed(2) + '" r="4" fill="' + lineColor + '"/>';
+        paths +
+        '<circle cx="' + x(last).toFixed(2) + '" cy="' + y(last.value).toFixed(2) + '" r="4" fill="' + colorForDelta(last.value - baselineValue) + '"/>';
     }
 
     function currentOrderSearchInput() {
