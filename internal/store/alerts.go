@@ -106,7 +106,8 @@ func (s *Store) LiquidationAlertByID(ctx context.Context, id string) (domain.Liq
 }
 
 // LiquidationAlerts reads the alert history newest first. Side accepts long or
-// short, symbol accepts a single symbol or an empty value for all symbols.
+// short, symbol accepts a case-insensitive substring or an empty value for all
+// symbols (for example, DOGE matches DOGEUSDT).
 func (s *Store) LiquidationAlerts(ctx context.Context, symbol, side string, limit int, cursor string) (domain.AlertPage, error) {
 	out := domain.AlertPage{Rows: []domain.LiquidationAlert{}}
 	if limit < 1 || limit > 200 {
@@ -119,7 +120,7 @@ func (s *Store) LiquidationAlerts(ctx context.Context, symbol, side string, limi
 	where := "trigger_ts>=0"
 	args := []any{}
 	if symbol != "" && symbol != "ALL" {
-		where += " AND symbol=?"
+		where += " AND instr(UPPER(symbol),UPPER(?))>0"
 		args = append(args, symbol)
 	}
 	if side == "long" || side == "short" {
@@ -229,7 +230,8 @@ func (s *Store) MarkTradeSignalNotified(ctx context.Context, id, status, message
 }
 
 // TradeSignals reads the signal history newest first. Kind accepts aggressive or
-// steady, empty reads both.
+// steady, empty reads both. Symbol uses the same case-insensitive substring
+// matching as LiquidationAlerts.
 func (s *Store) TradeSignals(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.SignalPage, error) {
 	out := domain.SignalPage{Rows: []domain.TradeSignal{}}
 	if limit < 1 || limit > 200 {
@@ -242,7 +244,7 @@ func (s *Store) TradeSignals(ctx context.Context, symbol, kind string, limit int
 	where := "created_ts>=0"
 	args := []any{}
 	if symbol != "" && symbol != "ALL" {
-		where += " AND symbol=?"
+		where += " AND instr(UPPER(symbol),UPPER(?))>0"
 		args = append(args, symbol)
 	}
 	if kind == domain.SignalAggressive || kind == domain.SignalSteady {
@@ -299,7 +301,7 @@ func (s *Store) AlertTimeline(ctx context.Context, symbol, kind string, limit in
 
 	symbolWhere := ""
 	if symbol != "" && symbol != "ALL" {
-		symbolWhere = " WHERE symbol=?"
+		symbolWhere = " WHERE instr(UPPER(symbol),UPPER(?))>0"
 	}
 	parts := []string{}
 	args := []any{}
@@ -382,7 +384,7 @@ func (s *Store) AlertTimeline(ctx context.Context, symbol, kind string, limit in
 	countWhere := ""
 	countArgs := []any{}
 	if symbolWhere != "" {
-		countWhere = " WHERE symbol=?"
+		countWhere = " WHERE instr(UPPER(symbol),UPPER(?))>0"
 		countArgs = append(countArgs, symbol)
 	}
 	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts`+countWhere, countArgs...).Scan(&out.AlertCount); err != nil {

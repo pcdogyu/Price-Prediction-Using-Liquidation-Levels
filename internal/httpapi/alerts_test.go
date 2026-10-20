@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "下单信号类别", "预平仓后自动开仓（始终开启）", "每页 20 条", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-order-signal-settings", `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "下单信号类别", "预平仓后自动开仓（始终开启）", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-order-signal-settings", `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -351,6 +351,33 @@ func TestAlertHistoryEndpoints(t *testing.T) {
 	steadyTimeline := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?kind=steady", nil)
 	if steadyTimeline.Code != http.StatusOK || !strings.Contains(steadyTimeline.Body.String(), `"total_count":1`) || !strings.Contains(steadyTimeline.Body.String(), `"type":"steady"`) {
 		t.Fatalf("the merged kind filter failed: %d %s", steadyTimeline.Code, steadyTimeline.Body.String())
+	}
+	dogeAt := base.Add(10 * time.Minute)
+	if _, err := st.SaveLiquidationAlert(ctx, domain.LiquidationAlert{ID: "adoge", Symbol: "DOGEUSDT", Side: "long", TradeSide: "long", WindowMinutes: 3, NotionalUSD: 400000, ThresholdUSD: 300000, TriggeredAt: dogeAt, QuietSeconds: 600, QuietUntil: dogeAt.Add(10 * time.Minute), Status: domain.AlertStateWatching, UpdatedAt: dogeAt}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveTradeSignal(ctx, domain.TradeSignal{ID: "sdoge", AlertID: "adoge", Symbol: "DOGEUSDT", Kind: domain.SignalAggressive, Side: "long", LiquidationSide: "long", CreatedAt: dogeAt, AlertNotionalUSD: 400000, ThresholdUSD: 300000, WindowMinutes: 3}); err != nil {
+		t.Fatal(err)
+	}
+	fuzzy := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?symbol=doge", nil)
+	var fuzzyPage domain.AlertTimelinePage
+	if fuzzy.Code != http.StatusOK || json.Unmarshal(fuzzy.Body.Bytes(), &fuzzyPage) != nil || len(fuzzyPage.Rows) != 2 || fuzzyPage.TotalCount != 2 || fuzzyPage.AlertCount != 1 || fuzzyPage.AggressiveCount != 1 {
+		t.Fatalf("case-insensitive substring symbol filter failed: %d %s page=%+v", fuzzy.Code, fuzzy.Body.String(), fuzzyPage)
+	}
+	for _, row := range fuzzyPage.Rows {
+		if (row.Alert != nil && row.Alert.Symbol != "DOGEUSDT") || (row.Signal != nil && row.Signal.Symbol != "DOGEUSDT") {
+			t.Fatalf("fuzzy symbol filter returned the wrong pair: %+v", row)
+		}
+	}
+	fuzzyAlerts := serveAlert(srv, http.MethodGet, "/api/v1/alerts/history?symbol=doge", nil)
+	var fuzzyAlertPage domain.AlertPage
+	if fuzzyAlerts.Code != http.StatusOK || json.Unmarshal(fuzzyAlerts.Body.Bytes(), &fuzzyAlertPage) != nil || len(fuzzyAlertPage.Rows) != 1 || fuzzyAlertPage.AlertCount != 1 || fuzzyAlertPage.Rows[0].Symbol != "DOGEUSDT" {
+		t.Fatalf("alert substring symbol filter failed: %d %s page=%+v", fuzzyAlerts.Code, fuzzyAlerts.Body.String(), fuzzyAlertPage)
+	}
+	fuzzySignals := serveAlert(srv, http.MethodGet, "/api/v1/alerts/signals?symbol=doge", nil)
+	var fuzzySignalPage domain.SignalPage
+	if fuzzySignals.Code != http.StatusOK || json.Unmarshal(fuzzySignals.Body.Bytes(), &fuzzySignalPage) != nil || len(fuzzySignalPage.Rows) != 1 || fuzzySignalPage.SignalCount != 1 || fuzzySignalPage.Rows[0].Symbol != "DOGEUSDT" {
+		t.Fatalf("signal substring symbol filter failed: %d %s page=%+v", fuzzySignals.Code, fuzzySignals.Body.String(), fuzzySignalPage)
 	}
 	for _, path := range []string{
 		"/api/v1/alerts/history?limit=0",
