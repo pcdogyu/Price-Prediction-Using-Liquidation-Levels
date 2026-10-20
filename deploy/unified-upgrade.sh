@@ -8,6 +8,8 @@ source_root="$app_root/source"
 data_root=/var/lib/liquidation-predictor
 legacy_root=/opt/tv_okx_bot
 legacy_state=/var/lib/tv-okx-bot
+legacy_database=/etc/tv-okx-bot/data/tvbot.db
+legacy_migration="$data_root/tvbot-legacy-migration.db"
 revision="${1:?usage: unified-upgrade.sh <binance-revision> [build-branch]}"
 build_branch="${2:-binance}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -46,10 +48,10 @@ backup_tree() {
   fi
 }
 
-backup_sqlite() {
-  local source="$1" name="$2"
+snapshot_sqlite() {
+  local source="$1" destination="$2"
   if [[ -f "$source" ]]; then
-    python3 - "$source" "$backup/$name" <<'PY'
+    python3 - "$source" "$destination" <<'PY'
 import sqlite3, sys
 source = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
 destination = sqlite3.connect(sys.argv[2])
@@ -57,12 +59,10 @@ with destination:
     source.backup(destination)
 destination.close(); source.close()
 PY
-    chmod 0600 "$backup/$name"
+    chmod 0600 "$destination"
   fi
 }
 
-backup_sqlite "$data_root/liquidation.db" liquidation.db
-backup_sqlite /etc/tv-okx-bot/data/tvbot.db tvbot.db
 backup_file /etc/tv-okx-bot/data/orders.json tvbot-orders.json
 backup_file "$legacy_root/data/binance-credentials.json" tvbot-binance-credentials.json
 backup_file "$legacy_state/okx-credentials.json" tvbot-okx-credentials.json
@@ -73,10 +73,17 @@ backup_file "$binary" liquidation-predictor
 sha256sum "$backup"/* > "$backup/sha256.txt"
 backup_tree "$data_root/users" "$backup/tvbot-user-credentials"
 
-# The legacy database is owned by tvokx and mode 0600. Keep the original
-# untouched and expose only a consistent backup snapshot to the liquidation
-# service, which runs as the liquidation user and imports it at startup.
-install -o liquidation -g liquidation -m 0600 "$backup/tvbot.db" "$data_root/tvbot-legacy-migration.db"
+# Do not copy SQLite databases into every release backup. The unified database
+# is live application state, and the legacy database only needs a consistent
+# snapshot for the one-time migration. Once that snapshot exists, preserve it
+# and leave both SQLite databases out of subsequent release backups.
+if [[ ! -f "$legacy_migration" && -f "$legacy_database" ]]; then
+  snapshot_sqlite "$legacy_database" "$legacy_migration"
+  chown liquidation:liquidation "$legacy_migration"
+  echo "legacy_migration_snapshot=created"
+else
+  echo "legacy_migration_snapshot=preserved_or_unavailable"
+fi
 
 git -C "$source_root" fetch origin binance
 if git -C "$source_root" show-ref --verify --quiet refs/heads/binance; then
