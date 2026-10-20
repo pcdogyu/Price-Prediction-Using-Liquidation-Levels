@@ -68,3 +68,26 @@ func TestClientDecodesNumericPositionFields(t *testing.T) {
 		t.Fatalf("decoded position = %#v", got)
 	}
 }
+
+func TestClientDecodesNumericOpenOrderFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v4/futures/usdt/orders" || r.URL.Query().Get("status") != "open" {
+			t.Fatalf("unexpected request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`[{"id":123,"contract":"BTC_USDT","size":-8,"left":-8,"price":83065.8,"fill_price":0,"status":"open","finish_as":"-","text":"t-test","is_reduce_only":false,"is_close":false,"create_time":1761027807,"update_time":1761027808}]`))
+	}))
+	defer server.Close()
+
+	client := Client{BaseURL: server.URL, Credentials: Credentials{APIKey: "key", SecretKey: "secret"}, HTTPClient: server.Client()}
+	orders, err := client.OpenOrders(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orders) != 1 {
+		t.Fatalf("orders = %#v", orders)
+	}
+	got := orders[0]
+	if got.IDString() != "123" || got.Contract != "BTC_USDT" || got.Size != "-8" || got.Left != "-8" || got.Price != "83065.8" || got.FillPrice != "0" || got.CreateTime != "1761027807" || got.UpdateTime != "1761027808" {
+		t.Fatalf("decoded order = %#v", got)
+	}
+}

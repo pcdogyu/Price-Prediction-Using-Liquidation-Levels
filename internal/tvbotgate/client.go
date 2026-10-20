@@ -208,6 +208,51 @@ type Order struct {
 	UpdateTime   string          `json:"update_time"`
 }
 
+// UnmarshalJSON accepts both the string and number representations returned by
+// different Gate API deployments for order fields. In particular, the futures
+// open-orders endpoint returns size and left as JSON numbers, while price and
+// time fields may be strings or numbers depending on the response.
+func (o *Order) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID           json.RawMessage `json:"id"`
+		Contract     json.RawMessage `json:"contract"`
+		Size         json.RawMessage `json:"size"`
+		Left         json.RawMessage `json:"left"`
+		Price        json.RawMessage `json:"price"`
+		FillPrice    json.RawMessage `json:"fill_price"`
+		Status       json.RawMessage `json:"status"`
+		FinishAs     json.RawMessage `json:"finish_as"`
+		Text         json.RawMessage `json:"text"`
+		IsReduceOnly bool            `json:"is_reduce_only"`
+		IsClose      bool            `json:"is_close"`
+		CreateTime   json.RawMessage `json:"create_time"`
+		UpdateTime   json.RawMessage `json:"update_time"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fields := []struct {
+		raw *json.RawMessage
+		out *string
+	}{
+		{&raw.Contract, &o.Contract}, {&raw.Size, &o.Size}, {&raw.Left, &o.Left},
+		{&raw.Price, &o.Price}, {&raw.FillPrice, &o.FillPrice}, {&raw.Status, &o.Status},
+		{&raw.FinishAs, &o.FinishAs}, {&raw.Text, &o.Text}, {&raw.CreateTime, &o.CreateTime},
+		{&raw.UpdateTime, &o.UpdateTime},
+	}
+	for _, field := range fields {
+		value, err := gateJSONText(*field.raw)
+		if err != nil {
+			return err
+		}
+		*field.out = value
+	}
+	o.ID = raw.ID
+	o.IsReduceOnly = raw.IsReduceOnly
+	o.IsClose = raw.IsClose
+	return nil
+}
+
 func (o Order) IDString() string { return rawString(o.ID) }
 func rawString(raw json.RawMessage) string {
 	raw = bytes.TrimSpace(raw)
