@@ -2,11 +2,13 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -597,6 +599,64 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyAlgoConflict(t *testing.T) 
 	retry := orderForms[1]
 	if retry.Get("symbol") != "AVAXUSDT" || retry.Get("side") != "BUY" || retry.Get("type") != "LIMIT" || retry.Get("quantity") != "15" || retry.Get("price") != "6.6472" || retry.Get("reduceOnly") != "true" {
 		t.Fatalf("bad retry close form: %#v", retry)
+	}
+}
+
+func TestBinanceReduceOnlyCloseRetriesWhenConflictSnapshotIsEmpty(t *testing.T) {
+	oldDelay := binanceReduceOnlyRetryDelay
+	binanceReduceOnlyRetryDelay = 0
+	t.Cleanup(func() { binanceReduceOnlyRetryDelay = oldDelay })
+
+	orderAttempts := 0
+	regularChecks := 0
+	algoChecks := 0
+	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v1/openOrders":
+			regularChecks++
+			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/openAlgoOrders":
+			algoChecks++
+			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/order":
+			if r.Method != http.MethodPost {
+				t.Fatalf("unexpected Binance order method %s", r.Method)
+			}
+			orderAttempts++
+			if orderAttempts == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"code":-2022,"msg":"ReduceOnly Order is rejected."}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"orderId":789,"symbol":"ZECUSDT","status":"NEW","clientOrderId":"close-zec","price":"1149.1","origQty":"0.432","executedQty":"0","type":"LIMIT","side":"SELL","positionSide":"BOTH"}`))
+		default:
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+	}))
+	defer binanceServer.Close()
+	client := binance.Client{BaseURL: binanceServer.URL, Credentials: binance.Credentials{APIKey: strings.Repeat("k", 4), SecretKey: strings.Repeat("s", 8)}, HTTPClient: binanceServer.Client()}
+	req := binance.PlaceOrderRequest{
+		Symbol:           "ZECUSDT",
+		Side:             "SELL",
+		PositionSide:     "BOTH",
+		Type:             "LIMIT",
+		TimeInForce:      "GTC",
+		Quantity:         "0.432",
+		Price:            "1149.1",
+		NewClientOrderID: "close-zec",
+		ReduceOnly:       true,
+	}
+	_, firstErr := client.PlaceOrder(context.Background(), req)
+	if firstErr == nil || !binance.IsAPIErrorCode(firstErr, -2022) {
+		t.Fatalf("expected initial ReduceOnly rejection, got %v", firstErr)
+	}
+	ack, unknown, err := retryBinanceReduceOnlyPositionClose(context.Background(), client, req, firstErr)
+	if err != nil || unknown || ack.OrderID != 789 {
+		t.Fatalf("retry result ack=%#v unknown=%v err=%v", ack, unknown, err)
+	}
+	if orderAttempts != 2 || regularChecks != 1 || algoChecks != 1 {
+		t.Fatalf("expected one initial and one retry with both order snapshots, got orders=%d regular=%d algo=%d", orderAttempts, regularChecks, algoChecks)
 	}
 }
 

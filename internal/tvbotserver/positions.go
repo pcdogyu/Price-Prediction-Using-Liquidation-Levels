@@ -5395,42 +5395,36 @@ func placeBinanceOrderWithUnknownRecovery(ctx context.Context, client binance.Cl
 }
 
 func retryBinanceReduceOnlyPositionClose(ctx context.Context, client binance.Client, req binance.PlaceOrderRequest, originalErr error) (binance.OrderAck, bool, error) {
-	if !req.ReduceOnly || !binance.IsAPIErrorCode(originalErr, -2022) {
+	if !binance.IsAPIErrorCode(originalErr, -2022) {
 		return binance.OrderAck{}, false, originalErr
 	}
 	attempts := binanceReduceOnlyRetryAttempts
 	if attempts < 1 {
 		attempts = 1
 	}
-	canceledTotal := 0
+	canceledRegularTotal := 0
+	canceledAlgoTotal := 0
 	lastErr := originalErr
 	for attempt := 0; attempt < attempts; attempt++ {
-		canceled, err := cancelBinanceConflictingReduceOnlyOpenOrders(ctx, client, req)
-		if err != nil {
-			return binance.OrderAck{}, false, originalErr
-		}
-		canceledAlgos, err := cancelBinanceConflictingReduceOnlyAlgoOrders(ctx, client, req)
-		if err != nil && canceled == 0 {
-			return binance.OrderAck{}, false, originalErr
-		}
-		canceled += canceledAlgos
-		canceledTotal += canceled
-		if canceledTotal == 0 {
-			return binance.OrderAck{}, false, originalErr
+		canceled, canceledAlgos, discoveryErr := cancelBinanceConflictingReduceOnlyOrders(ctx, client, req)
+		canceledRegularTotal += canceled
+		canceledAlgoTotal += canceledAlgos
+		if discoveryErr != nil {
+			lastErr = discoveryErr
 		}
 		if err := waitBinanceReduceOnlyRetry(ctx); err != nil {
-			return binance.OrderAck{}, false, originalErr
+			return binance.OrderAck{}, false, fmt.Errorf("Binance reduce-only close retry canceled %d regular and %d algorithm orders: %w", canceledRegularTotal, canceledAlgoTotal, err)
 		}
 		ack, unknown, err := placeBinanceOrderWithUnknownRecovery(ctx, client, req)
 		if err == nil {
 			return ack, unknown, nil
 		}
 		if !binance.IsAPIErrorCode(err, -2022) {
-			return binance.OrderAck{}, false, fmt.Errorf("Binance reduce-only close retry failed after canceling %d conflicting orders: %w", canceledTotal, err)
+			return binance.OrderAck{}, false, fmt.Errorf("Binance reduce-only close retry failed after canceling %d regular and %d algorithm orders: %w", canceledRegularTotal, canceledAlgoTotal, err)
 		}
 		lastErr = err
 	}
-	return binance.OrderAck{}, false, fmt.Errorf("Binance reduce-only close retry failed after canceling %d conflicting orders: %w", canceledTotal, lastErr)
+	return binance.OrderAck{}, false, fmt.Errorf("Binance reduce-only close retry failed after canceling %d regular and %d algorithm orders: %w", canceledRegularTotal, canceledAlgoTotal, lastErr)
 }
 
 func waitBinanceReduceOnlyRetry(ctx context.Context) error {
@@ -5577,6 +5571,21 @@ func cancelBinanceConflictingReduceOnlyOpenOrders(ctx context.Context, client bi
 		canceled++
 	}
 	return canceled, nil
+}
+
+func cancelBinanceConflictingReduceOnlyOrders(ctx context.Context, client binance.Client, req binance.PlaceOrderRequest) (int, int, error) {
+	regularCanceled, regularErr := cancelBinanceConflictingReduceOnlyOpenOrders(ctx, client, req)
+	algoCanceled, algoErr := cancelBinanceConflictingReduceOnlyAlgoOrders(ctx, client, req)
+	if regularErr == nil && algoErr == nil {
+		return regularCanceled, algoCanceled, nil
+	}
+	if regularErr != nil && algoErr != nil {
+		return regularCanceled, algoCanceled, fmt.Errorf("inspect Binance regular and algorithm orders failed: regular: %v; algorithm: %v", regularErr, algoErr)
+	}
+	if regularErr != nil {
+		return regularCanceled, algoCanceled, fmt.Errorf("inspect Binance regular orders failed: %w", regularErr)
+	}
+	return regularCanceled, algoCanceled, fmt.Errorf("inspect Binance algorithm orders failed: %w", algoErr)
 }
 
 func cancelBinanceConflictingReduceOnlyAlgoOrders(ctx context.Context, client binance.Client, req binance.PlaceOrderRequest) (int, error) {
