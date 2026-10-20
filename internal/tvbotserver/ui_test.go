@@ -71,6 +71,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`apiKeyTestEnv`,
 		`apiKeyTestStale`,
 		`apiKeyTestError`,
+		`zeroTime(status.updated_at) ? "-" : status.updated_at`,
 		`data-delete-api-id=`,
 		`async function deleteAPIKey(apiID)`,
 		`button.dataset.deleteApiId`,

@@ -4489,7 +4489,7 @@ const tvbotHTML = `<!doctype html>
       ];
       if (exchange === "okx") rows.push(["Passphrase", status.passphrase_set ? "已保存" : "未保存"]);
       rows.push(["来源", status.source || "-"]);
-      rows.push(["更新时间", status.updated_at || "-"]);
+      rows.push(["更新时间", zeroTime(status.updated_at) ? "-" : status.updated_at]);
       if (status.error) rows.push(["读取错误", status.error]);
       const test = state.apiKeyTest;
       const testID = state.apiKeyTestID || (test && test.api_id) || "";
