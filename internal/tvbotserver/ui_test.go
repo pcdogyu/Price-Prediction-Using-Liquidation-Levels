@@ -16,7 +16,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		t.Fatalf("tvbot page contains an unrendered or legacy second navigation")
 	}
 	nav := strings.Index(page, `<nav class="app-nav tvbot-nav" aria-label="主菜单">`)
-	links := strings.Index(page, `<div class="app-links">`)
+	links := strings.Index(page, `<div class="tvbot-menu-row"><div class="app-links tvbot-top-menu">`)
 	if nav < 0 || links < 0 || links < nav {
 		t.Fatalf("unified navigation is missing or out of order: nav=%d links=%d", nav, links)
 	}
@@ -28,7 +28,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 	for _, want := range []string{
 		`<nav class="app-nav tvbot-nav" aria-label="主菜单">`,
-		`<div class="app-links">`,
+		`<div class="app-links tvbot-top-menu">`,
 		`data-system-menu="true"`,
 		`class="nav-system-trigger header-action"`,
 		`交易所信息`,

@@ -82,15 +82,29 @@ func RenderTVBotNav(items []TopMenuItem, link func(string) string, active func(T
 
 func renderUnifiedNav(classSuffix string, items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool, username, logoutPath string) string {
 	var out strings.Builder
-	out.WriteString(`<nav class="app-nav` + classSuffix + `" aria-label="主菜单"><div class="app-links">`)
+	tvbotLayout := classSuffix == " tvbot-nav"
+	out.WriteString(`<nav class="app-nav` + classSuffix + `" aria-label="主菜单">`)
+	if tvbotLayout {
+		out.WriteString(`<div class="tvbot-menu-row"><div class="app-links tvbot-top-menu">`)
+	} else {
+		out.WriteString(`<div class="app-links">`)
+	}
 	out.WriteString(RenderTopMenuLinks(items, link, active))
-	out.WriteString(`</div>`)
+	if tvbotLayout {
+		out.WriteString(`</div></div><div class="header-controls">`)
+	} else {
+		out.WriteString(`</div>`)
+	}
 	out.WriteString(RenderSystemMenu(items, link, active))
 	out.WriteString(`<button id="nav-theme" type="button">浅色主题</button><button id="nav-logs" type="button">程序日志</button>`)
 	if username = strings.TrimSpace(username); username != "" {
 		out.WriteString(`<span class="nav-user" aria-label="当前登录用户">` + html.EscapeString(username) + `</span>`)
 	}
-	out.WriteString(`<form method="post" action="` + html.EscapeString(logoutPath) + `"><button type="submit">退出</button></form></nav>`)
+	out.WriteString(`<form method="post" action="` + html.EscapeString(logoutPath) + `"><button type="submit">退出</button></form>`)
+	if tvbotLayout {
+		out.WriteString(`</div>`)
+	}
+	out.WriteString(`</nav>`)
 	return out.String()
 }
 
