@@ -21,6 +21,15 @@ type TopSymbol struct {
 	RefreshedAt    time.Time `json:"refreshed_at"`
 }
 
+// ContractSymbol describes one currently tradable Binance USDⓈ-M perpetual
+// contract. The bubble page uses this catalog for selection; it deliberately
+// does not imply that the contract is part of the background APP_SYMBOLS
+// monitoring set.
+type ContractSymbol struct {
+	Symbol    string `json:"symbol"`
+	BaseAsset string `json:"base_asset"`
+}
+
 // AlwaysWatch stays on the alert watch list regardless of volume rank, because
 // the alert thresholds are defined for BTC and ETH explicitly.
 var AlwaysWatch = []string{"BTCUSDT", "ETHUSDT"}
@@ -55,21 +64,41 @@ func tradableUSDT(info topSymbolExchangeInfo) map[string]string {
 	out := map[string]string{}
 	for _, s := range info.Symbols {
 		symbol := strings.ToUpper(strings.TrimSpace(s.Symbol))
-		if !strings.HasSuffix(symbol, "USDT") || s.QuoteAsset != "USDT" {
+		if !strings.HasSuffix(symbol, "USDT") || !strings.EqualFold(strings.TrimSpace(s.QuoteAsset), "USDT") {
 			continue
 		}
-		if s.ContractType != "" && s.ContractType != "PERPETUAL" {
+		if s.ContractType != "" && !strings.EqualFold(strings.TrimSpace(s.ContractType), "PERPETUAL") {
 			continue
 		}
-		if s.Status != "" && s.Status != "TRADING" {
+		if s.Status != "" && !strings.EqualFold(strings.TrimSpace(s.Status), "TRADING") {
 			continue
 		}
-		if s.Permission != "" && s.Permission != "MARKET" {
+		if s.Permission != "" && !strings.EqualFold(strings.TrimSpace(s.Permission), "MARKET") {
 			continue
 		}
 		out[symbol] = strings.ToUpper(s.BaseAsset)
 	}
 	return out
+}
+
+// BinanceUSDTPerpetualSymbols returns the current exchange-wide selection
+// catalog used by the bubble page. The endpoint is public and the result is
+// intentionally not used to expand background streams or model training.
+func BinanceUSDTPerpetualSymbols(ctx context.Context) ([]ContractSymbol, error) {
+	var info topSymbolExchangeInfo
+	if err := newHTTP().get(ctx, binanceFuturesBase+"/fapi/v1/exchangeInfo", &info); err != nil {
+		return nil, err
+	}
+	tradable := tradableUSDT(info)
+	rows := make([]ContractSymbol, 0, len(tradable))
+	for symbol, base := range tradable {
+		rows = append(rows, ContractSymbol{Symbol: symbol, BaseAsset: base})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Symbol < rows[j].Symbol })
+	if len(rows) == 0 {
+		return nil, errNoTopSymbols
+	}
+	return rows, nil
 }
 
 // rankUSDT turns raw 24 hour tickers into ranked USDT perpetual entries. It is

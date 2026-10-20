@@ -147,3 +147,56 @@ func TestAlertKlinesReportsBothUpstreamAndFallbackFailures(t *testing.T) {
 		t.Fatalf("combined error=%v", err)
 	}
 }
+
+func TestMarketLoadsUnconfiguredSymbolOnDemand(t *testing.T) {
+	svc := klineService(t)
+	original := fetchAlertKlines
+	var calls []string
+	fetchAlertKlines = func(_ context.Context, symbol, interval string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+		calls = append(calls, symbol+":"+interval)
+		step := time.Minute
+		if interval == "15m" {
+			step = 15 * time.Minute
+		}
+		if interval == "1h" {
+			step = time.Hour
+		}
+		end := until.UTC().Truncate(step)
+		rows := make([]domain.MarketCandle, 0, limit)
+		for i := limit; i > 0; i-- {
+			at := end.Add(-time.Duration(i) * step)
+			price := 100 + float64(limit-i)
+			rows = append(rows, domain.MarketCandle{Time: at, Open: price, High: price + 1, Low: price - 1, Close: price + .5, VolumeUSD: 10, ExchangeCount: 1, Complete: true})
+		}
+		return rows, false, nil
+	}
+	t.Cleanup(func() { fetchAlertKlines = original })
+
+	view, err := svc.Market(context.Background(), "SOLUSDT", "15m", time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Source != "binance_usdm_ondemand" || len(view.Candles) != 10 || len(view.ModelSignals) != 0 || view.Summary.LastPrice <= 0 {
+		t.Fatalf("unexpected on-demand view: %+v", view)
+	}
+	if len(calls) != 2 || calls[0] != "SOLUSDT:15m" || calls[1] != "SOLUSDT:1h" {
+		t.Fatalf("unexpected upstream calls: %v", calls)
+	}
+	if _, err := svc.Market(context.Background(), "SOLUSDT", "15m", time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC), 10); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("short market cache should avoid duplicate upstream calls: %v", calls)
+	}
+}
+
+func TestUnconfiguredVolumeProfileIsUnavailable(t *testing.T) {
+	svc := klineService(t)
+	profile, err := svc.VolumeProfile(context.Background(), "SOLUSDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.State != "unavailable" || profile.Symbol != "SOLUSDT" {
+		t.Fatalf("unexpected unconfigured volume profile: %+v", profile)
+	}
+}

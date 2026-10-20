@@ -2,6 +2,8 @@ package exchange
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -94,6 +96,33 @@ func TestTradableUSDTFilter(t *testing.T) {
 	got := tradableUSDT(info)
 	if len(got) != 1 || got["BTCUSDT"] != "BTC" {
 		t.Fatalf("only the tradable USDT perpetual must survive: %+v", got)
+	}
+}
+
+func TestBinanceUSDTPerpetualSymbolsReturnsSortedCatalog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fapi/v1/exchangeInfo" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"symbols":[
+			{"symbol":"ETHUSDT","baseAsset":"ETH","quoteAsset":"USDT","contractType":"PERPETUAL","status":"TRADING","permissionType":"MARKET"},
+			{"symbol":"BTCUSDT_2609","baseAsset":"BTC","quoteAsset":"USDT","contractType":"CURRENT_MONTH","status":"TRADING","permissionType":"MARKET"},
+			{"symbol":"BTCUSDT","baseAsset":"BTC","quoteAsset":"USDT","contractType":"PERPETUAL","status":"TRADING","permissionType":"MARKET"},
+			{"symbol":"XRPBUSD","baseAsset":"XRP","quoteAsset":"BUSD","contractType":"PERPETUAL","status":"TRADING","permissionType":"MARKET"},
+			{"symbol":"SOLUSDT","baseAsset":"SOL","quoteAsset":"USDT","contractType":"PERPETUAL","status":"SETTLING","permissionType":"MARKET"}
+		]}`))
+	}))
+	defer server.Close()
+	original := binanceFuturesBase
+	binanceFuturesBase = server.URL
+	t.Cleanup(func() { binanceFuturesBase = original })
+
+	rows, err := BinanceUSDTPerpetualSymbols(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Symbol != "BTCUSDT" || rows[1].Symbol != "ETHUSDT" || rows[0].BaseAsset != "BTC" {
+		t.Fatalf("unexpected catalog: %+v", rows)
 	}
 }
 

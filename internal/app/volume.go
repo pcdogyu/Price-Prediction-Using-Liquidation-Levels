@@ -270,6 +270,9 @@ func waitContext(ctx context.Context, duration time.Duration) error {
 
 func (s *Service) VolumeProfile(ctx context.Context, symbol string) (domain.VolumeProfile, error) {
 	now := time.Now().UTC()
+	if !s.backgroundSymbol(symbol) {
+		return domain.VolumeProfile{Symbol: symbol, Source: domain.DataSourceBinanceUSDM, State: "unavailable", UpdatedAt: now}, nil
+	}
 	session, err := volumeprofile.SessionAt(now)
 	if err != nil {
 		return domain.VolumeProfile{}, err

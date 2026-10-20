@@ -58,7 +58,7 @@ func TestBubbleChartUsesConfiguredMultipleSymbols(t *testing.T) {
 	defer st.Close()
 	w := httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/bubbles", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `data-symbol="SOLUSDT"`) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `data-symbol="SOLUSDT"`) || !strings.Contains(w.Body.String(), `id="symbol-search"`) || !strings.Contains(w.Body.String(), `id="symbol-options"`) {
 		t.Fatalf("configured SOL symbol was not rendered: status=%d", w.Code)
 	}
 	w = httptest.NewRecorder()

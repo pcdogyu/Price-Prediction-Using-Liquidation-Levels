@@ -50,7 +50,12 @@ type Service struct {
 	mu                 sync.RWMutex
 	priceMu            sync.Mutex
 	klineMu            sync.Mutex
+	marketMu           sync.Mutex
+	symbolCatalogMu    sync.Mutex
 	klineCache         map[string]klineCacheEntry
+	marketCache        map[string]marketCacheEntry
+	symbolCatalog      []exchange.ContractSymbol
+	symbolCatalogAt    time.Time
 	trainMu            sync.Mutex
 	maps               map[string]engine.MapResult
 	predictions        map[string]domain.Prediction
@@ -104,7 +109,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	if strings.TrimSpace(cfg.AlertTenantDataPath) == "" && strings.TrimSpace(cfg.DatabasePath) != "" {
 		cfg.AlertTenantDataPath = filepath.Join(filepath.Dir(cfg.DatabasePath), "alert-tenants")
 	}
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime)}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, marketCache: map[string]marketCacheEntry{}, volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime)}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	if a, e := ml.Load(cfg.ModelPath); e == nil {
@@ -477,6 +482,9 @@ func (s *Service) Latest(ctx context.Context, symbol string) (domain.Prediction,
 	}
 	p, e := s.store.LatestPrediction(ctx, symbol)
 	if errors.Is(e, sql.ErrNoRows) {
+		if !s.backgroundSymbol(symbol) {
+			return domain.Prediction{Symbol: symbol, DataSource: domain.DataSourceBinanceUSDM, State: "unavailable", Reason: "该币对未配置后台预测"}, nil
+		}
 		return p, errors.New("prediction unavailable")
 	}
 	if e == nil {
@@ -488,6 +496,9 @@ func (s *Service) Latest(ctx context.Context, symbol string) (domain.Prediction,
 }
 
 func (s *Service) Market(ctx context.Context, symbol, intervalName string, before time.Time, limit int) (domain.MarketView, error) {
+	if !s.backgroundSymbol(symbol) {
+		return s.onDemandMarket(ctx, symbol, intervalName, before, limit)
+	}
 	now := time.Now().UTC()
 	latestRequest := before.IsZero()
 	interval, ok := marketview.ParseInterval(intervalName)

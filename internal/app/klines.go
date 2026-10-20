@@ -25,12 +25,23 @@ const klineUpstreamTimeout = 8 * time.Second
 // through symbols and pagination cursors.
 const klineCacheSize = 128
 
+const onDemandMarketCacheTTL = 5 * time.Second
+
 // fetchAlertKlines is replaceable in tests so the local-database fallback can
 // be exercised without depending on Binance network availability.
 var fetchAlertKlines = exchange.BinanceKlines
 
+var fetchAlertDailyKlines = func(ctx context.Context, symbol, _ string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+	return exchange.BinanceDailyKlines(ctx, symbol, limit, until)
+}
+
 type klineCacheEntry struct {
 	view      domain.KlineView
+	expiresAt time.Time
+}
+
+type marketCacheEntry struct {
+	view      domain.MarketView
 	expiresAt time.Time
 }
 
@@ -40,6 +51,9 @@ type klineCacheEntry struct {
 // the chart has to read them through here. A zero until asks for the newest
 // candles; passing the oldest candle time pages further into history.
 func (s *Service) AlertKlines(ctx context.Context, symbol, interval string, limit int, until time.Time) (domain.KlineView, error) {
+	if interval == "1d" {
+		return domain.KlineView{}, fmt.Errorf("unsupported kline interval %q", interval)
+	}
 	minutes, ok := exchange.KlineIntervalMinutes[interval]
 	if !ok {
 		return domain.KlineView{}, fmt.Errorf("unsupported kline interval %q", interval)
@@ -74,6 +88,163 @@ func (s *Service) AlertKlines(ctx context.Context, symbol, interval string, limi
 	}
 	s.rememberKlines(key, view)
 	return view, nil
+}
+
+// onDemandMarket serves a valid exchange pair that is not part of the local
+// APP_SYMBOLS collection. Binance K-lines are fetched only for the selected
+// chart; prediction and local volume-profile data are intentionally absent for
+// this path.
+func (s *Service) onDemandMarket(ctx context.Context, symbol, intervalName string, before time.Time, limit int) (domain.MarketView, error) {
+	_, ok := marketview.ParseInterval(intervalName)
+	if !ok {
+		return domain.MarketView{}, errors.New("unsupported market interval")
+	}
+	now := time.Now().UTC()
+	if before.IsZero() {
+		before = now.Add(time.Minute)
+	}
+	cacheKey := symbol + "|" + intervalName + "|" + strconv.Itoa(limit) + "|" + before.UTC().Truncate(time.Second).Format(time.RFC3339)
+	if cached, ok := s.cachedOnDemandMarket(cacheKey); ok {
+		return s.attachOnDemandLiquidations(ctx, cached)
+	}
+	sourceInterval, multiplier := onDemandKlineSource(intervalName)
+	required := limit * multiplier
+	if required < 40 {
+		required = 40
+	}
+	upstreamCtx, cancel := context.WithTimeout(ctx, klineUpstreamTimeout)
+	defer cancel()
+	raw, hasMore, err := fetchPagedAlertKlines(upstreamCtx, symbol, sourceInterval, required, before)
+	if err != nil {
+		return domain.MarketView{}, err
+	}
+	if len(raw) == 0 {
+		return domain.MarketView{}, errors.New("market data unavailable")
+	}
+
+	// A one-hour page keeps the ticker summary useful even when the chart is
+	// zoomed into a short interval. If that best-effort request fails, the chart
+	// page itself is still valid and its selected-window candles are used.
+	summaryRaw, _, summaryErr := fetchPagedAlertKlines(upstreamCtx, symbol, "1h", 25, before)
+	if summaryErr != nil || len(summaryRaw) == 0 {
+		summaryRaw = raw
+	}
+	rawCandles := marketCandlesToDomain(symbol, raw)
+	summaryCandles := marketCandlesToDomain(symbol, summaryRaw)
+	view, err := marketview.BuildPagedView(symbol, rawCandles, summaryCandles, nil, intervalName, before, limit, now, time.Time{}, true)
+	if err != nil {
+		return domain.MarketView{}, err
+	}
+	view.Source = "binance_usdm_ondemand"
+	view.LiquidationMinimumUSD = domain.DefaultLiquidationMinimumUSD
+	if hasMore && len(view.Candles) > 0 {
+		cursor := view.Candles[0].Time.UTC()
+		view.HasMore = true
+		view.NextBefore = &cursor
+	}
+	s.rememberOnDemandMarket(cacheKey, view)
+	return s.attachOnDemandLiquidations(ctx, view)
+}
+
+func (s *Service) attachOnDemandLiquidations(ctx context.Context, view domain.MarketView) (domain.MarketView, error) {
+	if len(view.Candles) > 0 {
+		interval, _ := marketview.ParseInterval(view.Interval)
+		start := view.Candles[0].Time
+		end := view.Candles[len(view.Candles)-1].Time.Add(interval)
+		liquidations, truncated, liquidationErr := s.store.Liquidations(ctx, view.Symbol, start, end, 5000, domain.DefaultLiquidationMinimumUSD)
+		if liquidationErr != nil {
+			return domain.MarketView{}, liquidationErr
+		}
+		view.Liquidations = liquidations
+		view.LiquidationsTruncated = truncated
+	}
+	return view, nil
+}
+
+func (s *Service) cachedOnDemandMarket(key string) (domain.MarketView, bool) {
+	s.marketMu.Lock()
+	defer s.marketMu.Unlock()
+	entry, ok := s.marketCache[key]
+	if !ok {
+		return domain.MarketView{}, false
+	}
+	if time.Now().UTC().After(entry.expiresAt) {
+		delete(s.marketCache, key)
+		return domain.MarketView{}, false
+	}
+	return entry.view, true
+}
+
+func (s *Service) rememberOnDemandMarket(key string, view domain.MarketView) {
+	now := time.Now().UTC()
+	s.marketMu.Lock()
+	defer s.marketMu.Unlock()
+	if s.marketCache == nil {
+		s.marketCache = make(map[string]marketCacheEntry)
+	}
+	if len(s.marketCache) >= 64 {
+		for existing, entry := range s.marketCache {
+			if now.After(entry.expiresAt) {
+				delete(s.marketCache, existing)
+			}
+		}
+	}
+	s.marketCache[key] = marketCacheEntry{view: view, expiresAt: now.Add(onDemandMarketCacheTTL)}
+}
+
+func onDemandKlineSource(interval string) (string, int) {
+	switch interval {
+	case "2m":
+		return "1m", 2
+	case "10m":
+		return "1m", 10
+	case "24h":
+		return "1d", 1
+	default:
+		return interval, 1
+	}
+}
+
+func fetchPagedAlertKlines(ctx context.Context, symbol, interval string, required int, before time.Time) ([]domain.MarketCandle, bool, error) {
+	if required < 1 {
+		required = 1
+	}
+	all := make([]domain.MarketCandle, 0, required)
+	cursor := before
+	hasMore := false
+	for len(all) < required {
+		pageLimit := required - len(all)
+		if pageLimit > exchange.KlinePageLimit {
+			pageLimit = exchange.KlinePageLimit
+		}
+		fetch := fetchAlertKlines
+		if interval == "1d" {
+			fetch = fetchAlertDailyKlines
+		}
+		page, more, err := fetch(ctx, symbol, interval, pageLimit, cursor)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		all = append(page, all...)
+		hasMore = more
+		oldest := page[0].Time.UTC()
+		if !more || oldest.IsZero() || (!cursor.IsZero() && !oldest.Before(cursor)) {
+			break
+		}
+		cursor = oldest
+	}
+	return all, hasMore, nil
+}
+
+func marketCandlesToDomain(symbol string, rows []domain.MarketCandle) []domain.Candle {
+	out := make([]domain.Candle, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.Candle{Exchange: "binance", Symbol: symbol, Time: row.Time, Open: row.Open, High: row.High, Low: row.Low, Close: row.Close, VolumeUSD: row.VolumeUSD})
+	}
+	return out
 }
 
 // localAlertKlines rebuilds a Binance interval from the one-minute candles the

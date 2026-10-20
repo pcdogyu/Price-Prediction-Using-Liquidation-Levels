@@ -14,10 +14,8 @@ import (
 // variable so the kline proxy can be pointed at a local HTTP fixture in tests.
 var binanceFuturesBase = "https://fapi.binance.com"
 
-// KlineIntervals lists the intervals the alert K-line page offers, in display
-// order. Binance serves every one of them natively, so the chart never has to
-// aggregate 1m candles and the monitored pairs outside APP_SYMBOLS, which are
-// not stored locally, become chartable through the same code path.
+// KlineIntervals lists the native Binance intervals used by the on-demand
+// chart loader. The page may aggregate these into its custom display periods.
 var KlineIntervals = []string{"1m", "2m", "5m", "15m", "30m", "1h", "4h", "8h", "12h"}
 
 // KlineIntervalMinutes maps those names to their length in minutes.
@@ -32,7 +30,20 @@ const KlinePageLimit = 1000
 // oldest first, and reports whether older candles are probably still available.
 // A zero until means "up to now".
 func BinanceKlines(ctx context.Context, symbol, interval string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+	return binanceKlines(ctx, symbol, interval, limit, until, false)
+}
+
+// BinanceDailyKlines is used only by the on-demand 24-hour chart period. The
+// public alert-image proxy keeps its historical nine-period contract intact.
+func BinanceDailyKlines(ctx context.Context, symbol string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+	return binanceKlines(ctx, symbol, "1d", limit, until, true)
+}
+
+func binanceKlines(ctx context.Context, symbol, interval string, limit int, until time.Time, allowDaily bool) ([]domain.MarketCandle, bool, error) {
 	minutes, ok := KlineIntervalMinutes[interval]
+	if interval == "1d" && allowDaily {
+		minutes, ok = 1440, true
+	}
 	if !ok {
 		return nil, false, fmt.Errorf("unsupported kline interval %q", interval)
 	}

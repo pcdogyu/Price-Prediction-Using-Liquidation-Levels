@@ -111,6 +111,7 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.HandleFunc("/api/v1/coinglass/latest", getOnly(s.coinGlassLatest))
 	mux.HandleFunc("/api/v1/coinglass/schedule", getOnly(s.coinGlassSchedule))
 	mux.HandleFunc("/api/v1/signals/latest", getOnly(s.signal))
+	mux.HandleFunc("/api/v1/symbols", getOnly(s.dashboardSymbols))
 	mux.HandleFunc("/api/v1/map", getOnly(s.liquidationMap))
 	mux.HandleFunc("/api/v1/market", getOnly(s.market))
 	mux.HandleFunc("/api/v1/volume-profile", getOnly(s.volumeProfile))
@@ -456,7 +457,7 @@ func (s *Server) dashboardSymbolButtons() string {
 		}
 		buttons = append(buttons, `<button type="button" data-symbol="`+htmlEscapeAttribute(value)+`"`+class+`>`+html.EscapeString(label)+`</button>`)
 	}
-	return strings.Join(buttons, "")
+	return strings.Join(buttons, "") + `<label class="symbol-picker" for="symbol-search"><span>全部币对</span><input id="symbol-search" type="search" list="symbol-options" placeholder="搜索 BTC / ETH" autocomplete="off" spellcheck="false"><datalist id="symbol-options"></datalist><button id="symbol-load" type="button">加载</button></label><span id="symbol-catalog-state" class="symbol-catalog-state" aria-live="polite">正在读取币对目录…</span>`
 }
 
 func containsString(values []string, target string) bool {
@@ -470,10 +471,38 @@ func containsString(values []string, target string) bool {
 
 func (s *Server) symbol(r *http.Request) (string, error) {
 	v := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("symbol")))
-	if _, ok := s.symbolSet[v]; !ok {
-		return "", fmt.Errorf("symbol must be one of %s", strings.Join(s.symbols, ", "))
+	if !validDashboardSymbolName(v) {
+		return "", fmt.Errorf("symbol must be a Binance USDT perpetual")
+	}
+	if _, ok := s.symbolSet[v]; ok {
+		return v, nil
+	}
+	if !s.svc.DashboardSymbolSupported(r.Context(), v) {
+		return "", fmt.Errorf("symbol must be a tradable Binance USDT perpetual")
 	}
 	return v, nil
+}
+
+func validDashboardSymbolName(symbol string) bool {
+	if len(symbol) <= len("USDT") || !strings.HasSuffix(symbol, "USDT") {
+		return false
+	}
+	for _, r := range symbol {
+		if (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) dashboardSymbols(w http.ResponseWriter, r *http.Request) {
+	catalog, err := s.svc.DashboardSymbolCatalog(r.Context())
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, fmt.Errorf("Binance symbol catalog unavailable: %w", err))
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, catalog)
 }
 func (s *Server) signal(w http.ResponseWriter, r *http.Request) {
 	sym, e := s.symbol(r)

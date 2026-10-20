@@ -148,7 +148,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 			t.Fatalf("interval=%s status=%d body=%s", interval, w.Code, w.Body.String())
 		}
 	}
-	r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=SOLUSDT", nil)
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=not-a-symbol", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
 	if w.Code != http.StatusBadRequest {

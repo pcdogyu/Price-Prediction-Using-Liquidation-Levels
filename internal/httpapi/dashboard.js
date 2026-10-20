@@ -31,6 +31,7 @@ const chart = {
 let symbol = 'ETHUSDT';
 const initialSymbolButton = document.querySelector('button[data-symbol].active');
 if (initialSymbolButton) symbol = initialSymbolButton.dataset.symbol;
+let symbolCatalog = [];
 let refreshing = false;
 let refreshSequence = 0;
 let refreshController;
@@ -90,6 +91,51 @@ async function json(path, options = {}) {
   try { body = await response.json(); } catch (_) { /* handled below */ }
   if (!response.ok) throw new Error('HTTP ' + response.status + ' · ' + (body?.detail || response.statusText || '请求失败'));
   return body;
+}
+
+function catalogSymbol(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return '';
+  const exact = symbolCatalog.find(item => item.symbol === raw);
+  if (exact) return exact.symbol;
+  const base = symbolCatalog.find(item => item.base_asset === raw);
+  return base ? base.symbol : '';
+}
+
+function activateSymbol(next) {
+  next = String(next || '').toUpperCase();
+  if (!next || next === symbol) {
+    const input = $('symbol-search');
+    if (input) input.value = symbol;
+    return;
+  }
+  symbol = next;
+  document.querySelectorAll('button[data-symbol]').forEach(item => item.classList.toggle('active', item.dataset.symbol === symbol));
+  const input = $('symbol-search');
+  if (input) input.value = symbol;
+  cache.signal = cache.map = cache.market = cache.volume = null;
+  resetChartState();
+  refresh(true);
+}
+
+async function loadSymbolCatalog() {
+  const state = $('symbol-catalog-state');
+  try {
+    const packet = await json('symbols');
+    symbolCatalog = Array.isArray(packet?.symbols) ? packet.symbols.filter(item => item?.symbol && item?.base_asset) : [];
+    const list = $('symbol-options');
+    if (list) {
+      list.replaceChildren(...symbolCatalog.map(item => {
+        const option = document.createElement('option');
+        option.value = item.symbol;
+        option.label = item.base_asset;
+        return option;
+      }));
+    }
+    if (state) state.textContent = symbolCatalog.length + ' 个可交易 USDT 永续';
+  } catch (error) {
+    if (state) state.textContent = '币对目录暂不可用，仍可使用已配置币对';
+  }
 }
 
 function marketPath(before = '') {
@@ -1073,14 +1119,25 @@ async function captureCoinGlass() {
 
 document.querySelectorAll('button[data-symbol]').forEach(button => {
   button.addEventListener('click', () => {
-    document.querySelectorAll('button[data-symbol]').forEach(item => item.classList.remove('active'));
-    button.classList.add('active');
-    symbol = button.dataset.symbol;
-    cache.signal = cache.map = cache.market = cache.volume = null;
-    resetChartState();
-    refresh(true);
+    activateSymbol(button.dataset.symbol);
   });
 });
+if ($('symbol-load')) {
+  $('symbol-load').addEventListener('click', () => {
+    const next = catalogSymbol($('symbol-search').value);
+    if (!next) {
+      $('symbol-catalog-state').textContent = '请输入目录中的币对，例如 BTCUSDT';
+      return;
+    }
+    activateSymbol(next);
+  });
+  $('symbol-search').addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      $('symbol-load').click();
+    }
+  });
+}
 document.querySelectorAll('button[data-interval]').forEach(button => {
   button.classList.toggle('active', button.dataset.interval === chart.interval);
   button.addEventListener('click', () => {
@@ -1130,7 +1187,8 @@ $('log-copy').addEventListener('click', async () => {
 
 installChartSizeControls();
 installChartInteractions();
-refresh(true);
+if ($('symbol-search')) $('symbol-search').value = symbol;
+loadSymbolCatalog().finally(() => refresh(true));
 setInterval(() => refresh(false), 10000);
 setInterval(updateCoinGlassCountdown, 1000);
 setInterval(() => { if (!$('log-drawer').classList.contains('hidden') && $('log-auto').checked) loadLogs(false); }, 5000);
