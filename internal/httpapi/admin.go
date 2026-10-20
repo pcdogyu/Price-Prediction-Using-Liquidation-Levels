@@ -76,6 +76,18 @@ var canonicalDefaultAdminMenuKeys = []string{
 	"order-settings", "template", "orders", "trade-monitor", "upgrade", "system-info", "menu", "system",
 }
 
+var legacyPersonalMenuKeys = []string{
+	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+	"overview", "orders", "positions", "analysis", "trade-monitor", "symbols",
+	"api-keys", "order-settings", "template", "config", "upgrade", "system-info",
+}
+
+var canonicalPersonalMenuKeys = []string{
+	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+	"overview", "positions", "analysis", "symbols", "config", "api-keys",
+	"order-settings", "template", "orders", "trade-monitor", "upgrade", "system-info",
+}
+
 func reorderLegacyDefaultAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	if len(menu) != len(legacyDefaultAdminMenuKeys) {
 		return menu, false
@@ -89,6 +101,28 @@ func reorderLegacyDefaultAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool)
 	}
 	ordered := make([]adminMenuItem, 0, len(canonicalDefaultAdminMenuKeys))
 	for _, key := range canonicalDefaultAdminMenuKeys {
+		item, ok := byKey[key]
+		if !ok {
+			return menu, false
+		}
+		ordered = append(ordered, item)
+	}
+	return ordered, true
+}
+
+func reorderLegacyPersonalMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
+	if len(menu) != len(legacyPersonalMenuKeys) {
+		return menu, false
+	}
+	byKey := make(map[string]adminMenuItem, len(menu))
+	for i, item := range menu {
+		if item.Key != legacyPersonalMenuKeys[i] {
+			return menu, false
+		}
+		byKey[item.Key] = item
+	}
+	ordered := make([]adminMenuItem, 0, len(canonicalPersonalMenuKeys))
+	for _, key := range canonicalPersonalMenuKeys {
 		item, ok := byKey[key]
 		if !ok {
 			return menu, false
@@ -152,6 +186,9 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 		}
 	}
 	if reordered, ok := reorderLegacyDefaultAdminMenu(migrated); ok {
+		return reordered, true
+	}
+	if reordered, ok := reorderLegacyPersonalMenu(migrated); ok {
 		return reordered, true
 	}
 	return migrated, changed

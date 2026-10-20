@@ -85,6 +85,22 @@ func TestMigrateAdminMenuReordersLegacyDefaultOnly(t *testing.T) {
 	}
 }
 
+func TestMigrateAdminMenuReordersLegacyPersonalMenu(t *testing.T) {
+	legacy := make([]adminMenuItem, 0, len(legacyPersonalMenuKeys))
+	for _, key := range legacyPersonalMenuKeys {
+		legacy = append(legacy, adminMenuItem{Key: key, Title: key, Href: "/" + key, Group: "trading"})
+	}
+	migrated, changed := migrateAdminMenu(legacy)
+	if !changed {
+		t.Fatal("legacy personal menu should be migrated")
+	}
+	for i, key := range canonicalPersonalMenuKeys {
+		if migrated[i].Key != key {
+			t.Fatalf("migrated personal menu[%d]=%q, want=%q", i, migrated[i].Key, key)
+		}
+	}
+}
+
 func TestMigrateAdminMenuRenamesSystemManagement(t *testing.T) {
 	legacy := []adminMenuItem{{Key: "system", Title: "系统管理", Href: "/admin", Group: "admin"}}
 	migrated, changed := migrateAdminMenu(legacy)
