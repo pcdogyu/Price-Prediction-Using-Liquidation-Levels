@@ -1505,6 +1505,10 @@ const tvbotHTML = `<!doctype html>
       .dashboard-balance-grid .analysis-card .value {
         font-size: 15px;
       }
+      .dashboard-balance-period-row .balance-window-toolbar {
+        flex: 0 0 auto;
+        width: 100%;
+      }
       .tvbot-page-toolbar { justify-content: flex-start; }
       .app-nav.tvbot-nav {
         display: grid;
