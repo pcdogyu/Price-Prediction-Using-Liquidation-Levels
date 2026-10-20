@@ -87,13 +87,14 @@ func (rtm *alertRuntime) alertChartTaskWindow(symbol, side string, markerAt time
 // a busy symbol had more than 200 historical items, so unrelated historical ◆,
 // aggressive, and steady markers disappeared from the chart.
 func (rtm *alertRuntime) alertChartHistory(ctx context.Context, symbol string, from time.Time) ([]domain.AlertTimelineItem, error) {
-	if rtm.store == nil {
+	history := rtm.historyStore()
+	if history == nil {
 		return nil, nil
 	}
 	rows := []domain.AlertTimelineItem{}
 	cursor := ""
 	for {
-		page, err := rtm.store.AlertTimeline(ctx, symbol, "", 200, cursor)
+		page, err := history.AlertTimeline(ctx, symbol, "", 200, cursor)
 		if err != nil {
 			return nil, err
 		}

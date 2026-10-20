@@ -44,6 +44,16 @@ type alertRuntime struct {
 	watchErr string
 }
 
+// historyStore is shared by the root runtime and all authenticated tenant
+// runtimes. Alert strategy state and notification settings remain tenant-owned,
+// but the resulting alert/signal audit trail is a service-wide stream.
+func (rtm *alertRuntime) historyStore() *store.Store {
+	if rtm.sourceStore != nil {
+		return rtm.sourceStore
+	}
+	return rtm.store
+}
+
 // alertNotifyCooldown suppresses repeated messages for the same symbol and signal
 // kind so a burst cannot flood the chat.
 const alertNotifyCooldown = 5 * time.Minute
@@ -364,6 +374,7 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 			rtm.log.Error("store liquidation alert failed", "symbol", item.Symbol, "error", err)
 			continue
 		}
+		rtm.mirrorAlertToHistory(ctx, item)
 		if created {
 			rtm.submitAlertWebhook(item, allowNotify)
 		}
@@ -386,6 +397,11 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 			rtm.log.Error("store trade signal failed", "symbol", item.Symbol, "error", err)
 			continue
 		}
+		globalItem := item
+		// Tenant identity is used for that tenant's webhook delivery, but the
+		// shared history must not disclose which user produced a signal.
+		globalItem.TenantID = ""
+		rtm.mirrorSignalToHistory(ctx, globalItem)
 		if !created {
 			// A replay after a restart reproduced a signal that is already stored.
 			continue
@@ -395,6 +411,26 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 		if err = rtm.store.MarkTradeSignalNotified(ctx, item.ID, status, message); err != nil && ctx.Err() == nil {
 			rtm.log.Warn("record signal notification status failed", "id", item.ID, "error", err)
 		}
+	}
+}
+
+func (rtm *alertRuntime) mirrorAlertToHistory(ctx context.Context, item domain.LiquidationAlert) {
+	history := rtm.historyStore()
+	if history == nil || history == rtm.store {
+		return
+	}
+	if _, err := history.SaveLiquidationAlert(ctx, item); err != nil {
+		rtm.log.Error("store global liquidation alert failed", "symbol", item.Symbol, "error", err)
+	}
+}
+
+func (rtm *alertRuntime) mirrorSignalToHistory(ctx context.Context, item domain.TradeSignal) {
+	history := rtm.historyStore()
+	if history == nil || history == rtm.store {
+		return
+	}
+	if _, err := history.SaveTradeSignal(ctx, item); err != nil {
+		rtm.log.Error("store global trade signal failed", "symbol", item.Symbol, "error", err)
 	}
 }
 
@@ -503,7 +539,7 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 	var signal domain.TradeSignal
 	switch recordType {
 	case "alert":
-		row, err := rtm.store.LiquidationAlertByID(ctx, recordID)
+		row, err := rtm.historyStore().LiquidationAlertByID(ctx, recordID)
 		if err != nil {
 			return manualTriggerResult{}, err
 		}
@@ -513,7 +549,7 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 			AlertNotionalUSD: row.NotionalUSD, ThresholdUSD: row.ThresholdUSD, WindowMinutes: row.WindowMinutes,
 		}
 	case domain.SignalAggressive, domain.SignalSteady:
-		row, err := rtm.store.TradeSignalByID(ctx, recordID)
+		row, err := rtm.historyStore().TradeSignalByID(ctx, recordID)
 		if err != nil {
 			return manualTriggerResult{}, err
 		}
@@ -564,14 +600,14 @@ func (rtm *alertRuntime) notifyTelegramUsing(ctx context.Context, recordType, re
 	var referencePrice float64
 	switch recordType {
 	case "alert":
-		row, err := rtm.store.LiquidationAlertByID(ctx, recordID)
+		row, err := rtm.historyStore().LiquidationAlertByID(ctx, recordID)
 		if err != nil {
 			return manualNotifyResult{}, err
 		}
 		symbol, side, text = row.Symbol, row.TradeSide, alertMessage(row)
 		markerAt, referencePrice = row.TriggeredAt, row.ReferencePrice
 	case domain.SignalAggressive, domain.SignalSteady:
-		row, err := rtm.store.TradeSignalByID(ctx, recordID)
+		row, err := rtm.historyStore().TradeSignalByID(ctx, recordID)
 		if err != nil {
 			return manualNotifyResult{}, err
 		}

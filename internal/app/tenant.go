@@ -73,6 +73,11 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 	rtm.store = tenantStore
 	rtm.sourceStore = s.store
 	rtm.tenantID = tenantID
+	if err := mergeTenantAlertHistory(ctx, tenantStore, s.store); err != nil {
+		_ = tenantStore.Close()
+		s.alertTenantsMu.Unlock()
+		return nil, fmt.Errorf("merge alert tenant history: %w", err)
+	}
 	if settings, found, settingsErr := s.store.AlertSettingsForTenant(ctx, tenantID); settingsErr != nil {
 		_ = tenantStore.Close()
 		s.alertTenantsMu.Unlock()
@@ -142,6 +147,40 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 		go rtm.tickLoop(startCtx)
 	}
 	return rtm, nil
+}
+
+// mergeTenantAlertHistory upgrades rows written before alert history became a
+// shared stream. The deterministic alert and signal IDs make this idempotent,
+// so opening a tenant more than once is safe and existing global rows win.
+func mergeTenantAlertHistory(ctx context.Context, tenantStore, historyStore *store.Store) error {
+	if tenantStore == nil || historyStore == nil || tenantStore == historyStore {
+		return nil
+	}
+	cursor := ""
+	for {
+		page, err := tenantStore.AlertTimeline(ctx, "", "", 200, cursor)
+		if err != nil {
+			return err
+		}
+		for _, row := range page.Rows {
+			switch {
+			case row.Alert != nil:
+				if _, err := historyStore.SaveLiquidationAlert(ctx, *row.Alert); err != nil {
+					return err
+				}
+			case row.Signal != nil:
+				signal := *row.Signal
+				signal.TenantID = ""
+				if _, err := historyStore.SaveTradeSignal(ctx, signal); err != nil {
+					return err
+				}
+			}
+		}
+		if page.NextCursor == "" {
+			return nil
+		}
+		cursor = page.NextCursor
+	}
 }
 
 func (s *Service) isLegacyAlertTenant(tenantID string) bool {
