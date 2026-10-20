@@ -172,11 +172,14 @@ func renderTVBotHTMLWithMenu(info BuildInfo, r *http.Request, menu []TopMenuItem
 		tab := topMenuTab(item)
 		return tab != "" && tab == currentTab
 	}))
-	topMenu.WriteString(`</nav>`)
+	topMenu.WriteString(`</nav></div>`)
+	topMenu.WriteString(`<div class="header-controls">`)
 	topMenu.WriteString(RenderSystemMenu(menu, link, func(item TopMenuItem) bool {
 		tab := topMenuTab(item)
 		return tab != "" && tab == currentTab
 	}))
+	topMenu.WriteString(`<button type="button" class="header-action theme-toggle" id="tvbot-theme" aria-label="切换主题"></button>`)
+	topMenu.WriteString(`<form class="tvbot-logout-form" method="post" action="` + html.EscapeString(link("/auth/logout")) + `"><button type="submit" class="header-action tvbot-logout" aria-label="退出登录">退出</button></form>`)
 	topMenu.WriteString(`</div>`)
 	themeScript := `<script>(()=>{const button=document.getElementById('tvbot-theme');const update=()=>{const light=document.documentElement.dataset.theme==='light';button.textContent=light?'深色主题':'浅色主题';button.setAttribute('aria-label','当前'+(light?'浅色':'深色')+'主题，切换至'+(light?'深色':'浅色')+'主题')};button.addEventListener('click',()=>window.LiquidationTheme.toggle());window.addEventListener('themechange',update);update()})();</script>`
 	page = strings.Replace(page, "{{HOME_LINK}}", html.EscapeString(link("/alerts")), 1)
@@ -1597,9 +1600,6 @@ const tvbotHTML = `<!doctype html>
 <body>
     <header class="app-nav tvbot-nav">
       {{TVBOT_TOP_MENU}}
-      <div class="header-controls">
-        <button type="button" class="theme-toggle" id="tvbot-theme" aria-label="切换主题"></button>
-      </div>
   </header>
 
   <main>

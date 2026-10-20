@@ -41,7 +41,7 @@ func RenderSystemMenu(items []TopMenuItem, link func(string) string, active func
 		}
 	}
 	out.WriteString(`<div class="nav-system-menu" data-system-menu="true">`)
-	out.WriteString(`<button type="button" class="nav-system-trigger" aria-haspopup="menu" aria-expanded="false"`)
+	out.WriteString(`<button type="button" class="nav-system-trigger header-action" aria-haspopup="menu" aria-expanded="false"`)
 	if activeGroup {
 		out.WriteString(` aria-current="page"`)
 	}
