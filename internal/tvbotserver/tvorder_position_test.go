@@ -152,7 +152,7 @@ func testTVOrderTPSLSignalExecutesBinanceLimitClose(t *testing.T, positionAmount
 		form.Get("quantity") != "221512" ||
 		form.Get("price") != expectedOrderPrice ||
 		form.Get("reduceOnly") != "true" ||
-		form.Get("positionSide") != "" {
+		form.Get("positionSide") != "BOTH" {
 		t.Fatalf("bad Binance close form: %#v", form)
 	}
 }

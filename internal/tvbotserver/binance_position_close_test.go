@@ -151,11 +151,11 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 		t.Fatalf("expected two close orders, got %#v", orderForms)
 	}
 	market := orderForms[0]
-	if market.Get("symbol") != "BTCUSDT" || market.Get("side") != "BUY" || market.Get("type") != "MARKET" || market.Get("quantity") != "2" || market.Get("reduceOnly") != "true" {
+	if market.Get("symbol") != "BTCUSDT" || market.Get("side") != "BUY" || market.Get("type") != "MARKET" || market.Get("quantity") != "2" || market.Get("positionSide") != "BOTH" || market.Get("reduceOnly") != "true" {
 		t.Fatalf("bad market close form: %#v", market)
 	}
 	limit := orderForms[1]
-	if limit.Get("symbol") != "BTCUSDT" || limit.Get("side") != "BUY" || limit.Get("type") != "LIMIT" || limit.Get("timeInForce") != "GTC" || limit.Get("quantity") != "0.2" || limit.Get("price") != "100.2" || limit.Get("reduceOnly") != "true" {
+	if limit.Get("symbol") != "BTCUSDT" || limit.Get("side") != "BUY" || limit.Get("type") != "LIMIT" || limit.Get("timeInForce") != "GTC" || limit.Get("quantity") != "0.2" || limit.Get("price") != "100.2" || limit.Get("positionSide") != "BOTH" || limit.Get("reduceOnly") != "true" {
 		t.Fatalf("bad limit close form: %#v", limit)
 	}
 }
@@ -242,7 +242,7 @@ func TestTVBotBinanceLimitPositionCloseSplitsWhenQuantityExceedsMaxQty(t *testin
 			orderForms[i].Get("type") != "LIMIT" ||
 			orderForms[i].Get("quantity") != want ||
 			orderForms[i].Get("price") != "0.0589" ||
-			orderForms[i].Get("reduceOnly") != "true" {
+			orderForms[i].Get("positionSide") != "BOTH" || orderForms[i].Get("reduceOnly") != "true" {
 			t.Fatalf("bad split order %d: %#v", i, orderForms[i])
 		}
 	}
@@ -506,7 +506,7 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyConflict(t *testing.T) {
 		t.Fatalf("expected every regular order for the symbol canceled before close, got %#v", cancelForms)
 	}
 	retry := orderForms[1]
-	if retry.Get("symbol") != "AVAXUSDT" || retry.Get("side") != "BUY" || retry.Get("type") != "LIMIT" || retry.Get("quantity") != "15" || retry.Get("price") != "6.6285" || retry.Get("reduceOnly") != "true" {
+	if retry.Get("symbol") != "AVAXUSDT" || retry.Get("side") != "BUY" || retry.Get("type") != "LIMIT" || retry.Get("quantity") != "15" || retry.Get("price") != "6.6285" || retry.Get("positionSide") != "BOTH" || retry.Get("reduceOnly") != "true" {
 		t.Fatalf("bad retry close form: %#v", retry)
 	}
 }
@@ -620,7 +620,7 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyAlgoConflict(t *testing.T) 
 		t.Fatalf("expected every algorithm order for the symbol canceled before close, got %#v", cancelAlgoForms)
 	}
 	retry := orderForms[1]
-	if retry.Get("symbol") != "AVAXUSDT" || retry.Get("side") != "BUY" || retry.Get("type") != "LIMIT" || retry.Get("quantity") != "15" || retry.Get("price") != "6.6472" || retry.Get("reduceOnly") != "true" {
+	if retry.Get("symbol") != "AVAXUSDT" || retry.Get("side") != "BUY" || retry.Get("type") != "LIMIT" || retry.Get("quantity") != "15" || retry.Get("price") != "6.6472" || retry.Get("positionSide") != "BOTH" || retry.Get("reduceOnly") != "true" {
 		t.Fatalf("bad retry close form: %#v", retry)
 	}
 }
@@ -743,7 +743,7 @@ func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t 
 		t.Fatalf("expected four rejected limit attempts and two market fallback attempts, got %#v", orderForms)
 	}
 	market := orderForms[len(orderForms)-1]
-	if market.Get("type") != "MARKET" || market.Get("side") != "SELL" || market.Get("quantity") != "0.432" || market.Get("reduceOnly") != "true" || market.Get("price") != "" || market.Get("timeInForce") != "" {
+	if market.Get("type") != "MARKET" || market.Get("side") != "SELL" || market.Get("quantity") != "0.432" || market.Get("positionSide") != "BOTH" || market.Get("reduceOnly") != "true" || market.Get("price") != "" || market.Get("timeInForce") != "" {
 		t.Fatalf("bad market fallback form: %#v", market)
 	}
 }
@@ -861,7 +861,7 @@ func TestTVBotBinanceLimitCloseFallsBackToMarketRemaining(t *testing.T) {
 		t.Fatalf("expected initial limit and fallback market orders, got %#v", orderForms)
 	}
 	market := orderForms[len(orderForms)-1]
-	if market.Get("type") != "MARKET" || market.Get("side") != "BUY" || market.Get("quantity") != "8" || market.Get("reduceOnly") != "true" {
+	if market.Get("type") != "MARKET" || market.Get("side") != "BUY" || market.Get("quantity") != "8" || market.Get("positionSide") != "BOTH" || market.Get("reduceOnly") != "true" {
 		t.Fatalf("bad market fallback form: %#v", market)
 	}
 }

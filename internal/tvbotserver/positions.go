@@ -5796,7 +5796,9 @@ func binanceClosePositionSide(posSide string) string {
 	case "short":
 		return "SHORT"
 	default:
-		return ""
+		// Binance one-way mode uses BOTH. Include it explicitly so closing
+		// orders carry the same position mode as the live position response.
+		return "BOTH"
 	}
 }
 
