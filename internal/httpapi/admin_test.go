@@ -52,6 +52,14 @@ func TestMigrateAdminMenuRenamesSystemManagement(t *testing.T) {
 	}
 }
 
+func TestMigrateAdminMenuMovesUpgradePageOutOfAPIEndpoint(t *testing.T) {
+	legacy := []adminMenuItem{{Key: "upgrade", Title: "升级", Href: "/upgrade", Group: "admin"}}
+	migrated, changed := migrateAdminMenu(legacy)
+	if !changed || len(migrated) != 1 || migrated[0].Href != "/tvbot/view/upgrade" {
+		t.Fatalf("upgrade menu should point to the themed page: changed=%v menu=%#v", changed, migrated)
+	}
+}
+
 func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	hash, err := authn.HashPassword("admin-password")
 	if err != nil {

@@ -58,7 +58,7 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "system-info", Title: "系统信息", Href: "/system", Group: "admin"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"},
 		{Key: "system", Title: "用户管理", Href: "/admin", Group: "admin"},
-		{Key: "upgrade", Title: "升级", Href: "/upgrade", Group: "admin"},
+		{Key: "upgrade", Title: "升级", Href: "/tvbot/view/upgrade", Group: "admin"},
 	}
 }
 
@@ -105,6 +105,10 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 				migrated[i].Title = "资金"
 				changed = true
 			}
+		}
+		if migrated[i].Key == "upgrade" && migrated[i].Href == "/upgrade" {
+			migrated[i].Href = "/tvbot/view/upgrade"
+			changed = true
 		}
 		if href, ok := tradingRoutes[migrated[i].Key]; ok && (migrated[i].Href == "/tvbot" || migrated[i].Href == "/tvbot/" || strings.HasPrefix(migrated[i].Href, "/tvbot#")) {
 			migrated[i].Href = href

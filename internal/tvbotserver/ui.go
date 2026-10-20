@@ -147,7 +147,7 @@ func defaultTopMenu() []TopMenuItem {
 		{Key: "system-info", Title: "系统信息", Href: "/system"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu"},
 		{Key: "system", Title: "用户管理", Href: "/admin"},
-		{Key: "upgrade", Title: "升级", Href: "/upgrade"},
+		{Key: "upgrade", Title: "升级", Href: "/tvbot/view/upgrade"},
 	}
 }
 
