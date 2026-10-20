@@ -55,18 +55,43 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	saveButton := strings.Index(page, `id="save-api-keys"`)
 	testButton := strings.Index(page, `id="test-api-keys"`)
 	addButton := strings.Index(page, `id="add-api-key"`)
-	if saveButton < 0 || testButton < 0 || addButton < 0 || !(saveButton < testButton && testButton < addButton) {
-		t.Fatalf("API key actions should place save and test before add: save=%d test=%d add=%d", saveButton, testButton, addButton)
+	deleteButton := strings.Index(page, `id="delete-api-key"`)
+	apiIDControl := strings.Index(page, `class="api-id-control"`)
+	if saveButton < 0 || testButton < 0 || addButton < 0 || deleteButton < 0 || apiIDControl < 0 || !(apiIDControl < deleteButton && deleteButton < saveButton && saveButton < testButton && testButton < addButton) {
+		t.Fatalf("API key controls should place delete beside API ID and save/test before add: control=%d delete=%d save=%d test=%d add=%d", apiIDControl, deleteButton, saveButton, testButton, addButton)
 	}
 	for _, want := range []string{
 		`function fillAPIForm(id, preserveCredentials)`,
 		`renderAPIKeys(true);`,
 		`const apiKey = preserveCredentials ? $("key-api").value : "";`,
 		`const secretKey = preserveCredentials ? $("key-secret").value : "";`,
+		`function testSavedAPIKey(exchange, env, id)`,
+		`apiKeyTestEnv`,
+		`apiKeyTestStale`,
+		`apiKeyTestError`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("API key form should preserve entered credentials after saving; missing %q", want)
 		}
+	}
+	saveStart := strings.Index(page, "async function saveAPIKeys()")
+	testStart := strings.Index(page, "async function testAPIKeys()")
+	if saveStart < 0 || testStart <= saveStart {
+		t.Fatalf("API key save/test functions are missing or out of order: save=%d test=%d", saveStart, testStart)
+	}
+	saveFunction := page[saveStart:testStart]
+	for _, want := range []string{
+		`await testSavedAPIKey(exchange, env, state.selectedAPIID);`,
+		`state.apiKeyTestStale = !!state.apiKeyTest;`,
+		`余额已刷新`,
+		`余额刷新失败`,
+	} {
+		if !strings.Contains(saveFunction, want) {
+			t.Fatalf("API key save flow missing %q", want)
+		}
+	}
+	if strings.Contains(saveFunction, `state.apiKeyTest = null`) {
+		t.Fatal("API key save flow should preserve the previous balance result until saved credentials are retested")
 	}
 	if strings.Contains(page, "清算墙雷达") || strings.Contains(page, `class="brand"`) || strings.Contains(page, `class="liquidation-links"`) || strings.Contains(page, `class="app-logo"`) {
 		t.Fatal("tvbot header still contains the removed product name or legacy navigation classes")
