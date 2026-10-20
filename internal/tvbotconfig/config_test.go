@@ -256,6 +256,7 @@ func TestIgnoredCoinpairsMigratePersistAndDeduplicate(t *testing.T) {
 func TestStoreClonesIgnoredCoinpairs(t *testing.T) {
 	cfg := Default()
 	cfg.Trading.IgnoredCoinpairs = []string{"ETH"}
+	cfg.Trading.CoinpairWhitelist = []string{"BTC"}
 	store := NewStore("", cfg)
 	got := store.Get()
 	got.Trading.IgnoredCoinpairs[0] = "MUTATED"
@@ -270,6 +271,36 @@ func TestStoreClonesIgnoredCoinpairs(t *testing.T) {
 	}
 	if current := store.Get().Trading.IgnoredCoinpairs; !reflect.DeepEqual(current, []string{"ETH", "BTC"}) {
 		t.Fatalf("Update lost ignored coinpair list: %#v", current)
+	}
+	got = store.Get()
+	got.Trading.CoinpairWhitelist[0] = "MUTATED"
+	if current := store.Get().Trading.CoinpairWhitelist; !reflect.DeepEqual(current, []string{"BTC"}) {
+		t.Fatalf("Get shared coinpair whitelist: %#v", current)
+	}
+}
+
+func TestCoinpairWhitelistNormalizePersistAndDeduplicate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	cfg.Trading.CoinpairWhitelist = []string{" eth ", "ETH-USDT", "ethusdt", "", "btc"}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ETH", "ETH-USDT", "BTC"}
+	if !reflect.DeepEqual(loaded.Trading.CoinpairWhitelist, want) {
+		t.Fatalf("coinpair whitelist was not normalized: got %#v want %#v", loaded.Trading.CoinpairWhitelist, want)
+	}
+
+	missing, err := Load(filepath.Join(t.TempDir(), "missing.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing.Trading.CoinpairWhitelist) != 0 {
+		t.Fatalf("missing config should default coinpair whitelist disabled: %#v", missing.Trading.CoinpairWhitelist)
 	}
 }
 

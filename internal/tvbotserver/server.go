@@ -244,6 +244,19 @@ func (s *Server) handleTVOrder(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if filter, matched := coinpairWhitelistMatch(cfg, signal); !matched {
+			record, err := s.Orders.RecordIgnoredReason(signal, "coinpair_whitelist", fmt.Sprintf("coinpair did not match coinpair whitelist %q", filter), now)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"status":    "ignored",
+				"signal_id": record.SignalID,
+				"reason":    "coinpair_whitelist",
+			})
+			return
+		}
 		if signal.PositionEffect != trading.PositionEffectClose {
 			decision, err := s.marketScopeDecision(signal)
 			if err != nil {
@@ -413,6 +426,30 @@ func ignoredEntrySignal(cfg config.Config, signal trading.Signal) (string, bool)
 		}
 	}
 	return "", false
+}
+
+// coinpairWhitelistMatch returns the first configured keyword that matches the
+// signal. An empty whitelist allows every signal, while a non-empty whitelist
+// only allows entry signals whose coinpair or ticker contains one keyword.
+func coinpairWhitelistMatch(cfg config.Config, signal trading.Signal) (string, bool) {
+	if strings.EqualFold(strings.TrimSpace(signal.PositionEffect), trading.PositionEffectClose) {
+		return "", true
+	}
+	if len(cfg.Trading.CoinpairWhitelist) == 0 {
+		return "", true
+	}
+	for _, keyword := range cfg.Trading.CoinpairWhitelist {
+		filter := normalizeCoinpairFilter(keyword)
+		if filter == "" {
+			continue
+		}
+		for _, candidate := range []string{signal.Coinpair, signal.Ticker} {
+			if strings.Contains(normalizeCoinpairFilter(candidate), filter) {
+				return strings.ToUpper(strings.TrimSpace(keyword)), true
+			}
+		}
+	}
+	return strings.Join(cfg.Trading.CoinpairWhitelist, ", "), false
 }
 
 func normalizeCoinpairFilter(value string) string {
@@ -2087,6 +2124,21 @@ func (s *Server) handleOrderRetry(w http.ResponseWriter, r *http.Request, path s
 		})
 		return
 	}
+	if filter, matched := coinpairWhitelistMatch(cfg, probe); !matched {
+		signal := ignoredRetrySignalFromRecord(source, now)
+		record, err := s.Orders.RecordIgnoredReason(signal, "coinpair_whitelist", fmt.Sprintf("coinpair did not match coinpair whitelist %q", filter), now)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"status":    "ignored",
+			"reason":    "coinpair_whitelist",
+			"signal_id": record.SignalID,
+			"retry_of":  source.SignalID,
+		})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	price, err := s.currentRetryMarketPrice(ctx, cfg, source)
@@ -2132,7 +2184,7 @@ func (s *Server) handleOrderRetry(w http.ResponseWriter, r *http.Request, path s
 
 func ignoredOrderCanRetry(rec storage.OrderRecord) bool {
 	code := strings.ToLower(strings.TrimSpace(rec.ErrorCode))
-	return strings.HasPrefix(code, "outside_market_") || code == "coinpair_filtered" || code == "coinpair_cooldown"
+	return strings.HasPrefix(code, "outside_market_") || code == "coinpair_filtered" || code == "coinpair_cooldown" || code == "coinpair_whitelist"
 }
 
 func unsupportedOKXInstrumentMessage(rec storage.OrderRecord) string {
@@ -2754,6 +2806,7 @@ type tradingPatch struct {
 	SignalTTLSeconds          *int                          `json:"signal_ttl_seconds"`
 	IgnoredCoinpair           *string                       `json:"ignored_coinpair"`
 	IgnoredCoinpairs          *[]string                     `json:"ignored_coinpairs"`
+	CoinpairWhitelist         *[]string                     `json:"coinpair_whitelist"`
 	OrderAmountUSDT           *float64                      `json:"order_amount_usdt"`
 	Leverage                  *int                          `json:"leverage"`
 	OrderType                 *string                       `json:"order_type"`
@@ -2838,6 +2891,9 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 	} else if patch.Trading.IgnoredCoinpair != nil {
 		c.Trading.IgnoredCoinpairs = nil
 		c.Trading.IgnoredCoinpair = *patch.Trading.IgnoredCoinpair
+	}
+	if patch.Trading.CoinpairWhitelist != nil {
+		c.Trading.CoinpairWhitelist = append([]string(nil), (*patch.Trading.CoinpairWhitelist)...)
 	}
 	if patch.Trading.OrderAmountUSDT != nil {
 		c.Trading.OrderAmountUSDT = *patch.Trading.OrderAmountUSDT

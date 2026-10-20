@@ -2148,6 +2148,18 @@ const tvbotHTML = `<!doctype html>
           <div class="coinpair-filter-list" id="coinpair-cooldown-list"><span class="muted coinpair-filter-empty">暂无冷静期币对</span></div>
         </div>
       </div>
+      <div class="coinpair-filter-card coinpair-whitelist-card">
+        <div>
+          <h3>币对白名单</h3>
+          <div class="muted" id="coinpair-whitelist-status">当前未启用</div>
+          <div class="muted">不区分大小写，采用包含匹配并忽略常见分隔符；填写后只执行命中任一关键字的开仓信号，平仓不受影响。例如输入 ETH，可匹配 ETHUSDT、ETHUSDC、ETHFIUSDT、ETHUSDG 等。</div>
+        </div>
+        <div class="coinpair-filter-actions">
+          <input class="coinpair-filter-input" id="coinpair-whitelist-keyword" autocomplete="off" spellcheck="false" placeholder="例如 ETH" aria-label="币对白名单关键字">
+          <button class="btn primary" type="button" id="add-coinpair-whitelist" disabled>添加白名单</button>
+        </div>
+        <div class="coinpair-filter-list" id="coinpair-whitelist-list"><span class="muted coinpair-filter-empty">暂无已添加的币对白名单</span></div>
+      </div>
     </section>
 
     <section id="tradeMonitor">
@@ -4028,6 +4040,7 @@ const tvbotHTML = `<!doctype html>
         ["持仓模式", t.position_mode],
         ["信号有效秒数", t.signal_ttl_seconds],
         ["忽略币对", configuredIgnoredCoinpairs().join(", ") || "未启用"],
+        ["币对白名单", configuredCoinpairWhitelist().join(", ") || "未启用"],
         ["USDT 下单金额", t.order_amount_usdt],
         ["杠杆", t.leverage],
         ["订单类型", orderTypeText(t.order_type || "market")],
@@ -4095,6 +4108,7 @@ const tvbotHTML = `<!doctype html>
       $("cfg-live").checked = !!trading.allow_live_trading;
       renderMarketTurnoverScope();
       renderIgnoredCoinpairFilter();
+      renderCoinpairWhitelist();
     }
 
     function renderSymbols() {
@@ -6187,6 +6201,73 @@ const tvbotHTML = `<!doctype html>
       toast(removed + " 已恢复后续下单");
     }
 
+    function currentCoinpairWhitelistInput() {
+      return $("coinpair-whitelist-keyword") ? $("coinpair-whitelist-keyword").value.trim() : "";
+    }
+
+    function configuredCoinpairWhitelist() {
+      const trading = state.config && state.config.trading ? state.config.trading : {};
+      return Array.isArray(trading.coinpair_whitelist)
+        ? trading.coinpair_whitelist.map((item) => String(item || "").trim()).filter(Boolean)
+        : [];
+    }
+
+    function syncCoinpairWhitelistControls() {
+      const addButton = $("add-coinpair-whitelist");
+      if (!addButton) return;
+      addButton.disabled = !ignoredCoinpairKey(currentCoinpairWhitelistInput());
+    }
+
+    function renderCoinpairWhitelist() {
+      const status = $("coinpair-whitelist-status");
+      const list = $("coinpair-whitelist-list");
+      if (!status || !list) return;
+      const keywords = configuredCoinpairWhitelist();
+      status.textContent = keywords.length ? ("当前生效：" + keywords.length + " 个白名单关键字") : "当前未启用";
+      list.innerHTML = keywords.map((keyword, index) => {
+        const removeLabel = "删除币对白名单 " + keyword;
+        return '<div class="coinpair-filter-item"><span>' + escapeHTML(keyword) + '</span>' +
+          '<button class="coinpair-filter-remove" type="button" data-coinpair-whitelist-index="' + index + '" title="' + escapeHTML(removeLabel) + '" aria-label="' + escapeHTML(removeLabel) + '">×</button></div>';
+      }).join("") || '<span class="muted coinpair-filter-empty">暂无已添加的币对白名单</span>';
+      syncCoinpairWhitelistControls();
+    }
+
+    async function persistCoinpairWhitelist(keywords) {
+      state.config = await api("/tvbot/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trading: { coinpair_whitelist: keywords } })
+      });
+      renderConfig();
+      renderDashboard();
+      renderSystem();
+    }
+
+    async function addCoinpairWhitelist() {
+      const keyword = currentCoinpairWhitelistInput();
+      const key = ignoredCoinpairKey(keyword);
+      if (!key) return;
+      const keywords = configuredCoinpairWhitelist();
+      if (keywords.some((item) => ignoredCoinpairKey(item) === key)) {
+        toast("该币对白名单已存在");
+        return;
+      }
+      await persistCoinpairWhitelist(keywords.concat([keyword]));
+      const input = $("coinpair-whitelist-keyword");
+      if (input) input.value = "";
+      syncCoinpairWhitelistControls();
+      toast("币对白名单已添加");
+    }
+
+    async function removeCoinpairWhitelist(index) {
+      const keywords = configuredCoinpairWhitelist();
+      if (!Number.isInteger(index) || index < 0 || index >= keywords.length) return;
+      const removed = keywords[index];
+      keywords.splice(index, 1);
+      await persistCoinpairWhitelist(keywords);
+      toast(removed + " 已移出币对白名单");
+    }
+
     function orderHistoryStatusText(status) {
       const labels = {
         submitted: "已下单",
@@ -7159,6 +7240,18 @@ const tvbotHTML = `<!doctype html>
       const button = event.target.closest("button[data-ignored-coinpair-index]");
       if (!button) return;
       removeIgnoredCoinpair(Number(button.dataset.ignoredCoinpairIndex)).catch((err) => toast(err.message));
+    });
+    $("coinpair-whitelist-keyword").addEventListener("input", () => syncCoinpairWhitelistControls());
+    $("coinpair-whitelist-keyword").addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      addCoinpairWhitelist().catch((err) => toast(err.message));
+    });
+    $("add-coinpair-whitelist").addEventListener("click", () => addCoinpairWhitelist().catch((err) => toast(err.message)));
+    $("coinpair-whitelist-list").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-coinpair-whitelist-index]");
+      if (!button) return;
+      removeCoinpairWhitelist(Number(button.dataset.coinpairWhitelistIndex)).catch((err) => toast(err.message));
     });
     $("coinpair-cooldown-list").addEventListener("click", (event) => {
       const button = event.target.closest("button[data-cooldown-keyword]");

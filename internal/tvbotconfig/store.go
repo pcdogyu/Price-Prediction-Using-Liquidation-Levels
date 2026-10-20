@@ -22,6 +22,7 @@ func (s *Store) Get() Config {
 	defer s.mu.RUnlock()
 	cfg := s.cfg
 	cfg.Trading.IgnoredCoinpairs = cloneStringList(s.cfg.Trading.IgnoredCoinpairs)
+	cfg.Trading.CoinpairWhitelist = cloneStringList(s.cfg.Trading.CoinpairWhitelist)
 	cfg.Trading.LayeredOrder.PriceLayers = cloneLayeredOrderLayers(s.cfg.Trading.LayeredOrder.PriceLayers)
 	cfg.Symbols = cloneSymbols(s.cfg.Symbols)
 	cfg.UI.MenuItems = cloneMenuItems(s.cfg.UI.MenuItems)
@@ -34,6 +35,7 @@ func (s *Store) Update(fn func(*Config) error) (Config, error) {
 	defer s.mu.Unlock()
 	next := s.cfg
 	next.Trading.IgnoredCoinpairs = cloneStringList(s.cfg.Trading.IgnoredCoinpairs)
+	next.Trading.CoinpairWhitelist = cloneStringList(s.cfg.Trading.CoinpairWhitelist)
 	next.Trading.LayeredOrder.PriceLayers = cloneLayeredOrderLayers(s.cfg.Trading.LayeredOrder.PriceLayers)
 	next.Symbols = cloneSymbols(s.cfg.Symbols)
 	next.UI.MenuItems = cloneMenuItems(s.cfg.UI.MenuItems)

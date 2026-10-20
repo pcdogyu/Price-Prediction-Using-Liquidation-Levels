@@ -306,6 +306,7 @@ func configureBinanceCloseTestServer(t *testing.T, srv *Server, binanceServer *h
 type tvOrderSignalResponse struct {
 	Status   string `json:"status"`
 	SignalID string `json:"signal_id"`
+	Reason   string `json:"reason"`
 }
 
 func postTVOrderSignal(t *testing.T, srv *Server, signal trading.Signal) tvOrderSignalResponse {

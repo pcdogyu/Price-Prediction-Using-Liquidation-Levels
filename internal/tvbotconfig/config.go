@@ -58,6 +58,7 @@ type TradingConfig struct {
 	SignalTTLSeconds          int                          `json:"signal_ttl_seconds"`
 	IgnoredCoinpair           string                       `json:"ignored_coinpair"`
 	IgnoredCoinpairs          []string                     `json:"ignored_coinpairs"`
+	CoinpairWhitelist         []string                     `json:"coinpair_whitelist"`
 	OrderAmountUSDT           float64                      `json:"order_amount_usdt"`
 	Leverage                  int                          `json:"leverage"`
 	OrderType                 string                       `json:"order_type"`
@@ -384,6 +385,7 @@ func (c *Config) Normalize() {
 	} else {
 		c.Trading.IgnoredCoinpair = ""
 	}
+	c.Trading.CoinpairWhitelist = normalizeCoinpairKeywords(c.Trading.CoinpairWhitelist)
 	if c.Trading.OrderAmountUSDT <= 0 {
 		c.Trading.OrderAmountUSDT = 100
 	}
@@ -796,6 +798,21 @@ func normalizeIgnoredCoinpairs(values []string, legacy string) []string {
 	out := make([]string, 0, len(candidates))
 	seen := make(map[string]bool, len(candidates))
 	for _, value := range candidates {
+		value = strings.ToUpper(strings.TrimSpace(value))
+		key := ignoredCoinpairKey(value)
+		if value == "" || key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeCoinpairKeywords(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
 		value = strings.ToUpper(strings.TrimSpace(value))
 		key := ignoredCoinpairKey(value)
 		if value == "" || key == "" || seen[key] {

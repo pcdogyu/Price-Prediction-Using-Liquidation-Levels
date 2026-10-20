@@ -657,6 +657,13 @@ func TestTVBotUIOrderHistorySearchControls(t *testing.T) {
 		[]byte(`ignored_coinpairs: keywords`),
 		[]byte(`function addIgnoredCoinpair()`),
 		[]byte(`function removeIgnoredCoinpair(index)`),
+		[]byte(`id="coinpair-whitelist-keyword"`),
+		[]byte(`id="add-coinpair-whitelist"`),
+		[]byte(`id="coinpair-whitelist-list"`),
+		[]byte(`coinpair_whitelist: keywords`),
+		[]byte(`function addCoinpairWhitelist()`),
+		[]byte(`function removeCoinpairWhitelist(index)`),
+		[]byte(`只执行命中任一关键字的开仓信号`),
 		[]byte(`只过滤开仓信号`),
 		[]byte(`orderHistoryStatusText`),
 		[]byte(`function orderCanRetry(order)`),
@@ -747,6 +754,14 @@ func TestTVBotConfigSavesIgnoredCoinpairListAndSupportsLegacyPatch(t *testing.T)
 	cfg = put(map[string]any{"ignored_coinpairs": []string{}})
 	if len(cfg.Trading.IgnoredCoinpairs) != 0 || cfg.Trading.IgnoredCoinpair != "" {
 		t.Fatalf("ignored coinpair list not cleared: %#v", cfg.Trading)
+	}
+	cfg = put(map[string]any{"coinpair_whitelist": []string{" eth ", "ETH-USDT", "ethusdt", "btc"}})
+	if !reflect.DeepEqual(cfg.Trading.CoinpairWhitelist, []string{"ETH", "ETH-USDT", "BTC"}) {
+		t.Fatalf("coinpair whitelist not normalized: %#v", cfg.Trading.CoinpairWhitelist)
+	}
+	cfg = put(map[string]any{"coinpair_whitelist": []string{}})
+	if len(cfg.Trading.CoinpairWhitelist) != 0 {
+		t.Fatalf("coinpair whitelist list not cleared: %#v", cfg.Trading.CoinpairWhitelist)
 	}
 }
 
@@ -1414,6 +1429,31 @@ func TestIgnoredEntrySignalUsesCaseInsensitiveFuzzyMatching(t *testing.T) {
 	}
 }
 
+func TestCoinpairWhitelistUsesCaseInsensitiveFuzzyMatching(t *testing.T) {
+	cfg := config.Default()
+	cfg.Trading.CoinpairWhitelist = []string{"eth"}
+	for _, signal := range []trading.Signal{
+		{Coinpair: "ETHUSDT", PositionEffect: trading.PositionEffectOpen},
+		{Coinpair: "ETHUSDC", PositionEffect: trading.PositionEffectOpen},
+		{Coinpair: "ETHFIUSDT", PositionEffect: trading.PositionEffectOpen},
+		{Ticker: "OKX:ETHUSDG.P", PositionEffect: trading.PositionEffectOpen},
+	} {
+		if keyword, matched := coinpairWhitelistMatch(cfg, signal); !matched || keyword != "ETH" {
+			t.Fatalf("signal %#v matched=%v keyword=%q", signal, matched, keyword)
+		}
+	}
+	if _, matched := coinpairWhitelistMatch(cfg, trading.Signal{Coinpair: "BTCUSDT", PositionEffect: trading.PositionEffectOpen}); matched {
+		t.Fatal("BTCUSDT should not match ETH whitelist")
+	}
+	if _, matched := coinpairWhitelistMatch(cfg, trading.Signal{Coinpair: "BTCUSDT", PositionEffect: trading.PositionEffectClose}); !matched {
+		t.Fatal("close signals should bypass coinpair whitelist")
+	}
+	cfg.Trading.CoinpairWhitelist = nil
+	if _, matched := coinpairWhitelistMatch(cfg, trading.Signal{Coinpair: "BTCUSDT", PositionEffect: trading.PositionEffectOpen}); !matched {
+		t.Fatal("empty coinpair whitelist should allow every entry")
+	}
+}
+
 func TestTVOrderRecordsMatchingEntrySignalAsIgnored(t *testing.T) {
 	srv := newTestServer(t)
 	cfg := srv.ConfigStore.Get()
@@ -1446,6 +1486,38 @@ func TestTVOrderRecordsMatchingEntrySignalAsIgnored(t *testing.T) {
 	}
 	if rec.Coinpair != "ETHUSDC" || rec.PositionEffect != trading.PositionEffectOpen {
 		t.Fatalf("ignored history lost normalized signal fields: %#v", rec)
+	}
+}
+
+func TestTVOrderRecordsNonMatchingCoinpairWhitelistAsIgnored(t *testing.T) {
+	srv := newTestServer(t)
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.CoinpairWhitelist = []string{"eth"}
+	srv.ConfigStore = config.NewStore("", cfg)
+	signal := validSignal(t, srv)
+	signal.Coinpair = "BTCUSDT"
+	signal.Ticker = "OKX:BTCUSDT.P"
+	body, err := json.Marshal(signal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/tvorder", bytes.NewReader(body)))
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	resp := decodeTVOrderSignalResponse(t, rr.Body.Bytes())
+	if resp.Status != "ignored" || resp.Reason != "coinpair_whitelist" {
+		t.Fatalf("response should be ignored by whitelist: %#v", resp)
+	}
+	select {
+	case got := <-srv.Executor.(fakeExecutor).calls:
+		t.Fatalf("non-matching whitelist signal should not execute: %#v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+	rec, ok := srv.Orders.Get(resp.SignalID)
+	if !ok || rec.Status != storage.StatusIgnored || rec.ErrorCode != "coinpair_whitelist" || !strings.Contains(rec.Error, "ETH") {
+		t.Fatalf("bad whitelist history record: %#v found=%v", rec, ok)
 	}
 }
 

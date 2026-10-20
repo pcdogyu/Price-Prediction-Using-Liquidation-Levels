@@ -750,6 +750,27 @@ func (s *Server) maybeSubmitAutoReentry(ctx context.Context, cfg config.Config, 
 		Ticker:         firstNonEmptyString(rec.Ticker, lifecycle.Symbol),
 		PositionEffect: trading.PositionEffectOpen,
 	}
+	if filter, matched := coinpairWhitelistMatch(cfg, marketScopeProbe); !matched {
+		updated, err := s.Orders.UpdateTradeLifecycle(lifecycle.LifecycleID, storage.TradeLifecycleUpdate{
+			Status:    storage.TradeLifecycleBlocked,
+			UpdatedAt: now,
+		})
+		if err != nil {
+			return err
+		}
+		s.recordTradeMonitorEvent(storage.TradeMonitorEvent{
+			EventTime:      now,
+			Exchange:       lifecycle.Exchange,
+			APIID:          lifecycle.APIID,
+			Symbol:         lifecycle.Symbol,
+			LifecycleID:    lifecycle.LifecycleID,
+			SourceSignalID: lifecycle.SourceSignalID,
+			EventType:      "auto_reentry_coinpair_whitelist",
+			Status:         updated.Status,
+			Message:        "auto reentry coinpair did not match coinpair whitelist " + filter,
+		})
+		return nil
+	}
 	decision, err := s.marketScopeDecision(marketScopeProbe)
 	if err != nil {
 		return err
