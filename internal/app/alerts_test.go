@@ -321,22 +321,46 @@ func TestOrderSignalSettingsRoundTripAndOpeningCategoryFiltering(t *testing.T) {
 	ctx := context.Background()
 	svc, _, _ := alertTestService(t, "order-signal-settings.db")
 	initial := svc.AlertOrderSignalSettings()
-	if !initial.Alerts || !initial.Aggressive || !initial.Steady {
+	if !initial.Alerts || !initial.Aggressive || !initial.Steady || !initial.AlertsClose || !initial.AggressiveClose || !initial.SteadyClose {
 		t.Fatalf("new order signal settings should default to enabled: %+v", initial)
 	}
-	saved, err := svc.SaveAlertOrderSignalSettings(ctx, domain.OrderSignalSettings{Alerts: false, Aggressive: true, Steady: false})
+	saved, err := svc.SaveAlertOrderSignalSettings(ctx, domain.OrderSignalSettings{Alerts: false, Aggressive: true, Steady: false, AlertsClose: true, AggressiveClose: false, SteadyClose: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Alerts || !saved.Aggressive || saved.Steady {
+	if saved.Alerts || !saved.Aggressive || saved.Steady || !saved.AlertsClose || saved.AggressiveClose || !saved.SteadyClose {
 		t.Fatalf("saved order signal settings = %+v", saved)
 	}
-	if !svc.alerts.orderSignalEnabled("alert") || !svc.alerts.orderSignalEnabled(domain.SignalAggressive) || svc.alerts.orderSignalEnabled(domain.SignalSteady) {
+	if svc.alerts.orderSignalEnabled("alert") || !svc.alerts.orderSignalEnabled(domain.SignalAggressive) || svc.alerts.orderSignalEnabled(domain.SignalSteady) || !svc.alerts.orderCloseEnabled("alert") || svc.alerts.orderCloseEnabled(domain.SignalAggressive) || !svc.alerts.orderCloseEnabled(domain.SignalSteady) {
 		t.Fatal("opening signal category filtering did not follow the saved settings")
 	}
 	restarted := New(svc.cfg, svc.store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	restarted.alerts.restoreSettings(ctx)
-	if got := restarted.AlertOrderSignalSettings(); got.Alerts || !got.Aggressive || got.Steady {
+	if got := restarted.AlertOrderSignalSettings(); got.Alerts || !got.Aggressive || got.Steady || !got.AlertsClose || got.AggressiveClose || !got.SteadyClose {
 		t.Fatalf("restarted order signal settings = %+v", got)
+	}
+}
+
+func TestOrderSignalCloseSwitchIsIndependentFromOpeningSwitch(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _ := alertTestService(t, "order-signal-close-switch.db")
+	defer svc.Close()
+
+	if _, err := svc.SaveAlertOrderSignalSettings(ctx, domain.OrderSignalSettings{
+		Alerts: true, Aggressive: true, Steady: true,
+		AlertsClose: false, AggressiveClose: false, SteadyClose: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, category := range []string{"alert", domain.SignalAggressive, domain.SignalSteady} {
+		if !svc.alerts.orderSignalEnabled(category) {
+			t.Fatalf("opening switch unexpectedly disabled for %s", category)
+		}
+		if svc.alerts.orderCloseEnabled(category) {
+			t.Fatalf("close switch unexpectedly enabled for %s", category)
+		}
+	}
+	if !svc.alerts.submitPrecloseWebhook(domain.TradeSignal{Kind: domain.SignalAggressive, Symbol: "BTCUSDT"}) {
+		t.Fatal("disabled close switch should not block the opening path")
 	}
 }

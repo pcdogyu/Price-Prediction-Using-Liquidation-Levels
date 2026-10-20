@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "下单信号类别", "预平仓后自动开仓（始终开启）", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-order-signal-settings", `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "下单信号类别", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -450,12 +450,12 @@ func TestAlertSettingsEndpoints(t *testing.T) {
 	if off.Code != http.StatusOK || strings.Contains(off.Body.String(), `"telegram_enabled":true`) {
 		t.Fatalf("disabling must succeed: %d %s", off.Code, off.Body.String())
 	}
-	orderSaved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/order-settings", strings.NewReader(`{"order_alerts":false,"order_aggressive":true,"order_steady":false}`))
+	orderSaved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/order-settings", strings.NewReader(`{"order_alerts":false,"order_aggressive":true,"order_steady":false,"order_alerts_close":false,"order_aggressive_close":true,"order_steady_close":false}`))
 	if orderSaved.Code != http.StatusOK || !strings.Contains(orderSaved.Body.String(), `"order_aggressive":true`) {
 		t.Fatalf("order signal settings must save: %d %s", orderSaved.Code, orderSaved.Body.String())
 	}
 	orderRead := serveAlert(srv, http.MethodGet, "/api/v1/alerts/order-settings", nil)
-	if orderRead.Code != http.StatusOK || !strings.Contains(orderRead.Body.String(), `"order_alerts":false`) || !strings.Contains(orderRead.Body.String(), `"order_steady":false`) {
+	if orderRead.Code != http.StatusOK || !strings.Contains(orderRead.Body.String(), `"order_alerts":false`) || !strings.Contains(orderRead.Body.String(), `"order_steady":false`) || !strings.Contains(orderRead.Body.String(), `"order_alerts_close":false`) || !strings.Contains(orderRead.Body.String(), `"order_aggressive_close":true`) {
 		t.Fatalf("order signal settings must round trip: %d %s", orderRead.Code, orderRead.Body.String())
 	}
 	if put := serveAlert(srv, http.MethodPut, "/api/v1/alerts/settings", nil); put.Code != http.StatusMethodNotAllowed {

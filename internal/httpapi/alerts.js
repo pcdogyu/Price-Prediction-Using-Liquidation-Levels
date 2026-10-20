@@ -128,16 +128,24 @@
 
   function renderOrderSignalSummary() {
     const selected = [
+      [$('alerts-order-alert-close').checked, '预警平仓'],
+      [$('alerts-order-alert').checked, '预警开仓'],
+      [$('alerts-order-aggressive-close').checked, '激进平仓'],
       [$('alerts-order-aggressive').checked, '激进开仓'],
+      [$('alerts-order-steady-close').checked, '稳健平仓'],
       [$('alerts-order-steady').checked, '稳健开仓']
     ].filter(item => item[0]).map(item => item[1]);
-    $('alerts-order-signal-summary').textContent = '预平仓始终开启' + (selected.length ? ' · 已开启：' + selected.join('、') : ' · 当前不自动开仓');
+    $('alerts-order-signal-summary').textContent = selected.length ? '已开启：' + selected.join('、') : '当前不自动发送下单信号';
   }
 
   function renderOrderSignalSettings(settings) {
     if (!settings) return;
     if (!orderSignalSettingsLoaded) {
+      $('alerts-order-alert-close').checked = !!settings.order_alerts_close;
+      $('alerts-order-alert').checked = !!settings.order_alerts;
+      $('alerts-order-aggressive-close').checked = !!settings.order_aggressive_close;
       $('alerts-order-aggressive').checked = !!settings.order_aggressive;
+      $('alerts-order-steady-close').checked = !!settings.order_steady_close;
       $('alerts-order-steady').checked = !!settings.order_steady;
       orderSignalSettingsLoaded = true;
     }
@@ -235,9 +243,12 @@
       notify_alerts: $('alerts-notify-alerts').checked,
       notify_aggressive: $('alerts-notify-aggressive').checked,
       notify_steady: $('alerts-notify-steady').checked,
-      order_alerts: true,
+      order_alerts: $('alerts-order-alert').checked,
       order_aggressive: $('alerts-order-aggressive').checked,
       order_steady: $('alerts-order-steady').checked,
+      order_alerts_close: $('alerts-order-alert-close').checked,
+      order_aggressive_close: $('alerts-order-aggressive-close').checked,
+      order_steady_close: $('alerts-order-steady-close').checked,
       telegram_chat_id: $('alerts-chat').value.trim()
     };
     const token = $('alerts-token').value.trim();
@@ -256,9 +267,12 @@
 
   function orderSignalSettingsBody() {
     return {
-      order_alerts: true,
+      order_alerts: $('alerts-order-alert').checked,
       order_aggressive: $('alerts-order-aggressive').checked,
-      order_steady: $('alerts-order-steady').checked
+      order_steady: $('alerts-order-steady').checked,
+      order_alerts_close: $('alerts-order-alert-close').checked,
+      order_aggressive_close: $('alerts-order-aggressive-close').checked,
+      order_steady_close: $('alerts-order-steady-close').checked
     };
   }
 
@@ -381,7 +395,7 @@
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
   $('alerts-order-signal-settings').addEventListener('submit', saveOrderSignalSettings);
-  ['alerts-order-aggressive', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));
+  ['alerts-order-alert-close', 'alerts-order-alert', 'alerts-order-aggressive-close', 'alerts-order-aggressive', 'alerts-order-steady-close', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));
   $('alerts-test').addEventListener('click', testSettings);
   $('alerts-history-rows').addEventListener('click', event => {
     const button = event.target.closest('.alerts-action');

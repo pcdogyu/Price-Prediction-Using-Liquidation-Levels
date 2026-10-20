@@ -58,51 +58,31 @@ func TestTenantAlertSettingsAreIsolated(t *testing.T) {
 	}
 }
 
-func TestTenantAlertHistoryIsGlobalButSettingsStayIsolated(t *testing.T) {
+func TestTenantAlertHistoryIsIsolated(t *testing.T) {
 	svc, _, _ := alertTestService(t, "tenant-history.db")
 	defer svc.Close()
 	ctx := context.Background()
 	alice := WithTenantID(ctx, "alice")
 	bob := WithTenantID(ctx, "bob")
-
-	aliceRuntime, err := svc.alertRuntimeForContext(alice)
+	rtm, err := svc.alertRuntimeForContext(alice)
 	if err != nil {
 		t.Fatal(err)
 	}
 	at := time.Now().UTC().Truncate(time.Second)
-	aliceRuntime.persist(ctx, alert.Result{
-		Alerts: []domain.LiquidationAlert{{
-			ID: "global-alert", Symbol: "BTCUSDT", Side: "long", TradeSide: "long",
-			TriggeredAt: at, ReferencePrice: 100, Status: domain.AlertStateWatching,
-		}},
-		Signals: []domain.TradeSignal{{
-			ID: "global-signal", AlertID: "global-alert", Symbol: "BTCUSDT",
-			Kind: domain.SignalAggressive, Side: "long", LiquidationSide: "long",
-			CreatedAt: at, ReferencePrice: 100, TenantID: "alice",
-		}},
+	rtm.persist(ctx, alert.Result{
+		Alerts:  []domain.LiquidationAlert{{ID: "alice-alert", Symbol: "BTCUSDT", Side: "long", TradeSide: "long", TriggeredAt: at, Status: domain.AlertStateWatching}},
+		Signals: []domain.TradeSignal{{ID: "alice-signal", AlertID: "alice-alert", Symbol: "BTCUSDT", Kind: domain.SignalAggressive, Side: "long", LiquidationSide: "long", CreatedAt: at}},
 	}, false)
 
-	page, err := svc.AlertTimeline(bob, "", "", 20, "")
+	alicePage, err := svc.AlertTimeline(alice, "", "", 20, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.TotalCount != 2 || page.AlertCount != 1 || page.AggressiveCount != 1 {
-		t.Fatalf("bob did not see alice's global history: %+v", page)
-	}
-	for _, row := range page.Rows {
-		if row.Signal != nil && row.Signal.TenantID != "" {
-			t.Fatalf("global signal leaked tenant identity: %+v", row.Signal)
-		}
-	}
-
-	if _, err := svc.SaveAlertStrategySettingsForContext(alice, domain.AlertStrategySettings{WindowMinutes: 7, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 150000}); err != nil {
-		t.Fatal(err)
-	}
-	bobStrategy, err := svc.AlertStrategySettingsForContext(bob)
+	bobPage, err := svc.AlertTimeline(bob, "", "", 20, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bobStrategy.WindowMinutes == 7 || bobStrategy.BTCUSD == 300000 {
-		t.Fatalf("global history change unexpectedly shared bob's settings: %+v", bobStrategy)
+	if alicePage.TotalCount != 2 || bobPage.TotalCount != 0 {
+		t.Fatalf("tenant history was not isolated: alice=%+v bob=%+v", alicePage, bobPage)
 	}
 }

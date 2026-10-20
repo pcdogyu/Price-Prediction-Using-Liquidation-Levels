@@ -44,16 +44,6 @@ type alertRuntime struct {
 	watchErr string
 }
 
-// historyStore is shared by the root runtime and all authenticated tenant
-// runtimes. Alert strategy state and notification settings remain tenant-owned,
-// but the resulting alert/signal audit trail is a service-wide stream.
-func (rtm *alertRuntime) historyStore() *store.Store {
-	if rtm.sourceStore != nil {
-		return rtm.sourceStore
-	}
-	return rtm.store
-}
-
 // alertNotifyCooldown suppresses repeated messages for the same symbol and signal
 // kind so a burst cannot flood the chat.
 const alertNotifyCooldown = 5 * time.Minute
@@ -96,15 +86,18 @@ func (rtm *alertRuntime) webhookSettings() (string, string, bool) {
 // replaces them at startup.
 func (r *alertRuntime) defaultSettings() domain.NotificationSettings {
 	return domain.NotificationSettings{
-		TelegramEnabled:  r.envToken != "" && r.envChat != "",
-		TelegramToken:    r.envToken,
-		TelegramChatID:   r.envChat,
-		NotifyAlerts:     true,
-		NotifyAggressive: true,
-		NotifySteady:     true,
-		OrderAlerts:      true,
-		OrderAggressive:  true,
-		OrderSteady:      true,
+		TelegramEnabled:      r.envToken != "" && r.envChat != "",
+		TelegramToken:        r.envToken,
+		TelegramChatID:       r.envChat,
+		NotifyAlerts:         true,
+		NotifyAggressive:     true,
+		NotifySteady:         true,
+		OrderAlerts:          true,
+		OrderAggressive:      true,
+		OrderSteady:          true,
+		OrderAlertsClose:     true,
+		OrderAggressiveClose: true,
+		OrderSteadyClose:     true,
 	}
 }
 
@@ -374,7 +367,6 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 			rtm.log.Error("store liquidation alert failed", "symbol", item.Symbol, "error", err)
 			continue
 		}
-		rtm.mirrorAlertToHistory(ctx, item)
 		if created {
 			rtm.submitAlertWebhook(item, allowNotify)
 		}
@@ -397,11 +389,6 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 			rtm.log.Error("store trade signal failed", "symbol", item.Symbol, "error", err)
 			continue
 		}
-		globalItem := item
-		// Tenant identity is used for that tenant's webhook delivery, but the
-		// shared history must not disclose which user produced a signal.
-		globalItem.TenantID = ""
-		rtm.mirrorSignalToHistory(ctx, globalItem)
 		if !created {
 			// A replay after a restart reproduced a signal that is already stored.
 			continue
@@ -411,26 +398,6 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 		if err = rtm.store.MarkTradeSignalNotified(ctx, item.ID, status, message); err != nil && ctx.Err() == nil {
 			rtm.log.Warn("record signal notification status failed", "id", item.ID, "error", err)
 		}
-	}
-}
-
-func (rtm *alertRuntime) mirrorAlertToHistory(ctx context.Context, item domain.LiquidationAlert) {
-	history := rtm.historyStore()
-	if history == nil || history == rtm.store {
-		return
-	}
-	if _, err := history.SaveLiquidationAlert(ctx, item); err != nil {
-		rtm.log.Error("store global liquidation alert failed", "symbol", item.Symbol, "error", err)
-	}
-}
-
-func (rtm *alertRuntime) mirrorSignalToHistory(ctx context.Context, item domain.TradeSignal) {
-	history := rtm.historyStore()
-	if history == nil || history == rtm.store {
-		return
-	}
-	if _, err := history.SaveTradeSignal(ctx, item); err != nil {
-		rtm.log.Error("store global trade signal failed", "symbol", item.Symbol, "error", err)
 	}
 }
 
@@ -482,6 +449,9 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 		rtm.log.Info("opening signal suppressed by negative Deribit gamma", "kind", signal.Kind, "symbol", signal.Symbol)
 		return
 	}
+	if !rtm.orderSignalEnabled(signal.Kind) {
+		return
+	}
 	payload, err := buildAlertWebhookPayload(signal, rtm.serviceConfig())
 	if err != nil {
 		rtm.log.Warn("alert webhook payload rejected", "kind", signal.Kind, "symbol", signal.Symbol, "error", err)
@@ -497,6 +467,9 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 // being queued, so a queue/backpressure issue cannot turn into an unprotected
 // direction switch.
 func (rtm *alertRuntime) submitPrecloseWebhook(signal domain.TradeSignal) bool {
+	if !rtm.orderCloseEnabled(signal.Kind) {
+		return true
+	}
 	if _, _, ok := rtm.webhookSettings(); !ok {
 		return false
 	}
@@ -539,7 +512,7 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 	var signal domain.TradeSignal
 	switch recordType {
 	case "alert":
-		row, err := rtm.historyStore().LiquidationAlertByID(ctx, recordID)
+		row, err := rtm.store.LiquidationAlertByID(ctx, recordID)
 		if err != nil {
 			return manualTriggerResult{}, err
 		}
@@ -549,7 +522,7 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 			AlertNotionalUSD: row.NotionalUSD, ThresholdUSD: row.ThresholdUSD, WindowMinutes: row.WindowMinutes,
 		}
 	case domain.SignalAggressive, domain.SignalSteady:
-		row, err := rtm.historyStore().TradeSignalByID(ctx, recordID)
+		row, err := rtm.store.TradeSignalByID(ctx, recordID)
 		if err != nil {
 			return manualTriggerResult{}, err
 		}
@@ -600,14 +573,14 @@ func (rtm *alertRuntime) notifyTelegramUsing(ctx context.Context, recordType, re
 	var referencePrice float64
 	switch recordType {
 	case "alert":
-		row, err := rtm.historyStore().LiquidationAlertByID(ctx, recordID)
+		row, err := rtm.store.LiquidationAlertByID(ctx, recordID)
 		if err != nil {
 			return manualNotifyResult{}, err
 		}
 		symbol, side, text = row.Symbol, row.TradeSide, alertMessage(row)
 		markerAt, referencePrice = row.TriggeredAt, row.ReferencePrice
 	case domain.SignalAggressive, domain.SignalSteady:
-		row, err := rtm.historyStore().TradeSignalByID(ctx, recordID)
+		row, err := rtm.store.TradeSignalByID(ctx, recordID)
 		if err != nil {
 			return manualNotifyResult{}, err
 		}
@@ -658,18 +631,35 @@ func (rtm *alertRuntime) categoryEnabled(category string) bool {
 }
 
 // orderSignalEnabled reports whether a live liquidation category may send an
-// opening request to the trading webhook. Initial alerts always send both the
-// preclose and opening requests, so the legacy alert switch is not a gate.
+// opening request to the trading webhook.
 func (rtm *alertRuntime) orderSignalEnabled(category string) bool {
 	rtm.mu.RLock()
 	defer rtm.mu.RUnlock()
 	switch category {
 	case "alert":
-		return true
+		return rtm.settings.OrderAlerts
 	case domain.SignalAggressive:
 		return rtm.settings.OrderAggressive
 	case domain.SignalSteady:
 		return rtm.settings.OrderSteady
+	default:
+		return false
+	}
+}
+
+// orderCloseEnabled reports whether a live liquidation category may send the
+// opposite-position preclose request. It is intentionally independent from the
+// opening switch so a tenant can close risk without opening a new position.
+func (rtm *alertRuntime) orderCloseEnabled(category string) bool {
+	rtm.mu.RLock()
+	defer rtm.mu.RUnlock()
+	switch category {
+	case "alert":
+		return rtm.settings.OrderAlertsClose
+	case domain.SignalAggressive:
+		return rtm.settings.OrderAggressiveClose
+	case domain.SignalSteady:
+		return rtm.settings.OrderSteadyClose
 	default:
 		return false
 	}
@@ -733,15 +723,18 @@ func (rtm *alertRuntime) snapshotSettings() domain.NotificationSettings {
 func (rtm *alertRuntime) updateSettings(ctx context.Context, in domain.NotificationSettings) (domain.NotificationSettings, error) {
 	rtm.mu.Lock()
 	out := domain.NotificationSettings{
-		TelegramEnabled:  in.TelegramEnabled,
-		NotifyAlerts:     in.NotifyAlerts,
-		NotifyAggressive: in.NotifyAggressive,
-		NotifySteady:     in.NotifySteady,
-		OrderAlerts:      in.OrderAlerts,
-		OrderAggressive:  in.OrderAggressive,
-		OrderSteady:      in.OrderSteady,
-		TelegramChatID:   strings.TrimSpace(in.TelegramChatID),
-		TelegramToken:    strings.TrimSpace(rtm.settings.TelegramToken),
+		TelegramEnabled:      in.TelegramEnabled,
+		NotifyAlerts:         in.NotifyAlerts,
+		NotifyAggressive:     in.NotifyAggressive,
+		NotifySteady:         in.NotifySteady,
+		OrderAlerts:          in.OrderAlerts,
+		OrderAggressive:      in.OrderAggressive,
+		OrderSteady:          in.OrderSteady,
+		OrderAlertsClose:     in.OrderAlertsClose,
+		OrderAggressiveClose: in.OrderAggressiveClose,
+		OrderSteadyClose:     in.OrderSteadyClose,
+		TelegramChatID:       strings.TrimSpace(in.TelegramChatID),
+		TelegramToken:        strings.TrimSpace(rtm.settings.TelegramToken),
 	}
 	if out.TelegramChatID != "" && !notify.ValidChatID(out.TelegramChatID) {
 		rtm.mu.Unlock()
@@ -779,7 +772,9 @@ func (rtm *alertRuntime) snapshotOrderSignalSettings() domain.OrderSignalSetting
 	defer rtm.mu.RUnlock()
 	return domain.OrderSignalSettings{
 		Alerts: rtm.settings.OrderAlerts, Aggressive: rtm.settings.OrderAggressive,
-		Steady: rtm.settings.OrderSteady, UpdatedAt: rtm.settings.UpdatedAt,
+		Steady: rtm.settings.OrderSteady, AlertsClose: rtm.settings.OrderAlertsClose,
+		AggressiveClose: rtm.settings.OrderAggressiveClose, SteadyClose: rtm.settings.OrderSteadyClose,
+		UpdatedAt: rtm.settings.UpdatedAt,
 	}
 }
 
@@ -787,6 +782,7 @@ func (rtm *alertRuntime) updateOrderSignalSettings(ctx context.Context, in domai
 	rtm.mu.Lock()
 	out := rtm.settings
 	out.OrderAlerts, out.OrderAggressive, out.OrderSteady = in.Alerts, in.Aggressive, in.Steady
+	out.OrderAlertsClose, out.OrderAggressiveClose, out.OrderSteadyClose = in.AlertsClose, in.AggressiveClose, in.SteadyClose
 	out.UpdatedAt = time.Now().UTC()
 	rtm.settings = out
 	rtm.mu.Unlock()

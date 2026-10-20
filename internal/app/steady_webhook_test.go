@@ -168,7 +168,7 @@ func TestDisabledOpeningSignalStillSendsPreclose(t *testing.T) {
 	svc.alerts.webhookToken = cfg.SteadyWebhookToken
 	svc.alerts.webhookConfig = cfg
 	svc.alerts.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), svc.alerts.webhookSettings, 4, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := svc.SaveAlertOrderSignalSettings(context.Background(), domain.OrderSignalSettings{Alerts: false, Aggressive: false, Steady: false}); err != nil {
+	if _, err := svc.SaveAlertOrderSignalSettings(context.Background(), domain.OrderSignalSettings{Alerts: false, Aggressive: false, Steady: false, AlertsClose: true, AggressiveClose: true, SteadyClose: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -249,7 +249,7 @@ func TestNegativeETHGammaSuppressesEveryOpeningWebhook(t *testing.T) {
 	}
 }
 
-func TestAlertWebhookPreclosesThenOpensRegardlessOfLegacyAlertSwitch(t *testing.T) {
+func TestAlertWebhookRespectsCloseAndOpenSwitches(t *testing.T) {
 	requests := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -267,7 +267,7 @@ func TestAlertWebhookPreclosesThenOpensRegardlessOfLegacyAlertSwitch(t *testing.
 	svc.alerts.webhookToken = cfg.SteadyWebhookToken
 	svc.alerts.webhookConfig = cfg
 	svc.alerts.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), svc.alerts.webhookSettings, 4, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := svc.SaveAlertOrderSignalSettings(context.Background(), domain.OrderSignalSettings{Alerts: false, Aggressive: false, Steady: false}); err != nil {
+	if _, err := svc.SaveAlertOrderSignalSettings(context.Background(), domain.OrderSignalSettings{Alerts: true, Aggressive: false, Steady: false, AlertsClose: true, AggressiveClose: true, SteadyClose: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -288,10 +288,10 @@ func TestAlertWebhookPreclosesThenOpensRegardlessOfLegacyAlertSwitch(t *testing.
 		}
 	}
 	if payloads[0]["position_effect"] != "close" || payloads[0]["position_side"] != "short" || payloads[0]["order_intent"] != "close_short" {
-		t.Fatalf("alert must preclose first regardless of legacy switch: %#v", payloads[0])
+		t.Fatalf("alert must preclose first when close is enabled: %#v", payloads[0])
 	}
 	if payloads[1]["position_effect"] != "open" || payloads[1]["position_side"] != "long" || payloads[1]["order_intent"] != "entry_long" {
-		t.Fatalf("alert must open after preclose regardless of legacy switch: %#v", payloads[1])
+		t.Fatalf("alert must open after preclose when open is enabled: %#v", payloads[1])
 	}
 }
 

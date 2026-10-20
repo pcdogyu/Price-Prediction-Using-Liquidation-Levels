@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	_ "embed"
@@ -422,6 +423,15 @@ func (s *Server) alertSettings(w http.ResponseWriter, r *http.Request) {
 		if _, ok := fields["order_steady"]; !ok {
 			in.OrderSteady = current.OrderSteady
 		}
+		if _, ok := fields["order_alerts_close"]; !ok {
+			in.OrderAlertsClose = current.OrderAlertsClose
+		}
+		if _, ok := fields["order_aggressive_close"]; !ok {
+			in.OrderAggressiveClose = current.OrderAggressiveClose
+		}
+		if _, ok := fields["order_steady_close"]; !ok {
+			in.OrderSteadyClose = current.OrderSteadyClose
+		}
 	}
 	token, err := alertTokenFromBody(body)
 	if err != nil {
@@ -438,9 +448,8 @@ func (s *Server) alertSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stored)
 }
 
-// alertOrderSettings reads or stores the live opening-signal switches sent to
-// tvbot. Every live category still sends a preclose request first; these
-// switches are independent from Telegram notification preferences.
+// alertOrderSettings reads or stores the live close/open switches sent to
+// tvbot. These switches are independent from Telegram notification preferences.
 func (s *Server) alertOrderSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := s.alertContext(r)
 	if r.Method == http.MethodGet {
@@ -458,12 +467,36 @@ func (s *Server) alertOrderSettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusMethodNotAllowed, fmt.Errorf("method must be GET or POST"))
 		return
 	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<10))
+	if err != nil {
+		problem(w, http.StatusBadRequest, fmt.Errorf("order settings body must be JSON: %w", err))
+		return
+	}
 	var in domain.OrderSignalSettings
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 8<<10))
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&in); err != nil {
 		problem(w, http.StatusBadRequest, fmt.Errorf("order settings body must be JSON: %w", err))
 		return
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		problem(w, http.StatusBadRequest, fmt.Errorf("order settings body must be JSON: %w", err))
+		return
+	}
+	current, err := s.svc.AlertOrderSignalSettingsForContext(ctx)
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if _, ok := fields["order_alerts_close"]; !ok {
+		in.AlertsClose = current.AlertsClose
+	}
+	if _, ok := fields["order_aggressive_close"]; !ok {
+		in.AggressiveClose = current.AggressiveClose
+	}
+	if _, ok := fields["order_steady_close"]; !ok {
+		in.SteadyClose = current.SteadyClose
 	}
 	stored, err := s.svc.SaveAlertOrderSignalSettingsForContext(ctx, in)
 	if err != nil {

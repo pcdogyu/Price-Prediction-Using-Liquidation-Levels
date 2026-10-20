@@ -244,27 +244,31 @@ type NotificationSettings struct {
 	NotifyAlerts     bool   `json:"notify_alerts"`
 	NotifyAggressive bool   `json:"notify_aggressive"`
 	NotifySteady     bool   `json:"notify_steady"`
-	// OrderAlerts is retained for API and SQLite compatibility. When the symbol's
-	// Gamma anchor is negative, live alerts send only the preclose webhook
-	// regardless of these legacy opening switches.
-	OrderAlerts     bool      `json:"order_alerts"`
-	OrderAggressive bool      `json:"order_aggressive"`
-	OrderSteady     bool      `json:"order_steady"`
-	HasToken        bool      `json:"has_token"`
-	TokenMask       string    `json:"token_mask"`
-	TokenSource     string    `json:"token_source"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	// OrderAlerts, OrderAggressive and OrderSteady are the opening switches. They
+	// retain their original JSON names for API compatibility.
+	OrderAlerts          bool      `json:"order_alerts"`
+	OrderAggressive      bool      `json:"order_aggressive"`
+	OrderSteady          bool      `json:"order_steady"`
+	OrderAlertsClose     bool      `json:"order_alerts_close"`
+	OrderAggressiveClose bool      `json:"order_aggressive_close"`
+	OrderSteadyClose     bool      `json:"order_steady_close"`
+	HasToken             bool      `json:"has_token"`
+	TokenMask            string    `json:"token_mask"`
+	TokenSource          string    `json:"token_source"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
-// OrderSignalSettings controls which live liquidation categories may send an
-// opening request to the trading webhook. All live categories always send a
-// preclose request first. If the symbol's Gamma anchor is negative, the
-// opening request is suppressed for that category.
+// OrderSignalSettings controls the close and opening requests for each live
+// liquidation category. The first three fields are the legacy opening switch
+// names retained for existing clients.
 type OrderSignalSettings struct {
-	Alerts     bool      `json:"order_alerts"`
-	Aggressive bool      `json:"order_aggressive"`
-	Steady     bool      `json:"order_steady"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	Alerts          bool      `json:"order_alerts"`
+	Aggressive      bool      `json:"order_aggressive"`
+	Steady          bool      `json:"order_steady"`
+	AlertsClose     bool      `json:"order_alerts_close"`
+	AggressiveClose bool      `json:"order_aggressive_close"`
+	SteadyClose     bool      `json:"order_steady_close"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // NotificationStatus reports the state of the Telegram delivery worker.

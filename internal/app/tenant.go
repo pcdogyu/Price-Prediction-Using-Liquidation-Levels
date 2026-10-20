@@ -73,11 +73,6 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 	rtm.store = tenantStore
 	rtm.sourceStore = s.store
 	rtm.tenantID = tenantID
-	if err := mergeTenantAlertHistory(ctx, tenantStore, s.store); err != nil {
-		_ = tenantStore.Close()
-		s.alertTenantsMu.Unlock()
-		return nil, fmt.Errorf("merge alert tenant history: %w", err)
-	}
 	if settings, found, settingsErr := s.store.AlertSettingsForTenant(ctx, tenantID); settingsErr != nil {
 		_ = tenantStore.Close()
 		s.alertTenantsMu.Unlock()
@@ -147,40 +142,6 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 		go rtm.tickLoop(startCtx)
 	}
 	return rtm, nil
-}
-
-// mergeTenantAlertHistory upgrades rows written before alert history became a
-// shared stream. The deterministic alert and signal IDs make this idempotent,
-// so opening a tenant more than once is safe and existing global rows win.
-func mergeTenantAlertHistory(ctx context.Context, tenantStore, historyStore *store.Store) error {
-	if tenantStore == nil || historyStore == nil || tenantStore == historyStore {
-		return nil
-	}
-	cursor := ""
-	for {
-		page, err := tenantStore.AlertTimeline(ctx, "", "", 200, cursor)
-		if err != nil {
-			return err
-		}
-		for _, row := range page.Rows {
-			switch {
-			case row.Alert != nil:
-				if _, err := historyStore.SaveLiquidationAlert(ctx, *row.Alert); err != nil {
-					return err
-				}
-			case row.Signal != nil:
-				signal := *row.Signal
-				signal.TenantID = ""
-				if _, err := historyStore.SaveTradeSignal(ctx, signal); err != nil {
-					return err
-				}
-			}
-		}
-		if page.NextCursor == "" {
-			return nil
-		}
-		cursor = page.NextCursor
-	}
 }
 
 func (s *Service) isLegacyAlertTenant(tenantID string) bool {
@@ -283,7 +244,7 @@ func (s *Service) alertOrderSignalSettingsForContext(ctx context.Context) (domai
 	if err != nil {
 		return domain.OrderSignalSettings{}, err
 	}
-	return domain.OrderSignalSettings{Alerts: settings.OrderAlerts, Aggressive: settings.OrderAggressive, Steady: settings.OrderSteady, UpdatedAt: settings.UpdatedAt}, nil
+	return domain.OrderSignalSettings{Alerts: settings.OrderAlerts, Aggressive: settings.OrderAggressive, Steady: settings.OrderSteady, AlertsClose: settings.OrderAlertsClose, AggressiveClose: settings.OrderAggressiveClose, SteadyClose: settings.OrderSteadyClose, UpdatedAt: settings.UpdatedAt}, nil
 }
 
 func (s *Service) saveAlertOrderSignalSettingsForContext(ctx context.Context, in domain.OrderSignalSettings) (domain.OrderSignalSettings, error) {
@@ -429,7 +390,7 @@ func (rtm *alertRuntime) updateSettingsForTenant(ctx context.Context, tenantID s
 	if !found {
 		current = rtm.defaultSettings()
 	}
-	out := domain.NotificationSettings{TelegramEnabled: in.TelegramEnabled, NotifyAlerts: in.NotifyAlerts, NotifyAggressive: in.NotifyAggressive, NotifySteady: in.NotifySteady, OrderAlerts: in.OrderAlerts, OrderAggressive: in.OrderAggressive, OrderSteady: in.OrderSteady, TelegramChatID: strings.TrimSpace(in.TelegramChatID), TelegramToken: strings.TrimSpace(current.TelegramToken)}
+	out := domain.NotificationSettings{TelegramEnabled: in.TelegramEnabled, NotifyAlerts: in.NotifyAlerts, NotifyAggressive: in.NotifyAggressive, NotifySteady: in.NotifySteady, OrderAlerts: in.OrderAlerts, OrderAggressive: in.OrderAggressive, OrderSteady: in.OrderSteady, OrderAlertsClose: in.OrderAlertsClose, OrderAggressiveClose: in.OrderAggressiveClose, OrderSteadyClose: in.OrderSteadyClose, TelegramChatID: strings.TrimSpace(in.TelegramChatID), TelegramToken: strings.TrimSpace(current.TelegramToken)}
 	if out.TelegramChatID != "" && !notify.ValidChatID(out.TelegramChatID) {
 		return domain.NotificationSettings{}, errors.New("Telegram Chat ID 需为数字 ID 或 @频道名")
 	}
@@ -463,6 +424,7 @@ func (rtm *alertRuntime) updateOrderSignalSettingsForTenant(ctx context.Context,
 		settings = rtm.defaultSettings()
 	}
 	settings.OrderAlerts, settings.OrderAggressive, settings.OrderSteady = in.Alerts, in.Aggressive, in.Steady
+	settings.OrderAlertsClose, settings.OrderAggressiveClose, settings.OrderSteadyClose = in.AlertsClose, in.AggressiveClose, in.SteadyClose
 	settings.UpdatedAt = time.Now().UTC()
 	if err := rtm.tenantConfigStore().SaveAlertSettingsForTenant(ctx, tenantID, settings); err != nil {
 		return domain.OrderSignalSettings{}, err
@@ -470,7 +432,7 @@ func (rtm *alertRuntime) updateOrderSignalSettingsForTenant(ctx context.Context,
 	rtm.mu.Lock()
 	rtm.settings = settings
 	rtm.mu.Unlock()
-	return domain.OrderSignalSettings{Alerts: settings.OrderAlerts, Aggressive: settings.OrderAggressive, Steady: settings.OrderSteady, UpdatedAt: settings.UpdatedAt}, nil
+	return domain.OrderSignalSettings{Alerts: settings.OrderAlerts, Aggressive: settings.OrderAggressive, Steady: settings.OrderSteady, AlertsClose: settings.OrderAlertsClose, AggressiveClose: settings.OrderAggressiveClose, SteadyClose: settings.OrderSteadyClose, UpdatedAt: settings.UpdatedAt}, nil
 }
 
 func (rtm *alertRuntime) updateStrategySettingsForTenant(ctx context.Context, tenantID string, in domain.AlertStrategySettings) (domain.AlertStrategySettings, error) {
