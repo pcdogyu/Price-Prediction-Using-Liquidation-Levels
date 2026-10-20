@@ -1221,7 +1221,7 @@ const tvbotHTML = `<!doctype html>
       display: block;
     }
     .dashboard-balance-grid .mini-usdt-chart {
-      height: 325px;
+      height: 358px;
     }
     #usdt-chart.mini-usdt-chart {
       height: 250px;
@@ -1490,7 +1490,7 @@ const tvbotHTML = `<!doctype html>
       #usdt-chart { height: 320px; }
       #usdt-chart.mini-usdt-chart { height: 240px; }
       .mini-usdt-chart { height: 240px; }
-      .dashboard-balance-grid .mini-usdt-chart { height: 312px; }
+      .dashboard-balance-grid .mini-usdt-chart { height: 343px; }
       #analysis .mini-usdt-chart { height: 346px; }
       .exchange-balance-metrics { min-height: 0; }
       .dashboard-balance-grid .analysis-metrics.symbol-metrics {
@@ -2975,6 +2975,13 @@ const tvbotHTML = `<!doctype html>
     function chartAxisValue(v) {
       const formatted = formatUSDTBalance(v);
       return formatted === "-" ? asText(v) : formatted;
+    }
+
+    function chartAxisPercentValue(value, baseline) {
+      const current = Number(value);
+      const start = Number(baseline);
+      if (!Number.isFinite(current) || !Number.isFinite(start) || start === 0) return "-";
+      return formatPct((current - start) / Math.abs(start));
     }
 
     function usdtBalanceDetail(balance) {
@@ -5657,6 +5664,12 @@ const tvbotHTML = `<!doctype html>
       const min = Math.min.apply(null, values);
       const max = Math.max.apply(null, values);
       const span = max - min || 0.0001;
+      const baselinePoint = chartPoints.reduce((earliest, point) => {
+        if (!earliest) return point;
+        if (point.date && (!earliest.date || point.date.getTime() < earliest.date.getTime())) return point;
+        return earliest;
+      }, null);
+      const baselineValue = baselinePoint ? baselinePoint.value : chartPoints[0].value;
       const timed = chartPoints.filter((point) => point.date);
       const timeValues = timed.map((point) => point.date.getTime());
       const minTime = timeValues.length ? Math.min.apply(null, timeValues) : 0;
@@ -5676,7 +5689,7 @@ const tvbotHTML = `<!doctype html>
         const lineY = pad.top + ratio * plotHeight;
         const labelValue = max - ratio * span;
         grid += '<line class="chart-grid" x1="' + pad.left + '" y1="' + lineY.toFixed(2) + '" x2="' + (width - pad.right) + '" y2="' + lineY.toFixed(2) + '"/>';
-        grid += '<text class="chart-label" x="8" y="' + (lineY + 4).toFixed(2) + '">' + chartAxisValue(labelValue) + '</text>';
+        grid += '<text class="chart-label" x="8" y="' + (lineY + 4).toFixed(2) + '">' + chartAxisPercentValue(labelValue, baselineValue) + '</text>';
         grid += '<text class="chart-label chart-axis-value-right" x="' + (width - 8) + '" y="' + (lineY + 4).toFixed(2) + '" text-anchor="end">' + chartAxisValue(labelValue) + '</text>';
       }
       const xTicks = chartTickIndexes(chartPoints.length, 6);
@@ -5693,6 +5706,7 @@ const tvbotHTML = `<!doctype html>
         '<line class="chart-axis" x1="' + pad.left + '" y1="' + pad.top + '" x2="' + pad.left + '" y2="' + plotBottom + '"/>' +
         '<line class="chart-axis" x1="' + (width - pad.right) + '" y1="' + pad.top + '" x2="' + (width - pad.right) + '" y2="' + plotBottom + '"/>' +
         '<line class="chart-axis" x1="' + pad.left + '" y1="' + plotBottom + '" x2="' + (width - pad.right) + '" y2="' + plotBottom + '"/>' +
+        '<text class="chart-axis-title" x="' + pad.left + '" y="12">涨跌幅 (%)</text>' +
         '<text class="chart-axis-title" x="' + (width - 8) + '" y="12" text-anchor="end">估值 (USDT)</text>' +
         '<path d="' + path + '" fill="none" stroke="' + lineColor + '" stroke-width="2.4"/>' +
         '<circle cx="' + x(last).toFixed(2) + '" cy="' + y(last.value).toFixed(2) + '" r="4" fill="' + lineColor + '"/>';
