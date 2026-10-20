@@ -2947,6 +2947,7 @@ const tvbotHTML = `<!doctype html>
       const source = String(value || "").toLowerCase();
       if (source === "okx_fills_history") return "OKX 成交明细";
       if (source === "binance_user_trades") return "Binance 成交明细";
+      if (source === "gate_my_trades") return "Gate 成交明细";
       if (source === "exchange_position_time") return "交易所持仓时间";
       return asText(value);
     }

@@ -144,15 +144,21 @@ type Ticker struct {
 	ChangePercentage string `json:"change_percentage"`
 }
 type Position struct {
-	Contract      string `json:"contract"`
-	Size          string `json:"size"`
-	Leverage      string `json:"leverage"`
-	EntryPrice    string `json:"entry_price"`
-	MarkPrice     string `json:"mark_price"`
-	UnrealisedPnl string `json:"unrealised_pnl"`
-	Mode          string `json:"mode"`
-	MarginMode    string `json:"pos_margin_mode"`
-	Lever         string `json:"lever"`
+	Contract         string `json:"contract"`
+	Size             string `json:"size"`
+	Leverage         string `json:"leverage"`
+	Value            string `json:"value"`
+	Margin           string `json:"margin"`
+	InitialMargin    string `json:"initial_margin"`
+	EntryPrice       string `json:"entry_price"`
+	MarkPrice        string `json:"mark_price"`
+	LiquidationPrice string `json:"liq_price"`
+	UnrealisedPnl    string `json:"unrealised_pnl"`
+	Mode             string `json:"mode"`
+	MarginMode       string `json:"pos_margin_mode"`
+	Lever            string `json:"lever"`
+	UpdateTime       string `json:"update_time"`
+	OpenTime         string `json:"open_time"`
 }
 
 // UnmarshalJSON accepts both the string and number representations returned by
@@ -161,15 +167,21 @@ type Position struct {
 // numbers, while other endpoints and older responses use strings.
 func (p *Position) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Contract      json.RawMessage `json:"contract"`
-		Size          json.RawMessage `json:"size"`
-		Leverage      json.RawMessage `json:"leverage"`
-		EntryPrice    json.RawMessage `json:"entry_price"`
-		MarkPrice     json.RawMessage `json:"mark_price"`
-		UnrealisedPnl json.RawMessage `json:"unrealised_pnl"`
-		Mode          json.RawMessage `json:"mode"`
-		MarginMode    json.RawMessage `json:"pos_margin_mode"`
-		Lever         json.RawMessage `json:"lever"`
+		Contract         json.RawMessage `json:"contract"`
+		Size             json.RawMessage `json:"size"`
+		Leverage         json.RawMessage `json:"leverage"`
+		Value            json.RawMessage `json:"value"`
+		Margin           json.RawMessage `json:"margin"`
+		InitialMargin    json.RawMessage `json:"initial_margin"`
+		EntryPrice       json.RawMessage `json:"entry_price"`
+		MarkPrice        json.RawMessage `json:"mark_price"`
+		LiquidationPrice json.RawMessage `json:"liq_price"`
+		UnrealisedPnl    json.RawMessage `json:"unrealised_pnl"`
+		Mode             json.RawMessage `json:"mode"`
+		MarginMode       json.RawMessage `json:"pos_margin_mode"`
+		Lever            json.RawMessage `json:"lever"`
+		UpdateTime       json.RawMessage `json:"update_time"`
+		OpenTime         json.RawMessage `json:"open_time"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -179,8 +191,58 @@ func (p *Position) UnmarshalJSON(data []byte) error {
 		out *string
 	}{
 		{&raw.Contract, &p.Contract}, {&raw.Size, &p.Size}, {&raw.Leverage, &p.Leverage},
-		{&raw.EntryPrice, &p.EntryPrice}, {&raw.MarkPrice, &p.MarkPrice}, {&raw.UnrealisedPnl, &p.UnrealisedPnl},
-		{&raw.Mode, &p.Mode}, {&raw.MarginMode, &p.MarginMode}, {&raw.Lever, &p.Lever},
+		{&raw.Value, &p.Value}, {&raw.Margin, &p.Margin}, {&raw.InitialMargin, &p.InitialMargin},
+		{&raw.EntryPrice, &p.EntryPrice}, {&raw.MarkPrice, &p.MarkPrice}, {&raw.LiquidationPrice, &p.LiquidationPrice},
+		{&raw.UnrealisedPnl, &p.UnrealisedPnl}, {&raw.Mode, &p.Mode}, {&raw.MarginMode, &p.MarginMode},
+		{&raw.Lever, &p.Lever}, {&raw.UpdateTime, &p.UpdateTime}, {&raw.OpenTime, &p.OpenTime},
+	}
+	for _, field := range fields {
+		value, err := gateJSONText(*field.raw)
+		if err != nil {
+			return err
+		}
+		*field.out = value
+	}
+	return nil
+}
+
+// MyTrade is a private Gate futures fill. Gate returns numeric fields as both
+// JSON numbers and strings depending on the endpoint/version, so all fields
+// used by the position view are normalized to text here.
+type MyTrade struct {
+	ID         string `json:"id"`
+	Contract   string `json:"contract"`
+	OrderID    string `json:"order_id"`
+	Size       string `json:"size"`
+	Price      string `json:"price"`
+	CreateTime string `json:"create_time"`
+	Text       string `json:"text"`
+	CloseSize  string `json:"close_size"`
+	TradeValue string `json:"trade_value"`
+}
+
+func (t *MyTrade) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID         json.RawMessage `json:"id"`
+		Contract   json.RawMessage `json:"contract"`
+		OrderID    json.RawMessage `json:"order_id"`
+		Size       json.RawMessage `json:"size"`
+		Price      json.RawMessage `json:"price"`
+		CreateTime json.RawMessage `json:"create_time"`
+		Text       json.RawMessage `json:"text"`
+		CloseSize  json.RawMessage `json:"close_size"`
+		TradeValue json.RawMessage `json:"trade_value"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fields := []struct {
+		raw *json.RawMessage
+		out *string
+	}{
+		{&raw.ID, &t.ID}, {&raw.Contract, &t.Contract}, {&raw.OrderID, &t.OrderID},
+		{&raw.Size, &t.Size}, {&raw.Price, &t.Price}, {&raw.CreateTime, &t.CreateTime},
+		{&raw.Text, &t.Text}, {&raw.CloseSize, &t.CloseSize}, {&raw.TradeValue, &t.TradeValue},
 	}
 	for _, field := range fields {
 		value, err := gateJSONText(*field.raw)
@@ -308,6 +370,15 @@ func (c Client) Positions(ctx context.Context, contract string) ([]Position, err
 	}
 	var out []Position
 	err := c.Do(ctx, http.MethodGet, "/futures/usdt/positions", q, nil, true, &out)
+	return out, err
+}
+func (c Client) MyTrades(ctx context.Context, contract string) ([]MyTrade, error) {
+	q := url.Values{"limit": []string{"1000"}}
+	if strings.TrimSpace(contract) != "" {
+		q.Set("contract", contract)
+	}
+	var out []MyTrade
+	err := c.Do(ctx, http.MethodGet, "/futures/usdt/my_trades", q, nil, true, &out)
 	return out, err
 }
 func (c Client) OpenOrders(ctx context.Context, contract string) ([]Order, error) {

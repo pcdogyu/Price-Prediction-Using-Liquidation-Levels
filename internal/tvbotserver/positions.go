@@ -63,6 +63,7 @@ const (
 	positionEntrySizeEpsilon    = 1e-9
 	entryTimeSourceOKXFills     = "okx_fills_history"
 	entryTimeSourceBinanceTrade = "binance_user_trades"
+	entryTimeSourceGateTrades   = "gate_my_trades"
 	entryTimeSourcePositionTime = "exchange_position_time"
 	positionProtectionTP        = "tp"
 	positionProtectionSL        = "sl"
@@ -2263,9 +2264,38 @@ func (s *Server) fetchGatePositions(ctx context.Context, cfg config.Config, requ
 		}
 		return positions[i].InstID < positions[j].InstID
 	})
-	views := positionViewsWithEntryTimes(positions, nil, s.now(), entryTimeSourcePositionTime, nil)
-	s.enrichPositionViewsWithOrderMetadata(views, trading.ExchangeGate, apiID)
 	now := s.now()
+	fillsByContract := make(map[string][]positionEntryFill)
+	errorsByContract := make(map[string]error)
+	loadedContracts := make(map[string]struct{})
+	for _, position := range positions {
+		contract := strings.ToUpper(strings.TrimSpace(position.InstID))
+		if contract == "" {
+			continue
+		}
+		if _, loaded := loadedContracts[contract]; loaded {
+			continue
+		}
+		loadedContracts[contract] = struct{}{}
+		trades, tradeErr := client.MyTrades(ctx, contract)
+		if tradeErr != nil {
+			errorsByContract[contract] = tradeErr
+			continue
+		}
+		fillsByContract[contract] = gatePositionEntryFills(trades)
+	}
+	views := make([]positionView, 0, len(positions))
+	for _, position := range positions {
+		contract := strings.ToUpper(strings.TrimSpace(position.InstID))
+		views = append(views, positionViewWithEntryTime(
+			position,
+			fillsByContract[contract],
+			now,
+			entryTimeSourceGateTrades,
+			errorsByContract[contract],
+		))
+	}
+	s.enrichPositionViewsWithOrderMetadata(views, trading.ExchangeGate, apiID)
 	return positionsResponse{
 		OK: true, Exchange: trading.ExchangeGate, APIID: apiID, InstType: "USDT-M",
 		Count: len(positions), RefreshedAt: now, Positions: views,
@@ -2630,8 +2660,20 @@ func (s *Server) enrichPositionViewsWithOrderMetadata(views []positionView, exch
 func positionEntryOrderMatches(result trading.OrderResult, ordID, clOrdID string) bool {
 	ordID = strings.TrimSpace(ordID)
 	clOrdID = strings.TrimSpace(clOrdID)
-	return ordID != "" && ordID == strings.TrimSpace(result.OrdID) ||
-		clOrdID != "" && clOrdID == strings.TrimSpace(result.ClOrdID)
+	return orderIDListContains(result.OrdID, ordID) || orderIDListContains(result.ClOrdID, clOrdID)
+}
+
+func orderIDListContains(list, wanted string) bool {
+	wanted = strings.TrimSpace(wanted)
+	if wanted == "" {
+		return false
+	}
+	for _, candidate := range strings.Split(list, " / ") {
+		if wanted == strings.TrimSpace(candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func positionEntryFillMatches(position okx.Position, fill positionEntryFill) bool {
@@ -2881,6 +2923,55 @@ func binancePositionToOKX(position binance.Position) okx.Position {
 	}
 }
 
+func gatePositionEntryFills(trades []gate.MyTrade) []positionEntryFill {
+	fills := make([]positionEntryFill, 0, len(trades))
+	for _, trade := range trades {
+		size, err := strconv.ParseFloat(strings.TrimSpace(trade.Size), 64)
+		if err != nil || math.Abs(size) <= positionEntrySizeEpsilon {
+			continue
+		}
+		fillTime, ok := gateUnixTime(trade.CreateTime)
+		if !ok {
+			continue
+		}
+		side := "buy"
+		if size < 0 {
+			side = "sell"
+		}
+		fills = append(fills, positionEntryFill{
+			InstID:   strings.ToUpper(strings.TrimSpace(trade.Contract)),
+			OrdID:    strings.TrimSpace(trade.OrderID),
+			ClOrdID:  strings.TrimSpace(trade.Text),
+			Side:     side,
+			Size:     math.Abs(size),
+			FillTime: fillTime,
+		})
+	}
+	return fills
+}
+
+func gateUnixTime(raw string) (time.Time, bool) {
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || seconds <= 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return time.Time{}, false
+	}
+	whole := math.Floor(seconds)
+	nanos := math.Round((seconds - whole) * 1e9)
+	if nanos >= 1e9 {
+		whole++
+		nanos = 0
+	}
+	return time.Unix(int64(whole), int64(nanos)).UTC(), true
+}
+
+func gateTimeMillis(raw string) string {
+	value, ok := gateUnixTime(raw)
+	if !ok {
+		return ""
+	}
+	return strconv.FormatInt(value.UnixMilli(), 10)
+}
+
 func gatePositionToOKX(position gate.Position) okx.Position {
 	size := strings.TrimSpace(position.Size)
 	posSide := "net"
@@ -2891,11 +2982,31 @@ func gatePositionToOKX(position gate.Position) okx.Position {
 			posSide = "short"
 		}
 	}
-	notional := ""
-	if sizeValue, sizeErr := strconv.ParseFloat(strings.TrimSpace(size), 64); sizeErr == nil {
-		mark, markErr := strconv.ParseFloat(strings.TrimSpace(position.MarkPrice), 64)
-		if markErr == nil && mark > 0 {
-			notional = trading.NormalizeFloat(math.Abs(sizeValue) * mark)
+	notional := strings.TrimSpace(position.Value)
+	if notional == "" {
+		if sizeValue, sizeErr := strconv.ParseFloat(strings.TrimSpace(size), 64); sizeErr == nil {
+			mark, markErr := strconv.ParseFloat(strings.TrimSpace(position.MarkPrice), 64)
+			if markErr == nil && mark > 0 {
+				// Gate's position endpoint normally supplies value directly. This
+				// fallback preserves compatibility with older responses that omitted it.
+				notional = trading.NormalizeFloat(math.Abs(sizeValue) * mark)
+			}
+		}
+	}
+	margin := firstNonEmpty(strings.TrimSpace(position.Margin), strings.TrimSpace(position.InitialMargin))
+	if margin == "" {
+		if notionalValue, notionalErr := strconv.ParseFloat(notional, 64); notionalErr == nil && notionalValue > 0 {
+			leverage, leverageErr := strconv.ParseFloat(firstNonEmpty(position.Lever, position.Leverage), 64)
+			if leverageErr == nil && leverage > 0 {
+				margin = trading.NormalizeFloat(notionalValue / leverage)
+			}
+		}
+	}
+	upl := strings.TrimSpace(position.UnrealisedPnl)
+	uplRatio := ""
+	if uplValue, uplErr := strconv.ParseFloat(upl, 64); uplErr == nil {
+		if marginValue, marginErr := strconv.ParseFloat(margin, 64); marginErr == nil && marginValue != 0 {
+			uplRatio = trading.NormalizeFloat(uplValue / math.Abs(marginValue))
 		}
 	}
 	return okx.Position{
@@ -2907,10 +3018,14 @@ func gatePositionToOKX(position gate.Position) okx.Position {
 		AvailPos:    size,
 		AvgPx:       strings.TrimSpace(position.EntryPrice),
 		MarkPx:      strings.TrimSpace(position.MarkPrice),
-		Upl:         strings.TrimSpace(position.UnrealisedPnl),
+		Upl:         upl,
+		UplRatio:    uplRatio,
 		Lever:       firstNonEmpty(position.Lever, position.Leverage),
+		LiqPx:       strings.TrimSpace(position.LiquidationPrice),
 		NotionalUsd: notional,
-		Margin:      "",
+		Margin:      margin,
+		CTime:       gateTimeMillis(position.OpenTime),
+		UTime:       gateTimeMillis(position.UpdateTime),
 		Ccy:         "USDT",
 	}
 }

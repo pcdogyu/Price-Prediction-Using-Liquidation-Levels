@@ -51,7 +51,7 @@ func TestClientDecodesNumericPositionFields(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/v4/futures/usdt/positions" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":2,"leverage":5,"entry_price":67123.45,"mark_price":67200.1,"unrealised_pnl":12.5,"mode":"single","pos_margin_mode":"cross","lever":5}]`))
+		_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":2,"leverage":5,"value":134400.2,"margin":26880.04,"initial_margin":26880.04,"entry_price":67123.45,"mark_price":67200.1,"liq_price":62000,"unrealised_pnl":12.5,"mode":"single","pos_margin_mode":"cross","lever":5,"update_time":1761027808,"open_time":1761027700}]`))
 	}))
 	defer server.Close()
 
@@ -64,8 +64,31 @@ func TestClientDecodesNumericPositionFields(t *testing.T) {
 		t.Fatalf("positions = %#v", positions)
 	}
 	got := positions[0]
-	if got.Contract != "BTC_USDT" || got.Size != "2" || got.Leverage != "5" || got.EntryPrice != "67123.45" || got.MarkPrice != "67200.1" || got.UnrealisedPnl != "12.5" || got.MarginMode != "cross" || got.Lever != "5" {
+	if got.Contract != "BTC_USDT" || got.Size != "2" || got.Leverage != "5" || got.Value != "134400.2" || got.Margin != "26880.04" || got.InitialMargin != "26880.04" || got.EntryPrice != "67123.45" || got.MarkPrice != "67200.1" || got.LiquidationPrice != "62000" || got.UnrealisedPnl != "12.5" || got.MarginMode != "cross" || got.Lever != "5" || got.UpdateTime != "1761027808" || got.OpenTime != "1761027700" {
 		t.Fatalf("decoded position = %#v", got)
+	}
+}
+
+func TestClientDecodesNumericMyTradeFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v4/futures/usdt/my_trades" || r.URL.Query().Get("contract") != "BTC_USDT" || r.URL.Query().Get("limit") != "1000" {
+			t.Fatalf("unexpected request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`[{"id":123,"contract":"BTC_USDT","order_id":456,"size":-14,"price":83096.5,"create_time":1761027700.25,"text":"t-entry","close_size":0,"trade_value":116.3}]`))
+	}))
+	defer server.Close()
+
+	client := Client{BaseURL: server.URL, Credentials: Credentials{APIKey: "key", SecretKey: "secret"}, HTTPClient: server.Client()}
+	trades, err := client.MyTrades(context.Background(), "BTC_USDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trades) != 1 {
+		t.Fatalf("trades = %#v", trades)
+	}
+	got := trades[0]
+	if got.ID != "123" || got.Contract != "BTC_USDT" || got.OrderID != "456" || got.Size != "-14" || got.Price != "83096.5" || got.CreateTime != "1761027700.25" || got.Text != "t-entry" || got.CloseSize != "0" || got.TradeValue != "116.3" {
+		t.Fatalf("decoded trade = %#v", got)
 	}
 }
 

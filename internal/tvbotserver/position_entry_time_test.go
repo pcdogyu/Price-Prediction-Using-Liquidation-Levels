@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotstorage"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
@@ -87,6 +88,36 @@ func TestPositionViewWithEntryTimeFallsBackToExchangePositionTime(t *testing.T) 
 		view.HoldingSeconds != int64((30*time.Minute).Seconds()) ||
 		!strings.Contains(view.EntryTimeError, "binance 502") {
 		t.Fatalf("bad fallback position time view: %#v", view)
+	}
+}
+
+func TestGatePositionConversionUsesExchangeValueMarginAndTimes(t *testing.T) {
+	openAt := time.Unix(1761027700, 0).UTC()
+	updatedAt := time.Unix(1761027808, 0).UTC()
+	position := gatePositionToOKX(gate.Position{
+		Contract:         "BTC_USDT",
+		Size:             "-14",
+		Value:            "116.3",
+		Margin:           "5.815",
+		Leverage:         "20",
+		Lever:            "20",
+		EntryPrice:       "83096.5",
+		MarkPrice:        "82873.17",
+		LiquidationPrice: "90000",
+		UnrealisedPnl:    "0.312682",
+		MarginMode:       "isolated",
+		OpenTime:         "1761027700",
+		UpdateTime:       "1761027808",
+	})
+	if position.NotionalUsd != "116.3" || position.Margin != "5.815" || position.UplRatio == "" || position.CTime != strconv.FormatInt(openAt.UnixMilli(), 10) || position.UTime != strconv.FormatInt(updatedAt.UnixMilli(), 10) {
+		t.Fatalf("bad Gate position conversion: %#v", position)
+	}
+
+	view := positionViewWithEntryTime(position, gatePositionEntryFills([]gate.MyTrade{{
+		Contract: "BTC_USDT", OrderID: "456", Text: "t-entry", Size: "-14", CreateTime: "1761027700.25",
+	}}), updatedAt.Add(time.Hour), entryTimeSourceGateTrades, nil)
+	if view.EntryFillTime != time.Unix(1761027700, 250000000).UTC().Format(time.RFC3339Nano) || view.EntryTimeSource != entryTimeSourceGateTrades || view.entryOrdID != "456" || view.entryClOrdID != "t-entry" {
+		t.Fatalf("bad Gate entry view: %#v", view)
 	}
 }
 
