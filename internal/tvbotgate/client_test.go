@@ -45,3 +45,26 @@ func TestClientSignsGateV4Request(t *testing.T) {
 		t.Fatalf("order id = %q", out.IDString())
 	}
 }
+
+func TestClientDecodesNumericPositionFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v4/futures/usdt/positions" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":2,"leverage":5,"entry_price":67123.45,"mark_price":67200.1,"unrealised_pnl":12.5,"mode":"single","pos_margin_mode":"cross","lever":5}]`))
+	}))
+	defer server.Close()
+
+	client := Client{BaseURL: server.URL, Credentials: Credentials{APIKey: "key", SecretKey: "secret"}, HTTPClient: server.Client()}
+	positions, err := client.Positions(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(positions) != 1 {
+		t.Fatalf("positions = %#v", positions)
+	}
+	got := positions[0]
+	if got.Contract != "BTC_USDT" || got.Size != "2" || got.Leverage != "5" || got.EntryPrice != "67123.45" || got.MarkPrice != "67200.1" || got.UnrealisedPnl != "12.5" || got.MarginMode != "cross" || got.Lever != "5" {
+		t.Fatalf("decoded position = %#v", got)
+	}
+}

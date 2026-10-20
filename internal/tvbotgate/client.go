@@ -154,6 +154,44 @@ type Position struct {
 	MarginMode    string `json:"pos_margin_mode"`
 	Lever         string `json:"lever"`
 }
+
+// UnmarshalJSON accepts both the string and number representations returned by
+// different Gate API deployments for decimal position fields. Gate's futures
+// position endpoint currently returns size and some related values as JSON
+// numbers, while other endpoints and older responses use strings.
+func (p *Position) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Contract      json.RawMessage `json:"contract"`
+		Size          json.RawMessage `json:"size"`
+		Leverage      json.RawMessage `json:"leverage"`
+		EntryPrice    json.RawMessage `json:"entry_price"`
+		MarkPrice     json.RawMessage `json:"mark_price"`
+		UnrealisedPnl json.RawMessage `json:"unrealised_pnl"`
+		Mode          json.RawMessage `json:"mode"`
+		MarginMode    json.RawMessage `json:"pos_margin_mode"`
+		Lever         json.RawMessage `json:"lever"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fields := []struct {
+		raw *json.RawMessage
+		out *string
+	}{
+		{&raw.Contract, &p.Contract}, {&raw.Size, &p.Size}, {&raw.Leverage, &p.Leverage},
+		{&raw.EntryPrice, &p.EntryPrice}, {&raw.MarkPrice, &p.MarkPrice}, {&raw.UnrealisedPnl, &p.UnrealisedPnl},
+		{&raw.Mode, &p.Mode}, {&raw.MarginMode, &p.MarginMode}, {&raw.Lever, &p.Lever},
+	}
+	for _, field := range fields {
+		value, err := gateJSONText(*field.raw)
+		if err != nil {
+			return err
+		}
+		*field.out = value
+	}
+	return nil
+}
+
 type Order struct {
 	ID           json.RawMessage `json:"id"`
 	Contract     string          `json:"contract"`
