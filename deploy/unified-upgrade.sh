@@ -20,8 +20,18 @@ new_binary="$app_root/liquidation-predictor.new"
 
 test -d "$source_root/.git"
 test -f "$data_root/liquidation.db"
-mkdir -p "$backup"
 git config --global --add safe.directory "$source_root" || true
+git -C "$source_root" fetch origin binance
+if git -C "$source_root" show-ref --verify --quiet refs/heads/binance; then
+  git -C "$source_root" switch binance
+else
+  git -C "$source_root" switch -c binance --track origin/binance
+fi
+git -C "$source_root" merge --ff-only origin/binance
+test "$(git -C "$source_root" rev-parse HEAD)" = "$revision"
+test -z "$(git -C "$source_root" status --porcelain)"
+git -C "$source_root" diff --check
+mkdir -p "$backup"
 
 backup_file() {
   local source="$1" name="$2"
@@ -85,16 +95,6 @@ else
   echo "legacy_migration_snapshot=preserved_or_unavailable"
 fi
 
-git -C "$source_root" fetch origin binance
-if git -C "$source_root" show-ref --verify --quiet refs/heads/binance; then
-  git -C "$source_root" switch binance
-else
-  git -C "$source_root" switch -c binance --track origin/binance
-fi
-git -C "$source_root" merge --ff-only origin/binance
-test "$(git -C "$source_root" rev-parse HEAD)" = "$revision"
-test -z "$(git -C "$source_root" status --porcelain)"
-git -C "$source_root" diff --check
 chown -R liquidation:liquidation "$app_root"
 
 if [[ ! -f "$data_root/tvbot-config.json" ]]; then
