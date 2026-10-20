@@ -82,16 +82,25 @@ func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 		t.Fatalf("alerts status=%d", w.Code)
 	}
 	body := w.Body.String()
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/assets/pages.css", nil))
+	if w.Code != 200 {
+		t.Fatalf("pages.css status=%d", w.Code)
+	}
+	styles := w.Body.String()
 	for _, marker := range []string{
 		`.app-nav{flex-wrap:wrap;overflow:visible}`,
 		`.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}`,
 		`@media(max-width:720px){.app-nav{gap:6px;flex-wrap:wrap}`,
 		`.app-links{order:3;flex:1 0 100%;flex-basis:100%;min-width:0;scrollbar-width:thin}.app-links a{flex:0 0 auto}`,
-		`data-system-menu="true"`,
-		`交易所信息`,
 	} {
-		if !strings.Contains(body, marker) {
+		if !strings.Contains(styles, marker) {
 			t.Fatalf("alerts navigation missing mobile scroll override %q", marker)
+		}
+	}
+	for _, marker := range []string{`data-system-menu="true"`, `交易所信息`} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("alerts navigation missing %q", marker)
 		}
 	}
 	if strings.Contains(body, `class="app-brand-name"`) || strings.Contains(body, `class="app-logo"`) || strings.Contains(body, `aria-label="清算墙雷达首页"`) {

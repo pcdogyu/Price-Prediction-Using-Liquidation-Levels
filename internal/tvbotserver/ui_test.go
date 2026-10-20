@@ -39,7 +39,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`data-tab="apiKeys" href="/liquidation/tvbot/view/api-keys"`,
 		`href="/liquidation/admin"`,
 		`id="nav-theme"`,
-		`type="button" id="nav-logs">程序日志</button>`,
+		`id="nav-logs" type="button">程序日志</button>`,
 		`id="shared-logs"`,
 		`method="post" action="/liquidation/auth/logout"><button type="submit">退出</button></form>`,
 		`data-global-exchange="okx" aria-selected="true"`,
