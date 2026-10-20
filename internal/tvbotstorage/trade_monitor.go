@@ -288,7 +288,7 @@ func (s *OrderStore) UpsertTradeLifecycleFromOrder(rec OrderRecord, reentryOfLif
 }
 
 func tradeLifecycleFromOrder(rec OrderRecord, reentryOfLifecycleID string, reentryCount int, now time.Time) (TradeLifecycle, bool) {
-	if rec.SignalID == "" || rec.Status != StatusSubmitted || trading.NormalizeExchange(rec.TargetExchange) != trading.ExchangeBinance {
+	if rec.SignalID == "" || (rec.Status != StatusSubmitted && rec.Status != StatusPartial) || trading.NormalizeExchange(rec.TargetExchange) != trading.ExchangeBinance {
 		return TradeLifecycle{}, false
 	}
 	symbol := strings.ToUpper(strings.TrimSpace(rec.Result.InstID))

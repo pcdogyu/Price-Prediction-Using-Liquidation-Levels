@@ -388,7 +388,9 @@ func TestRoutes(t *testing.T) {
 	if !bytes.Contains(ui.Body.Bytes(), []byte("订单类型")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`id="order-type"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("市价单")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("限价单")) {
+		!bytes.Contains(ui.Body.Bytes(), []byte("限价单")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("多层订单")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("order-layered-market-pct")) {
 		t.Fatalf("tvbot ui should include market/limit order type setting")
 	}
 	if !bytes.Contains(ui.Body.Bytes(), []byte("USDT估值")) ||
@@ -843,6 +845,14 @@ func TestTVBotConfigSavesOrderType(t *testing.T) {
 	}
 	if cfg.Trading.OrderType != string(trading.OrderTypeLimit) || cfg.OrderSettings().OrderType != trading.OrderTypeLimit {
 		t.Fatalf("order type not saved: %#v", cfg.Trading)
+	}
+
+	layeredReq := httptest.NewRequest(http.MethodPatch, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"order_type":"layered","layered_order":{"market_amount_pct":10,"signal_limit_amount_pct":18,"price_layers":[{"amount_pct":18,"offset_pct":0.5},{"amount_pct":18,"offset_pct":1},{"amount_pct":18,"offset_pct":2},{"amount_pct":18,"offset_pct":3}]}}}`)))
+	layeredReq.SetBasicAuth("admin", "Admin123")
+	layered := httptest.NewRecorder()
+	srv.ServeHTTP(layered, layeredReq)
+	if layered.Code != http.StatusOK || srv.ConfigStore.Get().Trading.OrderType != string(trading.OrderTypeLayered) || srv.ConfigStore.Get().Trading.LayeredOrder.PriceLayers[0].OffsetPct != 0.5 {
+		t.Fatalf("layered order type not saved: status=%d body=%s cfg=%#v", layered.Code, layered.Body.String(), srv.ConfigStore.Get().Trading)
 	}
 
 	badReq := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"order_type":"post_only"}}`)))

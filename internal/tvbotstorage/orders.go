@@ -24,6 +24,7 @@ const (
 	StatusAccepted  OrderStatus = "accepted"
 	StatusDuplicate OrderStatus = "duplicate"
 	StatusSubmitted OrderStatus = "submitted"
+	StatusPartial   OrderStatus = "partial"
 	StatusFailed    OrderStatus = "failed"
 	StatusRejected  OrderStatus = "rejected"
 	StatusIgnored   OrderStatus = "ignored"
@@ -216,6 +217,27 @@ func (s *OrderStore) MarkSubmitted(signalID string, result trading.OrderResult, 
 			s.state.Orders[i].UpdatedAt = now.UTC()
 			s.state.Orders[i].Result = result
 			s.state.Orders[i].Error = ""
+			return s.saveLocked()
+		}
+	}
+	return errors.New("signal record not found")
+}
+
+func (s *OrderStore) MarkPartiallySubmitted(signalID string, result trading.OrderResult, submitErr error, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		return s.markPartiallySubmittedSQLiteLocked(signalID, result, submitErr, now)
+	}
+	for i := range s.state.Orders {
+		if s.state.Orders[i].SignalID == signalID {
+			s.state.Orders[i].Status = StatusPartial
+			s.state.Orders[i].UpdatedAt = now.UTC()
+			s.state.Orders[i].Result = result
+			s.state.Orders[i].ErrorCode = "partial_submission"
+			if submitErr != nil {
+				s.state.Orders[i].Error = submitErr.Error()
+			}
 			return s.saveLocked()
 		}
 	}
@@ -439,7 +461,7 @@ func (s *OrderStore) CountFiltered(exchange string, status OrderStatus, query st
 
 func ValidOrderStatus(status OrderStatus) bool {
 	switch status {
-	case StatusAccepted, StatusDuplicate, StatusSubmitted, StatusFailed, StatusRejected, StatusIgnored:
+	case StatusAccepted, StatusDuplicate, StatusSubmitted, StatusPartial, StatusFailed, StatusRejected, StatusIgnored:
 		return true
 	default:
 		return false
@@ -1022,6 +1044,30 @@ func (s *OrderStore) markSubmittedSQLiteLocked(signalID string, result trading.O
 	return nil
 }
 
+func (s *OrderStore) markPartiallySubmittedSQLiteLocked(signalID string, result trading.OrderResult, submitErr error, now time.Time) error {
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	message := ""
+	if submitErr != nil {
+		message = submitErr.Error()
+	}
+	res, err := s.db.Exec(`UPDATE orders SET status = ?, updated_at = ?, result_json = ?, error_code = ?, error = ? WHERE signal_id = ?`,
+		string(StatusPartial), now.UTC().Format(time.RFC3339Nano), string(resultJSON), "partial_submission", message, signalID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errors.New("signal record not found")
+	}
+	return nil
+}
+
 func (s *OrderStore) markFailedSQLiteLocked(signalID, code string, failErr error, now time.Time) error {
 	message := ""
 	if failErr != nil {
@@ -1352,10 +1398,11 @@ func (s *OrderStore) findSQLiteLocked(signalID string) (OrderRecord, error) {
 
 func (s *OrderStore) hasPrimaryDedupeSQLiteLocked(dedupeKey string) bool {
 	var exists int
-	err := s.db.QueryRow(`SELECT 1 FROM orders WHERE dedupe_key = ? AND status IN (?, ?, ?) LIMIT 1`,
+	err := s.db.QueryRow(`SELECT 1 FROM orders WHERE dedupe_key = ? AND status IN (?, ?, ?, ?) LIMIT 1`,
 		dedupeKey,
 		string(StatusAccepted),
 		string(StatusSubmitted),
+		string(StatusPartial),
 		string(StatusFailed),
 	).Scan(&exists)
 	return err == nil

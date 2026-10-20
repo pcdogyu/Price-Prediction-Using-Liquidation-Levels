@@ -45,32 +45,33 @@ type ServerConfig struct {
 }
 
 type TradingConfig struct {
-	Env                       string                `json:"env"`
-	AllowLiveTrading          bool                  `json:"allow_live_trading"`
-	BaseURL                   string                `json:"base_url"`
-	BinanceBaseURL            string                `json:"binance_base_url"`
-	BinanceDemoBaseURL        string                `json:"binance_demo_base_url"`
-	GateBaseURL               string                `json:"gate_base_url"`
-	GateDemoBaseURL           string                `json:"gate_demo_base_url"`
-	DefaultMarginMode         string                `json:"default_margin_mode"`
-	PositionMode              string                `json:"position_mode"`
-	MarketTurnoverScope       string                `json:"market_turnover_scope"`
-	SignalTTLSeconds          int                   `json:"signal_ttl_seconds"`
-	IgnoredCoinpair           string                `json:"ignored_coinpair"`
-	IgnoredCoinpairs          []string              `json:"ignored_coinpairs"`
-	OrderAmountUSDT           float64               `json:"order_amount_usdt"`
-	Leverage                  int                   `json:"leverage"`
-	OrderType                 string                `json:"order_type"`
-	RiskType                  string                `json:"risk_type"`
-	TakeProfitPct             float64               `json:"take_profit_pct"`
-	StopLossPct               float64               `json:"stop_loss_pct"`
-	TrailingPct               float64               `json:"trailing_pct"`
-	LongLimitPriceMultiplier  float64               `json:"long_limit_price_multiplier"`
-	ShortLimitPriceMultiplier float64               `json:"short_limit_price_multiplier"`
-	LossCooldown              LossCooldownConfig    `json:"loss_cooldown"`
-	FillMonitor               FillMonitorConfig     `json:"fill_monitor"`
-	AutoReentry               AutoReentryConfig     `json:"auto_reentry"`
-	PositionMonitor           PositionMonitorConfig `json:"position_monitor"`
+	Env                       string                       `json:"env"`
+	AllowLiveTrading          bool                         `json:"allow_live_trading"`
+	BaseURL                   string                       `json:"base_url"`
+	BinanceBaseURL            string                       `json:"binance_base_url"`
+	BinanceDemoBaseURL        string                       `json:"binance_demo_base_url"`
+	GateBaseURL               string                       `json:"gate_base_url"`
+	GateDemoBaseURL           string                       `json:"gate_demo_base_url"`
+	DefaultMarginMode         string                       `json:"default_margin_mode"`
+	PositionMode              string                       `json:"position_mode"`
+	MarketTurnoverScope       string                       `json:"market_turnover_scope"`
+	SignalTTLSeconds          int                          `json:"signal_ttl_seconds"`
+	IgnoredCoinpair           string                       `json:"ignored_coinpair"`
+	IgnoredCoinpairs          []string                     `json:"ignored_coinpairs"`
+	OrderAmountUSDT           float64                      `json:"order_amount_usdt"`
+	Leverage                  int                          `json:"leverage"`
+	OrderType                 string                       `json:"order_type"`
+	RiskType                  string                       `json:"risk_type"`
+	TakeProfitPct             float64                      `json:"take_profit_pct"`
+	StopLossPct               float64                      `json:"stop_loss_pct"`
+	TrailingPct               float64                      `json:"trailing_pct"`
+	LongLimitPriceMultiplier  float64                      `json:"long_limit_price_multiplier"`
+	ShortLimitPriceMultiplier float64                      `json:"short_limit_price_multiplier"`
+	LayeredOrder              trading.LayeredOrderSettings `json:"layered_order"`
+	LossCooldown              LossCooldownConfig           `json:"loss_cooldown"`
+	FillMonitor               FillMonitorConfig            `json:"fill_monitor"`
+	AutoReentry               AutoReentryConfig            `json:"auto_reentry"`
+	PositionMonitor           PositionMonitorConfig        `json:"position_monitor"`
 }
 
 // LossCooldownConfig controls the global block applied to a coinpair after a
@@ -242,6 +243,7 @@ func Default() Config {
 			TrailingPct:               1,
 			LongLimitPriceMultiplier:  0.997,
 			ShortLimitPriceMultiplier: 1.003,
+			LayeredOrder:              trading.DefaultLayeredOrderSettings(),
 			LossCooldown: LossCooldownConfig{
 				Enabled: true,
 				Hours:   24,
@@ -411,6 +413,7 @@ func (c *Config) Normalize() {
 	if c.Trading.ShortLimitPriceMultiplier <= 0 {
 		c.Trading.ShortLimitPriceMultiplier = 1.003
 	}
+	c.Trading.LayeredOrder = c.Trading.LayeredOrder.Normalize()
 	if c.Trading.LossCooldown.Hours <= 0 {
 		c.Trading.LossCooldown.Hours = 24
 	}
@@ -492,7 +495,7 @@ func (c Config) Validate() error {
 		return errors.New("leverage must be positive")
 	}
 	switch trading.OrderType(c.Trading.OrderType) {
-	case trading.OrderTypeMarket, trading.OrderTypeLimit:
+	case trading.OrderTypeMarket, trading.OrderTypeLimit, trading.OrderTypeLayered:
 	default:
 		return fmt.Errorf("unsupported order_type %q", c.Trading.OrderType)
 	}
@@ -504,6 +507,9 @@ func (c Config) Validate() error {
 	}
 	if c.Trading.LongLimitPriceMultiplier <= 0 || c.Trading.ShortLimitPriceMultiplier <= 0 {
 		return errors.New("limit price multipliers must be positive")
+	}
+	if err := c.Trading.LayeredOrder.Validate(); err != nil {
+		return err
 	}
 	if c.Trading.LossCooldown.Hours < 1 || c.Trading.LossCooldown.Hours > 8760 {
 		return errors.New("loss_cooldown.hours must be between 1 and 8760")
@@ -880,6 +886,7 @@ func (c Config) OrderSettings() trading.OrderSettings {
 		Risk:                      risk,
 		LongLimitPriceMultiplier:  c.Trading.LongLimitPriceMultiplier,
 		ShortLimitPriceMultiplier: c.Trading.ShortLimitPriceMultiplier,
+		Layered:                   c.Trading.LayeredOrder,
 	}.Normalize()
 }
 

@@ -41,8 +41,9 @@ const (
 type OrderType string
 
 const (
-	OrderTypeMarket OrderType = "market"
-	OrderTypeLimit  OrderType = "limit"
+	OrderTypeMarket  OrderType = "market"
+	OrderTypeLimit   OrderType = "limit"
+	OrderTypeLayered OrderType = "layered"
 )
 
 const (
@@ -145,6 +146,7 @@ type OrderSettings struct {
 	Risk                      Risk
 	LongLimitPriceMultiplier  float64
 	ShortLimitPriceMultiplier float64
+	Layered                   LayeredOrderSettings
 }
 
 type TemplateRequest struct {
@@ -166,24 +168,40 @@ type TemplateResponse struct {
 }
 
 type OrderResult struct {
-	SignalID       string            `json:"signal_id"`
-	APIID          string            `json:"api_id,omitempty"`
-	TargetExchange string            `json:"target_exchange,omitempty"`
-	InstID         string            `json:"inst_id"`
-	ClOrdID        string            `json:"cl_ord_id"`
-	OrdType        string            `json:"ord_type,omitempty"`
-	Px             string            `json:"px,omitempty"`
-	Leverage       int               `json:"leverage,omitempty"`
-	OrdID          string            `json:"ord_id,omitempty"`
-	OKXCode        string            `json:"okx_code,omitempty"`
-	OKXMsg         string            `json:"okx_msg,omitempty"`
-	BinanceCode    int               `json:"binance_code,omitempty"`
-	BinanceMsg     string            `json:"binance_msg,omitempty"`
-	GateLabel      string            `json:"gate_label,omitempty"`
-	GateMsg        string            `json:"gate_msg,omitempty"`
-	PositionEffect string            `json:"position_effect,omitempty"`
-	PositionSide   string            `json:"position_side,omitempty"`
-	RiskOrders     []RiskOrderResult `json:"risk_orders,omitempty"`
+	SignalID       string             `json:"signal_id"`
+	APIID          string             `json:"api_id,omitempty"`
+	TargetExchange string             `json:"target_exchange,omitempty"`
+	InstID         string             `json:"inst_id"`
+	ClOrdID        string             `json:"cl_ord_id"`
+	OrdType        string             `json:"ord_type,omitempty"`
+	Px             string             `json:"px,omitempty"`
+	Leverage       int                `json:"leverage,omitempty"`
+	OrdID          string             `json:"ord_id,omitempty"`
+	OKXCode        string             `json:"okx_code,omitempty"`
+	OKXMsg         string             `json:"okx_msg,omitempty"`
+	BinanceCode    int                `json:"binance_code,omitempty"`
+	BinanceMsg     string             `json:"binance_msg,omitempty"`
+	GateLabel      string             `json:"gate_label,omitempty"`
+	GateMsg        string             `json:"gate_msg,omitempty"`
+	PositionEffect string             `json:"position_effect,omitempty"`
+	PositionSide   string             `json:"position_side,omitempty"`
+	RiskOrders     []RiskOrderResult  `json:"risk_orders,omitempty"`
+	Layers         []OrderLayerResult `json:"layers,omitempty"`
+	Partial        bool               `json:"partial,omitempty"`
+}
+
+type OrderLayerResult struct {
+	Name       string            `json:"name"`
+	AmountPct  float64           `json:"amount_pct"`
+	AmountUSDT float64           `json:"amount_usdt"`
+	OffsetPct  float64           `json:"offset_pct,omitempty"`
+	OrderType  string            `json:"order_type"`
+	Price      string            `json:"price,omitempty"`
+	ClOrdID    string            `json:"cl_ord_id,omitempty"`
+	OrdID      string            `json:"ord_id,omitempty"`
+	Status     string            `json:"status"`
+	Error      string            `json:"error,omitempty"`
+	RiskOrders []RiskOrderResult `json:"risk_orders,omitempty"`
 }
 
 type RiskOrderResult struct {
@@ -429,7 +447,20 @@ func (o OrderSettings) Normalize() OrderSettings {
 	if o.ShortLimitPriceMultiplier <= 0 {
 		o.ShortLimitPriceMultiplier = 1.003
 	}
+	o.Layered = o.Layered.Normalize()
 	return o
+}
+
+func (r OrderResult) HasSubmittedOrders() bool {
+	if strings.TrimSpace(r.OrdID) != "" {
+		return true
+	}
+	for _, layer := range r.Layers {
+		if strings.TrimSpace(layer.OrdID) != "" || layer.Status == "submitted" {
+			return true
+		}
+	}
+	return false
 }
 
 func (o OrderSettings) ApplyToSignal(signal *Signal) {

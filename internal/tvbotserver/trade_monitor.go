@@ -819,7 +819,8 @@ func (s *Server) maybeSubmitAutoReentry(ctx context.Context, cfg config.Config, 
 	result, err := s.Executor.ExecuteSignal(orderCtx, signal, execCfg)
 	cancel()
 	result.SignalID = record.SignalID
-	if err != nil {
+	partial := err != nil && result.Partial && result.HasSubmittedOrders()
+	if err != nil && !partial {
 		_ = s.Orders.MarkFailed(record.SignalID, err, now)
 		updated, updateErr := s.Orders.UpdateTradeLifecycle(lifecycle.LifecycleID, storage.TradeLifecycleUpdate{
 			Status:    storage.TradeLifecycleBlocked,
@@ -840,7 +841,11 @@ func (s *Server) maybeSubmitAutoReentry(ctx context.Context, cfg config.Config, 
 		}
 		return err
 	}
-	if err := s.Orders.MarkSubmitted(record.SignalID, result, now); err != nil {
+	if partial {
+		if err := s.Orders.MarkPartiallySubmitted(record.SignalID, result, err, now); err != nil {
+			return err
+		}
+	} else if err := s.Orders.MarkSubmitted(record.SignalID, result, now); err != nil {
 		return err
 	}
 	submitted, ok := s.Orders.Get(record.SignalID)
@@ -864,7 +869,7 @@ func (s *Server) maybeSubmitAutoReentry(ctx context.Context, cfg config.Config, 
 		Symbol:         lifecycle.Symbol,
 		LifecycleID:    lifecycle.LifecycleID,
 		SourceSignalID: lifecycle.SourceSignalID,
-		EventType:      "auto_reentry_submitted",
+		EventType:      map[bool]string{true: "auto_reentry_partial", false: "auto_reentry_submitted"}[partial],
 		Status:         updated.Status,
 		Message:        "auto reentry order submitted: " + record.SignalID,
 		RawJSON:        storage.TradeMonitorEventRawJSON(result),

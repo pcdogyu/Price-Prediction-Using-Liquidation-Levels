@@ -48,6 +48,12 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 	}
 	orderSettings := cfg.OrderSettings().Normalize()
 	orderSettings.ApplyToSignal(&signal)
+	if orderSettings.OrderType == trading.OrderTypeLayered && signal.PositionEffect != trading.PositionEffectClose {
+		return t.executeLayeredSignal(ctx, signal, cfg, orderSettings)
+	}
+	if orderSettings.OrderType == trading.OrderTypeLayered {
+		orderSettings.OrderType = trading.OrderTypeMarket
+	}
 	if err := validateBinanceRisk(signal.Risk); err != nil {
 		return trading.OrderResult{}, err
 	}
@@ -144,6 +150,186 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 		t.Logger.Info("binance order submitted", "api_id", apiID, "symbol", symbol, "action", signal.Action, "client_order_id", clOrdID)
 	}
 	return result, nil
+}
+
+func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal, cfg trading.RuntimeConfig, settings trading.OrderSettings) (trading.OrderResult, error) {
+	client, apiID, err := t.client(cfg, signal.APIID)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	symbol, err := DeriveUSDMSymbol(signal.Coinpair, signal.Ticker)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	info, err := client.SymbolInfo(ctx, symbol)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	filters, err := info.TradingFilters()
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	switchState, err := t.prepareDirectionSwitch(ctx, client, signal.Action, symbol, filters)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	ticker, err := client.BookTicker(ctx, symbol)
+	if err != nil {
+		return trading.OrderResult{}, fmt.Errorf("refresh Binance layered price for %s: %w", symbol, err)
+	}
+	marketPrice, err := binanceBookMidPrice(ticker)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	legs, err := settings.Layered.BuildPlan(signal.Action, signal.Amount.Value, signal.Price.Value, marketPrice)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	posSide := binancePositionSide(signal.Action, cfg.PositionMode())
+	marginType := binanceMarginType(cfg.MarginMode())
+	if err := client.ChangeMarginType(ctx, symbol, marginType); err != nil && !shouldContinueAfterBinanceMarginSetupError(err) {
+		return trading.OrderResult{}, fmt.Errorf("binance change margin type %s to %s: %w", symbol, marginType, err)
+	}
+	usedLeverage, err := t.ensureLeverage(ctx, client, symbol, posSide, signal.Action, signal.Leverage, switchState)
+	if err != nil {
+		return trading.OrderResult{}, fmt.Errorf("binance set leverage %s to %dx: %w", symbol, signal.Leverage, err)
+	}
+	result := trading.OrderResult{
+		APIID:          apiID,
+		TargetExchange: trading.ExchangeBinance,
+		InstID:         symbol,
+		OrdType:        string(trading.OrderTypeLayered),
+		Px:             trading.NormalizeFloat(marketPrice),
+		Leverage:       usedLeverage,
+		PositionEffect: signal.PositionEffect,
+		PositionSide:   signal.PositionSide,
+	}
+	var firstErr error
+	for index, leg := range legs {
+		layer := trading.OrderLayerResult{
+			Name:       leg.Name,
+			AmountPct:  leg.AmountPct,
+			AmountUSDT: leg.AmountUSDT,
+			OffsetPct:  leg.OffsetPct,
+			OrderType:  string(leg.OrderType),
+			Price:      trading.NormalizeFloat(leg.Price),
+			Status:     "skipped",
+		}
+		if leg.AmountUSDT <= 0 {
+			result.Layers = append(result.Layers, layer)
+			continue
+		}
+		orderType := strings.ToUpper(string(leg.OrderType))
+		orderPx := ""
+		if leg.OrderType == trading.OrderTypeLimit {
+			orderPx = formatStep(leg.Price, filters.TickSize, signal.Action == trading.ActionShort)
+			layer.Price = orderPx
+		}
+		quantity := formatStep(leg.AmountUSDT/leg.Price, filters.StepSizeForOrderType(orderType), false)
+		if compareDecimal(quantity, filters.MinQtyForOrderType(orderType)) < 0 {
+			layer.Status = "failed"
+			layer.Error = fmt.Sprintf("order size %s is below Binance minQty %s", quantity, filters.MinQtyForOrderType(orderType))
+			if firstErr == nil {
+				firstErr = errors.New(layer.Error)
+			}
+			result.Layers = append(result.Layers, layer)
+			continue
+		}
+		baseID := clientOrderID(signal)
+		clientID := layeredClientOrderID(baseID, index)
+		req := PlaceOrderRequest{
+			Symbol:           symbol,
+			Side:             binanceSide(signal.Action),
+			PositionSide:     posSide,
+			Type:             orderType,
+			Quantity:         quantity,
+			Price:            orderPx,
+			NewClientOrderID: clientID,
+		}
+		if leg.OrderType == trading.OrderTypeLimit {
+			req.TimeInForce = "GTC"
+		}
+		orderRequests, splitErr := splitBinancePlaceOrderRequest(req, filters)
+		if splitErr != nil {
+			layer.Status = "failed"
+			layer.Error = splitErr.Error()
+			if firstErr == nil {
+				firstErr = splitErr
+			}
+			result.Layers = append(result.Layers, layer)
+			continue
+		}
+		acks, nextLeverage, placeErr := t.placeOrderRequestsWithLeverageFallback(ctx, client, orderRequests, usedLeverage)
+		usedLeverage = nextLeverage
+		result.Leverage = usedLeverage
+		layer.ClOrdID = joinBinancePlaceOrderClientIDs(orderRequests[:minInt(len(acks), len(orderRequests))])
+		layer.OrdID = joinBinanceOrderAckIDs(acks)
+		if len(acks) > 0 {
+			layer.Status = "submitted"
+			result.ClOrdID = joinNonEmptyOrderIDs(result.ClOrdID, layer.ClOrdID)
+			result.OrdID = joinNonEmptyOrderIDs(result.OrdID, layer.OrdID)
+			for partIndex, ack := range acks {
+				partReq := orderRequests[partIndex]
+				riskOrders, riskErr := t.placeRiskOrders(ctx, client, signal, partReq, leg.Price, filters)
+				result.RiskOrders = append(result.RiskOrders, riskOrders...)
+				layer.RiskOrders = append(layer.RiskOrders, riskOrders...)
+				_ = ack
+				if riskErr != nil && layer.Error == "" {
+					layer.Error = riskErr.Error()
+					if firstErr == nil {
+						firstErr = riskErr
+					}
+				}
+			}
+		}
+		if placeErr != nil {
+			layer.Error = placeErr.Error()
+			if firstErr == nil {
+				firstErr = placeErr
+			}
+		}
+		if layer.Status == "skipped" {
+			layer.Status = "failed"
+		}
+		result.Layers = append(result.Layers, layer)
+	}
+	if !result.HasSubmittedOrders() {
+		if firstErr == nil {
+			firstErr = errors.New("all Binance layered order legs failed")
+		}
+		return result, firstErr
+	}
+	if firstErr != nil {
+		result.Partial = true
+		return result, fmt.Errorf("Binance layered order partially submitted: %w", firstErr)
+	}
+	return result, nil
+}
+
+func binanceBookMidPrice(ticker BookTicker) (float64, error) {
+	bid, bidErr := strconv.ParseFloat(strings.TrimSpace(ticker.BidPrice), 64)
+	ask, askErr := strconv.ParseFloat(strings.TrimSpace(ticker.AskPrice), 64)
+	if bidErr != nil || askErr != nil || bid <= 0 || ask <= 0 {
+		return 0, fmt.Errorf("invalid Binance book ticker bid=%q ask=%q", ticker.BidPrice, ticker.AskPrice)
+	}
+	return (bid + ask) / 2, nil
+}
+
+func layeredClientOrderID(base string, index int) string {
+	suffix := fmt.Sprintf("-L%02d", index+1)
+	return trimClientID(base, 32-len(suffix)) + suffix
+}
+
+func joinNonEmptyOrderIDs(left, right string) string {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+	return left + " / " + right
 }
 
 func (t Trader) placeOrderRequestsWithLeverageFallback(ctx context.Context, client Client, reqs []PlaceOrderRequest, currentLeverage int) ([]OrderAck, int, error) {

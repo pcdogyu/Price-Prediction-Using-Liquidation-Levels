@@ -524,7 +524,11 @@ func (s *Server) execute(signalID string, signal trading.Signal, cfg config.Conf
 	result, err := s.Executor.ExecuteSignal(ctx, signal, cfg)
 	result.SignalID = signalID
 	if err != nil {
-		_ = s.Orders.MarkFailed(signalID, err, s.now())
+		if result.Partial && result.HasSubmittedOrders() {
+			_ = s.Orders.MarkPartiallySubmitted(signalID, result, err, s.now())
+		} else {
+			_ = s.Orders.MarkFailed(signalID, err, s.now())
+		}
 		if s.Logger != nil {
 			s.Logger.Error("order failed", "signal_id", signalID, "action", signal.Action, "coinpair", signal.Coinpair, "error", err)
 		}
@@ -1058,7 +1062,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, http.StatusOK, s.ConfigStore.Get())
-	case http.MethodPut:
+	case http.MethodPut, http.MethodPatch:
 		var patch configPatch
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&patch); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_json", err.Error())
@@ -1084,7 +1088,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, cfg)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET and PUT are allowed")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET, PUT and PATCH are allowed")
 	}
 }
 
@@ -2759,6 +2763,7 @@ type tradingPatch struct {
 	TrailingPct               *float64                      `json:"trailing_pct"`
 	LongLimitPriceMultiplier  *float64                      `json:"long_limit_price_multiplier"`
 	ShortLimitPriceMultiplier *float64                      `json:"short_limit_price_multiplier"`
+	LayeredOrder              *trading.LayeredOrderSettings `json:"layered_order"`
 	LossCooldown              *lossCooldownPatch            `json:"loss_cooldown"`
 	FillMonitor               *config.FillMonitorConfig     `json:"fill_monitor"`
 	AutoReentry               *config.AutoReentryConfig     `json:"auto_reentry"`
@@ -2860,6 +2865,9 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 	}
 	if patch.Trading.ShortLimitPriceMultiplier != nil {
 		c.Trading.ShortLimitPriceMultiplier = *patch.Trading.ShortLimitPriceMultiplier
+	}
+	if patch.Trading.LayeredOrder != nil {
+		c.Trading.LayeredOrder = *patch.Trading.LayeredOrder
 	}
 	if patch.Trading.LossCooldown != nil {
 		if patch.Trading.LossCooldown.Enabled != nil {

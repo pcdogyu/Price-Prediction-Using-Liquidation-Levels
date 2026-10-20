@@ -148,6 +148,33 @@ func TestMarketTurnoverScopeDefaultsPersistsAndValidates(t *testing.T) {
 	}
 }
 
+func TestLayeredOrderDefaultsPersistAndValidate(t *testing.T) {
+	cfg := Default()
+	if cfg.Trading.LayeredOrder.MarketAmountPct != 10 || len(cfg.Trading.LayeredOrder.PriceLayers) != 4 {
+		t.Fatalf("unexpected layered defaults: %#v", cfg.Trading.LayeredOrder)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg.Trading.OrderType = "layered"
+	cfg.Trading.LayeredOrder.PriceLayers[0].OffsetPct = 0.75
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Trading.OrderType != "layered" || loaded.Trading.LayeredOrder.PriceLayers[0].OffsetPct != 0.75 {
+		t.Fatalf("layered configuration did not persist: %#v", loaded.Trading)
+	}
+	cfg.Trading.LayeredOrder.MarketAmountPct = 11
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid layered amount total should be rejected")
+	}
+}
+
 func TestLossCooldownDefaultsMigrationAndValidation(t *testing.T) {
 	cfg := Default()
 	if !cfg.Trading.LossCooldown.Enabled || cfg.Trading.LossCooldown.Hours != 24 {

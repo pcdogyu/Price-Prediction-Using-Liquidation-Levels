@@ -2025,7 +2025,7 @@ const tvbotHTML = `<!doctype html>
       <div class="grid">
         <label>USDT 下单金额<input id="order-amount" type="number" min="0" step="0.01"></label>
         <label>杠杆<input id="order-leverage" type="number" min="1" step="1"></label>
-        <label>订单类型<select id="order-type"><option value="market">市价单</option><option value="limit">限价单</option></select></label>
+        <label>订单类型<select id="order-type"><option value="market">市价单</option><option value="limit">限价单</option><option value="layered">多层订单</option></select></label>
         <label>风控模式<select id="order-risk-type"><option value="tp_sl">固定止盈止损</option><option value="trailing">移动止损</option><option value="none">不设置</option></select></label>
         <label>固定止盈 %<input id="order-tp" type="number" min="0" step="0.01"></label>
         <label>固定止损 %<input id="order-sl" type="number" min="0" step="0.01"></label>
@@ -2033,6 +2033,22 @@ const tvbotHTML = `<!doctype html>
         <label>多单限价倍率<input id="order-long-multiplier" type="number" min="0" step="0.000001"></label>
         <label>空单限价倍率<input id="order-short-multiplier" type="number" min="0" step="0.000001"></label>
         <label>24h 交易额排名限制<select id="order-turnover-scope"><option value="top50">前 50</option><option value="top100">前 100</option><option value="top200">前 200</option><option value="top500">前 500</option><option value="all">不限排名</option></select></label>
+      </div>
+      <div id="layered-order-fields" style="display:none;margin-top:14px">
+        <div class="muted">多层订单按一次实时价快照计算：市价层立即成交，信号价层按 TradingView 价格挂单，其余层按当前价格的方向性价差挂单。比例合计必须为 100%。</div>
+        <div class="grid two" style="margin-top:10px">
+          <label>市价层金额 %<input id="order-layered-market-pct" type="number" min="0" step="0.01"></label>
+          <label>信号价限价层金额 %<input id="order-layered-signal-pct" type="number" min="0" step="0.01"></label>
+        </div>
+        <table style="margin-top:10px">
+          <thead><tr><th>层级</th><th>金额比例 %</th><th>实时价偏移 %</th></tr></thead>
+          <tbody>
+            <tr><th>第 1 层</th><td><input id="order-layered-layer-0-amount" type="number" min="0" step="0.01"></td><td><input id="order-layered-layer-0-offset" type="number" min="0" step="0.01"></td></tr>
+            <tr><th>第 2 层</th><td><input id="order-layered-layer-1-amount" type="number" min="0" step="0.01"></td><td><input id="order-layered-layer-1-offset" type="number" min="0" step="0.01"></td></tr>
+            <tr><th>第 3 层</th><td><input id="order-layered-layer-2-amount" type="number" min="0" step="0.01"></td><td><input id="order-layered-layer-2-offset" type="number" min="0" step="0.01"></td></tr>
+            <tr><th>第 4 层</th><td><input id="order-layered-layer-3-amount" type="number" min="0" step="0.01"></td><td><input id="order-layered-layer-3-offset" type="number" min="0" step="0.01"></td></tr>
+          </tbody>
+        </table>
       </div>
       <div class="muted" style="margin-top:10px">按各交易所、各交易环境的 24 小时交易额排名过滤新开仓，适用于 OKX 和 Binance；平仓不受影响。点击“保存下单设置”后生效。</div>
       <table style="margin-top:14px">
@@ -2077,6 +2093,7 @@ const tvbotHTML = `<!doctype html>
           <select class="order-status-filter" id="order-status-filter" aria-label="筛选订单状态">
             <option value="">全部状态</option>
             <option value="submitted">已下单</option>
+            <option value="partial">部分成功</option>
             <option value="ignored">已忽略</option>
             <option value="failed">下单失败</option>
             <option value="rejected">已拒绝</option>
@@ -2848,6 +2865,7 @@ const tvbotHTML = `<!doctype html>
     function orderTypeText(v) {
       if (v === "limit") return "限价单";
       if (v === "market") return "市价单";
+      if (v === "layered") return "多层订单";
       return asText(v);
     }
 
@@ -4414,6 +4432,7 @@ const tvbotHTML = `<!doctype html>
 
     function renderOrderSettings() {
       const trading = state.config && state.config.trading ? state.config.trading : {};
+      const layered = layeredOrderConfig(trading);
       $("order-amount").value = trading.order_amount_usdt || 100;
       $("order-leverage").value = trading.leverage || 5;
       $("order-type").value = trading.order_type || "market";
@@ -4424,11 +4443,55 @@ const tvbotHTML = `<!doctype html>
       $("order-trailing").value = trading.trailing_pct || 1;
       $("order-long-multiplier").value = trading.long_limit_price_multiplier || 0.997;
       $("order-short-multiplier").value = trading.short_limit_price_multiplier || 1.003;
+      $("order-layered-market-pct").value = layered.market_amount_pct;
+      $("order-layered-signal-pct").value = layered.signal_limit_amount_pct;
+      layered.price_layers.forEach((layer, index) => {
+        $("order-layered-layer-" + index + "-amount").value = layer.amount_pct;
+        $("order-layered-layer-" + index + "-offset").value = layer.offset_pct;
+      });
+      updateLayeredOrderFields();
       renderOrderSettingsPreview();
+    }
+
+    function layeredOrderConfig(trading) {
+      const raw = trading && trading.layered_order ? trading.layered_order : {};
+      const defaults = [
+        { amount_pct: 18, offset_pct: 0.5 },
+        { amount_pct: 18, offset_pct: 1 },
+        { amount_pct: 18, offset_pct: 2 },
+        { amount_pct: 18, offset_pct: 3 }
+      ];
+      const layers = Array.isArray(raw.price_layers) && raw.price_layers.length === 4 ? raw.price_layers : defaults;
+      return {
+        market_amount_pct: Number(raw.market_amount_pct === undefined ? 10 : raw.market_amount_pct),
+        signal_limit_amount_pct: Number(raw.signal_limit_amount_pct === undefined ? 18 : raw.signal_limit_amount_pct),
+        price_layers: layers.map((layer, index) => ({
+          amount_pct: Number(layer && layer.amount_pct !== undefined ? layer.amount_pct : defaults[index].amount_pct),
+          offset_pct: Number(layer && layer.offset_pct !== undefined ? layer.offset_pct : defaults[index].offset_pct)
+        }))
+      };
+    }
+
+    function readLayeredOrderConfig() {
+      return {
+        market_amount_pct: Number($("order-layered-market-pct").value),
+        signal_limit_amount_pct: Number($("order-layered-signal-pct").value),
+        price_layers: [0, 1, 2, 3].map((index) => ({
+          amount_pct: Number($("order-layered-layer-" + index + "-amount").value),
+          offset_pct: Number($("order-layered-layer-" + index + "-offset").value)
+        }))
+      };
+    }
+
+    function updateLayeredOrderFields() {
+      const visible = $("order-type").value === "layered";
+      $("layered-order-fields").style.display = visible ? "block" : "none";
     }
 
     function renderOrderSettingsPreview() {
       const orderType = $("order-type").value || "market";
+      const layered = readLayeredOrderConfig();
+      const layeredTotal = layered.market_amount_pct + layered.signal_limit_amount_pct + layered.price_layers.reduce((total, layer) => total + layer.amount_pct, 0);
       const rows = [
         ["订单类型", orderTypeText(orderType)],
         ["24h 交易额排名限制", orderTurnoverScopeLabel($("order-turnover-scope").value)],
@@ -4437,6 +4500,10 @@ const tvbotHTML = `<!doctype html>
         ["固定止盈止损", asText($("order-tp").value) + "% / " + asText($("order-sl").value) + "%"],
         ["移动止损", asText($("order-trailing").value) + "%"]
       ];
+      if (orderType === "layered") {
+        rows.splice(1, 0, ["分层比例合计", asText(layeredTotal) + "%" + (Math.abs(layeredTotal - 100) < 0.000001 ? "" : "（必须为 100%）")]);
+        rows.splice(2, 0, ["分层价格", "市价 + 信号价 + 实时价方向偏移 " + layered.price_layers.map((layer) => asText(layer.offset_pct) + "%").join(" / ")]);
+      }
       $("order-settings-preview").innerHTML = rows.map((row) => "<tr><th>" + escapeHTML(row[0]) + "</th><td>" + escapeHTML(row[1]) + "</td></tr>").join("");
     }
 
@@ -6080,6 +6147,7 @@ const tvbotHTML = `<!doctype html>
     function orderHistoryStatusText(status) {
       const labels = {
         submitted: "已下单",
+        partial: "部分成功",
         ignored: "已忽略",
         failed: "下单失败",
         rejected: "已拒绝",
@@ -6127,7 +6195,7 @@ const tvbotHTML = `<!doctype html>
         const sourceExchange = order.source_exchange || "-";
         const tradeEnvText = order.trade_env === "live" ? "实盘" : "模拟";
         const targetText = exchangeLabel(targetExchange) + " " + tradeEnvText + " / " + apiDisplayName(apiID, targetExchange, order.trade_env);
-        const tone = order.status === "submitted" ? "ok" : (order.status === "failed" || order.status === "rejected" ? "bad" : "warn");
+        const tone = order.status === "submitted" ? "ok" : (order.status === "partial" ? "warn" : (order.status === "failed" || order.status === "rejected" ? "bad" : "warn"));
         const canRetry = orderCanRetry(order);
         const retrying = canRetry && state.retrying[order.signal_id];
         const retryButton = canRetry ? '<button class="btn small" type="button" data-retry-id="' + escapeHTML(order.signal_id) + '"' + (retrying ? " disabled" : "") + ">" + (retrying ? "重试中" : "重试") + "</button>" : "";
@@ -6353,7 +6421,8 @@ const tvbotHTML = `<!doctype html>
           stop_loss_pct: Number($("order-sl").value),
           trailing_pct: Number($("order-trailing").value),
           long_limit_price_multiplier: Number($("order-long-multiplier").value),
-          short_limit_price_multiplier: Number($("order-short-multiplier").value)
+          short_limit_price_multiplier: Number($("order-short-multiplier").value),
+          layered_order: readLayeredOrderConfig()
         }
       };
       state.config = await api("/tvbot/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
@@ -6852,10 +6921,11 @@ const tvbotHTML = `<!doctype html>
       setSymbolSort(th.dataset.symbolSort);
     });
     $("save-order-settings").addEventListener("click", () => saveOrderSettings().catch((err) => toast(err.message)));
-    ["order-amount", "order-leverage", "order-type", "order-turnover-scope", "order-risk-type", "order-tp", "order-sl", "order-trailing", "order-long-multiplier", "order-short-multiplier"].forEach((id) => {
+    ["order-amount", "order-leverage", "order-type", "order-turnover-scope", "order-risk-type", "order-tp", "order-sl", "order-trailing", "order-long-multiplier", "order-short-multiplier", "order-layered-market-pct", "order-layered-signal-pct", "order-layered-layer-0-amount", "order-layered-layer-0-offset", "order-layered-layer-1-amount", "order-layered-layer-1-offset", "order-layered-layer-2-amount", "order-layered-layer-2-offset", "order-layered-layer-3-amount", "order-layered-layer-3-offset"].forEach((id) => {
       $(id).addEventListener("input", () => renderOrderSettingsPreview());
       $(id).addEventListener("change", () => renderOrderSettingsPreview());
     });
+    $("order-type").addEventListener("change", () => { updateLayeredOrderFields(); renderOrderSettingsPreview(); });
     $("save-position-monitor").addEventListener("click", () => savePositionMonitor().catch((err) => toast(err.message)));
     $("save-menu-settings").addEventListener("click", () => saveMenuSettings().catch((err) => toast(err.message)));
     $("menu-settings-rows").addEventListener("input", (event) => {

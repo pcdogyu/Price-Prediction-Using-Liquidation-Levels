@@ -32,6 +32,12 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 	if signal.Risk.Type == trading.RiskTrailing {
 		return trading.OrderResult{}, errors.New("Gate futures does not support trailing risk orders in the main order path")
 	}
+	if settings.OrderType == trading.OrderTypeLayered && signal.PositionEffect != trading.PositionEffectClose {
+		return t.executeLayeredSignal(ctx, signal, cfg, settings)
+	}
+	if settings.OrderType == trading.OrderTypeLayered {
+		settings.OrderType = trading.OrderTypeMarket
+	}
 	client, apiID, err := t.client(cfg, signal.APIID)
 	if err != nil {
 		return trading.OrderResult{}, err
@@ -101,6 +107,193 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 		t.Logger.Info("Gate futures order submitted", "api_id", apiID, "contract", contract.Name, "action", signal.Action, "client_order_id", textID)
 	}
 	return result, nil
+}
+
+func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal, cfg trading.RuntimeConfig, settings trading.OrderSettings) (trading.OrderResult, error) {
+	client, apiID, err := t.client(cfg, signal.APIID)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	contractName, err := deriveContract(signal)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	contract, err := client.Contract(ctx, contractName)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	if strings.ToLower(strings.TrimSpace(contract.Status)) != "" && strings.ToLower(strings.TrimSpace(contract.Status)) != "trading" {
+		return trading.OrderResult{}, fmt.Errorf("Gate contract %s is not trading", contract.Name)
+	}
+	marketPrice, err := gateRealtimePrice(ctx, client, contract.Name)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	legs, err := settings.Layered.BuildPlan(signal.Action, signal.Amount.Value, signal.Price.Value, marketPrice)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	if signal.Leverage <= 0 {
+		return trading.OrderResult{}, errors.New("leverage must be positive")
+	}
+	marginMode := strings.ToLower(strings.TrimSpace(cfg.MarginMode()))
+	if marginMode != "cross" {
+		marginMode = "isolated"
+	}
+	if cfg.PositionMode() == "long_short" {
+		return trading.OrderResult{}, errors.New("Gate futures currently requires net position mode; set position_mode=net")
+	}
+	if _, err := client.SetLeverage(ctx, contract.Name, signal.Leverage, marginMode, ""); err != nil {
+		return trading.OrderResult{}, fmt.Errorf("Gate set leverage %s to %dx: %w", contract.Name, signal.Leverage, err)
+	}
+	result := trading.OrderResult{
+		APIID:          apiID,
+		TargetExchange: trading.ExchangeGate,
+		InstID:         contract.Name,
+		OrdType:        string(trading.OrderTypeLayered),
+		Px:             trading.NormalizeFloat(marketPrice),
+		Leverage:       signal.Leverage,
+		PositionEffect: signal.PositionEffect,
+		PositionSide:   signal.PositionSide,
+	}
+	baseID := gateClientOrderID(signal)
+	var firstErr error
+	for index, leg := range legs {
+		layer := trading.OrderLayerResult{
+			Name:       leg.Name,
+			AmountPct:  leg.AmountPct,
+			AmountUSDT: leg.AmountUSDT,
+			OffsetPct:  leg.OffsetPct,
+			OrderType:  string(leg.OrderType),
+			Price:      trading.NormalizeFloat(leg.Price),
+			Status:     "skipped",
+		}
+		if leg.AmountUSDT <= 0 {
+			result.Layers = append(result.Layers, layer)
+			continue
+		}
+		qty, qtyErr := contractsForNotional(leg.AmountUSDT, leg.Price, contract)
+		if qtyErr != nil {
+			layer.Status = "failed"
+			layer.Error = qtyErr.Error()
+			if firstErr == nil {
+				firstErr = qtyErr
+			}
+			result.Layers = append(result.Layers, layer)
+			continue
+		}
+		price := "0"
+		tif := "ioc"
+		if leg.OrderType == trading.OrderTypeLimit {
+			price = formatGateLayerPrice(leg.Price, contract.OrderPriceRound, signal.Action)
+			tif = "gtc"
+			layer.Price = price
+		}
+		textID := gateLayeredClientOrderID(baseID, index)
+		req := PlaceOrderRequest{Contract: contract.Name, Size: qty, Price: price, TIF: tif, Text: textID, PosMarginMode: marginMode}
+		if signal.Action == trading.ActionShort {
+			req.Size = "-" + qty
+		}
+		if signal.Risk.Type == trading.RiskTPSL {
+			tp, sl := riskTriggerPrices(signal.Action, leg.Price, signal.Risk.TPPct.Value, signal.Risk.SLPct.Value)
+			req.TPTriggerPrice = formatStep(tp, contract.OrderPriceRound, false)
+			req.SLTriggerPrice = formatStep(sl, contract.OrderPriceRound, false)
+			layer.RiskOrders = []trading.RiskOrderResult{
+				{Exchange: trading.ExchangeGate, ClientAlgoID: textID + "TP", OrderType: "TAKE_PROFIT", Side: gateCloseSide(signal.Action), Quantity: qty, TriggerPrice: req.TPTriggerPrice},
+				{Exchange: trading.ExchangeGate, ClientAlgoID: textID + "SL", OrderType: "STOP_LOSS", Side: gateCloseSide(signal.Action), Quantity: qty, TriggerPrice: req.SLTriggerPrice},
+			}
+		}
+		ack, placeErr := client.PlaceOrder(ctx, req)
+		layer.ClOrdID = textID
+		layer.OrdID = ack.IDString()
+		if layer.OrdID != "" {
+			layer.Status = "submitted"
+			result.ClOrdID = joinGateOrderIDs(result.ClOrdID, textID)
+			result.OrdID = joinGateOrderIDs(result.OrdID, layer.OrdID)
+			result.RiskOrders = append(result.RiskOrders, layer.RiskOrders...)
+		}
+		if placeErr != nil {
+			layer.Error = placeErr.Error()
+			if apiErr := errorAsAPI(placeErr); apiErr != nil {
+				result.GateLabel = apiErr.Label
+				result.GateMsg = apiErr.Message
+			}
+			if firstErr == nil {
+				firstErr = placeErr
+			}
+		}
+		if layer.Status == "skipped" {
+			layer.Status = "failed"
+		}
+		result.Layers = append(result.Layers, layer)
+	}
+	if !result.HasSubmittedOrders() {
+		if firstErr == nil {
+			firstErr = errors.New("all Gate layered order legs failed")
+		}
+		return result, firstErr
+	}
+	if firstErr != nil {
+		result.Partial = true
+		return result, fmt.Errorf("Gate layered order partially submitted: %w", firstErr)
+	}
+	return result, nil
+}
+
+func gateRealtimePrice(ctx context.Context, client Client, contract string) (float64, error) {
+	tickers, err := client.Tickers(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("refresh Gate layered price for %s: %w", contract, err)
+	}
+	for _, ticker := range tickers {
+		if !strings.EqualFold(strings.TrimSpace(ticker.Contract), strings.TrimSpace(contract)) {
+			continue
+		}
+		price, parseErr := strconv.ParseFloat(strings.TrimSpace(ticker.Last), 64)
+		if parseErr != nil || price <= 0 {
+			return 0, fmt.Errorf("invalid Gate ticker price %q for %s", ticker.Last, contract)
+		}
+		return price, nil
+	}
+	return 0, fmt.Errorf("Gate ticker for %s not found", contract)
+}
+
+func formatGateLayerPrice(value float64, step string, action trading.Side) string {
+	n := parsePositive(step, 0)
+	if n <= 0 {
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	}
+	units := value / n
+	if action == trading.ActionShort {
+		value = math.Ceil(units-1e-10) * n
+	} else {
+		value = math.Floor(units+1e-10) * n
+	}
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func gateLayeredClientOrderID(base string, index int) string {
+	suffix := fmt.Sprintf("-L%02d", index+1)
+	base = strings.TrimSpace(base)
+	limit := maxGateClientIDLength - len(suffix)
+	if len(base) > limit {
+		base = base[:limit]
+	}
+	return base + suffix
+}
+
+const maxGateClientIDLength = 28
+
+func joinGateOrderIDs(left, right string) string {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+	return left + " / " + right
 }
 
 func (t Trader) Check(ctx context.Context, cfg trading.RuntimeConfig) (map[string]any, error) {

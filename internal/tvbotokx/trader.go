@@ -54,6 +54,12 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 		return trading.OrderResult{}, err
 	}
 	orderSettings := cfg.OrderSettings().Normalize()
+	if orderSettings.OrderType == trading.OrderTypeLayered && signal.PositionEffect != trading.PositionEffectClose {
+		return t.executeLayeredSignal(ctx, signal, cfg, orderSettings)
+	}
+	if orderSettings.OrderType == trading.OrderTypeLayered {
+		orderSettings.OrderType = trading.OrderTypeMarket
+	}
 	orderType := string(orderSettings.OrderType)
 	sizingPx := signal.Price.Value
 	orderPx := ""
@@ -114,6 +120,185 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 		t.Logger.Info("okx order submitted", "api_id", apiID, "inst_id", submittedReq.InstID, "action", signal.Action, "cl_ord_id", clOrdID, "okx_code", env.Code)
 	}
 	return result, nil
+}
+
+func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal, cfg trading.RuntimeConfig, settings trading.OrderSettings) (trading.OrderResult, error) {
+	client, apiID, err := t.client(cfg, signal.APIID)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	sym, err := t.resolveSymbol(ctx, client, signal, cfg)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	switchState, err := t.prepareDirectionSwitch(ctx, client, cfg, signal.Action, sym.InstID)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	ticker, _, err := client.MarketTicker(ctx, sym.InstID)
+	if err != nil {
+		return trading.OrderResult{}, fmt.Errorf("refresh OKX layered price for %s: %w", sym.InstID, err)
+	}
+	marketPrice, err := okxTickerMidPrice(ticker)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	legs, err := settings.Layered.BuildPlan(signal.Action, signal.Amount.Value, signal.Price.Value, marketPrice)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	posSide := ""
+	if cfg.PositionMode() == config.PositionLongShort {
+		posSide = string(signal.Action)
+	}
+	usedLeverage, err := t.ensureLeverage(ctx, client, SetLeverageRequest{
+		InstID: sym.InstID, Lever: strconv.Itoa(signal.Leverage), MgnMode: cfg.MarginMode(), PosSide: posSide,
+	}, switchState, signal.Action)
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	result := trading.OrderResult{
+		APIID:          apiID,
+		TargetExchange: trading.ExchangeOKX,
+		InstID:         sym.InstID,
+		OrdType:        string(trading.OrderTypeLayered),
+		Px:             trading.NormalizeFloat(marketPrice),
+		Leverage:       usedLeverage,
+		PositionEffect: signal.PositionEffect,
+		PositionSide:   signal.PositionSide,
+	}
+	baseID := clientOrderID(signal)
+	var firstErr error
+	for index, leg := range legs {
+		layer := trading.OrderLayerResult{
+			Name:       leg.Name,
+			AmountPct:  leg.AmountPct,
+			AmountUSDT: leg.AmountUSDT,
+			OffsetPct:  leg.OffsetPct,
+			OrderType:  string(leg.OrderType),
+			Price:      trading.NormalizeFloat(leg.Price),
+			Status:     "skipped",
+		}
+		if leg.AmountUSDT <= 0 {
+			result.Layers = append(result.Layers, layer)
+			continue
+		}
+		orderPx := ""
+		sizingPrice := leg.Price
+		if leg.OrderType == trading.OrderTypeLimit {
+			orderPx = formatOKXPrice(leg.Price, sym.TickSz, signal.Action == trading.ActionShort)
+			if orderPx == "" || orderPx == "0" {
+				err := fmt.Errorf("invalid OKX layered limit price for %s", leg.Name)
+				layer.Status = "failed"
+				layer.Error = err.Error()
+				if firstErr == nil {
+					firstErr = err
+				}
+				result.Layers = append(result.Layers, layer)
+				continue
+			}
+			layer.Price = orderPx
+			parsed, parseErr := strconv.ParseFloat(orderPx, 64)
+			if parseErr != nil || parsed <= 0 {
+				err := fmt.Errorf("invalid OKX rounded layered price %q for %s", orderPx, leg.Name)
+				layer.Status = "failed"
+				layer.Error = err.Error()
+				if firstErr == nil {
+					firstErr = err
+				}
+				result.Layers = append(result.Layers, layer)
+				continue
+			}
+			sizingPrice = parsed
+		}
+		sz, sizeErr := trading.SizeFromUSDTNotional(leg.AmountUSDT, sizingPrice, sym.CtVal, sym.LotSz, sym.MinSz)
+		if sizeErr != nil {
+			layer.Status = "failed"
+			layer.Error = sizeErr.Error()
+			if firstErr == nil {
+				firstErr = sizeErr
+			}
+			result.Layers = append(result.Layers, layer)
+			continue
+		}
+		clOrdID := okxLayeredClientOrderID(baseID, index)
+		req := PlaceOrderRequest{
+			InstID: sym.InstID, TDMode: cfg.MarginMode(), ClOrdID: clOrdID,
+			Side: okxSide(signal.Action), PosSide: posSide, OrdType: string(leg.OrderType), Px: orderPx,
+			Sz: sz, AttachAlgoOrds: attachAlgoOrders(signal, clOrdID),
+		}
+		ack, env, submittedReq, placeErr := t.placeOrderWithFallback(ctx, client, req, signal, clOrdID, leg.Price, sym)
+		layer.ClOrdID = submittedReq.ClOrdID
+		layer.OrdID = ack.OrdID
+		layer.RiskOrders = okxRiskOrderResults(submittedReq.AttachAlgoOrds)
+		result.RiskOrders = append(result.RiskOrders, layer.RiskOrders...)
+		if ack.OrdID != "" || ack.ClOrdID != "" {
+			layer.Status = "submitted"
+			result.ClOrdID = joinOKXOrderIDs(result.ClOrdID, submittedReq.ClOrdID)
+			result.OrdID = joinOKXOrderIDs(result.OrdID, ack.OrdID)
+		}
+		if placeErr != nil {
+			if env.Msg != "" {
+				layer.Error = env.Msg
+			} else {
+				layer.Error = placeErr.Error()
+			}
+			if firstErr == nil {
+				firstErr = placeErr
+			}
+		}
+		if layer.Status == "skipped" {
+			layer.Status = "failed"
+		}
+		result.Layers = append(result.Layers, layer)
+	}
+	if !result.HasSubmittedOrders() {
+		if firstErr == nil {
+			firstErr = errors.New("all OKX layered order legs failed")
+		}
+		return result, firstErr
+	}
+	if firstErr != nil {
+		result.Partial = true
+		return result, fmt.Errorf("OKX layered order partially submitted: %w", firstErr)
+	}
+	return result, nil
+}
+
+func okxLayeredClientOrderID(base string, index int) string {
+	suffix := fmt.Sprintf("L%02d", index+1)
+	return attachAlgoClOrdID(base, suffix)
+}
+
+func okxRiskOrderResults(attaches []map[string]string) []trading.RiskOrderResult {
+	result := make([]trading.RiskOrderResult, 0, len(attaches))
+	for _, attach := range attaches {
+		orderType := strings.TrimSpace(attach["ordType"])
+		if orderType == "" {
+			orderType = "TP_SL"
+		}
+		result = append(result, trading.RiskOrderResult{
+			Exchange:      trading.ExchangeOKX,
+			ClientAlgoID:  strings.TrimSpace(attach["attachAlgoClOrdId"]),
+			OrderType:     orderType,
+			TriggerPrice:  strings.TrimSpace(attach["tpTriggerPx"]),
+			ActivatePrice: strings.TrimSpace(attach["slTriggerPx"]),
+			CallbackRate:  strings.TrimSpace(attach["callbackRatio"]),
+		})
+	}
+	return result
+}
+
+func joinOKXOrderIDs(left, right string) string {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+	return left + " / " + right
 }
 
 func (t Trader) placeOrderWithFallback(ctx context.Context, client Client, req PlaceOrderRequest, signal trading.Signal, clOrdID string, referencePx float64, sym trading.SymbolInfo) (OrderAck, Envelope, PlaceOrderRequest, error) {
