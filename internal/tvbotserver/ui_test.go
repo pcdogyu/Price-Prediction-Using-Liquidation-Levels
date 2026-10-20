@@ -61,6 +61,52 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 }
 
+func TestTVBotThemeStylesUseSemanticSurfaceColors(t *testing.T) {
+	for _, forbidden := range []string{
+		"background: #fff;",
+		"background: #f8fafc;",
+		"background: #f7faff;",
+		"background: #fff8eb;",
+		"background: #111827;",
+	} {
+		if strings.Contains(tvbotHTML, forbidden) {
+			t.Fatalf("tvbot inline styles contain a fixed light/dark surface %q", forbidden)
+		}
+	}
+	for _, want := range []string{
+		"background: var(--control-bg);",
+		"background: var(--panel);",
+		"background: var(--chart-bg);",
+		"background: var(--warning-bg);",
+	} {
+		if !strings.Contains(tvbotHTML, want) {
+			t.Fatalf("tvbot inline styles missing theme-aware surface %q", want)
+		}
+	}
+}
+
+func TestRenderTVBotHTMLAppliesThemeAssetsToEveryViewRoute(t *testing.T) {
+	for _, item := range defaultTopMenu() {
+		tab := topMenuTab(item)
+		if tab == "" {
+			continue
+		}
+		req := httptest.NewRequest("GET", tvbotViewPath(tab), nil)
+		page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, req)
+		if !strings.Contains(page, `src="/assets/theme.js"`) || !strings.Contains(page, `href="/assets/theme.css"`) {
+			t.Fatalf("view %s is missing shared theme assets", tab)
+		}
+		menuItem := strings.Index(page, `data-tab="`+tab+`"`)
+		menuItemEnd := menuItem + 240
+		if menuItemEnd > len(page) {
+			menuItemEnd = len(page)
+		}
+		if menuItem < 0 || !strings.Contains(page[menuItem:menuItemEnd], `aria-current="page"`) {
+			t.Fatalf("view %s is not marked active in the unified menu", tab)
+		}
+	}
+}
+
 func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
 	req := httptest.NewRequest("GET", "/tvbot/view/dashboard", nil)
 	req.Header.Set("X-Forwarded-Prefix", "/liquidation")

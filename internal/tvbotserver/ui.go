@@ -375,7 +375,7 @@ const tvbotHTML = `<!doctype html>
       z-index: 5;
       background: var(--nav-bg);
       border-bottom: 1px solid var(--line);
-      box-shadow: 0 2px 12px rgba(23, 32, 51, 0.04);
+      box-shadow: var(--nav-shadow);
     }
     .app-nav.tvbot-nav {
       gap: 10px;
@@ -440,8 +440,8 @@ const tvbotHTML = `<!doctype html>
       width: 28px;
       height: 28px;
       border-radius: 6px;
-      background: #172033;
-      color: #fff;
+      background: var(--selected-bg);
+      color: var(--buy);
       display: inline-grid;
       place-items: center;
       font-size: 12px;
@@ -492,7 +492,7 @@ const tvbotHTML = `<!doctype html>
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 4px;
-      background: #f8fafc;
+      background: var(--control-bg);
     }
     .global-exchange-switch button {
       border: 1px solid transparent;
@@ -508,7 +508,7 @@ const tvbotHTML = `<!doctype html>
     .global-exchange-switch button[aria-selected="true"] {
       background: var(--blue);
       border-color: var(--blue);
-      color: #fff;
+      color: var(--bg);
     }
     nav {
       display: flex;
@@ -520,7 +520,7 @@ const tvbotHTML = `<!doctype html>
     }
     nav button, .btn {
       border: 1px solid var(--line);
-      background: #fff;
+      background: var(--control-bg);
       color: var(--text);
       border-radius: 6px;
       padding: 8px 11px;
@@ -535,15 +535,15 @@ const tvbotHTML = `<!doctype html>
     }
     nav button[aria-selected="true"], .btn.primary {
       background: var(--blue);
-      color: #fff;
+      color: var(--bg);
       border-color: var(--blue);
     }
     .btn.danger {
       color: var(--red);
-      border-color: #e3aaa3;
+      border-color: var(--short-line);
     }
     .btn.success {
-      color: #fff;
+      color: var(--bg);
       background: var(--green);
       border-color: var(--green);
     }
@@ -629,7 +629,7 @@ const tvbotHTML = `<!doctype html>
       border-radius: 6px;
       padding: 8px 9px;
       color: var(--text);
-      background: #fff;
+      background: var(--control-bg);
       font: inherit;
     }
     textarea {
@@ -671,7 +671,7 @@ const tvbotHTML = `<!doctype html>
       width: 100%;
       border-collapse: collapse;
       table-layout: fixed;
-      background: #fff;
+      background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
       overflow: hidden;
@@ -717,7 +717,7 @@ const tvbotHTML = `<!doctype html>
     th {
       color: var(--muted);
       font-size: 12px;
-      background: #f8fafc;
+      background: var(--control-bg);
       font-weight: 600;
     }
     tr:last-child td { border-bottom: 0; }
@@ -730,11 +730,11 @@ const tvbotHTML = `<!doctype html>
       font-size: 12px;
       border: 1px solid var(--line);
       color: var(--muted);
-      background: #fff;
+      background: var(--control-bg);
     }
-    .pill.ok { color: var(--green); border-color: #9fd8bd; }
-    .pill.warn { color: var(--amber); border-color: #e9d08d; }
-    .pill.bad { color: var(--red); border-color: #efb3ac; }
+    .pill.ok { color: var(--green); border-color: var(--long-line); }
+    .pill.warn { color: var(--amber); border-color: var(--warning-line); }
+    .pill.bad { color: var(--red); border-color: var(--short-line); }
     .status-cell {
       display: flex;
       align-items: center;
@@ -783,7 +783,7 @@ const tvbotHTML = `<!doctype html>
     .exchange-tabs button {
       border: 1px solid var(--line);
       border-radius: 6px;
-      background: #fff;
+      background: var(--control-bg);
       color: var(--text);
       min-height: 32px;
       padding: 6px 10px;
@@ -793,7 +793,7 @@ const tvbotHTML = `<!doctype html>
     .exchange-tabs button[aria-selected="true"] {
       background: var(--blue);
       border-color: var(--blue);
-      color: #fff;
+      color: var(--bg);
     }
     .table-actions {
       display: flex;
@@ -913,7 +913,7 @@ const tvbotHTML = `<!doctype html>
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 8px 10px;
-      background: #f8fafc;
+      background: var(--control-bg);
     }
     .analysis-time-status .label {
       color: var(--muted);
@@ -933,7 +933,7 @@ const tvbotHTML = `<!doctype html>
       border-radius: 6px;
       padding: 8px 10px;
       color: var(--muted);
-      background: #f8fafc;
+      background: var(--control-bg);
       font-weight: 650;
     }
     .symbol-controls {
@@ -981,7 +981,7 @@ const tvbotHTML = `<!doctype html>
       padding: 14px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fff;
+      background: var(--panel);
     }
     .coinpair-filter-card h3 {
       margin: 0 0 6px;
@@ -1040,9 +1040,9 @@ const tvbotHTML = `<!doctype html>
       position: relative;
       min-width: 112px;
       padding: 13px 34px 13px 14px;
-      border: 1px solid #b9c8df;
+      border: 1px solid var(--strong-line);
       border-radius: 8px;
-      background: #f7faff;
+      background: var(--control-bg);
       color: var(--text);
       font-weight: 700;
       overflow-wrap: anywhere;
@@ -1070,8 +1070,8 @@ const tvbotHTML = `<!doctype html>
     .coinpair-cooldown-item {
       min-width: 190px;
       padding-right: 34px;
-      border-color: #efb968;
-      background: #fff8eb;
+      border-color: var(--warning-line);
+      background: var(--warning-bg);
     }
     .coinpair-cooldown-title {
       display: flex;
@@ -1124,7 +1124,7 @@ const tvbotHTML = `<!doctype html>
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 10px;
-      background: #fff;
+      background: var(--panel);
       min-height: 70px;
     }
     .analysis-card .label {
@@ -1148,7 +1148,7 @@ const tvbotHTML = `<!doctype html>
     .chart-wrap {
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fff;
+      background: var(--chart-bg);
       padding: 10px;
       min-height: 460px;
     }
@@ -1167,7 +1167,7 @@ const tvbotHTML = `<!doctype html>
     .balance-window-btn[aria-selected="true"] {
       background: var(--blue);
       border-color: var(--blue);
-      color: #fff;
+      color: var(--bg);
     }
     .pending-order-switch {
       display: flex;
@@ -1178,7 +1178,7 @@ const tvbotHTML = `<!doctype html>
     .pending-order-group-btn[aria-selected="true"] {
       background: var(--blue);
       border-color: var(--blue);
-      color: #fff;
+      color: var(--bg);
     }
     .dashboard-balance-grid {
       display: grid;
@@ -1196,7 +1196,7 @@ const tvbotHTML = `<!doctype html>
     .balance-chart-card {
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fff;
+      background: var(--chart-bg);
       padding: 10px;
       min-height: 360px;
     }
@@ -1408,8 +1408,8 @@ const tvbotHTML = `<!doctype html>
       margin: 0;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      background: #111827;
-      color: #e5e7eb;
+      background: var(--chart-label-bg);
+      color: var(--text);
       border-radius: 8px;
       padding: 12px;
       min-height: 140px;
@@ -1421,7 +1421,7 @@ const tvbotHTML = `<!doctype html>
       border-radius: 8px;
       padding: 0;
       color: var(--text);
-      background: #fff;
+      background: var(--panel);
       box-shadow: var(--shadow);
     }
     .raw-json-dialog::backdrop {
@@ -1455,8 +1455,8 @@ const tvbotHTML = `<!doctype html>
       right: 18px;
       bottom: 18px;
       max-width: 420px;
-      background: #172033;
-      color: #fff;
+      background: var(--nav-bg);
+      color: var(--text);
       border-radius: 8px;
       padding: 12px 14px;
       box-shadow: var(--shadow);
