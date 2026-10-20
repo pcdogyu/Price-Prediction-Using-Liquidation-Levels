@@ -1916,10 +1916,6 @@ const tvbotHTML = `<!doctype html>
             <button type="button" data-api-key-exchange="gate">Gate</button>
           </div>
         </div>
-        <div class="actions" style="margin-top:0">
-          <button class="btn primary" type="button" id="save-api-keys">保存 API Key</button>
-          <button class="btn success" type="button" id="test-api-keys">测试 API</button>
-        </div>
       </div>
       <div class="api-key-layout">
         <div class="api-key-form">
@@ -1934,7 +1930,9 @@ const tvbotHTML = `<!doctype html>
             <label id="key-secret-label">OKX Secret Key<input id="key-secret" type="password" autocomplete="new-password" spellcheck="false"></label>
             <label id="key-passphrase-label">OKX Passphrase<input id="key-passphrase" type="password" autocomplete="new-password" spellcheck="false"></label>
           </div>
-          <div class="actions">
+          <div class="actions api-key-actions">
+            <button class="btn primary" type="button" id="save-api-keys">保存 API Key</button>
+            <button class="btn success" type="button" id="test-api-keys">测试 API</button>
             <button class="btn" type="button" id="add-api-key">新增 API</button>
             <button class="btn danger" type="button" id="delete-api-key">删除当前 API</button>
           </div>
@@ -4425,7 +4423,7 @@ const tvbotHTML = `<!doctype html>
       $("order-settings-preview").innerHTML = rows.map((row) => "<tr><th>" + escapeHTML(row[0]) + "</th><td>" + escapeHTML(row[1]) + "</td></tr>").join("");
     }
 
-    function renderAPIKeys() {
+    function renderAPIKeys(preserveCredentials) {
       const exchange = normalizeExchange(state.apiKeyExchange);
       const env = state.apiKeyEnv === "live" ? "live" : "demo";
       const status = apiKeyStatus(exchange);
@@ -4450,7 +4448,7 @@ const tvbotHTML = `<!doctype html>
       select.value = selected;
       state.selectedAPIID = selected;
       state.selectedAPIIDs[exchange] = selected;
-      fillAPIForm(selected);
+      fillAPIForm(selected, preserveCredentials);
       renderAPIKeyStatus(selected);
       $("api-key-accounts").innerHTML = accounts.map((account) => {
         return "<tr>" +
@@ -4538,14 +4536,17 @@ const tvbotHTML = `<!doctype html>
       return account && account.name ? account.name : apiID;
     }
 
-    function fillAPIForm(id) {
+    function fillAPIForm(id, preserveCredentials) {
       const account = selectedAPIAccount(id, state.apiKeyExchange);
+      const apiKey = preserveCredentials ? $("key-api").value : "";
+      const secretKey = preserveCredentials ? $("key-secret").value : "";
+      const passphrase = preserveCredentials ? $("key-passphrase").value : "";
       $("key-id").value = account ? account.id : (id || "default");
       $("key-name").value = account ? (account.name || "") : "";
       $("key-active").checked = account ? !!account.active : true;
-      $("key-api").value = "";
-      $("key-secret").value = "";
-      $("key-passphrase").value = "";
+      $("key-api").value = apiKey;
+      $("key-secret").value = secretKey;
+      $("key-passphrase").value = passphrase;
     }
 
     function renderTemplateAPIs() {
@@ -6391,10 +6392,7 @@ const tvbotHTML = `<!doctype html>
       state.apiKeyTest = null;
       state.apiKeyTestID = "";
       state.apiKeyTestExchange = exchange;
-      $("key-api").value = "";
-      $("key-secret").value = "";
-      $("key-passphrase").value = "";
-      renderAPIKeys();
+      renderAPIKeys(true);
       renderTemplateAPIs();
       renderPositionAPIs();
       renderOrders();

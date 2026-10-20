@@ -52,6 +52,22 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 			t.Fatalf("unified header missing %q", want)
 		}
 	}
+	saveButton := strings.Index(page, `id="save-api-keys"`)
+	testButton := strings.Index(page, `id="test-api-keys"`)
+	addButton := strings.Index(page, `id="add-api-key"`)
+	if saveButton < 0 || testButton < 0 || addButton < 0 || !(saveButton < testButton && testButton < addButton) {
+		t.Fatalf("API key actions should place save and test before add: save=%d test=%d add=%d", saveButton, testButton, addButton)
+	}
+	for _, want := range []string{
+		`function fillAPIForm(id, preserveCredentials)`,
+		`renderAPIKeys(true);`,
+		`const apiKey = preserveCredentials ? $("key-api").value : "";`,
+		`const secretKey = preserveCredentials ? $("key-secret").value : "";`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("API key form should preserve entered credentials after saving; missing %q", want)
+		}
+	}
 	if strings.Contains(page, "清算墙雷达") || strings.Contains(page, `class="brand"`) || strings.Contains(page, `class="liquidation-links"`) || strings.Contains(page, `class="app-logo"`) {
 		t.Fatal("tvbot header still contains the removed product name or legacy navigation classes")
 	}
