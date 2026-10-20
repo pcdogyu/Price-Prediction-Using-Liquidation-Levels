@@ -656,8 +656,14 @@ func (s *Server) authorize(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if isDashboardPage(r.URL.Path) && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-			s.renderLoginForRequest(w, r, http.StatusOK, "")
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			if isDashboardPage(r.URL.Path) {
+				s.renderLoginForRequest(w, r, http.StatusOK, "")
+			} else if wantsHTML(r) {
+				s.redirectUnifiedLogin(w, r)
+			} else {
+				problem(w, http.StatusUnauthorized, errors.New("authentication required"))
+			}
 			return
 		}
 		problem(w, http.StatusUnauthorized, errors.New("authentication required"))

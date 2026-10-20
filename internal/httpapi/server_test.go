@@ -287,6 +287,13 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated auth check status=%d", w.Code)
 	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/auth/check", nil)
+	r.Header.Set("Accept", "text/html")
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/liquidation/?next=%2Fapi%2Fv1%2Fauth%2Fcheck" {
+		t.Fatalf("browser auth check redirect status=%d location=%s body=%s", w.Code, w.Header().Get("Location"), w.Body.String())
+	}
 	r = httptest.NewRequest(http.MethodPost, "/api/v1/coinglass/capture", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
