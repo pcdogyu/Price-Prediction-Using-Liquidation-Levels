@@ -80,6 +80,62 @@ type Contract struct {
 	Status           string `json:"status"`
 	EnableDecimal    bool   `json:"enable_decimal"`
 }
+
+func (c *Contract) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Name             json.RawMessage `json:"name"`
+		Type             json.RawMessage `json:"type"`
+		QuantoMultiplier json.RawMessage `json:"quanto_multiplier"`
+		OrderSizeMin     json.RawMessage `json:"order_size_min"`
+		OrderSizeMax     json.RawMessage `json:"order_size_max"`
+		OrderPriceRound  json.RawMessage `json:"order_price_round"`
+		MarkPrice        json.RawMessage `json:"mark_price"`
+		LastPrice        json.RawMessage `json:"last_price"`
+		Status           json.RawMessage `json:"status"`
+		EnableDecimal    bool            `json:"enable_decimal"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fields := []struct {
+		raw *json.RawMessage
+		out *string
+	}{
+		{&raw.Name, &c.Name}, {&raw.Type, &c.Type}, {&raw.QuantoMultiplier, &c.QuantoMultiplier},
+		{&raw.OrderSizeMin, &c.OrderSizeMin}, {&raw.OrderSizeMax, &c.OrderSizeMax},
+		{&raw.OrderPriceRound, &c.OrderPriceRound}, {&raw.MarkPrice, &c.MarkPrice},
+		{&raw.LastPrice, &c.LastPrice}, {&raw.Status, &c.Status},
+	}
+	for _, field := range fields {
+		value, err := gateJSONText(*field.raw)
+		if err != nil {
+			return err
+		}
+		*field.out = value
+	}
+	c.EnableDecimal = raw.EnableDecimal
+	return nil
+}
+
+func gateJSONText(raw json.RawMessage) (string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return "", nil
+	}
+	var text string
+	if trimmed[0] == '"' {
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return "", err
+		}
+		return text, nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(trimmed, &number); err != nil {
+		return "", fmt.Errorf("decode Gate numeric value: %w", err)
+	}
+	return number.String(), nil
+}
+
 type Ticker struct {
 	Contract         string `json:"contract"`
 	Last             string `json:"last"`
