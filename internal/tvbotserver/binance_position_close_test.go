@@ -96,6 +96,10 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 				t.Fatalf("bad book ticker query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`{"symbol":"BTCUSDT","bidPrice":"100","bidQty":"1","askPrice":"100.2","askQty":"1","time":1784880000000}`))
+		case "/fapi/v1/openOrders":
+			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/openAlgoOrders":
+			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -183,6 +187,8 @@ func TestTVBotBinanceLimitPositionCloseSplitsWhenQuantityExceedsMaxQty(t *testin
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"MANTAUSDT","status":"TRADING","pricePrecision":4,"quantityPrecision":0,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.0001"},{"filterType":"LOT_SIZE","minQty":"1","maxQty":"10000","stepSize":"1"},{"filterType":"MARKET_LOT_SIZE","minQty":"1","maxQty":"10000","stepSize":"1"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":
 			_, _ = w.Write([]byte(`{"symbol":"MANTAUSDT","bidPrice":"0.0589","bidQty":"1","askPrice":"0.0591","askQty":"1","time":1784880000000}`))
+		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
+			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -258,6 +264,8 @@ func TestTVBotBinanceMarketCloseRecoversUnknownStatusByClientOrderID(t *testing.
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
+			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -335,6 +343,8 @@ func TestTVBotBinanceMarketCloseReturnsUnknownWhenTimeoutCannotBeResolved(t *tes
 		switch r.URL.Path {
 		case "/fapi/v3/positionRisk":
 			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
+			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -407,6 +417,7 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyConflict(t *testing.T) {
 	srv := newTestServer(t)
 	var orderForms []url.Values
 	var cancelForms []url.Values
+	regularOrdersCanceled := false
 	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/fapi/v1/exchangeInfo" && r.URL.Path != "/fapi/v1/ticker/bookTicker" && r.Header.Get("X-MBX-APIKEY") != "binance-key" {
@@ -428,6 +439,10 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyConflict(t *testing.T) {
 		case "/fapi/v1/openOrders":
 			if r.URL.Query().Get("symbol") != "AVAXUSDT" {
 				t.Fatalf("bad open orders query: %s", r.URL.RawQuery)
+			}
+			if regularOrdersCanceled {
+				_, _ = w.Write([]byte(`[]`))
+				return
 			}
 			_, _ = w.Write([]byte(`[
 				{"symbol":"AVAXUSDT","orderId":100,"clientOrderId":"old-close","price":"6.6285","origQty":"15","executedQty":"0","side":"BUY","positionSide":"BOTH","type":"STOP_MARKET","status":"NEW","time":1784880000000,"updateTime":1784880000000,"reduceOnly":true},
@@ -454,6 +469,7 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyConflict(t *testing.T) {
 				_, _ = w.Write([]byte(`{"orderId":789,"symbol":"AVAXUSDT","status":"NEW","clientOrderId":"close-1","price":"6.6285","origQty":"15","executedQty":"0","type":"LIMIT","side":"BUY","positionSide":"BOTH"}`))
 			case http.MethodDelete:
 				cancelForms = append(cancelForms, cloneValues(r.Form))
+				regularOrdersCanceled = true
 				_, _ = w.Write([]byte(`{"orderId":100,"symbol":"AVAXUSDT","status":"CANCELED","clientOrderId":"old-close","price":"6.6285","origQty":"15","executedQty":"0","type":"STOP_MARKET","side":"BUY","positionSide":"BOTH"}`))
 			default:
 				t.Fatalf("unexpected Binance order method %s", r.Method)
@@ -486,8 +502,8 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyConflict(t *testing.T) {
 	if len(orderForms) != 2 {
 		t.Fatalf("expected failed order and retry, got %#v", orderForms)
 	}
-	if len(cancelForms) != 1 || cancelForms[0].Get("orderId") != "100" {
-		t.Fatalf("expected only conflicting reduce-only close order canceled, got %#v", cancelForms)
+	if len(cancelForms) != 3 {
+		t.Fatalf("expected every regular order for the symbol canceled before close, got %#v", cancelForms)
 	}
 	retry := orderForms[1]
 	if retry.Get("symbol") != "AVAXUSDT" || retry.Get("side") != "BUY" || retry.Get("type") != "LIMIT" || retry.Get("quantity") != "15" || retry.Get("price") != "6.6285" || retry.Get("reduceOnly") != "true" {
@@ -511,6 +527,7 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyAlgoConflict(t *testing.T) 
 	srv := newTestServer(t)
 	var orderForms []url.Values
 	var cancelAlgoForms []url.Values
+	algoOrdersCanceled := false
 	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/fapi/v1/exchangeInfo" && r.URL.Path != "/fapi/v1/ticker/bookTicker" && r.Header.Get("X-MBX-APIKEY") != "binance-key" {
@@ -538,6 +555,10 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyAlgoConflict(t *testing.T) 
 			if r.URL.Query().Get("symbol") != "AVAXUSDT" || r.URL.Query().Get("algoType") != "CONDITIONAL" {
 				t.Fatalf("bad open algo orders query: %s", r.URL.RawQuery)
 			}
+			if algoOrdersCanceled {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
 			_, _ = w.Write([]byte(`[
 				{"symbol":"AVAXUSDT","algoId":900,"clientAlgoId":"old-avx-sl","side":"BUY","positionSide":"BOTH","orderType":"STOP_MARKET","algoStatus":"NEW","quantity":"15","reduceOnly":true},
 				{"symbol":"AVAXUSDT","algoId":901,"clientAlgoId":"entry-signal","side":"BUY","positionSide":"BOTH","orderType":"STOP_MARKET","algoStatus":"NEW","quantity":"2","reduceOnly":false},
@@ -551,6 +572,7 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyAlgoConflict(t *testing.T) 
 				t.Fatal(err)
 			}
 			cancelAlgoForms = append(cancelAlgoForms, cloneValues(r.Form))
+			algoOrdersCanceled = true
 			_, _ = w.Write([]byte(`{"algoId":900,"clientAlgoId":"old-avx-sl","code":"200","msg":"success"}`))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
@@ -594,8 +616,8 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyAlgoConflict(t *testing.T) 
 	if len(orderForms) != 2 {
 		t.Fatalf("expected failed order and retry, got %#v", orderForms)
 	}
-	if len(cancelAlgoForms) != 1 || cancelAlgoForms[0].Get("algoId") != "900" {
-		t.Fatalf("expected only conflicting reduce-only close algo canceled, got %#v", cancelAlgoForms)
+	if len(cancelAlgoForms) != 3 {
+		t.Fatalf("expected every algorithm order for the symbol canceled before close, got %#v", cancelAlgoForms)
 	}
 	retry := orderForms[1]
 	if retry.Get("symbol") != "AVAXUSDT" || retry.Get("side") != "BUY" || retry.Get("type") != "LIMIT" || retry.Get("quantity") != "15" || retry.Get("price") != "6.6472" || retry.Get("reduceOnly") != "true" {
@@ -743,6 +765,8 @@ func TestTVBotBinanceLimitCloseFallsBackToMarketRemaining(t *testing.T) {
 	var mu sync.Mutex
 	var orderForms []url.Values
 	var cancelForms []url.Values
+	limitOrderPending := false
+	limitOrderCancelled := false
 	marketSeen := make(chan struct{}, 1)
 	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -757,7 +781,16 @@ func TestTVBotBinanceLimitCloseFallsBackToMarketRemaining(t *testing.T) {
 		case "/fapi/v1/ticker/bookTicker":
 			_, _ = w.Write([]byte(`{"symbol":"BTCUSDT","bidPrice":"100","bidQty":"1","askPrice":"100.2","askQty":"1","time":1784880000000}`))
 		case "/fapi/v1/openOrders":
-			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","orderId":100,"clientOrderId":"limit-close","price":"100.2","origQty":"10","executedQty":"2","side":"BUY","positionSide":"BOTH","type":"LIMIT","status":"NEW","time":1784880000000,"updateTime":1784880000000,"reduceOnly":true}]`))
+			mu.Lock()
+			pending := limitOrderPending && !limitOrderCancelled
+			mu.Unlock()
+			if pending {
+				_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","orderId":100,"clientOrderId":"limit-close","price":"100.2","origQty":"10","executedQty":"2","side":"BUY","positionSide":"BOTH","type":"LIMIT","status":"NEW","time":1784880000000,"updateTime":1784880000000,"reduceOnly":true}]`))
+			} else {
+				_, _ = w.Write([]byte(`[]`))
+			}
+		case "/fapi/v1/openAlgoOrders":
+			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -767,6 +800,9 @@ func TestTVBotBinanceLimitCloseFallsBackToMarketRemaining(t *testing.T) {
 				form := cloneValues(r.Form)
 				mu.Lock()
 				orderForms = append(orderForms, form)
+				if form.Get("type") == "LIMIT" {
+					limitOrderPending = true
+				}
 				mu.Unlock()
 				if form.Get("type") == "MARKET" {
 					select {
@@ -780,6 +816,7 @@ func TestTVBotBinanceLimitCloseFallsBackToMarketRemaining(t *testing.T) {
 			case http.MethodDelete:
 				mu.Lock()
 				cancelForms = append(cancelForms, cloneValues(r.Form))
+				limitOrderCancelled = true
 				mu.Unlock()
 				_, _ = w.Write([]byte(`{"orderId":100,"symbol":"BTCUSDT","status":"CANCELED","clientOrderId":"limit-close","price":"100.2","origQty":"10","executedQty":"2","type":"LIMIT","side":"BUY","positionSide":"BOTH"}`))
 			default:

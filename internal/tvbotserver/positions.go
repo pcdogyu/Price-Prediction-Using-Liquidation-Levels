@@ -1857,6 +1857,19 @@ func (s *Server) handleBinancePositionClose(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadGateway, "positions_failed", err.Error())
 		return
 	}
+	if err := cancelAllBinanceSymbolOrders(ctx, client, position.InstID); err != nil {
+		writeError(w, http.StatusBadGateway, "position_close_cancel_orders_failed", err.Error())
+		return
+	}
+	position, err = currentBinanceOpenPosition(ctx, client, position.InstID, position.PosSide)
+	if err != nil {
+		if errors.Is(err, errPositionNotOpen) {
+			writeError(w, http.StatusConflict, "position_not_open", err.Error())
+			return
+		}
+		writeError(w, http.StatusBadGateway, "positions_failed", err.Error())
+		return
+	}
 	closeSz := ""
 	if ratio < 1 {
 		closeSz, err = binancePositionCloseSize(ctx, client, position, ratio)
@@ -1926,6 +1939,58 @@ func (s *Server) handleBinancePositionClose(w http.ResponseWriter, r *http.Reque
 		Px:      order.Px,
 		Message: message,
 	})
+}
+
+// cancelAllBinanceSymbolOrders clears both regular and conditional orders for
+// the closing symbol before sizing and submitting a position close. It verifies
+// both order groups are empty so a partial cancellation never proceeds to a
+// close that could be rejected or unexpectedly overlap another order.
+func cancelAllBinanceSymbolOrders(ctx context.Context, client binance.Client, symbol string) error {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return errors.New("Binance close symbol is required to cancel open orders")
+	}
+	regular, err := client.OpenOrders(ctx, symbol)
+	if err != nil {
+		return fmt.Errorf("inspect Binance regular orders for %s failed: %w", symbol, err)
+	}
+	for _, order := range regular {
+		cancelReq := binance.CancelOrderRequest{Symbol: order.Symbol}
+		if order.OrderID != 0 {
+			cancelReq.OrderID = strconv.FormatInt(order.OrderID, 10)
+		} else {
+			cancelReq.OrigClientOrderID = strings.TrimSpace(order.ClientOrderID)
+		}
+		if cancelReq.OrderID == "" && cancelReq.OrigClientOrderID == "" {
+			return fmt.Errorf("cannot safely cancel Binance regular order for %s: missing order identifiers", symbol)
+		}
+		if _, err := client.CancelOrder(ctx, cancelReq); err != nil && !binanceOrderCancellationAlreadyDone(err) {
+			return fmt.Errorf("cancel Binance regular order for %s failed: %w", symbol, err)
+		}
+	}
+
+	algos, err := client.OpenAlgoOrders(ctx, symbol)
+	if err != nil {
+		return fmt.Errorf("inspect Binance algorithm orders for %s failed: %w", symbol, err)
+	}
+	for _, order := range algos {
+		if _, err := client.CancelAlgoOrder(ctx, order.AlgoID, strings.TrimSpace(order.ClientAlgoID)); err != nil && !binanceOrderCancellationAlreadyDone(err) {
+			return fmt.Errorf("cancel Binance algorithm order for %s failed: %w", symbol, err)
+		}
+	}
+
+	regular, err = client.OpenOrders(ctx, symbol)
+	if err != nil {
+		return fmt.Errorf("verify Binance regular orders for %s failed: %w", symbol, err)
+	}
+	algos, err = client.OpenAlgoOrders(ctx, symbol)
+	if err != nil {
+		return fmt.Errorf("verify Binance algorithm orders for %s failed: %w", symbol, err)
+	}
+	if len(regular) != 0 || len(algos) != 0 {
+		return fmt.Errorf("Binance orders remain for %s after cancellation (regular=%d, algorithm=%d); close was not submitted", symbol, len(regular), len(algos))
+	}
+	return nil
 }
 
 func (s *Server) startLimitPositionClose(ctx context.Context, apiID string, cfg config.Config, client okx.Client, position okx.Position, closeSz string) (positionCloseOrder, bool, error) {
