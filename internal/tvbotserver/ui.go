@@ -1576,6 +1576,7 @@ const tvbotHTML = `<!doctype html>
       <div class="global-exchange-switch" role="group" aria-label="全局交易所">
         <button type="button" data-global-exchange="okx" aria-selected="true">OKX</button>
         <button type="button" data-global-exchange="binance">Binance</button>
+        <button type="button" data-global-exchange="gate">Gate</button>
       </div>
     </div>
     <div class="status" id="order-info-status" hidden>
@@ -1634,6 +1635,19 @@ const tvbotHTML = `<!doctype html>
             <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="overview-binance-updated">-</div></div>
           </div>
           <svg id="overview-binance-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Binance USDT balance chart"></svg>
+        </div>
+        <div class="balance-chart-card" data-exchange-view="gate">
+          <div class="section-head" style="margin-bottom:8px">
+            <h3>Gate USDT 余额</h3>
+            <span class="muted" id="overview-gate-status">-</span>
+          </div>
+          <div class="analysis-metrics symbol-metrics">
+            <div class="analysis-card"><div class="label">USDT估值</div><div class="value" id="overview-gate-eq">-</div></div>
+            <div class="analysis-card"><div class="label">可用</div><div class="value" id="overview-gate-avail">-</div></div>
+            <div class="analysis-card"><div class="label">交易 API</div><div class="value" id="overview-gate-api">-</div></div>
+            <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="overview-gate-updated">-</div></div>
+          </div>
+          <svg id="overview-gate-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Gate USDT balance chart"></svg>
         </div>
       </div>
     </section>
@@ -1816,6 +1830,26 @@ const tvbotHTML = `<!doctype html>
             <svg id="analysis-binance-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Binance USDT equity chart"></svg>
           </div>
         </div>
+        <div class="balance-chart-card exchange-balance-card" data-exchange-view="gate">
+          <div class="section-head" style="margin-bottom:0">
+            <h3>Gate 订单</h3>
+            <span class="muted" id="analysis-gate-balance-status">-</span>
+          </div>
+          <div class="analysis-usdt-block">
+            <div class="section-head" style="margin-bottom:0"><h3>USDT 估值表</h3></div>
+            <div class="analysis-metrics symbol-metrics exchange-balance-metrics">
+              <div class="analysis-card"><div class="label">周期起始</div><div class="value" id="analysis-gate-window-start">-</div></div>
+              <div class="analysis-card"><div class="label">当前USDT</div><div class="value" id="analysis-gate-usdt-eq">-</div></div>
+              <div class="analysis-card"><div class="label">周期变化</div><div class="value" id="analysis-gate-window-change">-</div></div>
+              <div class="analysis-card"><div class="label">最大回撤</div><div class="value" id="analysis-gate-max-drawdown">-</div></div>
+              <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="analysis-gate-balance-updated">-</div></div>
+            </div>
+          </div>
+          <div class="analysis-usdt-chart-card">
+            <div class="section-head" style="margin:0 0 8px"><h3 id="analysis-gate-usdt-title">USDT 权益图</h3></div>
+            <svg id="analysis-gate-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Gate USDT equity chart"></svg>
+          </div>
+        </div>
       </div>
       <div class="analysis-trade-history-card">
         <div class="section-head" style="margin-bottom:10px">
@@ -1888,7 +1922,7 @@ const tvbotHTML = `<!doctype html>
       <div class="section-head">
         <h2>币对配置</h2>
         <div class="symbol-controls">
-          <label>交易所<select id="symbol-exchange"><option value="okx">OKX</option><option value="binance">Binance</option></select></label>
+        <label>交易所<select id="symbol-exchange"><option value="okx">OKX</option><option value="binance">Binance</option><option value="gate">Gate</option></select></label>
           <label>环境<select id="symbol-env"><option value="live">实盘</option><option value="demo">模拟</option></select></label>
           <label>交易范围<select id="symbol-turnover-scope"><option value="top50">成交量前 50</option><option value="top100">成交量前 100</option><option value="top200">成交量前 200</option><option value="top500">成交量前 500</option><option value="all">全部</option></select></label>
           <label class="symbol-search-label"><span id="symbol-search-label-text">搜索成交量前 100 币对</span><input id="symbol-search" autocomplete="off" spellcheck="false" placeholder="例如 BTC"></label>
@@ -2211,7 +2245,7 @@ const tvbotHTML = `<!doctype html>
       { tab: "menuSettings", label: "菜单设置", locked: true },
       { tab: "upgrade", label: "升级" }
     ];
-    const positionExchanges = ["okx", "binance"];
+    const positionExchanges = ["okx", "binance", "gate"];
     const globalExchangeStorageKey = "tvbot.selectedExchange";
     const ordersPageSize = 20;
     const analysisTradePageSize = 20;
@@ -3885,7 +3919,7 @@ const tvbotHTML = `<!doctype html>
     function renderBalanceOverview() {
       renderGlobalExchangeSwitch();
       updateDashboardBalanceWindowButtons();
-      ["okx", "binance"].forEach((exchange) => {
+      ["okx", "binance", "gate"].forEach((exchange) => {
         const item = balanceOverviewExchange(exchange);
         const prefix = "overview-" + exchange;
         const label = exchangeLabel(exchange);
@@ -3895,7 +3929,7 @@ const tvbotHTML = `<!doctype html>
           $(prefix + "-avail").textContent = "-";
           $(prefix + "-api").textContent = "-";
           $(prefix + "-updated").textContent = "-";
-          drawUSDTChart([], prefix + "-usdt-chart", "暂无 " + label + " USDT 估值数据", exchange === "binance" ? "#138a55" : "#1f6feb");
+          drawUSDTChart([], prefix + "-usdt-chart", "暂无 " + label + " USDT 估值数据", exchange === "binance" ? "#138a55" : (exchange === "gate" ? "#1a9b8a" : "#1f6feb"));
           return;
         }
         const balance = item.balance || {};
@@ -3908,7 +3942,7 @@ const tvbotHTML = `<!doctype html>
         $(prefix + "-api").textContent = item.api_id ? apiDisplayName(item.api_id, exchange) : "-";
         $(prefix + "-updated").textContent = balance.updated_at ? shanghaiTime(balance.updated_at) : (item.refreshed_at ? shanghaiTime(item.refreshed_at) : "-");
         const points = usdtBalancePoints(item.balance_points || [], balance);
-        drawUSDTChart(points, prefix + "-usdt-chart", configured ? "暂无 " + label + " USDT 估值数据" : label + " 未配置", exchange === "binance" ? "#138a55" : "#1f6feb");
+        drawUSDTChart(points, prefix + "-usdt-chart", configured ? "暂无 " + label + " USDT 估值数据" : label + " 未配置", exchange === "binance" ? "#138a55" : (exchange === "gate" ? "#1a9b8a" : "#1f6feb"));
       });
       renderAnalysisExchangeBalances();
     }
@@ -3942,15 +3976,18 @@ const tvbotHTML = `<!doctype html>
       const data = state.symbols || {};
       const okxCatalog = data.okx || {};
       const binanceCatalog = data.binance || {};
+      const gateCatalog = data.gate || {};
       const okxLive = okxCatalog.live || {};
       const okxDemo = okxCatalog.demo || {};
       const binanceLive = binanceCatalog.live || {};
       const binanceDemo = binanceCatalog.demo || {};
+      const gateLive = gateCatalog.live || {};
+      const gateDemo = gateCatalog.demo || {};
       const configured = data.symbols || {};
       const keyword = currentSymbolSearchKeyword();
       const rows = sortedSymbolRows(filteredSymbolRows());
-      $("symbol-live-count").textContent = asText(symbolSetCount(okxLive) + symbolSetCount(binanceLive));
-      $("symbol-demo-count").textContent = asText(symbolSetCount(okxDemo) + symbolSetCount(binanceDemo));
+      $("symbol-live-count").textContent = asText(symbolSetCount(okxLive) + symbolSetCount(binanceLive) + symbolSetCount(gateLive));
+      $("symbol-demo-count").textContent = asText(symbolSetCount(okxDemo) + symbolSetCount(binanceDemo) + symbolSetCount(gateDemo));
       $("symbol-configured-count").textContent = asText(Object.keys(configured).length);
       $("symbol-visible-count").textContent = asText(rows.length);
       renderMarketTurnoverScope();
@@ -3962,6 +3999,8 @@ const tvbotHTML = `<!doctype html>
       collectSymbolSetErrors(errors, "OKX 模拟", okxDemo);
       collectSymbolSetErrors(errors, "Binance 实盘", binanceLive);
       collectSymbolSetErrors(errors, "Binance 模拟", binanceDemo);
+      collectSymbolSetErrors(errors, "Gate 实盘", gateLive);
+      collectSymbolSetErrors(errors, "Gate 模拟", gateDemo);
       $("symbol-errors").textContent = errors.join(" / ");
       const columns = currentTableColumnDefs("symbols");
       $("symbol-rows").innerHTML = rows.map((row) => "<tr>" + columns.map((col) => col.cell(row)).join("") + "</tr>").join("") || '<tr><td colspan="' + tableColumnCount("symbols") + '" class="muted">' + escapeHTML(symbolEmptyMessage(keyword)) + '</td></tr>';
@@ -4017,6 +4056,7 @@ const tvbotHTML = `<!doctype html>
       const data = state.symbols || {};
       const okxCatalog = data.okx || {};
       const binanceCatalog = data.binance || {};
+      const gateCatalog = data.gate || {};
       const exchangeFilter = $("symbol-exchange") ? normalizeExchange($("symbol-exchange").value) : activeExchange();
       const envFilter = $("symbol-env") && $("symbol-env").value === "live" ? "live" : "demo";
       const terms = symbolSearchTerms(currentSymbolSearchKeyword());
@@ -4025,7 +4065,9 @@ const tvbotHTML = `<!doctype html>
         { exchange: "okx", exchangeLabel: "OKX", env: "live", envLabel: "实盘", set: okxCatalog.live || {} },
         { exchange: "okx", exchangeLabel: "OKX", env: "demo", envLabel: "模拟", set: okxCatalog.demo || {} },
         { exchange: "binance", exchangeLabel: "Binance", env: "live", envLabel: "实盘", set: binanceCatalog.live || {} },
-        { exchange: "binance", exchangeLabel: "Binance", env: "demo", envLabel: "模拟", set: binanceCatalog.demo || {} }
+        { exchange: "binance", exchangeLabel: "Binance", env: "demo", envLabel: "模拟", set: binanceCatalog.demo || {} },
+        { exchange: "gate", exchangeLabel: "Gate", env: "live", envLabel: "实盘", set: gateCatalog.live || {} },
+        { exchange: "gate", exchangeLabel: "Gate", env: "demo", envLabel: "模拟", set: gateCatalog.demo || {} }
       ];
       const rows = [];
       groups.forEach((group) => {
@@ -4176,7 +4218,7 @@ const tvbotHTML = `<!doctype html>
 
     function symbolExchangeEnvText(row) {
       row = row || {};
-      const exchange = row.exchangeLabel || (String(row.exchange || "").toLowerCase() === "binance" ? "Binance" : "OKX");
+      const exchange = row.exchangeLabel || exchangeLabel(row.exchange);
       const env = row.envLabel || (row.env === "demo" ? "模拟" : "实盘");
       return exchange + " " + env;
     }
@@ -5501,6 +5543,7 @@ const tvbotHTML = `<!doctype html>
       const okxBalance = okxItem && okxItem.balance ? okxItem.balance : (state.analysis ? state.analysis.balance : null);
       renderAnalysisOKXBalance(okxItem, okxBalance);
       renderAnalysisBinanceBalance(balanceOverviewExchange("binance"));
+      renderAnalysisGateBalance(balanceOverviewExchange("gate"));
     }
 
     function renderAnalysisOKXBalance(item, balance) {
@@ -5526,6 +5569,18 @@ const tvbotHTML = `<!doctype html>
       $("analysis-binance-usdt-title").textContent = "USDT 权益图 " + balanceWindowLabel(state.balanceWindowMinutes);
       const points = usdtBalancePoints(item ? (item.balance_points || []) : [], balance);
       drawUSDTChart(points, "analysis-binance-usdt-chart", item && item.configured ? "暂无 Binance USDT 权益数据" : "Binance 未配置", "#138a55");
+    }
+
+    function renderAnalysisGateBalance(item) {
+      const balance = item && item.balance ? item.balance : null;
+      const usdt = usdtBalanceDetail(balance);
+      renderAnalysisBalanceWindow("analysis-gate", item);
+      $("analysis-gate-usdt-eq").textContent = usdt ? analysisAmountText(usdt.eq) : "-";
+      $("analysis-gate-balance-updated").textContent = balance && balance.updated_at ? shanghaiTime(balance.updated_at) : (item && item.refreshed_at ? shanghaiTime(item.refreshed_at) : "-");
+      $("analysis-gate-balance-status").textContent = exchangeBalanceStatusText(item, balance, "Gate");
+      $("analysis-gate-usdt-title").textContent = "USDT 权益图 " + balanceWindowLabel(state.balanceWindowMinutes);
+      const points = usdtBalancePoints(item ? (item.balance_points || []) : [], balance);
+      drawUSDTChart(points, "analysis-gate-usdt-chart", item && item.configured ? "暂无 Gate USDT 权益数据" : "Gate 未配置", "#1a9b8a");
     }
 
     function renderAnalysisBalanceWindow(prefix, item) {

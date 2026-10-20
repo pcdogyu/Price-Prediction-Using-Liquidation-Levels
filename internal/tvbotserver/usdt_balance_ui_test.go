@@ -6,8 +6,8 @@ import (
 )
 
 func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
-	if got := strings.Count(tvbotHTML, `class="analysis-metrics symbol-metrics exchange-balance-metrics"`); got != 2 {
-		t.Fatalf("exchange balance metric blocks=%d, want 2", got)
+	if got := strings.Count(tvbotHTML, `class="analysis-metrics symbol-metrics exchange-balance-metrics"`); got != 3 {
+		t.Fatalf("exchange balance metric blocks=%d, want 3", got)
 	}
 	if got := strings.Count(tvbotHTML, `class="analysis-exchange-block balance-pnl-block"`); got != 2 {
 		t.Fatalf("embedded pnl blocks=%d, want 2", got)
@@ -21,8 +21,11 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`.global-exchange-switch`,
 		`data-global-exchange="okx"`,
 		`data-global-exchange="binance"`,
+		`data-global-exchange="gate"`,
+		`<option value="gate">Gate</option>`,
 		`data-exchange-view="okx"`,
 		`data-exchange-view="binance"`,
+		`data-exchange-view="gate"`,
 		`globalExchangeStorageKey = "tvbot.selectedExchange"`,
 		`window.localStorage.getItem(globalExchangeStorageKey)`,
 		`window.localStorage.setItem(globalExchangeStorageKey, selected)`,
@@ -32,6 +35,7 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`订单时间`,
 		`OKX 订单`,
 		`Binance 订单`,
+		`Gate 订单`,
 		`USDT 估值表`,
 		`USDT 权益图`,
 		`id="analysis-okx-window-start"`,
@@ -40,8 +44,10 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`id="analysis-binance-window-start"`,
 		`id="analysis-binance-window-change"`,
 		`id="analysis-binance-max-drawdown"`,
+		`id="analysis-gate-window-start"`,
 		`id="analysis-okx-net-pnl"`,
 		`id="analysis-binance-net-pnl"`,
+		`id="analysis-gate-usdt-eq"`,
 		`id="analysis-okx-turnover"`,
 		`id="analysis-okx-fees"`,
 		`id="analysis-okx-position-count"`,

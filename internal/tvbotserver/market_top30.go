@@ -36,6 +36,8 @@ func applyMarketScopeRankings(resp *symbolsResponse, scope string) {
 	resp.OKX.Demo.TopInstruments = topOKXInstruments(resp.OKX.Demo.Instruments, limit)
 	resp.Binance.Live.TopInstruments = topBinanceInstruments(resp.Binance.Live.Instruments, limit)
 	resp.Binance.Demo.TopInstruments = topBinanceInstruments(resp.Binance.Demo.Instruments, limit)
+	resp.Gate.Live.TopInstruments = topGateInstruments(resp.Gate.Live.Instruments, limit)
+	resp.Gate.Demo.TopInstruments = topGateInstruments(resp.Gate.Demo.Instruments, limit)
 }
 
 func markUnavailableMarketScopeRankings(resp *symbolsResponse, scope string) {
@@ -47,6 +49,8 @@ func markUnavailableMarketScopeRankings(resp *symbolsResponse, scope string) {
 	markOKXRankingUnavailable(&resp.OKX.Demo, limit)
 	markBinanceRankingUnavailable(&resp.Binance.Live, limit)
 	markBinanceRankingUnavailable(&resp.Binance.Demo, limit)
+	markGateRankingUnavailable(&resp.Gate.Live, limit)
+	markGateRankingUnavailable(&resp.Gate.Demo, limit)
 }
 
 func markOKXRankingUnavailable(set *okxInstrumentSet, limit int) {
@@ -65,6 +69,17 @@ func markBinanceRankingUnavailable(set *binanceInstrumentSet, limit int) {
 		return
 	}
 	candidateCount, coverageComplete := binanceRankingCoverage(set.Instruments)
+	if coverageComplete && rankingSizeComplete(candidateCount, len(set.TopInstruments), limit) {
+		return
+	}
+	set.TickerError = fmt.Sprintf("%s ranking unavailable: got %d ranked symbols", marketScopeLabel(limit), len(set.TopInstruments))
+}
+
+func markGateRankingUnavailable(set *gateInstrumentSet, limit int) {
+	if set == nil || set.Error != "" || set.TickerError != "" {
+		return
+	}
+	candidateCount, coverageComplete := gateRankingCoverage(set.Instruments)
 	if coverageComplete && rankingSizeComplete(candidateCount, len(set.TopInstruments), limit) {
 		return
 	}
@@ -121,6 +136,30 @@ func topBinanceInstruments(in []binanceSymbolInstrument, limit int) []binanceSym
 	return limitBinanceInstruments(eligible, limit)
 }
 
+func topGateInstruments(in []gateSymbolInstrument, limit int) []gateSymbolInstrument {
+	eligible := make([]gateSymbolInstrument, 0, len(in))
+	for _, instrument := range in {
+		turnover, ok := positiveTurnover(instrument.TurnoverUSDT24h)
+		if !ok || !gateInstrumentTrading(instrument) || excludedRankingBase(instrument.BaseAsset, instrument.Symbol) {
+			continue
+		}
+		instrument.TurnoverUSDT24h = trading.NormalizeFloat(turnover)
+		eligible = append(eligible, instrument)
+	}
+	sort.SliceStable(eligible, func(i, j int) bool {
+		left, _ := positiveTurnover(eligible[i].TurnoverUSDT24h)
+		right, _ := positiveTurnover(eligible[j].TurnoverUSDT24h)
+		if left == right {
+			return strings.Compare(strings.ToUpper(eligible[i].Symbol), strings.ToUpper(eligible[j].Symbol)) < 0
+		}
+		return left > right
+	})
+	if limit > 0 && len(eligible) > limit {
+		eligible = eligible[:limit]
+	}
+	return append([]gateSymbolInstrument(nil), eligible...)
+}
+
 func okxRankingCoverage(in []symbolInstrument) (int, bool) {
 	count := 0
 	for _, instrument := range in {
@@ -153,6 +192,31 @@ func binanceRankingCoverage(in []binanceSymbolInstrument) (int, bool) {
 		}
 	}
 	return count, true
+}
+
+func gateRankingCoverage(in []gateSymbolInstrument) (int, bool) {
+	count := 0
+	for _, instrument := range in {
+		if !gateInstrumentTrading(instrument) || excludedRankingBase(instrument.BaseAsset, instrument.Symbol) {
+			continue
+		}
+		turnover, ok := parseAnyFloat(instrument.TurnoverUSDT24h)
+		if !ok || turnover < 0 {
+			return count, false
+		}
+		if turnover > 0 {
+			count++
+		}
+	}
+	return count, true
+}
+
+func gateInstrumentTrading(instrument gateSymbolInstrument) bool {
+	status := strings.ToLower(strings.TrimSpace(instrument.Status))
+	if status == "" {
+		status = strings.ToLower(strings.TrimSpace(instrument.State))
+	}
+	return status == "trading" || status == "tradable" || status == "online"
 }
 
 func excludedRankingBase(base, instrument string) bool {
@@ -237,6 +301,21 @@ func (s *Server) marketScopeDecision(signal trading.Signal) (marketScopeDecision
 			if candidates[base] {
 				decision.Allowed = true
 				decision.Symbol = instrument.InstID
+				break
+			}
+		}
+	case trading.ExchangeGate:
+		set := resp.Gate.Demo
+		if tradeEnv == trading.TradeEnvLive {
+			set = resp.Gate.Live
+		}
+		candidateCount, coverageComplete := gateRankingCoverage(set.Instruments)
+		decision.Available = set.SyncedAt != "" && coverageComplete && rankingSizeComplete(candidateCount, len(set.TopInstruments), decision.Limit)
+		for _, instrument := range set.TopInstruments {
+			base := marketSymbolBase(instrument.BaseAsset, instrument.Symbol)
+			if candidates[base] {
+				decision.Allowed = true
+				decision.Symbol = instrument.Symbol
 				break
 			}
 		}

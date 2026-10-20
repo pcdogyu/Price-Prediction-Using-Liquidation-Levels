@@ -80,6 +80,13 @@ type Contract struct {
 	Status           string `json:"status"`
 	EnableDecimal    bool   `json:"enable_decimal"`
 }
+type Ticker struct {
+	Contract         string `json:"contract"`
+	Last             string `json:"last"`
+	Volume24hQuote   string `json:"volume_24h_quote"`
+	Volume24hBase    string `json:"volume_24h_base"`
+	ChangePercentage string `json:"change_percentage"`
+}
 type Position struct {
 	Contract      string `json:"contract"`
 	Size          string `json:"size"`
@@ -103,6 +110,8 @@ type Order struct {
 	Text         string          `json:"text"`
 	IsReduceOnly bool            `json:"is_reduce_only"`
 	IsClose      bool            `json:"is_close"`
+	CreateTime   string          `json:"create_time"`
+	UpdateTime   string          `json:"update_time"`
 }
 
 func (o Order) IDString() string { return rawString(o.ID) }
@@ -143,6 +152,11 @@ func (c Client) Contracts(ctx context.Context) ([]Contract, error) {
 	err := c.Do(ctx, http.MethodGet, "/futures/usdt/contracts", nil, nil, false, &out)
 	return out, err
 }
+func (c Client) Tickers(ctx context.Context) ([]Ticker, error) {
+	var out []Ticker
+	err := c.Do(ctx, http.MethodGet, "/futures/usdt/tickers", nil, nil, false, &out)
+	return out, err
+}
 func (c Client) Contract(ctx context.Context, name string) (Contract, error) {
 	var out Contract
 	err := c.Do(ctx, http.MethodGet, "/futures/usdt/contracts/"+url.PathEscape(name), nil, nil, false, &out)
@@ -155,6 +169,20 @@ func (c Client) Positions(ctx context.Context, contract string) ([]Position, err
 	}
 	var out []Position
 	err := c.Do(ctx, http.MethodGet, "/futures/usdt/positions", q, nil, true, &out)
+	return out, err
+}
+func (c Client) OpenOrders(ctx context.Context, contract string) ([]Order, error) {
+	q := url.Values{"status": []string{"open"}}
+	if strings.TrimSpace(contract) != "" {
+		q.Set("contract", contract)
+	}
+	var out []Order
+	err := c.Do(ctx, http.MethodGet, "/futures/usdt/orders", q, nil, true, &out)
+	return out, err
+}
+func (c Client) CancelOrder(ctx context.Context, contract, orderID string) (Order, error) {
+	var out Order
+	err := c.Do(ctx, http.MethodDelete, "/futures/usdt/orders/"+url.PathEscape(strings.TrimSpace(orderID)), url.Values{"contract": []string{strings.TrimSpace(contract)}}, nil, true, &out)
 	return out, err
 }
 func (c Client) SetLeverage(ctx context.Context, contract string, leverage int, marginMode string, dualSide string) (Position, error) {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotstorage"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
@@ -347,6 +348,7 @@ func (s *Server) handleBalanceOverview(w http.ResponseWriter, r *http.Request) {
 		Exchanges: []exchangeBalanceOverview{
 			s.balanceOverviewForOKX(r.Context(), cfg, envName, okxAPIID, minutes, now),
 			s.balanceOverviewForBinance(r.Context(), cfg, envName, binanceAPIID, minutes, now),
+			s.balanceOverviewForGate(r.Context(), cfg, envName, strings.TrimSpace(r.URL.Query().Get("gate_api_id")), minutes, now),
 		},
 	})
 }
@@ -2173,6 +2175,62 @@ func (s *Server) balanceOverviewForBinance(ctx context.Context, cfg config.Confi
 	}
 	out.Window = balanceWindowStats(out.BalancePoints, out.Balance)
 	return out
+}
+
+func (s *Server) balanceOverviewForGate(ctx context.Context, cfg config.Config, envName, requestedAPIID string, minutes int, now time.Time) exchangeBalanceOverview {
+	out := exchangeBalanceOverview{Exchange: trading.ExchangeGate, Label: "Gate", Status: "not_configured", RefreshedAt: now.UTC()}
+	if s.GateCredentials == nil {
+		out.Error = "Gate credential store is not configured"
+		return out
+	}
+	status := s.GateCredentials.Status()
+	out.Configured = status.Configured
+	out.APIID = strings.TrimSpace(requestedAPIID)
+	if out.APIID == "" {
+		out.APIID = strings.TrimSpace(status.ActiveID)
+	}
+	if !status.Configured {
+		return out
+	}
+	creds, apiID, err := s.GateCredentials.GateCredentials(out.APIID)
+	if err != nil {
+		out.Status = "error"
+		out.Error = err.Error()
+		return out
+	}
+	out.APIID = apiID
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	account, err := (gate.Client{BaseURL: cfg.GateBaseURL(), Credentials: creds, HTTPClient: s.GateHTTPClient}).Account(fetchCtx)
+	cancel()
+	out.BalancePoints = s.balanceOverviewPoints(trading.ExchangeGate, apiID, envName, minutes, now)
+	if err != nil {
+		out.Status = "error"
+		out.Error = err.Error()
+		if cached, ok := analysisBalanceFromLatestPoint(out.BalancePoints); ok {
+			out.Status = "stale"
+			out.Balance = cached
+		}
+	} else {
+		out.Status = "ok"
+		out.Balance = analysisBalanceFromGate(account, now)
+	}
+	out.Window = balanceWindowStats(out.BalancePoints, out.Balance)
+	return out
+}
+
+func analysisBalanceFromGate(account gate.Account, now time.Time) analysisBalance {
+	updatedAt := now.UTC().Format(time.RFC3339Nano)
+	currency := strings.TrimSpace(account.Currency)
+	if currency == "" {
+		currency = "USDT"
+	}
+	return analysisBalance{
+		TotalEq: account.Total, AvailEq: account.Available, Currency: currency, UpdatedAt: updatedAt,
+		Details: []analysisBalanceDetail{{
+			Ccy: currency, Eq: account.Total, EqUsd: account.Total, AvailBal: account.Available,
+			AvailEq: account.Available, UpdatedAt: updatedAt,
+		}},
+	}
 }
 
 func analysisBalanceFromLatestPoint(points []analysisBalancePoint) (analysisBalance, bool) {

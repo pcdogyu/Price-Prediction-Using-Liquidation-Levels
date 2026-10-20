@@ -1067,6 +1067,7 @@ type symbolsResponse struct {
 	Symbols map[string]config.SymbolConfig `json:"symbols"`
 	OKX     okxSymbolsCatalog              `json:"okx"`
 	Binance binanceSymbolsCatalog          `json:"binance"`
+	Gate    gateSymbolsCatalog             `json:"gate"`
 }
 
 type okxSymbolsCatalog struct {
@@ -1077,6 +1078,11 @@ type okxSymbolsCatalog struct {
 type binanceSymbolsCatalog struct {
 	Live binanceInstrumentSet `json:"live"`
 	Demo binanceInstrumentSet `json:"demo"`
+}
+
+type gateSymbolsCatalog struct {
+	Live gateInstrumentSet `json:"live"`
+	Demo gateInstrumentSet `json:"demo"`
 }
 
 type okxInstrumentSet struct {
@@ -1120,11 +1126,46 @@ type binanceSymbolInstrument struct {
 	TickerUpdatedAt string `json:"ticker_updated_at,omitempty"`
 }
 
+type gateInstrumentSet struct {
+	Env            string                 `json:"env"`
+	Demo           bool                   `json:"demo"`
+	Count          int                    `json:"count"`
+	Instruments    []gateSymbolInstrument `json:"instruments"`
+	TopInstruments []gateSymbolInstrument `json:"top_instruments"`
+	Error          string                 `json:"error,omitempty"`
+	TickerError    string                 `json:"ticker_error,omitempty"`
+	SyncedAt       string                 `json:"synced_at,omitempty"`
+	AttemptedAt    string                 `json:"attempted_at,omitempty"`
+}
+
+type gateSymbolInstrument struct {
+	Symbol          string `json:"symbol"`
+	InstID          string `json:"instId"`
+	BaseAsset       string `json:"baseAsset"`
+	QuoteAsset      string `json:"quoteAsset"`
+	BaseCcy         string `json:"baseCcy"`
+	QuoteCcy        string `json:"quoteCcy"`
+	SettleCcy       string `json:"settleCcy"`
+	MarginAsset     string `json:"marginAsset"`
+	State           string `json:"state"`
+	Status          string `json:"status"`
+	Type            string `json:"type"`
+	CtVal           string `json:"ctVal"`
+	CtValCcy        string `json:"ctValCcy"`
+	MinQty          string `json:"min_qty,omitempty"`
+	MaxQty          string `json:"max_qty,omitempty"`
+	StepSize        string `json:"step_size,omitempty"`
+	TickSize        string `json:"tick_size,omitempty"`
+	TurnoverUSDT24h string `json:"turnover_usdt_24h,omitempty"`
+	TickerUpdatedAt string `json:"ticker_updated_at,omitempty"`
+}
+
 type symbolInstrumentResult struct {
 	exchange   string
 	env        string
 	okxSet     okxInstrumentSet
 	binanceSet binanceInstrumentSet
+	gateSet    gateInstrumentSet
 }
 
 func (s *Server) StartSymbolCatalogSyncer(ctx context.Context) {
@@ -1192,6 +1233,17 @@ func (s *Server) cachedSymbolsResponse(cfg config.Config) (symbolsResponse, erro
 			} else {
 				resp.OKX.Demo = set
 			}
+		case trading.ExchangeGate:
+			var set gateInstrumentSet
+			if err := json.Unmarshal([]byte(item.PayloadJSON), &set); err != nil {
+				return resp, err
+			}
+			applyGateSetCacheMeta(&set, item)
+			if item.Env == config.EnvLive {
+				resp.Gate.Live = set
+			} else {
+				resp.Gate.Demo = set
+			}
 		}
 	}
 	applyMarketScopeRankings(&resp, cfg.Trading.MarketTurnoverScope)
@@ -1224,7 +1276,7 @@ func (s *Server) syncSymbolCatalogs(ctx context.Context) (symbolsResponse, error
 }
 
 func (s *Server) fetchSymbolCatalogs(ctx context.Context, cfg config.Config) symbolsResponse {
-	results := make(chan symbolInstrumentResult, 4)
+	results := make(chan symbolInstrumentResult, 6)
 	go func() {
 		results <- symbolInstrumentResult{exchange: trading.ExchangeOKX, env: config.EnvLive, okxSet: s.fetchOKXInstrumentSet(ctx, cfg, false)}
 	}()
@@ -1237,8 +1289,14 @@ func (s *Server) fetchSymbolCatalogs(ctx context.Context, cfg config.Config) sym
 	go func() {
 		results <- symbolInstrumentResult{exchange: trading.ExchangeBinance, env: config.EnvDemo, binanceSet: s.fetchBinanceInstrumentSet(ctx, cfg, true)}
 	}()
+	go func() {
+		results <- symbolInstrumentResult{exchange: trading.ExchangeGate, env: config.EnvLive, gateSet: s.fetchGateInstrumentSet(ctx, cfg, false)}
+	}()
+	go func() {
+		results <- symbolInstrumentResult{exchange: trading.ExchangeGate, env: config.EnvDemo, gateSet: s.fetchGateInstrumentSet(ctx, cfg, true)}
+	}()
 	resp := emptySymbolsResponse(cfg.Symbols)
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 6; i++ {
 		result := <-results
 		if result.exchange == trading.ExchangeBinance {
 			if result.env == config.EnvDemo {
@@ -1246,6 +1304,14 @@ func (s *Server) fetchSymbolCatalogs(ctx context.Context, cfg config.Config) sym
 				continue
 			}
 			resp.Binance.Live = result.binanceSet
+			continue
+		}
+		if result.exchange == trading.ExchangeGate {
+			if result.env == config.EnvDemo {
+				resp.Gate.Demo = result.gateSet
+				continue
+			}
+			resp.Gate.Live = result.gateSet
 			continue
 		}
 		if result.env == config.EnvDemo {
@@ -1269,6 +1335,10 @@ func emptySymbolsResponse(symbols map[string]config.SymbolConfig) symbolsRespons
 			Live: binanceInstrumentSet{Env: config.EnvLive, Demo: false, Instruments: []binanceSymbolInstrument{}},
 			Demo: binanceInstrumentSet{Env: config.EnvDemo, Demo: true, Instruments: []binanceSymbolInstrument{}},
 		},
+		Gate: gateSymbolsCatalog{
+			Live: gateInstrumentSet{Env: config.EnvLive, Demo: false, Instruments: []gateSymbolInstrument{}},
+			Demo: gateInstrumentSet{Env: config.EnvDemo, Demo: true, Instruments: []gateSymbolInstrument{}},
+		},
 	}
 }
 
@@ -1279,11 +1349,14 @@ func symbolCatalogCacheItems(resp symbolsResponse, now time.Time) ([]storage.Sym
 		env      string
 		okx      *okxInstrumentSet
 		binance  *binanceInstrumentSet
+		gate     *gateInstrumentSet
 	}{
 		{exchange: trading.ExchangeOKX, env: config.EnvLive, okx: &resp.OKX.Live},
 		{exchange: trading.ExchangeOKX, env: config.EnvDemo, okx: &resp.OKX.Demo},
 		{exchange: trading.ExchangeBinance, env: config.EnvLive, binance: &resp.Binance.Live},
 		{exchange: trading.ExchangeBinance, env: config.EnvDemo, binance: &resp.Binance.Demo},
+		{exchange: trading.ExchangeGate, env: config.EnvLive, gate: &resp.Gate.Live},
+		{exchange: trading.ExchangeGate, env: config.EnvDemo, gate: &resp.Gate.Demo},
 	}
 	items := make([]storage.SymbolCatalogCache, 0, len(sets))
 	for _, entry := range sets {
@@ -1300,7 +1373,7 @@ func symbolCatalogCacheItems(resp symbolsResponse, now time.Time) ([]storage.Sym
 			count = entry.okx.Count
 			errorText = entry.okx.Error
 			tickerError = entry.okx.TickerError
-		} else {
+		} else if entry.binance != nil {
 			applyBinanceSetSyncMeta(entry.binance, now)
 			var err error
 			payload, err = json.Marshal(entry.binance)
@@ -1310,6 +1383,16 @@ func symbolCatalogCacheItems(resp symbolsResponse, now time.Time) ([]storage.Sym
 			count = entry.binance.Count
 			errorText = entry.binance.Error
 			tickerError = entry.binance.TickerError
+		} else {
+			applyGateSetSyncMeta(entry.gate, now)
+			var err error
+			payload, err = json.Marshal(entry.gate)
+			if err != nil {
+				return nil, err
+			}
+			count = entry.gate.Count
+			errorText = entry.gate.Error
+			tickerError = entry.gate.TickerError
 		}
 		item := storage.SymbolCatalogCache{
 			Exchange:    entry.exchange,
@@ -1376,6 +1459,16 @@ func applyBinanceSetSyncMeta(set *binanceInstrumentSet, now time.Time) {
 	}
 }
 
+func applyGateSetSyncMeta(set *gateInstrumentSet, now time.Time) {
+	if set == nil {
+		return
+	}
+	set.AttemptedAt = now.UTC().Format(time.RFC3339Nano)
+	if strings.TrimSpace(set.Error) == "" && strings.TrimSpace(set.TickerError) == "" && len(set.TopInstruments) > 0 {
+		set.SyncedAt = set.AttemptedAt
+	}
+}
+
 func applyOKXSetCacheMeta(set *okxInstrumentSet, item storage.SymbolCatalogCache) {
 	if set.Instruments == nil {
 		set.Instruments = []symbolInstrument{}
@@ -1396,6 +1489,26 @@ func applyOKXSetCacheMeta(set *okxInstrumentSet, item storage.SymbolCatalogCache
 func applyBinanceSetCacheMeta(set *binanceInstrumentSet, item storage.SymbolCatalogCache) {
 	if set.Instruments == nil {
 		set.Instruments = []binanceSymbolInstrument{}
+	}
+	set.Env = item.Env
+	set.Demo = item.Env == config.EnvDemo
+	set.Count = item.Count
+	set.Error = item.Error
+	set.TickerError = item.TickerError
+	if !item.SyncedAt.IsZero() {
+		set.SyncedAt = item.SyncedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !item.AttemptedAt.IsZero() {
+		set.AttemptedAt = item.AttemptedAt.UTC().Format(time.RFC3339Nano)
+	}
+}
+
+func applyGateSetCacheMeta(set *gateInstrumentSet, item storage.SymbolCatalogCache) {
+	if set.Instruments == nil {
+		set.Instruments = []gateSymbolInstrument{}
+	}
+	if set.TopInstruments == nil {
+		set.TopInstruments = []gateSymbolInstrument{}
 	}
 	set.Env = item.Env
 	set.Demo = item.Env == config.EnvDemo
@@ -1510,6 +1623,92 @@ func (s *Server) fetchBinanceInstrumentSet(ctx context.Context, cfg config.Confi
 	set.Instruments = binanceSymbolInstrumentsWithTickers(symbols, tickers)
 	set.Count = len(symbols)
 	return set
+}
+
+func (s *Server) fetchGateInstrumentSet(ctx context.Context, cfg config.Config, demo bool) gateInstrumentSet {
+	env := config.EnvLive
+	baseURL := cfg.Trading.GateBaseURL
+	if demo {
+		env = config.EnvDemo
+		baseURL = cfg.Trading.GateDemoBaseURL
+	}
+	set := gateInstrumentSet{Env: env, Demo: demo, Instruments: []gateSymbolInstrument{}}
+	client := gate.Client{BaseURL: baseURL, HTTPClient: s.GateHTTPClient}
+	contracts, err := client.Contracts(ctx)
+	if err != nil {
+		set.Error = err.Error()
+		return set
+	}
+	tickers, err := client.Tickers(ctx)
+	if err != nil {
+		set.TickerError = err.Error()
+	}
+	contracts = filterGateUSDTContracts(contracts)
+	sort.Slice(contracts, func(i, j int) bool {
+		return strings.Compare(strings.ToUpper(strings.TrimSpace(contracts[i].Name)), strings.ToUpper(strings.TrimSpace(contracts[j].Name))) < 0
+	})
+	set.Instruments = gateSymbolInstrumentsWithTickers(contracts, tickers)
+	set.Count = len(set.Instruments)
+	return set
+}
+
+func filterGateUSDTContracts(contracts []gate.Contract) []gate.Contract {
+	filtered := make([]gate.Contract, 0, len(contracts))
+	for _, contract := range contracts {
+		name := strings.ToUpper(strings.TrimSpace(contract.Name))
+		if !strings.HasSuffix(name, "_USDT") {
+			continue
+		}
+		filtered = append(filtered, contract)
+	}
+	return filtered
+}
+
+func gateSymbolInstrumentsWithTickers(contracts []gate.Contract, tickers []gate.Ticker) []gateSymbolInstrument {
+	tickerByContract := make(map[string]gate.Ticker, len(tickers))
+	for _, ticker := range tickers {
+		name := strings.ToUpper(strings.TrimSpace(ticker.Contract))
+		if name != "" {
+			tickerByContract[name] = ticker
+		}
+	}
+	out := make([]gateSymbolInstrument, 0, len(contracts))
+	for _, contract := range contracts {
+		name := strings.ToUpper(strings.TrimSpace(contract.Name))
+		base, quote := gateContractAssets(name)
+		view := gateSymbolInstrument{
+			Symbol: name, InstID: name, BaseAsset: base, QuoteAsset: quote,
+			BaseCcy: base, QuoteCcy: quote, SettleCcy: quote, MarginAsset: quote,
+			State: strings.ToLower(strings.TrimSpace(contract.Status)), Status: strings.TrimSpace(contract.Status),
+			Type: contract.Type, CtVal: contract.QuantoMultiplier, CtValCcy: base,
+			MinQty: contract.OrderSizeMin, MaxQty: contract.OrderSizeMax,
+			StepSize: "1", TickSize: contract.OrderPriceRound,
+		}
+		if contract.EnableDecimal {
+			view.StepSize = contract.OrderSizeMin
+		}
+		if ticker, ok := tickerByContract[name]; ok {
+			view.TurnoverUSDT24h = trading.NormalizeFloat(parseGateTickerTurnover(ticker))
+		}
+		out = append(out, view)
+	}
+	return out
+}
+
+func gateContractAssets(name string) (string, string) {
+	parts := strings.SplitN(strings.TrimSpace(name), "_", 2)
+	if len(parts) != 2 {
+		return strings.TrimSpace(name), "USDT"
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+}
+
+func parseGateTickerTurnover(ticker gate.Ticker) float64 {
+	value, ok := parseAnyFloat(ticker.Volume24hQuote)
+	if !ok || value < 0 {
+		return 0
+	}
+	return value
 }
 
 func binanceCatalogBaseURL(cfg config.Config, demo bool) string {

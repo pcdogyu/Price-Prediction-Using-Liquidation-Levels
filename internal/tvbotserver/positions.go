@@ -17,6 +17,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotstorage"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
@@ -340,6 +341,12 @@ func (s *Server) handlePositions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp, err = s.fetchBinancePositions(ctx, cfg, apiID, refresh)
+	} else if exchange == trading.ExchangeGate {
+		if s.GateCredentials == nil {
+			writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
+			return
+		}
+		resp, err = s.fetchGatePositions(ctx, cfg, apiID)
 	} else {
 		if s.OKXCredentials == nil {
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
@@ -378,6 +385,12 @@ func (s *Server) handlePendingOrders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp, err = s.fetchBinancePendingOrders(ctx, cfg, apiID)
+	} else if exchange == trading.ExchangeGate {
+		if s.GateCredentials == nil {
+			writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
+			return
+		}
+		resp, err = s.fetchGatePendingOrders(ctx, cfg, apiID)
 	} else {
 		if s.OKXCredentials == nil {
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
@@ -420,6 +433,10 @@ func (s *Server) handlePendingOrderRisk(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_pending_order_risk", "only normal pending orders can be rebuilt with attached risk controls")
 		return
 	}
+	if req.Exchange == trading.ExchangeGate {
+		writeError(w, http.StatusBadRequest, "unsupported_exchange_order", "Gate pending order risk rebuild is not supported")
+		return
+	}
 	if req.Exchange == trading.ExchangeBinance {
 		writeError(w, http.StatusBadRequest, "invalid_pending_order_risk", "Binance pending order risk rebuild is not supported")
 		return
@@ -445,6 +462,30 @@ func (s *Server) handlePendingOrderRisk(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleGatePendingOrderCancel(w http.ResponseWriter, r *http.Request, cfg config.Config, req pendingOrderChaseRequest) {
+	if req.OrderGroup == "algo" {
+		writeError(w, http.StatusBadRequest, "unsupported_exchange_order", "Gate algorithm order cancellation is not supported")
+		return
+	}
+	client, apiID, err := s.gateClientForCredentials(cfg, req.APIID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "credentials_failed", err.Error())
+		return
+	}
+	if strings.TrimSpace(req.OrdID) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_pending_order_cancel", "Gate order id is required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	_, err = client.CancelOrder(ctx, req.InstID, req.OrdID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "pending_order_cancel_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, pendingOrderChaseResponse{OK: true, Status: "canceled", APIID: apiID, OrderGroup: "normal", InstID: req.InstID, OrdID: req.OrdID, ClOrdID: req.ClOrdID})
+}
+
 func (s *Server) handlePendingOrderCancel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
@@ -462,6 +503,10 @@ func (s *Server) handlePendingOrderCancel(w http.ResponseWriter, r *http.Request
 		return
 	}
 	cfg := s.ConfigStore.Get()
+	if req.Exchange == trading.ExchangeGate {
+		s.handleGatePendingOrderCancel(w, r, cfg, req)
+		return
+	}
 	if req.OrderGroup == "algo" {
 		if req.Exchange == trading.ExchangeBinance {
 			s.handleBinancePendingAlgoOrderCancel(w, r, cfg, req)
@@ -687,6 +732,10 @@ func (s *Server) handlePendingOrderChaseAction(w http.ResponseWriter, r *http.Re
 		return
 	}
 	cfg := s.ConfigStore.Get()
+	if req.Exchange == trading.ExchangeGate {
+		writeError(w, http.StatusBadRequest, "unsupported_exchange_order", "Gate pending order chase is not supported")
+		return
+	}
 	if req.OrderGroup == "algo" {
 		if req.Exchange == trading.ExchangeBinance {
 			s.handleBinancePendingAlgoOrderChaseAction(w, r, start, cfg, req)
@@ -1551,6 +1600,10 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := s.ConfigStore.Get()
+	if req.Exchange == trading.ExchangeGate {
+		s.handleGatePositionClose(w, r, cfg, req, ratio)
+		return
+	}
 	if req.Exchange == trading.ExchangeBinance {
 		s.handleBinancePositionClose(w, r, cfg, req, ratio)
 		return
@@ -1633,6 +1686,55 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request, cfg config.Config, req positionCloseRequest, ratio float64) {
+	if req.Mode != "market" || ratio < 1 {
+		writeError(w, http.StatusBadRequest, "unsupported_gate_position_close", "Gate currently supports full market close only")
+		return
+	}
+	if s.GateCredentials == nil {
+		writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
+		return
+	}
+	client, apiID, err := s.gateClientForCredentials(cfg, req.APIID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "credentials_failed", err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	positions, err := client.Positions(ctx, req.InstID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "positions_failed", err.Error())
+		return
+	}
+	var found gate.Position
+	for _, candidate := range positions {
+		converted := gatePositionToOKX(candidate)
+		if strings.EqualFold(converted.InstID, req.InstID) && isOpenPosition(converted.Pos) && (req.PosSide == "" || normalizePosSide(converted.PosSide) == req.PosSide) {
+			found = candidate
+			break
+		}
+	}
+	if strings.TrimSpace(found.Contract) == "" {
+		writeError(w, http.StatusConflict, "position_not_open", "Gate position is not open")
+		return
+	}
+	ack, err := client.PlaceOrder(ctx, gate.PlaceOrderRequest{
+		Contract: found.Contract, Size: "0", Price: "0", TIF: "ioc", Close: true, ReduceOnly: true,
+		PosMarginMode: cfg.MarginMode(), Text: nextPositionCloseClOrdID(),
+	})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "position_close_failed", err.Error())
+		return
+	}
+	converted := gatePositionToOKX(found)
+	writeJSON(w, http.StatusOK, positionCloseResponse{
+		OK: true, Status: "submitted", Mode: "market", APIID: apiID, InstID: converted.InstID,
+		PosSide: normalizePosSide(converted.PosSide), Sz: absolutePositionSize(converted.Pos), OrdID: ack.IDString(),
+		ClOrdID: ack.Text, Message: "Gate market close order submitted",
+	})
+}
+
 func (s *Server) handlePositionProtection(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
@@ -1658,6 +1760,10 @@ func (s *Server) handlePositionProtection(w http.ResponseWriter, r *http.Request
 		return
 	}
 	cfg := s.ConfigStore.Get()
+	if req.Exchange == trading.ExchangeGate {
+		writeError(w, http.StatusBadRequest, "unsupported_exchange_position_protection", "Gate position protection is not supported")
+		return
+	}
 	if req.Exchange == trading.ExchangeBinance {
 		s.handleBinancePositionProtection(w, r, cfg, req)
 		return
@@ -2036,6 +2142,69 @@ func (s *Server) fetchBinancePendingOrders(ctx context.Context, cfg config.Confi
 		RefreshedAt: s.now(),
 		Orders:      views,
 		AlgoOrders:  algoViews,
+	}, nil
+}
+
+func (s *Server) fetchGatePositions(ctx context.Context, cfg config.Config, requestedAPIID string) (positionsResponse, error) {
+	client, apiID, err := s.gateClientForCredentials(cfg, requestedAPIID)
+	if err != nil {
+		return positionsResponse{}, err
+	}
+	rawPositions, err := client.Positions(ctx, "")
+	if err != nil {
+		return positionsResponse{}, err
+	}
+	positions := make([]okx.Position, 0, len(rawPositions))
+	for _, raw := range rawPositions {
+		position := gatePositionToOKX(raw)
+		if isOpenPosition(position.Pos) {
+			positions = append(positions, position)
+		}
+	}
+	sort.Slice(positions, func(i, j int) bool {
+		if positions[i].InstID == positions[j].InstID {
+			return positions[i].PosSide < positions[j].PosSide
+		}
+		return positions[i].InstID < positions[j].InstID
+	})
+	views := positionViewsWithEntryTimes(positions, nil, s.now(), entryTimeSourcePositionTime, nil)
+	s.enrichPositionViewsWithOrderMetadata(views, trading.ExchangeGate, apiID)
+	now := s.now()
+	return positionsResponse{
+		OK: true, Exchange: trading.ExchangeGate, APIID: apiID, InstType: "USDT-M",
+		Count: len(positions), RefreshedAt: now, Positions: views,
+	}, nil
+}
+
+func (s *Server) fetchGatePendingOrders(ctx context.Context, cfg config.Config, requestedAPIID string) (pendingOrdersResponse, error) {
+	client, apiID, err := s.gateClientForCredentials(cfg, requestedAPIID)
+	if err != nil {
+		return pendingOrdersResponse{}, err
+	}
+	orders, err := client.OpenOrders(ctx, "")
+	if err != nil {
+		return pendingOrdersResponse{}, err
+	}
+	sort.Slice(orders, func(i, j int) bool {
+		if orders[i].Contract == orders[j].Contract {
+			return orders[i].UpdateTime > orders[j].UpdateTime
+		}
+		return orders[i].Contract < orders[j].Contract
+	})
+	views := make([]pendingOrderView, 0, len(orders))
+	for _, raw := range orders {
+		views = append(views, pendingOrderView{
+			PendingOrder:           gateOrderToOKX(raw),
+			OrderGroup:             "normal",
+			Chaseable:              false,
+			ChaseUnavailableReason: "Gate 暂不支持自动追价",
+		})
+	}
+	normalCount := len(views)
+	return pendingOrdersResponse{
+		OK: true, Exchange: trading.ExchangeGate, APIID: apiID, InstType: "USDT-M",
+		Count: normalCount, NormalCount: normalCount, TotalCount: normalCount,
+		RefreshedAt: s.now(), Orders: views, AlgoOrders: []pendingOrderView{},
 	}, nil
 }
 
@@ -2613,6 +2782,77 @@ func binancePositionToOKX(position binance.Position) okx.Position {
 		Adl:         strconv.Itoa(position.Adl),
 		UTime:       strconv.FormatInt(position.UpdateTime, 10),
 		Ccy:         strings.TrimSpace(position.MarginAsset),
+	}
+}
+
+func gatePositionToOKX(position gate.Position) okx.Position {
+	size := strings.TrimSpace(position.Size)
+	posSide := "net"
+	if value, err := strconv.ParseFloat(size, 64); err == nil {
+		if value > 0 {
+			posSide = "long"
+		} else if value < 0 {
+			posSide = "short"
+		}
+	}
+	notional := ""
+	if sizeValue, sizeErr := strconv.ParseFloat(strings.TrimSpace(size), 64); sizeErr == nil {
+		mark, markErr := strconv.ParseFloat(strings.TrimSpace(position.MarkPrice), 64)
+		if markErr == nil && mark > 0 {
+			notional = trading.NormalizeFloat(math.Abs(sizeValue) * mark)
+		}
+	}
+	return okx.Position{
+		InstType:    "USDT-M",
+		InstID:      strings.ToUpper(strings.TrimSpace(position.Contract)),
+		MgnMode:     strings.ToLower(strings.TrimSpace(position.MarginMode)),
+		PosSide:     posSide,
+		Pos:         size,
+		AvailPos:    size,
+		AvgPx:       strings.TrimSpace(position.EntryPrice),
+		MarkPx:      strings.TrimSpace(position.MarkPrice),
+		Upl:         strings.TrimSpace(position.UnrealisedPnl),
+		Lever:       firstNonEmpty(position.Lever, position.Leverage),
+		NotionalUsd: notional,
+		Margin:      "",
+		Ccy:         "USDT",
+	}
+}
+
+func gateOrderToOKX(order gate.Order) okx.PendingOrder {
+	size := strings.TrimSpace(order.Size)
+	side := "buy"
+	if value, err := strconv.ParseFloat(size, 64); err == nil && value < 0 {
+		side = "sell"
+	}
+	filled := ""
+	if total, totalErr := strconv.ParseFloat(strings.TrimSpace(order.Size), 64); totalErr == nil {
+		left, leftErr := strconv.ParseFloat(strings.TrimSpace(order.Left), 64)
+		if leftErr == nil {
+			filled = trading.NormalizeFloat(math.Abs(total) - math.Abs(left))
+		}
+	}
+	ordType := "limit"
+	if strings.TrimSpace(order.Price) == "0" || strings.TrimSpace(order.Price) == "" {
+		ordType = "market"
+	}
+	return okx.PendingOrder{
+		InstType:      "USDT-M",
+		InstID:        strings.ToUpper(strings.TrimSpace(order.Contract)),
+		OrdID:         order.IDString(),
+		ClOrdID:       strings.TrimSpace(order.Text),
+		Side:          side,
+		PosSide:       "net",
+		OrdType:       ordType,
+		Px:            strings.TrimSpace(order.Price),
+		Sz:            strings.TrimLeft(size, "-"),
+		AccFillSz:     filled,
+		AvgPx:         strings.TrimSpace(order.FillPrice),
+		State:         strings.ToLower(strings.TrimSpace(order.Status)),
+		ReduceOnly:    json.RawMessage(strconv.FormatBool(order.IsReduceOnly)),
+		ClosePosition: json.RawMessage(strconv.FormatBool(order.IsClose)),
+		CTime:         strings.TrimSpace(order.CreateTime),
+		UTime:         strings.TrimSpace(order.UpdateTime),
 	}
 }
 
@@ -4538,6 +4778,18 @@ func (s *Server) binanceClientForCredentials(cfg config.Config, requestedAPIID s
 		BaseURL:     cfg.BinanceBaseURL(),
 		Credentials: creds,
 		HTTPClient:  s.binanceHTTPClient(),
+	}, apiID, nil
+}
+
+func (s *Server) gateClientForCredentials(cfg config.Config, requestedAPIID string) (gate.Client, string, error) {
+	creds, apiID, err := s.GateCredentials.GateCredentials(requestedAPIID)
+	if err != nil {
+		return gate.Client{}, "", err
+	}
+	return gate.Client{
+		BaseURL:     cfg.GateBaseURL(),
+		Credentials: creds,
+		HTTPClient:  s.GateHTTPClient,
 	}, apiID, nil
 }
 
