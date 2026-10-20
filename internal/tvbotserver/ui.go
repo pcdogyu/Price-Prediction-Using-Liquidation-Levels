@@ -385,20 +385,28 @@ const tvbotHTML = `<!doctype html>
     .app-nav.tvbot-nav {
       gap: 10px;
       padding: 10px 12px;
-      overflow-x: auto;
+      overflow: visible;
       flex-wrap: nowrap;
-      scrollbar-width: thin;
     }
-    .app-nav.tvbot-nav > .app-brand,
-    .app-nav.tvbot-nav > .app-links,
+    .app-nav.tvbot-nav > .tvbot-menu-row,
     .app-nav.tvbot-nav > .header-controls {
-      flex: 0 0 auto;
+      min-width: 0;
     }
-    .app-nav.tvbot-nav > .app-links {
-      gap: 6px;
+    .app-nav.tvbot-nav > .tvbot-menu-row {
+      display: flex;
+      align-items: center;
+      flex: 1 1 auto;
       overflow: visible;
     }
-    .app-nav.tvbot-nav .tvbot-sections a {
+    .app-nav.tvbot-nav .tvbot-menu-row > .tvbot-top-menu {
+      gap: 6px;
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: thin;
+    }
+    .app-nav.tvbot-nav .tvbot-top-menu a {
       min-height: 0;
       padding: 7px 13px;
       border: 0;
@@ -407,20 +415,16 @@ const tvbotHTML = `<!doctype html>
       color: var(--muted);
       font-size: 14px;
     }
-    .app-nav.tvbot-nav .tvbot-sections a:hover {
+    .app-nav.tvbot-nav .tvbot-top-menu a:hover {
       color: var(--text);
       background: var(--hover-bg);
     }
-    .app-nav.tvbot-nav .tvbot-sections a[aria-current="page"] {
+    .app-nav.tvbot-nav .tvbot-top-menu a[aria-current="page"] {
       background: var(--selected-bg);
       color: var(--buy);
       border-color: transparent;
     }
-    .app-nav.tvbot-nav .tvbot-sections {
-      gap: 6px;
-      flex: 0 0 auto;
-      overflow: visible;
-    }
+    .app-nav.tvbot-nav > .header-controls { flex: 0 0 auto; }
     .bar {
       width: 100%;
       margin: 0 auto;
@@ -459,24 +463,6 @@ const tvbotHTML = `<!doctype html>
       flex: 1 0 auto;
       min-width: 0;
       white-space: nowrap;
-    }
-    .liquidation-links {
-      display: flex;
-      align-items: center;
-      gap: 2px;
-      flex: 0 0 auto;
-      white-space: nowrap;
-    }
-    .liquidation-links a {
-      color: var(--muted);
-      text-decoration: none;
-      padding: 7px 8px;
-      border-radius: 7px;
-      white-space: nowrap;
-    }
-    .liquidation-links a:hover {
-      color: var(--text);
-      background: var(--hover-bg);
     }
     .theme-toggle {
       flex: 0 0 auto;
@@ -1527,8 +1513,6 @@ const tvbotHTML = `<!doctype html>
     }
     @media (max-width: 880px) {
       .bar { gap: 6px; }
-      .liquidation-links { gap: 0; }
-      .liquidation-links a { padding-left: 6px; padding-right: 6px; }
       .status, .grid, .grid.two, .split, .api-key-layout, .analysis-metrics, .asset-metrics, .symbol-metrics, .position-metrics, .dashboard-balance-grid, .analysis-balance-grid, .position-monitor-grid { grid-template-columns: 1fr; }
       .template-title-row { grid-template-columns: 1fr; }
       .analysis-period-row { flex-direction: column; }
@@ -1561,41 +1545,33 @@ const tvbotHTML = `<!doctype html>
       .tvbot-page-toolbar { justify-content: flex-start; }
       .app-nav.tvbot-nav {
         display: grid;
-        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr);
         grid-template-rows: auto auto;
-        gap: 4px 8px;
+        gap: 4px 6px;
         padding: 6px 8px;
         overflow: visible;
       }
-      .app-nav.tvbot-nav > .app-brand {
-        grid-column: 1;
-        grid-row: 1;
-        align-self: center;
-      }
       .app-nav.tvbot-nav > .header-controls {
-        grid-column: 2;
+        grid-column: 1;
         grid-row: 1;
         justify-content: flex-end;
         min-width: 0;
         flex: 0 0 auto;
       }
-      .app-nav.tvbot-nav > .app-links {
+      .app-nav.tvbot-nav > .tvbot-menu-row {
         grid-column: 1 / -1;
         grid-row: 2;
+        display: flex;
         width: 100%;
         min-width: 0;
         flex: 0 0 auto;
-        overflow-x: auto;
-        overflow-y: hidden;
-        scrollbar-width: thin;
+      }
+      .app-nav.tvbot-nav .tvbot-menu-row > .tvbot-top-menu {
+        width: 100%;
+        min-width: 0;
         -webkit-overflow-scrolling: touch;
       }
-      .app-nav.tvbot-nav .tvbot-sections {
-        width: max-content;
-        min-width: max-content;
-        flex-wrap: nowrap;
-      }
-      .app-nav.tvbot-nav .tvbot-sections a {
+      .app-nav.tvbot-nav .tvbot-top-menu a {
         flex: 0 0 auto;
         padding: 6px 9px;
         font-size: 13px;

@@ -17,8 +17,12 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 	nav := strings.Index(page, `<nav class="app-nav tvbot-nav" aria-label="主菜单">`)
 	links := strings.Index(page, `<div class="tvbot-menu-row"><div class="app-links tvbot-top-menu">`)
-	if nav < 0 || links < 0 || links < nav {
+	controls := strings.Index(page, `<div class="header-controls">`)
+	if nav < 0 || links < 0 || links < nav || controls < 0 || controls < links {
 		t.Fatalf("unified navigation is missing or out of order: nav=%d links=%d", nav, links)
+	}
+	if strings.Contains(page, "tvbot-sections") || strings.Contains(page, "liquidation-links") {
+		t.Fatal("tvbot page contains stale navigation layout selectors")
 	}
 	main := strings.Index(page, "<main>")
 	pageToolbar := strings.Index(page, `class="tvbot-page-toolbar"`)
