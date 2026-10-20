@@ -6531,7 +6531,9 @@ const tvbotHTML = `<!doctype html>
         });
         const limitCloseText = "限价平仓已启动 ";
         const ratioText = body.ratio ? " " + Math.round(body.ratio * 100) + "%" : "";
-        if (result && result.status === "unknown") {
+        if (result && result.status === "market_fallback") {
+          toast("Binance 限价平仓被拒，已提交市价 reduceOnly 兜底" + ratioText);
+        } else if (result && result.status === "unknown") {
           const clientID = result.cl_ord_id ? " " + asText(result.cl_ord_id) : "";
           toast("Binance 平仓状态同步中" + clientID + "，请刷新确认后再重试");
         } else {

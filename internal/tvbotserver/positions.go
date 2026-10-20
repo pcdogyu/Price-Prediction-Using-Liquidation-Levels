@@ -225,13 +225,14 @@ type positionProtectionResponse struct {
 }
 
 type positionCloseOrder struct {
-	Position okx.Position
-	Ack      okx.OrderAck
-	Acks     []okx.OrderAck
-	Px       string
-	CloseSz  string
-	Partial  bool
-	Unknown  bool
+	Position       okx.Position
+	Ack            okx.OrderAck
+	Acks           []okx.OrderAck
+	Px             string
+	CloseSz        string
+	Partial        bool
+	Unknown        bool
+	MarketFallback bool
 }
 
 type positionCloseRegistry struct {
@@ -1876,6 +1877,10 @@ func (s *Server) handleBinancePositionClose(w http.ResponseWriter, r *http.Reque
 		}
 		status := "running"
 		message := "limit close order started"
+		if order.MarketFallback {
+			status = "market_fallback"
+			message = "Binance limit close was rejected by reduce-only conflict; market reduce-only fallback submitted"
+		}
 		if order.Unknown {
 			status = "unknown"
 			message = "Binance close order status is unknown; refresh positions before retrying"
@@ -5310,11 +5315,40 @@ func placeBinancePositionClose(ctx context.Context, client binance.Client, posit
 			return split, nil
 		}
 		ack, unknown, err = retryBinanceReduceOnlyPositionClose(ctx, client, req, err)
+		if err != nil && req.Type == "LIMIT" && binance.IsAPIErrorCode(err, -2022) {
+			fallback, fallbackErr := placeBinanceReduceOnlyMarketFallback(ctx, client, position, req)
+			if fallbackErr == nil {
+				return fallback, nil
+			}
+			err = fmt.Errorf("Binance limit close rejected after reduce-only retries; market reduce-only fallback failed: %w", fallbackErr)
+		}
 		if err != nil {
 			return positionCloseOrder{}, err
 		}
 	}
 	return binancePositionCloseOrderFromAcks(position, []binance.OrderAck{ack}, px, req.Quantity, partial, unknown), nil
+}
+
+func placeBinanceReduceOnlyMarketFallback(ctx context.Context, client binance.Client, originalPosition okx.Position, originalReq binance.PlaceOrderRequest) (positionCloseOrder, error) {
+	position, err := currentBinanceOpenPosition(ctx, client, originalPosition.InstID, originalPosition.PosSide)
+	if err != nil {
+		return positionCloseOrder{}, fmt.Errorf("refresh Binance position before market fallback failed: %w", err)
+	}
+	size := capCloseSizeToPosition(position.Pos, originalReq.Quantity)
+	if size == "" || size == "0" {
+		return positionCloseOrder{}, errPositionNotOpen
+	}
+	req, partial, err := binancePositionCloseOrderRequest(position, "market", "", size)
+	if err != nil {
+		return positionCloseOrder{}, err
+	}
+	ack, unknown, err := placeBinanceOrderWithUnknownRecovery(ctx, client, req)
+	if err != nil {
+		return positionCloseOrder{}, err
+	}
+	order := binancePositionCloseOrderFromAcks(position, []binance.OrderAck{ack}, "", req.Quantity, partial, unknown)
+	order.MarketFallback = true
+	return order, nil
 }
 
 func placeSplitBinancePositionCloseByMaxQty(ctx context.Context, client binance.Client, position okx.Position, req binance.PlaceOrderRequest, px string, partial bool, originalErr error) (positionCloseOrder, error) {

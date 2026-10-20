@@ -15,6 +15,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 )
 
 func TestBinancePositionToOKXDerivesLeverageAndNotional(t *testing.T) {
@@ -657,6 +658,64 @@ func TestBinanceReduceOnlyCloseRetriesWhenConflictSnapshotIsEmpty(t *testing.T) 
 	}
 	if orderAttempts != 2 || regularChecks != 1 || algoChecks != 1 {
 		t.Fatalf("expected one initial and one retry with both order snapshots, got orders=%d regular=%d algo=%d", orderAttempts, regularChecks, algoChecks)
+	}
+}
+
+func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t *testing.T) {
+	oldDelay := binanceReduceOnlyRetryDelay
+	binanceReduceOnlyRetryDelay = 0
+	t.Cleanup(func() { binanceReduceOnlyRetryDelay = oldDelay })
+
+	var orderForms []url.Values
+	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v3/positionRisk":
+			_, _ = w.Write([]byte(`[{"symbol":"ZECUSDT","positionSide":"BOTH","positionAmt":"4.327","entryPrice":"1073.1994","markPrice":"1145.8","unRealizedProfit":"313.2","liquidationPrice":"980","isolatedMargin":"765","notional":"4959","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+		case "/fapi/v1/exchangeInfo":
+			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"ZECUSDT","status":"TRADING","pricePrecision":2,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]}]}`))
+		case "/fapi/v1/ticker/bookTicker":
+			_, _ = w.Write([]byte(`{"symbol":"ZECUSDT","bidPrice":"1145.7","bidQty":"1","askPrice":"1145.9","askQty":"1","time":1784880000000}`))
+		case "/fapi/v1/openOrders":
+			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/openAlgoOrders":
+			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/order":
+			if r.Method != http.MethodPost {
+				t.Fatalf("unexpected Binance order method %s", r.Method)
+			}
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			form := cloneValues(r.Form)
+			orderForms = append(orderForms, form)
+			if form.Get("type") == "LIMIT" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"code":-2022,"msg":"ReduceOnly Order is rejected."}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"orderId":900,"symbol":"ZECUSDT","status":"NEW","clientOrderId":"market-fallback","price":"0","origQty":"0.432","executedQty":"0","type":"MARKET","side":"SELL","positionSide":"BOTH"}`))
+		default:
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+	}))
+	defer binanceServer.Close()
+
+	client := binance.Client{BaseURL: binanceServer.URL, Credentials: binance.Credentials{APIKey: strings.Repeat("k", 4), SecretKey: strings.Repeat("s", 8)}, HTTPClient: binanceServer.Client()}
+	position := okx.Position{InstID: "ZECUSDT", Pos: "4.327", PosSide: "net"}
+	order, err := placeBinancePositionClose(context.Background(), client, position, "limit", "0.432")
+	if err != nil {
+		t.Fatalf("expected market fallback to close, got %v", err)
+	}
+	if !order.MarketFallback || order.Ack.OrdID != "900" || order.CloseSz != "0.432" {
+		t.Fatalf("bad market fallback result: %#v", order)
+	}
+	if len(orderForms) != 5 {
+		t.Fatalf("expected four rejected limit attempts and one market fallback, got %#v", orderForms)
+	}
+	market := orderForms[len(orderForms)-1]
+	if market.Get("type") != "MARKET" || market.Get("side") != "SELL" || market.Get("quantity") != "0.432" || market.Get("reduceOnly") != "true" || market.Get("price") != "" || market.Get("timeInForce") != "" {
+		t.Fatalf("bad market fallback form: %#v", market)
 	}
 }
 
