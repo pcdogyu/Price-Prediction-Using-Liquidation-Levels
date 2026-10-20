@@ -294,6 +294,14 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	if w.Code != http.StatusFound || w.Header().Get("Location") != "/liquidation/?next=%2Fapi%2Fv1%2Fauth%2Fcheck" {
 		t.Fatalf("browser auth check redirect status=%d location=%s body=%s", w.Code, w.Header().Get("Location"), w.Body.String())
 	}
+	for _, path := range []string{"/tvbot/view/dashboard", "/tvbot/view/positions", "/tvbot/view/trade-monitor", "/tvbot/view/symbols", "/tvbot/view/upgrade"} {
+		page := httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, path, nil))
+		want := "/liquidation/?next=" + url.QueryEscape(path)
+		if page.Code != http.StatusFound || page.Header().Get("Location") != want {
+			t.Fatalf("direct TVBot page %s redirect status=%d location=%s body=%s", path, page.Code, page.Header().Get("Location"), page.Body.String())
+		}
+	}
 	r = httptest.NewRequest(http.MethodPost, "/api/v1/coinglass/capture", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)

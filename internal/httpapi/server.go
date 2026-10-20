@@ -659,7 +659,7 @@ func (s *Server) authorize(next http.Handler) http.Handler {
 		if r.Method == http.MethodGet || r.Method == http.MethodHead {
 			if isDashboardPage(r.URL.Path) {
 				s.renderLoginForRequest(w, r, http.StatusOK, "")
-			} else if wantsHTML(r) {
+			} else if isTVBotPage(r.URL.Path) || wantsHTML(r) {
 				s.redirectUnifiedLogin(w, r)
 			} else {
 				problem(w, http.StatusUnauthorized, errors.New("authentication required"))
@@ -668,6 +668,15 @@ func (s *Server) authorize(next http.Handler) http.Handler {
 		}
 		problem(w, http.StatusUnauthorized, errors.New("authentication required"))
 	})
+}
+
+// isTVBotPage identifies the server-rendered TVBot navigation pages. These
+// routes must redirect to the unified login page even when a direct browser
+// navigation arrives without an Accept or Sec-Fetch-Dest header. API routes
+// under /tvbot remain content-negotiated so programmatic callers still receive
+// JSON 401 responses.
+func isTVBotPage(path string) bool {
+	return path == "/tvbot" || path == "/tvbot/" || strings.HasPrefix(path, "/tvbot/view/")
 }
 
 func localProbe(r *http.Request) bool {
