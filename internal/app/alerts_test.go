@@ -16,14 +16,18 @@ import (
 
 func alertTestService(t *testing.T, name string) (*Service, config.Config, *store.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), name))
+	dataDir := t.TempDir()
+	databasePath := filepath.Join(dataDir, name)
+	st, err := store.Open(databasePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	cfg := config.Config{
 		Symbols:              []string{"BTCUSDT"},
-		ModelPath:            filepath.Join(t.TempDir(), "model.json"),
+		DatabasePath:         databasePath,
+		AlertTenantDataPath:  filepath.Join(dataDir, "alert-tenants"),
+		ModelPath:            filepath.Join(dataDir, "model.json"),
 		AlertWindow:          3 * time.Minute,
 		AlertQuiet:           time.Minute,
 		AlertConfirm:         30 * time.Minute,
