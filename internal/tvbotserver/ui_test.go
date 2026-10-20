@@ -47,6 +47,10 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`class="tvbot-logout-form" method="post" action="/liquidation/auth/logout"><button type="submit" class="header-action tvbot-logout" aria-label="退出登录">退出</button></form>`,
 		`data-global-exchange="okx" aria-selected="true"`,
 		`data-global-exchange="binance"`,
+		`id="close-all-positions"`,
+		`async function closeAllPositions()`,
+		`await submitPositionClose(body);`,
+		`window.confirm("确认一键平掉当前 "`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("unified header missing %q", want)

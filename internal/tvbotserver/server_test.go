@@ -698,7 +698,7 @@ func TestTVBotUIOrderHistorySearchControls(t *testing.T) {
 		t.Fatal("cooldown remove should not show a confirmation prompt")
 	}
 	retryStart := bytes.Index(body, []byte(`async function retryOrder(signalID)`))
-	retryEnd := bytes.Index(body, []byte(`async function closePosition(button)`))
+	retryEnd := bytes.Index(body, []byte(`async function submitPositionClose(body)`))
 	if retryStart < 0 || retryEnd <= retryStart {
 		t.Fatal("retry function boundaries are missing")
 	}

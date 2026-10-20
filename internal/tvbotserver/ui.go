@@ -1725,6 +1725,7 @@ const tvbotHTML = `<!doctype html>
         <h2>当前持仓</h2>
         <div class="analysis-controls">
           <span class="exchange-summary" id="position-exchange-summary">OKX / Binance USDⓈ-M</span>
+          <button class="btn danger" type="button" id="close-all-positions" disabled>一键平仓</button>
           <button class="btn primary" type="button" id="refresh-positions">刷新持仓</button>
         </div>
       </div>
@@ -2268,6 +2269,7 @@ const tvbotHTML = `<!doctype html>
       coinpairCooldownRemoving: {},
       retrying: {},
       positionClosing: {},
+      positionClosingAll: false,
       pendingOrderActions: {},
       analysis: null,
       analysisError: "",
@@ -5327,6 +5329,11 @@ const tvbotHTML = `<!doctype html>
       const rows = state.positions && Array.isArray(state.positions.positions) ? state.positions.positions : [];
       const totalUpl = positionSum(rows, "upl");
       const positionsReady = state.positions && state.positions.ok;
+      const closeAllButton = $("close-all-positions");
+      if (closeAllButton) {
+        closeAllButton.disabled = !positionsReady || rows.length === 0 || state.positionClosingAll;
+        closeAllButton.textContent = state.positionClosingAll ? "平仓中..." : "一键平仓";
+      }
       $("positions-count").textContent = positionsReady ? asText(state.positions.count || rows.length) : "-";
       $("positions-upl").textContent = positionsReady ? formatNumber(totalUpl) + " USDT" : "-";
       $("positions-upl").className = ["value", positionsReady ? signedToneClass(totalUpl) : ""].filter(Boolean).join(" ");
@@ -6812,7 +6819,68 @@ const tvbotHTML = `<!doctype html>
       }
     }
 
+    async function submitPositionClose(body) {
+      return api("/tvbot/positions/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+    }
+
+    function positionCloseBody(row, mode) {
+      return {
+        exchange: normalizeExchange(row && (row._exchange || row.exchange || "okx")),
+        api_id: row && (row._api_id || row.api_id) || "",
+        inst_id: row && (row.instId || row.inst_id) || "",
+        pos_side: row && (row.posSide || row.pos_side) || "",
+        mode: mode || "market"
+      };
+    }
+
+    async function closeAllPositions() {
+      if (state.positionClosingAll) return;
+      const rows = state.positions && Array.isArray(state.positions.positions) ? state.positions.positions : [];
+      const targets = rows.filter((row) => row && String(row.instId || "").trim());
+      if (!targets.length) {
+        toast("当前没有可平仓的持仓");
+        return;
+      }
+      const exchange = activeExchange();
+      if (!window.confirm("确认一键平掉当前 " + exchangeLabel(exchange) + " 的 " + targets.length + " 个持仓？将提交市价平仓。")) return;
+
+      state.positionClosingAll = true;
+      const failures = [];
+      let successCount = 0;
+      try {
+        renderPositions();
+        for (const row of targets) {
+          const body = positionCloseBody(row, "market");
+          const key = positionCloseRowKey(row);
+          if (state.positionClosing[key]) continue;
+          state.positionClosing[key] = true;
+          try {
+            await submitPositionClose(body);
+            successCount++;
+          } catch (err) {
+            failures.push(String(row.instId || "持仓") + ": " + (err && err.message ? err.message : String(err)));
+          } finally {
+            delete state.positionClosing[key];
+          }
+        }
+        await loadPositionView();
+      } finally {
+        state.positionClosingAll = false;
+        renderPositions();
+      }
+      if (failures.length) {
+        toast("一键平仓完成：成功 " + successCount + " 个，失败 " + failures.length + " 个；" + failures.slice(0, 2).join(" / "));
+      } else {
+        toast("一键平仓已提交 " + successCount + " 个持仓");
+      }
+    }
+
     async function closePosition(button) {
+      if (state.positionClosingAll) return;
       const exchange = normalizeExchange(button.dataset.exchange || "okx");
       const mode = button.dataset.positionClose;
       const instID = button.dataset.instId || "";
@@ -6833,11 +6901,7 @@ const tvbotHTML = `<!doctype html>
           mode
         };
         if (Number.isFinite(ratio) && ratio > 0 && ratio < 1) body.ratio = ratio;
-        const result = await api("/tvbot/positions/close", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        });
+        const result = await submitPositionClose(body);
         const limitCloseText = "限价平仓已启动 ";
         const ratioText = body.ratio ? " " + Math.round(body.ratio * 100) + "%" : "";
         if (result && result.status === "market_fallback") {
@@ -7264,6 +7328,7 @@ const tvbotHTML = `<!doctype html>
       removeCoinpairCooldown(button).catch((err) => toast(err.message));
     });
     $("refresh-trade-monitor").addEventListener("click", () => loadTradeMonitor().then(() => toast("成交监听已刷新")).catch((err) => toast(err.message)));
+    $("close-all-positions").addEventListener("click", () => closeAllPositions().catch((err) => toast(err.message)));
     $("position-rows").addEventListener("click", (event) => {
       const button = event.target.closest("button[data-position-close]");
       if (!button) return;
