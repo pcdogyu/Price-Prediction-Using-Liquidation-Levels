@@ -117,7 +117,21 @@ rm -f "$new_binary"
 install -o root -g root -m 0644 deploy/liquidation-predictor.service /etc/systemd/system/liquidation-predictor.service
 install -o root -g root -m 0644 deploy/liquidation-predictor.env /etc/liquidation-predictor.env
 if [[ -f "$backup/liquidation-predictor.env" ]]; then
-  for key in APP_AUTH_USERNAME APP_AUTH_PASSWORD_HASH; do
+  # Preserve operator-managed authentication and tvorder webhook settings
+  # when the checked-in baseline environment file is installed.  The
+  # webhook token/nonce are generated credentials and must never be stored in
+  # the repository or printed during an upgrade.
+  for key in \
+    APP_AUTH_USERNAME \
+    APP_AUTH_PASSWORD_HASH \
+    APP_STEADY_WEBHOOK_URL \
+    APP_STEADY_WEBHOOK_API_ID \
+    APP_STEADY_WEBHOOK_TARGET_EXCHANGE \
+    APP_STEADY_WEBHOOK_TRADE_ENV \
+    APP_STEADY_WEBHOOK_EXCHANGE \
+    APP_STEADY_WEBHOOK_INTERVAL \
+    APP_STEADY_WEBHOOK_TOKEN_NONCE \
+    APP_STEADY_WEBHOOK_TOKEN; do
     value="$(grep -E "^${key}=" "$backup/liquidation-predictor.env" | tail -n 1 || true)"
     if [[ -n "$value" ]]; then
       if grep -q -E "^${key}=" /etc/liquidation-predictor.env; then
