@@ -1220,6 +1220,9 @@ const tvbotHTML = `<!doctype html>
       height: 250px;
       display: block;
     }
+    .dashboard-balance-grid .mini-usdt-chart {
+      height: 325px;
+    }
     #usdt-chart.mini-usdt-chart {
       height: 250px;
     }
@@ -1237,6 +1240,11 @@ const tvbotHTML = `<!doctype html>
     .chart-label {
       fill: #647089;
       font-size: 12px;
+    }
+    .chart-axis-title {
+      fill: #647089;
+      font-size: 11px;
+      font-weight: 600;
     }
     .symbol-table-wrap {
       overflow-x: auto;
@@ -1482,8 +1490,21 @@ const tvbotHTML = `<!doctype html>
       #usdt-chart { height: 320px; }
       #usdt-chart.mini-usdt-chart { height: 240px; }
       .mini-usdt-chart { height: 240px; }
+      .dashboard-balance-grid .mini-usdt-chart { height: 312px; }
       #analysis .mini-usdt-chart { height: 346px; }
       .exchange-balance-metrics { min-height: 0; }
+      .dashboard-balance-grid .analysis-metrics.symbol-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin: 10px 0;
+      }
+      .dashboard-balance-grid .analysis-card {
+        min-height: 62px;
+        padding: 8px;
+      }
+      .dashboard-balance-grid .analysis-card .value {
+        font-size: 15px;
+      }
       .tvbot-page-toolbar { justify-content: flex-start; }
       .app-nav.tvbot-nav {
         display: grid;
@@ -5556,7 +5577,7 @@ const tvbotHTML = `<!doctype html>
       const miniFallbackHeight = isAnalysisChart ? 360 : 250;
       const width = Math.max(isMini ? 520 : 900, Math.floor(rect.width || parentWidth || (window.innerWidth - 72) || 900));
       const height = Math.max(isMini ? miniMinHeight : 320, Math.floor(rect.height || svg.clientHeight || (isMini ? miniFallbackHeight : 420)));
-      const pad = { left: 64, right: 24, top: 18, bottom: 58 };
+      const pad = { left: 64, right: 72, top: 18, bottom: 58 };
       const plotWidth = width - pad.left - pad.right;
       const plotHeight = height - pad.top - pad.bottom;
       const plotBottom = height - pad.bottom;
@@ -5597,6 +5618,7 @@ const tvbotHTML = `<!doctype html>
         const labelValue = max - ratio * span;
         grid += '<line class="chart-grid" x1="' + pad.left + '" y1="' + lineY.toFixed(2) + '" x2="' + (width - pad.right) + '" y2="' + lineY.toFixed(2) + '"/>';
         grid += '<text class="chart-label" x="8" y="' + (lineY + 4).toFixed(2) + '">' + chartAxisValue(labelValue) + '</text>';
+        grid += '<text class="chart-label chart-axis-value-right" x="' + (width - 8) + '" y="' + (lineY + 4).toFixed(2) + '" text-anchor="end">' + chartAxisValue(labelValue) + '</text>';
       }
       const xTicks = chartTickIndexes(chartPoints.length, 6);
       xTicks.forEach((tickIndex) => {
@@ -5610,7 +5632,9 @@ const tvbotHTML = `<!doctype html>
       svg.innerHTML =
         grid +
         '<line class="chart-axis" x1="' + pad.left + '" y1="' + pad.top + '" x2="' + pad.left + '" y2="' + plotBottom + '"/>' +
+        '<line class="chart-axis" x1="' + (width - pad.right) + '" y1="' + pad.top + '" x2="' + (width - pad.right) + '" y2="' + plotBottom + '"/>' +
         '<line class="chart-axis" x1="' + pad.left + '" y1="' + plotBottom + '" x2="' + (width - pad.right) + '" y2="' + plotBottom + '"/>' +
+        '<text class="chart-axis-title" x="' + (width - 8) + '" y="12" text-anchor="end">估值 (USDT)</text>' +
         '<path d="' + path + '" fill="none" stroke="' + lineColor + '" stroke-width="2.4"/>' +
         '<circle cx="' + x(last).toFixed(2) + '" cy="' + y(last.value).toFixed(2) + '" r="4" fill="' + lineColor + '"/>';
     }

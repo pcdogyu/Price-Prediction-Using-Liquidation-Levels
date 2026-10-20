@@ -149,6 +149,14 @@ func TestRenderTVBotDashboardUsesFundingPeriods(t *testing.T) {
 		`dashboardBalanceWindowMinutes: 1440`,
 		`function setDashboardBalanceWindow(minutes)`,
 		`loadBalanceOverview(false, parsed)`,
+		`.dashboard-balance-grid .mini-usdt-chart`,
+		`height: 325px`,
+		`height: 312px`,
+		`chart-axis-title`,
+		`估值 (USDT)`,
+		`const pad = { left: 64, right: 72, top: 18, bottom: 58 }`,
+		`chart-axis-value-right`,
+		`.dashboard-balance-grid .analysis-metrics.symbol-metrics`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("dashboard funding period marker missing %q", want)
