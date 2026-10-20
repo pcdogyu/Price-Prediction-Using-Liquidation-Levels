@@ -134,6 +134,7 @@ function updateTicker(view) {
 // first screen. Keep the normal desktop canvas unchanged unless the chart
 // would extend below the current large-screen viewport.
 function fitBubbleChartViewport() {
+  const bubbleChartDefaultHeight = 874;
   const wrap = document.querySelector('.chart-wrap');
   if (!wrap) return;
   const largeViewport = window.innerWidth >= 700;
@@ -142,17 +143,9 @@ function fitBubbleChartViewport() {
   const viewportHeight = window.visualViewport?.height || window.innerHeight;
   const pageTop = wrap.getBoundingClientRect().top + window.scrollY;
   const available = Math.floor(viewportHeight - pageTop - 12);
-  if (available >= 672) return;
-  const height = Math.max(220, Math.min(672, available));
+  if (available >= bubbleChartDefaultHeight) return;
+  const height = Math.max(220, Math.min(bubbleChartDefaultHeight, available));
   wrap.style.height = height + 'px';
-}
-
-function updateProbabilities(probabilities) {
-  [['up', 'upper_first'], ['down', 'lower_first'], ['none', 'neither']].forEach(([id, key]) => {
-    const value = probabilities?.[key];
-    $('p-' + id).textContent = pct(value);
-    $('b-' + id).style.width = ((finite(value) ? value : 0) * 100) + '%';
-  });
 }
 
 function updateTrigger(prefix, trigger) {
@@ -725,7 +718,6 @@ async function refresh(resetMarket = false) {
     });
     if (cache.market) updateTicker(cache.market);
     if (cache.signal) {
-      updateProbabilities(cache.signal.probabilities);
       updateTrigger('upper', cache.signal.upper_trigger);
       updateTrigger('lower', cache.signal.lower_trigger);
       $('reason').textContent = cache.signal.state === 'ok' ? '当前领先类别：' + (cache.signal.leading_class || '—') + '；触发顺序：' + (cache.signal.trigger_order || 'pending') + '。' : (cache.signal.reason || '清算墙或历史数据不足');

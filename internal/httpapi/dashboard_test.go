@@ -98,9 +98,31 @@ func TestBubbleChartHasShortLandscapeViewportFit(t *testing.T) {
 	for _, marker := range []string{
 		"fitBubbleChartViewport",
 		"window.visualViewport?.addEventListener('resize', fitBubbleChartViewport)",
+		"const bubbleChartDefaultHeight = 874",
 	} {
 		if !strings.Contains(string(dashboardJS), marker) {
 			t.Fatalf("bubble chart script missing television viewport support %q", marker)
+		}
+	}
+	for _, marker := range []string{
+		`id="p-up"`,
+		`id="p-down"`,
+		`id="p-none"`,
+		"先触上墙",
+		"先触下墙",
+		"60分钟均未触及",
+	} {
+		if strings.Contains(body, marker) {
+			t.Fatalf("bubble chart should not render probability card %q", marker)
+		}
+	}
+	for _, marker := range []string{
+		".chart-wrap{height:874px}",
+		".chart-wrap{height:733px}",
+		".chart-wrap{height:967px}",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("bubble chart missing enlarged chart height %q", marker)
 		}
 	}
 }
