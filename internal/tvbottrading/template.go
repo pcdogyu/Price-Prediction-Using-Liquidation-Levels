@@ -14,6 +14,7 @@ type TokenGenerator interface {
 
 type alertTemplatePayload struct {
 	SentAt         string `json:"sent_at"`
+	TenantID       string `json:"tenant_id,omitempty"`
 	APIID          string `json:"api_id,omitempty"`
 	TargetExchange string `json:"target_exchange,omitempty"`
 	TradeEnv       string `json:"trade_env"`
@@ -38,6 +39,7 @@ const (
 
 func BuildTemplate(req TemplateRequest, generator TokenGenerator) (TemplateResponse, error) {
 	req.PriceSource = strings.ToLower(strings.TrimSpace(req.PriceSource))
+	req.TenantID = strings.TrimSpace(req.TenantID)
 	req.APIID = strings.TrimSpace(req.APIID)
 	req.TargetExchange = NormalizeExchange(req.TargetExchange)
 	req.TradeEnv = NormalizeTradeEnv(req.TradeEnv)
@@ -63,6 +65,7 @@ func BuildTemplate(req TemplateRequest, generator TokenGenerator) (TemplateRespo
 	}
 	signal := Signal{
 		Action:         Side(action),
+		TenantID:       req.TenantID,
 		APIID:          req.APIID,
 		TargetExchange: req.TargetExchange,
 		TradeEnv:       req.TradeEnv,
@@ -81,6 +84,7 @@ func BuildTemplate(req TemplateRequest, generator TokenGenerator) (TemplateRespo
 	token := generator.Generate(signal.CanonicalNonceWebhookTokenPayload())
 	payload := alertTemplatePayload{
 		SentAt:         signal.SentAt,
+		TenantID:       req.TenantID,
 		APIID:          req.APIID,
 		TargetExchange: req.TargetExchange,
 		TradeEnv:       req.TradeEnv,

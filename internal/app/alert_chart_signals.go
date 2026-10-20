@@ -24,6 +24,15 @@ const (
 func (rtm *alertRuntime) AlertChartSignals(ctx context.Context, symbol string) (domain.AlertChartSignals, error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	cfg := rtm.engine.Config()
+	return rtm.alertChartSignalsWithConfig(ctx, symbol, cfg)
+}
+
+func (rtm *alertRuntime) AlertChartSignalsWithConfig(ctx context.Context, symbol string, cfg alert.Config) (domain.AlertChartSignals, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	return rtm.alertChartSignalsWithConfig(ctx, symbol, cfg)
+}
+
+func (rtm *alertRuntime) alertChartSignalsWithConfig(ctx context.Context, symbol string, cfg alert.Config) (domain.AlertChartSignals, error) {
 	view := domain.AlertChartSignals{
 		Symbol:      symbol,
 		Thresholds:  cfg.Thresholds(),
@@ -31,7 +40,11 @@ func (rtm *alertRuntime) AlertChartSignals(ctx context.Context, symbol string) (
 		Signals:     []domain.TradeSignal{},
 		GeneratedAt: time.Now().UTC(),
 	}
-	events, err := rtm.store.LiquidationEventsForSymbol(ctx, symbol, view.GeneratedAt.Add(-alertChartReplayDays*24*time.Hour), alertChartReplayLimit)
+	source := rtm.sourceStore
+	if source == nil {
+		source = rtm.store
+	}
+	events, err := source.LiquidationEventsForSymbol(ctx, symbol, view.GeneratedAt.Add(-alertChartReplayDays*24*time.Hour), alertChartReplayLimit)
 	if err != nil {
 		return view, err
 	}

@@ -11,7 +11,10 @@ import (
 // Alerts returns the alert page payload: live monitoring rows, the newest alerts and
 // signals, the effective thresholds and the notification status.
 func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
-	rtm := s.alerts
+	rtm, err := s.alertRuntimeForContext(ctx)
+	if err != nil {
+		return domain.AlertsView{}, err
+	}
 	now := time.Now().UTC()
 	view := domain.AlertsView{
 		State:       "waiting_watch_list",
@@ -65,7 +68,11 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 
 // AlertHistory reads stored alerts.
 func (s *Service) AlertHistory(ctx context.Context, symbol, side string, limit int, cursor string) (domain.AlertPage, error) {
-	page, err := s.alerts.store.LiquidationAlerts(ctx, symbol, side, limit, cursor)
+	rtm, err := s.alertRuntimeForContext(ctx)
+	if err != nil {
+		return domain.AlertPage{}, err
+	}
+	page, err := rtm.store.LiquidationAlerts(ctx, symbol, side, limit, cursor)
 	if err != nil {
 		return page, err
 	}
@@ -75,7 +82,11 @@ func (s *Service) AlertHistory(ctx context.Context, symbol, side string, limit i
 
 // AlertSignals reads stored order signals.
 func (s *Service) AlertSignals(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.SignalPage, error) {
-	page, err := s.alerts.store.TradeSignals(ctx, symbol, kind, limit, cursor)
+	rtm, err := s.alertRuntimeForContext(ctx)
+	if err != nil {
+		return domain.SignalPage{}, err
+	}
+	page, err := rtm.store.TradeSignals(ctx, symbol, kind, limit, cursor)
 	if err != nil {
 		return page, err
 	}
@@ -85,7 +96,11 @@ func (s *Service) AlertSignals(ctx context.Context, symbol, kind string, limit i
 
 // AlertTimeline reads the unified alert and signal history.
 func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.AlertTimelinePage, error) {
-	page, err := s.alerts.store.AlertTimeline(ctx, symbol, kind, limit, cursor)
+	rtm, err := s.alertRuntimeForContext(ctx)
+	if err != nil {
+		return domain.AlertTimelinePage{}, err
+	}
+	page, err := rtm.store.AlertTimeline(ctx, symbol, kind, limit, cursor)
 	if err != nil {
 		return page, err
 	}
@@ -96,29 +111,32 @@ func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit 
 // AlertChartSignals replays the selected symbol with the currently saved alert
 // parameters so the K-line signal layer follows the settings form immediately.
 func (s *Service) AlertChartSignals(ctx context.Context, symbol string) (domain.AlertChartSignals, error) {
-	if s.alerts == nil {
-		return domain.AlertChartSignals{}, errors.New("alert engine unavailable")
+	rtm, err := s.alertRuntimeForContext(ctx)
+	if err != nil {
+		return domain.AlertChartSignals{}, err
 	}
-	return s.alerts.AlertChartSignals(ctx, symbol)
+	return rtm.AlertChartSignals(ctx, symbol)
 }
 
 // TriggerAlert sends one manually requested order signal for a persisted alert
 // or signal. The record is read server-side so the browser cannot alter its
 // symbol, direction, or reference price.
 func (s *Service) TriggerAlert(ctx context.Context, recordType, recordID string) (any, error) {
-	if s.alerts == nil {
-		return nil, errors.New("alert engine unavailable")
+	rtm, err := s.alertRuntimeForContext(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return s.alerts.triggerWebhook(ctx, recordType, recordID)
+	return rtm.triggerWebhook(ctx, recordType, recordID)
 }
 
 // NotifyAlert sends one manually requested alert or signal to Telegram. The
 // record is loaded from SQLite so the browser cannot forge its contents.
 func (s *Service) NotifyAlert(ctx context.Context, recordType, recordID string) (any, error) {
-	if s.alerts == nil {
-		return nil, errors.New("alert engine unavailable")
+	rtm, err := s.alertRuntimeForContext(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return s.alerts.notifyTelegram(ctx, recordType, recordID)
+	return rtm.notifyTelegram(ctx, recordType, recordID)
 }
 
 // AlertSettings returns the masked notification settings.

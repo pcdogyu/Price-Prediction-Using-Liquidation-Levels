@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -54,6 +55,8 @@ type Server struct {
 	RequireUnifiedAdmin    func(http.ResponseWriter, *http.Request) bool
 	CurrentUser            func(*http.Request) (string, bool)
 	UserCredentialResolver UserCredentialResolver
+	TenantID               string
+	TenantRouter           TenantRouter
 	RedirectUnifiedLogin   func(http.ResponseWriter, *http.Request)
 	LogoutUnified          func(http.ResponseWriter, *http.Request)
 	TopMenuProvider        func(*http.Request) []TopMenuItem
@@ -71,6 +74,28 @@ type UserCredentials struct {
 
 type UserCredentialResolver interface {
 	ForUser(username string) (UserCredentials, error)
+}
+
+// UserScopeResolver optionally resolves every user-owned TVBot resource in one
+// operation. The older credential-only resolver remains supported for tests and
+// deployments that have not enabled tenant storage yet.
+type UserScopeResolver interface {
+	ForUserScope(username string) (UserScope, error)
+}
+
+type UserScope struct {
+	TenantID    string
+	ConfigStore *config.Store
+	Orders      *storage.OrderStore
+	Credentials UserCredentials
+}
+
+// TenantRouter is used by the public TradingView webhook. A tenant id is
+// carried in generated templates, so one process can route the webhook to the
+// same config and order database that served the user's dashboard.
+type TenantRouter interface {
+	ForTenantID(tenantID string) (UserScope, error)
+	DefaultTenantID() string
 }
 
 func (s *Server) SetUnifiedAuth(user, admin func(http.ResponseWriter, *http.Request) bool, currentUser func(*http.Request) (string, bool), redirect func(http.ResponseWriter, *http.Request), logout func(http.ResponseWriter, *http.Request)) {
@@ -109,6 +134,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTVOrder(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "/tvorder only accepts POST")
+		return
+	}
+	if s.TenantRouter != nil && strings.TrimSpace(s.TenantID) == "" {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_json", err.Error())
+			return
+		}
+		tenantID := s.TenantRouter.DefaultTenantID()
+		var envelope struct {
+			TenantID string `json:"tenant_id"`
+		}
+		if json.Unmarshal(body, &envelope) == nil && strings.TrimSpace(envelope.TenantID) != "" {
+			tenantID = strings.TrimSpace(envelope.TenantID)
+		}
+		scope, err := s.TenantRouter.ForTenantID(tenantID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_tenant", err.Error())
+			return
+		}
+		scoped := s.withUserScope(scope)
+		scoped.TenantRouter = nil
+		replay := r.Clone(r.Context())
+		replay.Body = io.NopCloser(bytes.NewReader(body))
+		scoped.handleTVOrder(w, replay)
 		return
 	}
 	now := s.now()
@@ -1901,6 +1951,7 @@ func (s *Server) handleTemplates(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
 		return
 	}
+	req.TenantID = s.TenantID
 	resp, err := trading.BuildTemplate(req, s.Token)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_template", err.Error())

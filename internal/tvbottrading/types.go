@@ -110,6 +110,7 @@ type Risk struct {
 
 type Signal struct {
 	Action         Side          `json:"action"`
+	TenantID       string        `json:"tenant_id,omitempty"`
 	SourceAction   Side          `json:"-"`
 	APIID          string        `json:"api_id,omitempty"`
 	TargetExchange string        `json:"target_exchange,omitempty"`
@@ -148,6 +149,7 @@ type OrderSettings struct {
 
 type TemplateRequest struct {
 	PriceSource    string        `json:"price_source"`
+	TenantID       string        `json:"tenant_id,omitempty"`
 	APIID          string        `json:"api_id,omitempty"`
 	TargetExchange string        `json:"target_exchange,omitempty"`
 	TradeEnv       string        `json:"trade_env,omitempty"`
@@ -242,6 +244,7 @@ func (s *Signal) Normalize() {
 		s.Action = Side(strings.ToLower(strings.TrimSpace(string(s.Action))))
 	}
 	s.SourceAction = normalizeSide(s.SourceAction)
+	s.TenantID = strings.TrimSpace(s.TenantID)
 	s.APIID = strings.TrimSpace(s.APIID)
 	s.TargetExchange = NormalizeExchange(s.TargetExchange)
 	s.TradeEnv = NormalizeTradeEnv(s.TradeEnv)
@@ -573,15 +576,15 @@ func CanonicalWebhookTokenPayload(apiID string) string {
 }
 
 func (s Signal) CanonicalTokenPayload() string {
-	return CanonicalTokenPayload(s.Leverage, s.Amount, s.APIID)
+	return CanonicalTokenPayloadWithTenant(s.Leverage, s.Amount, s.APIID, s.TenantID)
 }
 
 func (s Signal) CanonicalWebhookTokenPayload() string {
-	return CanonicalTargetTradeEnvWebhookTokenPayload(s.TargetExchange, s.APIID, s.TradeEnv)
+	return CanonicalTargetTradeEnvWebhookTokenPayloadWithTenant(s.TargetExchange, s.APIID, s.TradeEnv, s.TenantID)
 }
 
 func (s Signal) CanonicalNonceWebhookTokenPayload() string {
-	return CanonicalTargetTradeEnvWebhookTokenPayloadWithNonce(s.TargetExchange, s.APIID, s.TradeEnv, s.TokenNonce)
+	return CanonicalTargetTradeEnvWebhookTokenPayloadWithNonceAndTenant(s.TargetExchange, s.APIID, s.TradeEnv, s.TokenNonce, s.TenantID)
 }
 
 func (t TemplateRequest) CanonicalTokenPayload() string {
@@ -589,7 +592,58 @@ func (t TemplateRequest) CanonicalTokenPayload() string {
 	if tradeEnv == "" {
 		tradeEnv = TradeEnvDemo
 	}
-	return CanonicalTargetTradeEnvWebhookTokenPayload(t.TargetExchange, t.APIID, tradeEnv)
+	return CanonicalTargetTradeEnvWebhookTokenPayloadWithTenant(t.TargetExchange, t.APIID, tradeEnv, t.TenantID)
+}
+
+func CanonicalTokenPayloadWithTenant(leverage int, amount FlexibleFloat, apiID, tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return CanonicalTokenPayload(leverage, amount, apiID)
+	}
+	return strings.Join([]string{
+		"v8",
+		tenantID,
+		strings.TrimSpace(apiID),
+		strconv.Itoa(leverage),
+		NormalizeFloat(amount.Value),
+	}, "\n")
+}
+
+func CanonicalTargetTradeEnvWebhookTokenPayloadWithTenant(targetExchange, apiID, tradeEnv, tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return CanonicalTargetTradeEnvWebhookTokenPayload(targetExchange, apiID, tradeEnv)
+	}
+	tradeEnv = NormalizeTradeEnv(tradeEnv)
+	if tradeEnv == "" {
+		tradeEnv = TradeEnvDemo
+	}
+	return strings.Join([]string{
+		"v8",
+		tenantID,
+		NormalizeExchange(targetExchange),
+		strings.TrimSpace(apiID),
+		tradeEnv,
+	}, "\n")
+}
+
+func CanonicalTargetTradeEnvWebhookTokenPayloadWithNonceAndTenant(targetExchange, apiID, tradeEnv, tokenNonce, tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return CanonicalTargetTradeEnvWebhookTokenPayloadWithNonce(targetExchange, apiID, tradeEnv, tokenNonce)
+	}
+	tradeEnv = NormalizeTradeEnv(tradeEnv)
+	if tradeEnv == "" {
+		tradeEnv = TradeEnvDemo
+	}
+	return strings.Join([]string{
+		"v8",
+		tenantID,
+		NormalizeExchange(targetExchange),
+		strings.TrimSpace(apiID),
+		tradeEnv,
+		strings.TrimSpace(tokenNonce),
+	}, "\n")
 }
 
 func CanonicalTargetWebhookTokenPayloadWithNonce(targetExchange, apiID, tokenNonce string) string {

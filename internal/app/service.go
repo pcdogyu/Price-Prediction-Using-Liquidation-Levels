@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +24,9 @@ import (
 type Service struct {
 	dashboard          *dashboardState
 	alerts             *alertRuntime
+	alertTenantsMu     sync.Mutex
+	alertTenants       map[string]*alertRuntime
+	alertContext       context.Context
 	cfg                config.Config
 	store              *store.Store
 	clients            []exchange.Client
@@ -48,7 +52,10 @@ type Service struct {
 }
 
 func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, volumeLiveReady: make(chan struct{})}
+	if strings.TrimSpace(cfg.AlertTenantDataPath) == "" && strings.TrimSpace(cfg.DatabasePath) != "" {
+		cfg.AlertTenantDataPath = filepath.Join(filepath.Dir(cfg.DatabasePath), "alert-tenants")
+	}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime)}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	if a, e := ml.Load(cfg.ModelPath); e == nil {
@@ -62,6 +69,9 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 }
 
 func (s *Service) Start(ctx context.Context) {
+	s.alertTenantsMu.Lock()
+	s.alertContext = ctx
+	s.alertTenantsMu.Unlock()
 	exchange.StartLiquidationStreams(ctx, nil, s.RecordLiquidation, s.health, s.log)
 	s.startDashboard(ctx)
 	go s.priceBroadcastLoop(ctx)
@@ -534,6 +544,11 @@ func (s *Service) RecordLiquidation(ctx context.Context, event domain.Liquidatio
 	if s.alerts != nil {
 		s.alerts.observe(ctx, event)
 	}
+	s.alertTenantsMu.Lock()
+	for _, rtm := range s.alertTenants {
+		rtm.observe(ctx, event)
+	}
+	s.alertTenantsMu.Unlock()
 	s.mu.Lock()
 	for ch := range s.liquidationSubs {
 		select {
@@ -543,6 +558,26 @@ func (s *Service) RecordLiquidation(ctx context.Context, event domain.Liquidatio
 	}
 	s.mu.Unlock()
 	return nil
+}
+
+// Close stops tenant-owned alert databases. The main database remains owned by
+// the process caller, just as it was before tenant alert storage was added.
+func (s *Service) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.alertTenantsMu.Lock()
+	defer s.alertTenantsMu.Unlock()
+	var first error
+	for tenantID, rtm := range s.alertTenants {
+		if rtm == nil || rtm.store == nil || rtm.store == s.store {
+			continue
+		}
+		if err := rtm.store.Close(); err != nil && first == nil {
+			first = errors.New("close alert tenant " + tenantID + ": " + err.Error())
+		}
+	}
+	return first
 }
 
 func (s *Service) SubscribeLiquidations() (chan domain.LiquidationEvent, func()) {

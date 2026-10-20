@@ -24,6 +24,8 @@ type alertRuntime struct {
 	service                                     *Service
 	engine                                      *alert.Engine
 	store                                       *store.Store
+	sourceStore                                 *store.Store
+	tenantID                                    string
 	log                                         *slog.Logger
 	cfg                                         alert.Config
 	sender                                      *notify.Telegram
@@ -297,6 +299,9 @@ func (rtm *alertRuntime) applyWatch(entries []alert.WatchEntry, rows []domain.Wa
 	}
 	rtm.watchErr = failure
 	rtm.mu.Unlock()
+	if rtm.service != nil && rtm.service.alerts == rtm {
+		rtm.service.syncTenantAlertWatches(rows, at, failure)
+	}
 }
 
 // seedFromHistory replays stored liquidations so an alert cycle that was still
@@ -370,6 +375,9 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 		}
 	}
 	for _, item := range res.Signals {
+		if rtm.tenantID != "" {
+			item.TenantID = rtm.tenantID
+		}
 		if allowNotify {
 			item.GammaIgnored = rtm.gammaIgnored(item.Symbol)
 		}
@@ -425,7 +433,8 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 	}
 	signal := domain.TradeSignal{
 		ID: alertRow.ID, AlertID: alertRow.ID, Symbol: alertRow.Symbol,
-		Kind: "alert", Side: alertRow.TradeSide, LiquidationSide: alertRow.Side,
+		TenantID: rtm.tenantID,
+		Kind:     "alert", Side: alertRow.TradeSide, LiquidationSide: alertRow.Side,
 		CreatedAt: alertRow.TriggeredAt, ReferencePrice: alertRow.ReferencePrice,
 		AlertNotionalUSD: alertRow.NotionalUSD, ThresholdUSD: alertRow.ThresholdUSD,
 		WindowMinutes: alertRow.WindowMinutes, FollowUps: alertRow.FollowUps,
@@ -531,7 +540,25 @@ func (rtm *alertRuntime) notifyTelegram(ctx context.Context, recordType, recordI
 	if !ok {
 		return manualNotifyResult{}, errors.New("Telegram 通知未启用，或 Token / Chat ID 未配置")
 	}
+	return rtm.notifyTelegramUsing(ctx, recordType, recordID, token, chatID)
+}
 
+func (rtm *alertRuntime) notifyTelegramWithSettings(ctx context.Context, recordType, recordID, tenantID string) (manualNotifyResult, error) {
+	settings, found, err := rtm.tenantConfigStore().AlertSettingsForTenant(ctx, tenantID)
+	if err != nil {
+		return manualNotifyResult{}, err
+	}
+	if !found {
+		settings = rtm.defaultSettings()
+	}
+	token, chatID, ok := rtm.credentialsForSettings(settings)
+	if !ok {
+		return manualNotifyResult{}, errors.New("Telegram 通知未启用，或 Token / Chat ID 未配置")
+	}
+	return rtm.notifyTelegramUsing(ctx, recordType, recordID, token, chatID)
+}
+
+func (rtm *alertRuntime) notifyTelegramUsing(ctx context.Context, recordType, recordID, token, chatID string) (manualNotifyResult, error) {
 	var symbol, side, text string
 	var markerAt time.Time
 	var referencePrice float64

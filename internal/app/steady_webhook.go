@@ -12,6 +12,7 @@ import (
 
 type steadyWebhookPayload struct {
 	SentAt         string `json:"sent_at"`
+	TenantID       string `json:"tenant_id,omitempty"`
 	APIID          string `json:"api_id"`
 	TargetExchange string `json:"target_exchange"`
 	TradeEnv       string `json:"trade_env"`
@@ -87,8 +88,8 @@ func buildPositionWebhookPayload(signal domain.TradeSignal, cfg config.Config, c
 		interval = fmt.Sprintf("%dm", signal.WindowMinutes)
 	}
 	payload := steadyWebhookPayload{
-		SentAt: signal.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
-		APIID:  cfg.SteadyWebhookAPIID, TargetExchange: cfg.SteadyWebhookTargetExchange,
+		SentAt: signal.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), TenantID: signal.TenantID,
+		APIID: cfg.SteadyWebhookAPIID, TargetExchange: cfg.SteadyWebhookTargetExchange,
 		TradeEnv: cfg.SteadyWebhookTradeEnv, Action: action,
 		PositionEffect: effect, PositionSide: positionSide,
 		Ticker: signal.Symbol, Coinpair: signal.Symbol, Price: price,

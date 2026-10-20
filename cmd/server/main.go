@@ -52,6 +52,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	svc := app.New(cfg, st, log)
+	defer svc.Close()
 	svc.Start(ctx)
 	bridge, err := tvbotbridge.New(cfg, log, tvbotserver.BuildInfo{
 		CommitTime: httpapi.BuildTime, CommitHash: httpapi.BuildRevision, CommitBranch: httpapi.BuildBranch,

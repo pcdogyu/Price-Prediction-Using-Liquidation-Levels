@@ -18,6 +18,8 @@ type Config struct {
 	TVBotLegacyDataPath              string
 	TVBotLegacyCredentialsDir        string
 	TVBotCredentialsDir              string
+	TVBotTenantDataPath              string
+	AlertTenantDataPath              string
 	UpgradeWorkDir                   string
 	UpgradeBinaryPath                string
 	UpgradeServiceName               string
@@ -66,6 +68,8 @@ func Load() Config {
 		TVBotLegacyDataPath:       env("APP_TVBOT_LEGACY_DATA", "data"),
 		TVBotLegacyCredentialsDir: env("APP_TVBOT_LEGACY_CREDENTIALS_DIR", "data"),
 		TVBotCredentialsDir:       env("APP_TVBOT_CREDENTIALS_DIR", "data"),
+		TVBotTenantDataPath:       env("APP_TVBOT_TENANTS", "data/tvbot-tenants"),
+		AlertTenantDataPath:       env("APP_ALERT_TENANTS", "data/alert-tenants"),
 		UpgradeWorkDir:            env("APP_UPGRADE_WORKDIR", ""),
 		UpgradeBinaryPath:         env("APP_UPGRADE_BINARY", ""),
 		UpgradeServiceName:        env("APP_UPGRADE_SERVICE", "liquidation-predictor.service"),

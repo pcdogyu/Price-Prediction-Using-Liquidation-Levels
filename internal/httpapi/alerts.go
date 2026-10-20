@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/app"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
@@ -98,6 +100,14 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/notify", postOnly(s.alertNotify))
 }
 
+func (s *Server) alertContext(r *http.Request) context.Context {
+	ctx := r.Context()
+	if username, ok := s.unifiedUser(r); ok {
+		return app.WithTenantID(ctx, username)
+	}
+	return ctx
+}
+
 func (s *Server) alertTrigger(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		RecordType string `json:"record_type"`
@@ -115,7 +125,7 @@ func (s *Server) alertTrigger(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, errors.New("record_type and record_id are invalid"))
 		return
 	}
-	result, err := s.svc.TriggerAlert(r.Context(), in.RecordType, in.RecordID)
+	result, err := s.svc.TriggerAlert(s.alertContext(r), in.RecordType, in.RecordID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			problem(w, http.StatusNotFound, errors.New("alert or signal not found"))
@@ -147,7 +157,7 @@ func (s *Server) alertNotify(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, errors.New("record_type and record_id are invalid"))
 		return
 	}
-	result, err := s.svc.NotifyAlert(r.Context(), in.RecordType, in.RecordID)
+	result, err := s.svc.NotifyAlertForContext(s.alertContext(r), in.RecordType, in.RecordID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			problem(w, http.StatusNotFound, errors.New("alert or signal not found"))
@@ -180,7 +190,7 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err)
 		return
 	}
-	page, err := s.svc.AlertTimeline(r.Context(), symbol, kind, 20, query.Get("cursor"))
+	page, err := s.svc.AlertTimeline(s.alertContext(r), symbol, kind, 20, query.Get("cursor"))
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
 		return
@@ -192,13 +202,27 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 // alertOverview serves the monitoring snapshot, the newest alerts and signals, and
 // the masked Telegram settings in one poll.
 func (s *Server) alertOverview(w http.ResponseWriter, r *http.Request) {
-	view, err := s.svc.Alerts(r.Context())
+	ctx := s.alertContext(r)
+	view, err := s.svc.Alerts(ctx)
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
 		return
 	}
+	strategy, strategyErr := s.svc.AlertStrategySettingsForContext(ctx)
+	if strategyErr != nil {
+		problem(w, http.StatusServiceUnavailable, strategyErr)
+		return
+	}
+	view.Thresholds.WindowMinutes = strategy.WindowMinutes
+	view.Thresholds.BTCUSD, view.Thresholds.ETHUSD, view.Thresholds.OtherUSD = strategy.BTCUSD, strategy.ETHUSD, strategy.OtherUSD
+	view.Method = domain.AlertMonitorMethod(view.Thresholds.WindowMinutes, view.Thresholds.RefreshMinutes, view.Thresholds.TopSymbols)
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"data": view, "settings": s.svc.AlertSettings(), "sources": s.svc.Health()})
+	settings, settingsErr := s.svc.AlertSettingsForContext(ctx)
+	if settingsErr != nil {
+		problem(w, http.StatusServiceUnavailable, settingsErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": view, "settings": settings, "sources": s.svc.Health()})
 }
 
 // alertCursor validates a pagination cursor before it reaches the store, so a bad
@@ -227,7 +251,7 @@ func (s *Server) alertHistory(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err)
 		return
 	}
-	page, err := s.svc.AlertHistory(r.Context(), symbol, side, limit, query.Get("cursor"))
+	page, err := s.svc.AlertHistory(s.alertContext(r), symbol, side, limit, query.Get("cursor"))
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
 		return
@@ -261,7 +285,7 @@ func (s *Server) alertSignals(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err)
 		return
 	}
-	page, err := s.svc.AlertSignals(r.Context(), symbol, kind, limit, query.Get("cursor"))
+	page, err := s.svc.AlertSignals(s.alertContext(r), symbol, kind, limit, query.Get("cursor"))
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
 		return
@@ -299,7 +323,7 @@ func (s *Server) alertChartSignals(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err)
 		return
 	}
-	view, err := s.svc.AlertChartSignals(r.Context(), symbol)
+	view, err := s.svc.AlertChartSignalsForContext(s.alertContext(r), symbol)
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
 		return
@@ -353,9 +377,15 @@ func alertKlineQuery(query url.Values) (symbol, interval string, limit int, befo
 // write only: a read returns a masked value, and an empty submission keeps the
 // stored token so the form never has to echo a secret back to the browser.
 func (s *Server) alertSettings(w http.ResponseWriter, r *http.Request) {
+	ctx := s.alertContext(r)
 	if r.Method == http.MethodGet {
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, s.svc.AlertSettings())
+		settings, err := s.svc.AlertSettingsForContext(ctx)
+		if err != nil {
+			problem(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -376,7 +406,11 @@ func (s *Server) alertSettings(w http.ResponseWriter, r *http.Request) {
 	// Keep the order-signal switches when an older client submits only the
 	// Telegram fields. The dedicated order-settings endpoint is the preferred UI
 	// path, but this makes the original settings API backward compatible.
-	current := s.svc.AlertSettings()
+	current, err := s.svc.AlertSettingsForContext(ctx)
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
+		return
+	}
 	var fields map[string]json.RawMessage
 	if err = json.Unmarshal(body, &fields); err == nil {
 		if _, ok := fields["order_alerts"]; !ok {
@@ -395,7 +429,7 @@ func (s *Server) alertSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TelegramToken = token
-	stored, err := s.svc.SaveAlertSettings(r.Context(), in)
+	stored, err := s.svc.SaveAlertSettingsForContext(ctx, in)
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return
@@ -408,9 +442,15 @@ func (s *Server) alertSettings(w http.ResponseWriter, r *http.Request) {
 // tvbot. Every live category still sends a preclose request first; these
 // switches are independent from Telegram notification preferences.
 func (s *Server) alertOrderSettings(w http.ResponseWriter, r *http.Request) {
+	ctx := s.alertContext(r)
 	if r.Method == http.MethodGet {
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, s.svc.AlertOrderSignalSettings())
+		settings, err := s.svc.AlertOrderSignalSettingsForContext(ctx)
+		if err != nil {
+			problem(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -425,7 +465,7 @@ func (s *Server) alertOrderSettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, fmt.Errorf("order settings body must be JSON: %w", err))
 		return
 	}
-	stored, err := s.svc.SaveAlertOrderSignalSettings(r.Context(), in)
+	stored, err := s.svc.SaveAlertOrderSignalSettingsForContext(ctx, in)
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return
@@ -438,9 +478,15 @@ func (s *Server) alertOrderSettings(w http.ResponseWriter, r *http.Request) {
 // rolling-window parameters. The endpoint is protected by the page's existing
 // authentication middleware just like the Telegram settings endpoint.
 func (s *Server) alertStrategySettings(w http.ResponseWriter, r *http.Request) {
+	ctx := s.alertContext(r)
 	if r.Method == http.MethodGet {
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, s.svc.AlertStrategySettings())
+		settings, err := s.svc.AlertStrategySettingsForContext(ctx)
+		if err != nil {
+			problem(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -455,7 +501,7 @@ func (s *Server) alertStrategySettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, fmt.Errorf("strategy settings body must be JSON: %w", err))
 		return
 	}
-	stored, err := s.svc.SaveAlertStrategySettings(r.Context(), in)
+	stored, err := s.svc.SaveAlertStrategySettingsForContext(ctx, in)
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return
@@ -467,7 +513,7 @@ func (s *Server) alertStrategySettings(w http.ResponseWriter, r *http.Request) {
 // alertSettingsTest sends one Telegram message immediately and reports the answer so
 // the form can show the real API response.
 func (s *Server) alertSettingsTest(w http.ResponseWriter, r *http.Request) {
-	if err := s.svc.TelegramTest(r.Context()); err != nil {
+	if err := s.svc.TelegramTestForContext(s.alertContext(r)); err != nil {
 		problem(w, http.StatusBadGateway, err)
 		return
 	}

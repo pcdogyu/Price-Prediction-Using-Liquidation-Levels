@@ -77,6 +77,7 @@ type LiquidationAlert struct {
 // was additionally confirmed by an opposite direction liquidation.
 type TradeSignal struct {
 	ID               string    `json:"id"`
+	TenantID         string    `json:"tenant_id,omitempty"`
 	AlertID          string    `json:"alert_id"`
 	Symbol           string    `json:"symbol"`
 	Kind             string    `json:"kind"`

@@ -26,7 +26,9 @@ CREATE INDEX IF NOT EXISTS trade_signals_kind ON trade_signals(kind,created_ts D
 CREATE INDEX IF NOT EXISTS trade_signals_symbol ON trade_signals(symbol,created_ts DESC);
 CREATE TABLE IF NOT EXISTS alert_watch_symbols(symbol TEXT PRIMARY KEY,rank INTEGER NOT NULL,quote_volume_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_settings(id INTEGER PRIMARY KEY CHECK(id=1),telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);`)
+CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_tenant_settings(tenant_id TEXT PRIMARY KEY,telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY KEY,window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);`)
 	if err != nil {
 		return err
 	}
@@ -481,6 +483,41 @@ ON CONFLICT(id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,telegra
 	return err
 }
 
+// AlertSettingsForTenant reads the settings owned by one authenticated tenant.
+// An empty tenant preserves the legacy administrator row for old callers.
+func (s *Store) AlertSettingsForTenant(ctx context.Context, tenantID string) (domain.NotificationSettings, bool, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return s.AlertSettings(ctx)
+	}
+	var out domain.NotificationSettings
+	var enabled, alerts, aggressive, steady, orderAlerts, orderAggressive, orderSteady int
+	var token, chatID string
+	var updated int64
+	err := s.db.QueryRowContext(ctx, `SELECT telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,order_alerts,order_aggressive,order_steady,updated_ts FROM alert_tenant_settings WHERE tenant_id=?`, tenantID).
+		Scan(&enabled, &token, &chatID, &alerts, &aggressive, &steady, &orderAlerts, &orderAggressive, &orderSteady, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, false, nil
+	}
+	if err != nil {
+		return out, false, err
+	}
+	out = domain.NotificationSettings{TelegramEnabled: enabled != 0, TelegramToken: token, TelegramChatID: chatID, NotifyAlerts: alerts != 0, NotifyAggressive: aggressive != 0, NotifySteady: steady != 0, OrderAlerts: orderAlerts != 0, OrderAggressive: orderAggressive != 0, OrderSteady: orderSteady != 0, UpdatedAt: time.UnixMilli(updated).UTC()}
+	return out, true, nil
+}
+
+// SaveAlertSettingsForTenant stores settings for one authenticated tenant.
+func (s *Store) SaveAlertSettingsForTenant(ctx context.Context, tenantID string, in domain.NotificationSettings) error {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return s.SaveAlertSettings(ctx, in)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_tenant_settings(tenant_id,telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,order_alerts,order_aggressive,order_steady,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(tenant_id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,telegram_token=excluded.telegram_token,telegram_chat_id=excluded.telegram_chat_id,notify_alerts=excluded.notify_alerts,notify_aggressive=excluded.notify_aggressive,notify_steady=excluded.notify_steady,order_alerts=excluded.order_alerts,order_aggressive=excluded.order_aggressive,order_steady=excluded.order_steady,updated_ts=excluded.updated_ts`,
+		tenantID, boolInt(in.TelegramEnabled), in.TelegramToken, in.TelegramChatID, boolInt(in.NotifyAlerts), boolInt(in.NotifyAggressive), boolInt(in.NotifySteady), boolInt(in.OrderAlerts), boolInt(in.OrderAggressive), boolInt(in.OrderSteady), time.Now().UTC().UnixMilli())
+	return err
+}
+
 // AlertStrategySettings reads the single persisted row managed by the alert
 // strategy form. A missing row means the environment/default values are active.
 func (s *Store) AlertStrategySettings(ctx context.Context) (domain.AlertStrategySettings, bool, error) {
@@ -506,6 +543,39 @@ func (s *Store) SaveAlertStrategySettings(ctx context.Context, in domain.AlertSt
 	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_strategy_settings(id,window_minutes,btc_usd,eth_usd,other_usd,updated_ts) VALUES(1,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,updated_ts=excluded.updated_ts`,
 		in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, time.Now().UTC().UnixMilli())
+	return err
+}
+
+// AlertStrategySettingsForTenant reads the editable strategy values for one
+// tenant. The empty tenant keeps the original singleton row.
+func (s *Store) AlertStrategySettingsForTenant(ctx context.Context, tenantID string) (domain.AlertStrategySettings, bool, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return s.AlertStrategySettings(ctx)
+	}
+	var out domain.AlertStrategySettings
+	var updated int64
+	err := s.db.QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,updated_ts FROM alert_tenant_strategy_settings WHERE tenant_id=?`, tenantID).
+		Scan(&out.WindowMinutes, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, false, nil
+	}
+	if err != nil {
+		return out, false, err
+	}
+	out.UpdatedAt = time.UnixMilli(updated).UTC()
+	return out, true, nil
+}
+
+// SaveAlertStrategySettingsForTenant stores strategy values for one tenant.
+func (s *Store) SaveAlertStrategySettingsForTenant(ctx context.Context, tenantID string, in domain.AlertStrategySettings) error {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return s.SaveAlertStrategySettings(ctx, in)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_tenant_strategy_settings(tenant_id,window_minutes,btc_usd,eth_usd,other_usd,updated_ts) VALUES(?,?,?,?,?,?)
+ON CONFLICT(tenant_id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,updated_ts=excluded.updated_ts`,
+		tenantID, in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, time.Now().UTC().UnixMilli())
 	return err
 }
 

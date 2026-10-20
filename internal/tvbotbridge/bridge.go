@@ -30,6 +30,7 @@ type Bridge struct {
 	Handler       *tvbotserver.Server
 	ConfigStore   *tvbotconfig.Store
 	Orders        *tvbotstorage.OrderStore
+	Tenants       *tenantManager
 	Upgrade       *tvbotupgrade.Manager
 	upgradeStatus string
 }
@@ -175,7 +176,7 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 	}
 	userCredentials, err := newUserCredentialResolver(
 		credentialsDir,
-		cfg.AuthUsername,
+		legacyOwner(cfg, secrets.AdminUser),
 		okxFile,
 		binanceFile,
 		gateFile,
@@ -188,6 +189,12 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 		_ = orders.Close()
 		return nil, err
 	}
+	rootConfigStore := tvbotconfig.NewStore(cfg.TVBotConfigPath, tvCfg)
+	tenantDataPath := strings.TrimSpace(cfg.TVBotTenantDataPath)
+	if tenantDataPath == "" {
+		tenantDataPath = filepath.Join(cfg.TVBotDataPath, "tenants")
+	}
+	tenants := newTenantManager(tenantDataPath, legacyOwner(cfg, secrets.AdminUser), rootConfigStore, orders, userCredentials)
 
 	runner, err := tvbotupgrade.NewShellRunnerFromEnv()
 	if err != nil {
@@ -216,7 +223,7 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 	upgrade := tvbotupgrade.NewManager(runner, tvbotupgrade.WithStatusFile(statusPath))
 
 	handler := &tvbotserver.Server{
-		ConfigStore: tvbotconfig.NewStore(cfg.TVBotConfigPath, tvCfg),
+		ConfigStore: rootConfigStore,
 		Orders:      orders,
 		Token:       tvbotsecurity.NewTokenService(secrets.TVTokenSecret),
 		Executor: tvbotserver.ExchangeExecutor{
@@ -228,32 +235,62 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 			GateLive:    tvbotgate.Trader{CredentialProvider: gateLiveCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
 		},
 		OKXCredentials: okxCredentials, OKXLiveCredentials: okxLiveCredentials, BinanceCredentials: binanceCredentials, BinanceLiveCredentials: binanceLiveCredentials, GateCredentials: gateCredentials, GateLiveCredentials: gateLiveCredentials,
-		UserCredentialResolver: userCredentials,
+		UserCredentialResolver: tenants,
+		TenantRouter:           tenants,
 		OKXHTTPClient:          &http.Client{Timeout: 15 * time.Second}, BinanceHTTPClient: &http.Client{Timeout: 15 * time.Second}, GateHTTPClient: &http.Client{Timeout: 15 * time.Second},
 		AdminToken: secrets.AdminToken, AdminUser: secrets.AdminUser, AdminPass: secrets.AdminPassword,
 		Logger: logger, Upgrade: upgrade, BuildInfo: build,
 	}
-	return &Bridge{Handler: handler, ConfigStore: handler.ConfigStore, Orders: orders, Upgrade: upgrade, upgradeStatus: statusPath}, nil
+	return &Bridge{Handler: handler, ConfigStore: handler.ConfigStore, Orders: orders, Tenants: tenants, Upgrade: upgrade, upgradeStatus: statusPath}, nil
 }
 
 func (b *Bridge) Start(ctx context.Context) {
 	if b == nil || b.Handler == nil {
 		return
 	}
-	b.Handler.StartUSDTBalanceSampler(ctx)
-	b.Handler.StartLowMarginPositionMonitor(ctx)
-	b.Handler.StartPositionMonitor(ctx)
-	b.Handler.StartStalePendingOrderCancelMonitor(ctx)
-	b.Handler.StartTradeFillMonitor(ctx)
-	b.Handler.StartCoinpairBlockCleaner(ctx)
-	b.Handler.StartSymbolCatalogSyncer(ctx)
+	if b.Tenants != nil {
+		b.Tenants.SetStart(func(scope tvbotserver.UserScope) {
+			b.startMonitors(ctx, b.Handler.WithUserScope(scope))
+		})
+	}
+	b.startMonitors(ctx, b.Handler)
+}
+
+func (b *Bridge) startMonitors(ctx context.Context, handler *tvbotserver.Server) {
+	if handler == nil {
+		return
+	}
+	handler.StartUSDTBalanceSampler(ctx)
+	handler.StartLowMarginPositionMonitor(ctx)
+	handler.StartPositionMonitor(ctx)
+	handler.StartStalePendingOrderCancelMonitor(ctx)
+	handler.StartTradeFillMonitor(ctx)
+	handler.StartCoinpairBlockCleaner(ctx)
+	handler.StartSymbolCatalogSyncer(ctx)
 }
 
 func (b *Bridge) Close() error {
 	if b == nil || b.Orders == nil {
 		return nil
 	}
-	return b.Orders.Close()
+	var first error
+	if b.Tenants != nil {
+		first = b.Tenants.Close()
+	}
+	if err := b.Orders.Close(); err != nil && first == nil {
+		first = err
+	}
+	return first
+}
+
+func legacyOwner(cfg config.Config, fallback string) string {
+	if owner := strings.TrimSpace(cfg.AuthUsername); owner != "" {
+		return owner
+	}
+	if owner := strings.TrimSpace(fallback); owner != "" {
+		return owner
+	}
+	return "admin"
 }
 
 func loadConfig(path string) (tvbotconfig.Config, error) {

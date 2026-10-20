@@ -119,7 +119,7 @@ func (s *Server) renderTVBotHTML(r *http.Request) string {
 	if s.TopMenuProvider != nil {
 		menu = s.TopMenuProvider(r)
 	}
-	return renderTVBotHTMLWithMenu(s.BuildInfo, r, menu)
+	return renderTVBotHTMLWithTenantMenu(s.BuildInfo, r, menu, s.TenantID)
 }
 
 func renderTVBotHTML(info BuildInfo, r *http.Request) string {
@@ -152,6 +152,10 @@ func defaultTopMenu() []TopMenuItem {
 }
 
 func renderTVBotHTMLWithMenu(info BuildInfo, r *http.Request, menu []TopMenuItem) string {
+	return renderTVBotHTMLWithTenantMenu(info, r, menu, "")
+}
+
+func renderTVBotHTMLWithTenantMenu(info BuildInfo, r *http.Request, menu []TopMenuItem, tenantID string) string {
 	prefix := strings.TrimRight(strings.TrimSpace(r.Header.Get("X-Forwarded-Prefix")), "/")
 	if prefix == "" {
 		prefix = ""
@@ -184,6 +188,13 @@ func renderTVBotHTMLWithMenu(info BuildInfo, r *http.Request, menu []TopMenuItem
 	themeScript := `<script>(()=>{const button=document.getElementById('tvbot-theme');const update=()=>{const light=document.documentElement.dataset.theme==='light';button.textContent=light?'深色主题':'浅色主题';button.setAttribute('aria-label','当前'+(light?'浅色':'深色')+'主题，切换至'+(light?'深色':'浅色')+'主题')};button.addEventListener('click',()=>window.LiquidationTheme.toggle());window.addEventListener('themechange',update);update()})();</script>`
 	page = strings.Replace(page, "{{HOME_LINK}}", html.EscapeString(link("/alerts")), 1)
 	page = strings.Replace(page, "{{TVBOT_TOP_MENU}}", topMenu.String(), 1)
+	if tenantID = strings.TrimSpace(tenantID); tenantID != "" {
+		// tenant IDs are generated from URL-safe base64 usernames, so they are
+		// safe to embed in these localStorage key literals.
+		suffix := ".tenant." + tenantID
+		page = strings.Replace(page, `const globalExchangeStorageKey = "tvbot.selectedExchange";`, `const globalExchangeStorageKey = "tvbot.selectedExchange`+suffix+`";`, 1)
+		page = strings.Replace(page, `const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3";`, `const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3`+suffix+`";`, 1)
+	}
 	page = strings.Replace(page, "</body>", themeScript+"</body>", 1)
 	return strings.Replace(page, "{{APP_FOOTER}}", html.EscapeString(info.FooterText()), 1)
 }
