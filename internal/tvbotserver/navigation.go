@@ -70,8 +70,19 @@ func RenderSystemMenu(items []TopMenuItem, link func(string) string, active func
 // dashboard and TVBot pages. Keeping the controls here prevents individual
 // page templates from drifting apart.
 func RenderUnifiedNav(items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool, username, logoutPath string) string {
+	return renderUnifiedNav("", items, link, active, username, logoutPath)
+}
+
+// RenderTVBotNav uses the dedicated single-row layout for the dense trading
+// navigation. The links stay in the requested order and scroll as one group;
+// system controls never split the menu into a second visual row.
+func RenderTVBotNav(items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool, username, logoutPath string) string {
+	return renderUnifiedNav(" tvbot-nav", items, link, active, username, logoutPath)
+}
+
+func renderUnifiedNav(classSuffix string, items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool, username, logoutPath string) string {
 	var out strings.Builder
-	out.WriteString(`<nav class="app-nav" aria-label="主菜单"><div class="app-links">`)
+	out.WriteString(`<nav class="app-nav` + classSuffix + `" aria-label="主菜单"><div class="app-links">`)
 	out.WriteString(RenderTopMenuLinks(items, link, active))
 	out.WriteString(`</div>`)
 	out.WriteString(RenderSystemMenu(items, link, active))

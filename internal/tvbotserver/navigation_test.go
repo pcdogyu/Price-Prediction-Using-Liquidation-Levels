@@ -6,7 +6,10 @@ import (
 )
 
 func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
-	page := RenderUnifiedNav(defaultTopMenu(), func(path string) string { return path }, func(TopMenuItem) bool { return false }, "wyx", "/auth/logout")
+	page := RenderTVBotNav(defaultTopMenu(), func(path string) string { return path }, func(TopMenuItem) bool { return false }, "wyx", "/auth/logout")
+	if !strings.Contains(page, `<nav class="app-nav tvbot-nav"`) {
+		t.Fatal("TVBot navigation should use the dedicated single-row layout")
+	}
 	want := []string{
 		`href="/alerts"`,
 		`href="/bubbles"`,

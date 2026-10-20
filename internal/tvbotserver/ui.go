@@ -183,7 +183,7 @@ func renderTVBotHTMLWithTenantMenuAndUser(info BuildInfo, r *http.Request, menu 
 	}
 	username = strings.TrimSpace(username)
 	page = strings.Replace(page, "{{HOME_LINK}}", html.EscapeString(link("/alerts")), 1)
-	page = strings.Replace(page, "{{UNIFIED_NAV}}", RenderUnifiedNav(menu, link, active, username, link("/auth/logout")), 1)
+	page = strings.Replace(page, "{{UNIFIED_NAV}}", RenderTVBotNav(menu, link, active, username, link("/auth/logout")), 1)
 	page = strings.Replace(page, "{{SHARED_LOGS}}", RenderSharedLogsDialog(), 1)
 	if tenantID = strings.TrimSpace(tenantID); tenantID != "" {
 		// tenant IDs are generated from URL-safe base64 usernames, so they are
