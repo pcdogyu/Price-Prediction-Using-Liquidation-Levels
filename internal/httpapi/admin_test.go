@@ -198,12 +198,25 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	}
 
 	positions := serve(http.MethodGet, "/tvbot", "", ordinaryCookie)
-	if positions.Code != http.StatusOK || !strings.Contains(positions.Body.String(), "positions") || !strings.Contains(positions.Body.String(), `class="app-logo"`) {
+	if positions.Code != http.StatusOK || !strings.Contains(positions.Body.String(), "positions") || strings.Contains(positions.Body.String(), `class="app-logo"`) {
 		t.Fatalf("unified tvbot page status=%d body prefix=%s", positions.Code, positions.Body.String()[:minInt(180, positions.Body.Len())])
 	}
 	tvbotPage := positions.Body.String()
-	if strings.Count(tvbotPage, `aria-label="主菜单"`) != 1 || !strings.Contains(tvbotPage, `href="/menu">菜单管理`) || !strings.Contains(tvbotPage, `href="/tvbot/view/orders">下单信号`) || !strings.Contains(tvbotPage, `data-tab="system" href="/system">系统信息`) {
-		t.Fatalf("tvbot should render the configured single top menu: %s", tvbotPage[:minInt(1200, len(tvbotPage))])
+	menuChecks := map[string]bool{
+		"main-menu":       strings.Count(tvbotPage, `aria-label="主菜单"`) == 1,
+		"menu-link":       strings.Contains(tvbotPage, `href="/menu">菜单管理`),
+		"orders-link":     strings.Contains(tvbotPage, `href="/tvbot/view/orders">下单信号`),
+		"exchange-link":   strings.Contains(tvbotPage, `data-tab="system" href="/system">交易所信息`),
+		"system-dropdown": strings.Contains(tvbotPage, `data-system-menu="true"`),
+	}
+	for name, ok := range menuChecks {
+		if !ok {
+			start := strings.Index(tvbotPage, "菜单管理") - 180
+			if start < 0 {
+				start = 0
+			}
+			t.Fatalf("tvbot should render the configured single top menu, missing %s: %s", name, tvbotPage[start:minInt(start+500, len(tvbotPage))])
+		}
 	}
 	menuStart := strings.Index(tvbotPage, `data-unified-menu="true"`)
 	personalTopMenu := tvbotPage[menuStart:]

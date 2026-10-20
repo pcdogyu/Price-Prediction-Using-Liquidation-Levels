@@ -32,4 +32,34 @@
       return colors[name] || value;
     }
   };
+  function setupSystemMenus() {
+    document.querySelectorAll('[data-system-menu="true"]').forEach((menu) => {
+      const trigger = menu.querySelector('.nav-system-trigger');
+      const panel = menu.querySelector('.nav-system-panel');
+      if (!trigger || !panel || menu.dataset.systemMenuReady === 'true') return;
+      menu.dataset.systemMenuReady = 'true';
+      const close = () => {
+        panel.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
+      };
+      trigger.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const open = panel.hidden;
+        document.querySelectorAll('.nav-system-panel').forEach((other) => { other.hidden = true; });
+        panel.hidden = !open;
+        trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      document.addEventListener('click', (event) => {
+        if (!menu.contains(event.target)) close();
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') close();
+      });
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupSystemMenus, { once: true });
+  } else {
+    setupSystemMenus();
+  }
 })();

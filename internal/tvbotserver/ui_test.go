@@ -17,11 +17,11 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	if strings.Contains(page, "{{TVBOT_TOP_MENU}}") || strings.Contains(page, "{{LIQUIDATION_LINKS}}") || strings.Contains(page, "merged-liquidation-nav") {
 		t.Fatalf("tvbot page contains an unrendered or legacy second navigation")
 	}
-	brand := strings.Index(page, `class="app-brand"`)
 	links := strings.Index(page, `class="app-links tvbot-sections tvbot-top-menu"`)
+	menuRow := strings.Index(page, `class="tvbot-menu-row"`)
 	controls := strings.Index(page, `class="header-controls"`)
-	if brand < 0 || links < 0 || controls < 0 || !(brand < links && links < controls) {
-		t.Fatalf("unified header order is wrong: brand=%d links=%d controls=%d", brand, links, controls)
+	if menuRow < 0 || links < 0 || controls < 0 || !(menuRow < links && links < controls) {
+		t.Fatalf("unified header order is wrong: menuRow=%d links=%d controls=%d", menuRow, links, controls)
 	}
 	main := strings.Index(page, "<main>")
 	pageToolbar := strings.Index(page, `class="tvbot-page-toolbar"`)
@@ -30,13 +30,13 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		t.Fatalf("exchange switch should be inside the page content: main=%d toolbar=%d switch=%d", main, pageToolbar, exchangeSwitch)
 	}
 	for _, want := range []string{
-		`class="app-logo" aria-hidden="true"`,
 		`class="app-links tvbot-sections tvbot-top-menu" data-unified-menu="true" aria-label="主菜单"`,
+		`data-system-menu="true"`,
+		`class="nav-system-trigger"`,
+		`交易所信息`,
 		`.app-nav.tvbot-nav .tvbot-sections a`,
-		`grid-template-columns: auto minmax(0, 1fr)`,
-		`.app-nav.tvbot-nav > .app-links`,
+		`class="tvbot-menu-row"`,
 		`overflow-x: auto`,
-		`width: max-content`,
 		`href="/liquidation/alerts"`,
 		`data-tab="dashboard" href="/liquidation/tvbot/view/dashboard"`,
 		`data-tab="positions" href="/liquidation/tvbot/view/positions"`,
@@ -51,7 +51,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 			t.Fatalf("unified header missing %q", want)
 		}
 	}
-	if strings.Contains(page, "清算墙雷达") || strings.Contains(page, `class="brand"`) || strings.Contains(page, `class="liquidation-links"`) {
+	if strings.Contains(page, "清算墙雷达") || strings.Contains(page, `class="brand"`) || strings.Contains(page, `class="liquidation-links"`) || strings.Contains(page, `class="app-logo"`) {
 		t.Fatal("tvbot header still contains the removed product name or legacy navigation classes")
 	}
 	for _, removed := range []string{"tvbot#", "location.hash", "history.replaceState", "url.hash ="} {
@@ -120,7 +120,7 @@ func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
 	}
 	for _, want := range []string{
 		`data-tab="dashboard" href="/liquidation/tvbot/view/dashboard" aria-current="page">资金`,
-		`data-tab="system" href="/liquidation/system">系统信息`,
+		`data-tab="system" href="/liquidation/system">交易所信息`,
 		`href="/liquidation/menu">菜单管理`,
 	} {
 		if !strings.Contains(page, want) {

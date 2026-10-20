@@ -13,6 +13,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/app"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
+	tvbotserver "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotserver"
 )
 
 //go:embed pages.html
@@ -57,19 +58,22 @@ func isDashboardPage(path string) bool {
 }
 func (s *Server) renderPage(body []byte, page, title string, r *http.Request) []byte {
 	base := html.EscapeString(s.auth.BasePath())
-	nav := `<style>.app-nav{flex-wrap:wrap;overflow:hidden}.app-nav>.app-brand{flex:0 0 auto}.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.app-nav>button,.app-nav>form{flex:0 0 auto}.app-links{order:initial;flex-basis:auto}@media(max-width:720px){.app-nav{gap:8px;flex-wrap:wrap}.app-brand{flex:0 0 auto}.app-links{order:3;flex:1 0 100%;flex-basis:100%;min-width:0;scrollbar-width:thin}.app-links a{flex:0 0 auto}}</style><nav class="app-nav" aria-label="主菜单"><a class="app-brand" href="` + base + `alerts" aria-label="首页"><span class="app-logo" aria-hidden="true"></span></a><div class="app-links">`
 	menu := s.menuForRequest(r)
+	items := make([]tvbotserver.TopMenuItem, 0, len(menu))
 	for _, item := range menu {
-		active := ""
-		if item.Key == page || strings.HasPrefix(item.Key, page+"#") {
-			active = ` aria-current="page" class="selected"`
-		}
-		href := item.Href
-		if item.Href != "/upgrade" && strings.HasPrefix(item.Href, "/") {
-			href = base + strings.TrimPrefix(item.Href, "/")
-		}
-		nav += `<a href="` + html.EscapeString(href) + `"` + active + `>` + html.EscapeString(item.Title) + `</a>`
+		items = append(items, tvbotserver.TopMenuItem{Key: item.Key, Title: item.Title, Href: item.Href})
 	}
+	link := func(path string) string {
+		if path != "/upgrade" && strings.HasPrefix(path, "/") {
+			return base + strings.TrimPrefix(path, "/")
+		}
+		return path
+	}
+	nav := `<style>.app-nav{flex-wrap:wrap;overflow:visible}.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.app-nav>button,.app-nav>form,.app-nav>.nav-system-menu{flex:0 0 auto}.app-links{order:initial;flex-basis:auto}@media(max-width:720px){.app-nav{gap:6px;flex-wrap:wrap}.app-links{order:3;flex:1 0 100%;flex-basis:100%;min-width:0;scrollbar-width:thin}.app-links a{flex:0 0 auto}}</style><nav class="app-nav" aria-label="主菜单"><div class="app-links">` + tvbotserver.RenderTopMenuLinks(items, link, func(item tvbotserver.TopMenuItem) bool {
+		return item.Key == page || strings.HasPrefix(item.Key, page+"#")
+	}) + `</div>` + tvbotserver.RenderSystemMenu(items, link, func(item tvbotserver.TopMenuItem) bool {
+		return item.Key == page || strings.HasPrefix(item.Key, page+"#")
+	})
 	nav += `</div><button id="nav-theme" type="button">浅色主题</button><button id="nav-logs" type="button">程序日志</button><form method="post" action="` + base + `auth/logout"><button type="submit">退出</button></form></nav><dialog id="shared-logs"><div class="dialog-head"><h2>程序日志</h2><button id="shared-logs-close" type="button">关闭</button></div><select id="shared-log-level"><option value="DEBUG">全部级别</option><option value="INFO">INFO+</option><option value="WARN">WARN+</option><option value="ERROR">ERROR</option></select><button id="shared-log-refresh" type="button">刷新</button><pre id="shared-log-content">等待加载</pre></dialog>`
 	replacer := strings.NewReplacer("{{BASE}}", base, "{{NAV}}", nav, "{{PAGE}}", page, "{{TITLE}}", title, "{{VERSION}}", versionFooter())
 	return []byte(replacer.Replace(string(body)))

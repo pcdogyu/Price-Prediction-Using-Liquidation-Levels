@@ -166,23 +166,18 @@ func renderTVBotHTMLWithMenu(info BuildInfo, r *http.Request, menu []TopMenuItem
 		}
 	}
 	var topMenu strings.Builder
+	topMenu.WriteString(`<div class="tvbot-menu-row">`)
 	topMenu.WriteString(`<nav class="app-links tvbot-sections tvbot-top-menu" data-unified-menu="true" aria-label="主菜单">`)
-	for _, item := range menu {
-		if strings.TrimSpace(item.Href) == "" || !strings.HasPrefix(item.Href, "/") {
-			continue
-		}
+	topMenu.WriteString(RenderTopMenuLinks(menu, link, func(item TopMenuItem) bool {
 		tab := topMenuTab(item)
-		tabAttr := ""
-		activeAttr := ""
-		if tab != "" {
-			tabAttr = ` data-tab="` + html.EscapeString(tab) + `"`
-			if tab == currentTab {
-				activeAttr = ` aria-current="page"`
-			}
-		}
-		topMenu.WriteString(`<a` + tabAttr + ` href="` + html.EscapeString(link(item.Href)) + `"` + activeAttr + `>` + html.EscapeString(item.Title) + `</a>`)
-	}
+		return tab != "" && tab == currentTab
+	}))
 	topMenu.WriteString(`</nav>`)
+	topMenu.WriteString(RenderSystemMenu(menu, link, func(item TopMenuItem) bool {
+		tab := topMenuTab(item)
+		return tab != "" && tab == currentTab
+	}))
+	topMenu.WriteString(`</div>`)
 	themeScript := `<script>(()=>{const button=document.getElementById('tvbot-theme');const update=()=>{const light=document.documentElement.dataset.theme==='light';button.textContent=light?'深色主题':'浅色主题';button.setAttribute('aria-label','当前'+(light?'浅色':'深色')+'主题，切换至'+(light?'深色':'浅色')+'主题')};button.addEventListener('click',()=>window.LiquidationTheme.toggle());window.addEventListener('themechange',update);update()})();</script>`
 	page = strings.Replace(page, "{{HOME_LINK}}", html.EscapeString(link("/alerts")), 1)
 	page = strings.Replace(page, "{{TVBOT_TOP_MENU}}", topMenu.String(), 1)
@@ -1545,7 +1540,6 @@ const tvbotHTML = `<!doctype html>
 </head>
 <body>
     <header class="app-nav tvbot-nav">
-      <a class="app-brand" href="{{HOME_LINK}}" aria-label="首页"><span class="app-logo" aria-hidden="true"></span></a>
       {{TVBOT_TOP_MENU}}
       <div class="header-controls">
         <button type="button" class="theme-toggle" id="tvbot-theme" aria-label="切换主题"></button>
