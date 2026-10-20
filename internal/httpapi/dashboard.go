@@ -204,7 +204,7 @@ func (s *Server) liquidationHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"data": page, "sources": s.svc.Health()})
 }
 func (s *Server) hedgeWall(w http.ResponseWriter, r *http.Request) {
-	sym, e := symbol(r)
+	sym, e := s.symbol(r)
 	if e != nil {
 		problem(w, 400, e)
 		return
@@ -233,7 +233,7 @@ func (s *Server) hedgeWall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, v)
 }
 func (s *Server) hedgeHistory(w http.ResponseWriter, r *http.Request) {
-	sym, e := symbol(r)
+	sym, e := s.symbol(r)
 	if e != nil {
 		problem(w, 400, e)
 		return
@@ -266,7 +266,7 @@ func (s *Server) hedgeHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, v)
 }
 func (s *Server) marketInfo(w http.ResponseWriter, r *http.Request) {
-	sym, e := symbol(r)
+	sym, e := s.symbol(r)
 	if e != nil {
 		problem(w, 400, e)
 		return

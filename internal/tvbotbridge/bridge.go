@@ -35,6 +35,16 @@ type Bridge struct {
 	upgradeStatus string
 }
 
+// TradeTargetForUser exposes the tenant-scoped API-key selection to the
+// liquidation alert service without coupling the application package to the
+// TVBot tenant manager.
+func (b *Bridge) TradeTargetForUser(username string) (string, string, string, bool) {
+	if b == nil || b.Tenants == nil {
+		return "", "", "", false
+	}
+	return b.Tenants.TradeTargetForUser(username)
+}
+
 func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*Bridge, error) {
 	tvCfg, err := loadConfig(cfg.TVBotConfigPath)
 	if err != nil {

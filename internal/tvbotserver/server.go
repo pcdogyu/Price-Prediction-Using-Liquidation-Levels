@@ -819,6 +819,11 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
 			}
+			if err := s.syncAPIKeyTradeTarget(exchange, env, status.ActiveID, active); err != nil {
+				writeError(w, http.StatusInternalServerError, "save_trading_target", err.Error())
+				return
+			}
+			status = store.Status()
 			writeJSON(w, http.StatusOK, status)
 			return
 		case trading.ExchangeGate:
@@ -832,6 +837,11 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
 			}
+			if err := s.syncAPIKeyTradeTarget(exchange, env, status.ActiveID, active); err != nil {
+				writeError(w, http.StatusInternalServerError, "save_trading_target", err.Error())
+				return
+			}
+			status = store.Status()
 			writeJSON(w, http.StatusOK, status)
 			return
 		default:
@@ -855,6 +865,11 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
 			}
+			if err := s.syncAPIKeyTradeTarget(exchange, env, status.ActiveID, active); err != nil {
+				writeError(w, http.StatusInternalServerError, "save_trading_target", err.Error())
+				return
+			}
+			status = store.Status()
 			writeJSON(w, http.StatusOK, status)
 		}
 	case http.MethodPatch:

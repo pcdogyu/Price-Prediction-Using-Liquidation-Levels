@@ -830,6 +830,10 @@ const tvbotHTML = `<!doctype html>
       border-color: var(--blue);
       color: var(--bg);
     }
+    .exchange-tabs button.trade-target {
+      box-shadow: 0 0 0 2px var(--green);
+      font-weight: 750;
+    }
     .table-actions {
       display: flex;
       gap: 6px;
@@ -4581,6 +4585,10 @@ const tvbotHTML = `<!doctype html>
       const previous = state.selectedAPIIDs[exchange] || select.value || status.active_id || "";
       document.querySelectorAll("[data-api-key-exchange]").forEach((button) => {
         button.setAttribute("aria-selected", normalizeExchange(button.dataset.apiKeyExchange) === exchange ? "true" : "false");
+        const target = configuredTradeTarget();
+        const isTarget = target.exchange === normalizeExchange(button.dataset.apiKeyExchange) && target.env === env;
+        button.classList.toggle("trade-target", isTarget);
+        button.title = isTarget ? "当前报警交易目标" : "";
       });
       document.querySelectorAll("[data-api-key-env]").forEach((button) => {
         button.setAttribute("aria-selected", button.dataset.apiKeyEnv === env ? "true" : "false");
@@ -4624,6 +4632,7 @@ const tvbotHTML = `<!doctype html>
       const rows = [
         ["交易所", exchangeLabel(exchange)],
         ["交易环境", state.apiKeyEnv === "live" ? "实盘" : "模拟盘"],
+        ["报警交易目标", configuredTradeTarget().exchange === exchange && configuredTradeTarget().env === env ? "是" : "否"],
         ["配置状态", status.configured ? "已配置" : "未配置"],
         ["交易 API", activeAPIIDStatusHTML(status.active_id), true],
         ["API Key", status.api_key_masked || "-"],
@@ -4658,6 +4667,13 @@ const tvbotHTML = `<!doctype html>
 
     function apiKeyStatus(exchange) {
       return apiKeyStatusForEnv(exchange, state.apiKeyEnv);
+    }
+
+    function configuredTradeTarget() {
+      const trading = state.config && state.config.trading ? state.config.trading : {};
+      const exchange = normalizeExchange(trading.target_exchange || "");
+      const env = trading.target_trade_env === "live" ? "live" : (trading.target_trade_env === "demo" ? "demo" : "");
+      return { exchange: exchange, apiID: String(trading.target_api_id || "").trim(), env: env };
     }
 
     function apiKeyStatusForEnv(exchange, env) {
@@ -6660,6 +6676,17 @@ const tvbotHTML = `<!doctype html>
       state.apiKeysByEnvironment[env][exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange) + "&env=" + env, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       state.apiKeysByExchange = state.apiKeysByEnvironment[env];
       state.apiKeys = apiKeyStatus(exchange);
+      if (!state.config) state.config = {};
+      if (!state.config.trading) state.config.trading = {};
+      if (body.active) {
+        state.config.trading.target_exchange = exchange;
+        state.config.trading.target_api_id = state.apiKeys.active_id || body.id || "";
+        state.config.trading.target_trade_env = env;
+      } else if (configuredTradeTarget().exchange === exchange && configuredTradeTarget().env === env) {
+        state.config.trading.target_exchange = "";
+        state.config.trading.target_api_id = "";
+        state.config.trading.target_trade_env = "";
+      }
       state.selectedAPIID = body.id || state.apiKeys.active_id || "default";
       state.selectedAPIIDs[exchange] = state.selectedAPIID;
       state.apiKeyTestStale = !!state.apiKeyTest;

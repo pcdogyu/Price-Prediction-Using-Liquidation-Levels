@@ -62,6 +62,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer bridge.Close()
+	svc.SetWebhookTargetResolver(func(username string) (app.WebhookTarget, bool) {
+		exchange, apiID, tradeEnv, ok := bridge.TradeTargetForUser(username)
+		if !ok {
+			return app.WebhookTarget{}, false
+		}
+		return app.WebhookTarget{Exchange: exchange, APIID: apiID, TradeEnv: tradeEnv}, true
+	})
 	bridge.Start(ctx)
 	srv, err := httpapi.New(cfg, svc, log, logStore, st)
 	if err != nil {

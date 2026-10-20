@@ -63,7 +63,7 @@ type credentialAccount struct {
 }
 
 type credentialFile struct {
-	ActiveID    string                `json:"active_id"`
+	ActiveID    *string               `json:"active_id"`
 	Credentials []credentialFileEntry `json:"credentials"`
 
 	APIKey    string    `json:"api_key"`
@@ -120,6 +120,19 @@ func (s *CredentialStore) Status() CredentialStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.statusLocked()
+}
+
+// ClearActive keeps the account credentials but disables this exchange as an
+// active trading source. The explicit empty active_id is persisted so a
+// restart does not silently reactivate the first configured account.
+func (s *CredentialStore) ClearActive() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeID = ""
+	if s.path == "" {
+		return nil
+	}
+	return s.saveLocked()
 }
 
 func (s *CredentialStore) UpdateAccount(update CredentialAccountUpdate) (CredentialStatus, error) {
@@ -260,9 +273,15 @@ func (s *CredentialStore) load() error {
 	for id, account := range loaded {
 		s.accounts[id] = account
 	}
-	activeID := normalizeCredentialID(file.ActiveID)
-	if activeID != "" && s.hasConfiguredLocked(activeID) {
-		s.activeID = activeID
+	if file.ActiveID != nil {
+		activeID := normalizeCredentialID(*file.ActiveID)
+		if activeID != "" && s.hasConfiguredLocked(activeID) {
+			s.activeID = activeID
+		} else if strings.TrimSpace(*file.ActiveID) == "" {
+			s.activeID = ""
+		} else if s.activeID == "" {
+			s.activeID = s.firstConfiguredIDLocked()
+		}
 	} else if s.activeID == "" {
 		s.activeID = s.firstConfiguredIDLocked()
 	}
@@ -270,7 +289,8 @@ func (s *CredentialStore) load() error {
 }
 
 func (s *CredentialStore) saveLocked() error {
-	file := credentialFile{ActiveID: s.activeID}
+	activeID := s.activeID
+	file := credentialFile{ActiveID: &activeID}
 	ids := make([]string, 0, len(s.accounts))
 	for id := range s.accounts {
 		ids = append(ids, id)

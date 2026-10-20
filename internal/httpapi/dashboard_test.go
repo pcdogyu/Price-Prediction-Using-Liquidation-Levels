@@ -52,6 +52,22 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 	}
 }
 
+func TestBubbleChartUsesConfiguredMultipleSymbols(t *testing.T) {
+	cfg := config.Config{BasePath: "/liquidation/", Symbols: []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "ETHUSDT"}}
+	srv, st := testService(t, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	defer st.Close()
+	w := httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/bubbles", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `data-symbol="SOLUSDT"`) {
+		t.Fatalf("configured SOL symbol was not rendered: status=%d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/market?symbol=SOLUSDT&interval=15m", nil))
+	if w.Code == 400 || strings.Contains(w.Body.String(), "symbol must be one of") {
+		t.Fatalf("configured SOL symbol was rejected: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 	srv, st := testService(t, config.Config{BasePath: "/liquidation/"}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	defer st.Close()

@@ -21,6 +21,17 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 )
 
+// WebhookTarget is the per-user destination selected in the TVBot API-key
+// settings. The resolver is kept in the application layer so alert generation
+// can remain independent from the TVBot tenant implementation.
+type WebhookTarget struct {
+	Exchange string
+	APIID    string
+	TradeEnv string
+}
+
+type WebhookTargetResolver func(tenantID string) (WebhookTarget, bool)
+
 type Service struct {
 	dashboard          *dashboardState
 	alerts             *alertRuntime
@@ -49,6 +60,40 @@ type Service struct {
 	backfillDone       bool
 	volumeHistoryReady bool
 	volumeLiveReady    chan struct{}
+	webhookTargetMu    sync.RWMutex
+	webhookTarget      WebhookTargetResolver
+}
+
+func (s *Service) SetWebhookTargetResolver(resolver WebhookTargetResolver) {
+	if s == nil {
+		return
+	}
+	s.webhookTargetMu.Lock()
+	s.webhookTarget = resolver
+	s.webhookTargetMu.Unlock()
+}
+
+func (s *Service) webhookTargetForTenant(tenantID string) (WebhookTarget, bool) {
+	if s == nil || strings.TrimSpace(tenantID) == "" {
+		return WebhookTarget{}, false
+	}
+	s.webhookTargetMu.RLock()
+	resolver := s.webhookTarget
+	s.webhookTargetMu.RUnlock()
+	if resolver == nil {
+		return WebhookTarget{}, false
+	}
+	target, ok := resolver(strings.TrimSpace(tenantID))
+	if !ok {
+		return WebhookTarget{}, false
+	}
+	target.Exchange = strings.TrimSpace(target.Exchange)
+	target.APIID = strings.TrimSpace(target.APIID)
+	target.TradeEnv = strings.TrimSpace(target.TradeEnv)
+	if target.Exchange == "" || target.TradeEnv == "" {
+		return WebhookTarget{}, false
+	}
+	return target, true
 }
 
 func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {

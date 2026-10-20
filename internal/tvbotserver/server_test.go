@@ -2870,6 +2870,38 @@ func TestTVBotAPIKeysRenameActiveID(t *testing.T) {
 	}
 }
 
+func TestTVBotAPIKeySelectionSetsSingleAlertTradeTarget(t *testing.T) {
+	srv := newTestServer(t)
+	gateStore, err := gate.NewCredentialStore(filepath.Join(t.TempDir(), "gate-credentials.json"), gate.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.GateCredentials = gateStore
+	put := func(exchange, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/tvbot/api-keys?exchange="+exchange+"&env=demo", strings.NewReader(body))
+		req.SetBasicAuth("admin", "Admin123")
+		response := httptest.NewRecorder()
+		srv.ServeHTTP(response, req)
+		return response
+	}
+	if response := put("binance", `{"exchange":"binance","id":"binance-main","api_key":"bnabcd12345678wxyz","secret_key":"binance-secret","active":true}`); response.Code != http.StatusOK {
+		t.Fatalf("save Binance status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := put("gate", `{"exchange":"gate","id":"gate-main","api_key":"gtabcd12345678wxyz","secret_key":"gate-secret","active":true}`); response.Code != http.StatusOK {
+		t.Fatalf("save Gate status=%d body=%s", response.Code, response.Body.String())
+	}
+	cfg := srv.ConfigStore.Get()
+	if cfg.Trading.TargetExchange != trading.ExchangeGate || cfg.Trading.TargetAPIID != "gate-main" || cfg.Trading.TargetTradeEnv != config.EnvDemo {
+		t.Fatalf("unexpected alert target: %#v", cfg.Trading)
+	}
+	if _, _, err := srv.BinanceCredentials.BinanceCredentials(""); err == nil {
+		t.Fatal("Binance should no longer have an active API after Gate selection")
+	}
+	if _, _, err := srv.GateCredentials.GateCredentials(""); err != nil {
+		t.Fatalf("Gate active API should remain usable: %v", err)
+	}
+}
+
 func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T) {
 	srv := newTestServer(t)
 	oldTradeTime := srv.now().Add(-25 * time.Hour).UnixMilli()

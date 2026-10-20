@@ -45,7 +45,14 @@ type ServerConfig struct {
 }
 
 type TradingConfig struct {
-	Env                       string                       `json:"env"`
+	Env string `json:"env"`
+	// Target* is the per-tenant destination used by liquidation alert
+	// webhooks. It is intentionally independent from the process-wide default
+	// webhook environment so one user's API-key selection cannot route another
+	// user's orders.
+	TargetExchange            string                       `json:"target_exchange,omitempty"`
+	TargetAPIID               string                       `json:"target_api_id,omitempty"`
+	TargetTradeEnv            string                       `json:"target_trade_env,omitempty"`
 	AllowLiveTrading          bool                         `json:"allow_live_trading"`
 	BaseURL                   string                       `json:"base_url"`
 	BinanceBaseURL            string                       `json:"binance_base_url"`
@@ -344,6 +351,12 @@ func (c *Config) Normalize() {
 	if c.Trading.Env == "" {
 		c.Trading.Env = EnvDemo
 	}
+	c.Trading.TargetExchange = trading.NormalizeExchange(c.Trading.TargetExchange)
+	c.Trading.TargetAPIID = strings.TrimSpace(c.Trading.TargetAPIID)
+	c.Trading.TargetTradeEnv = strings.ToLower(strings.TrimSpace(c.Trading.TargetTradeEnv))
+	if c.Trading.TargetTradeEnv != EnvDemo && c.Trading.TargetTradeEnv != EnvLive {
+		c.Trading.TargetTradeEnv = ""
+	}
 	c.Trading.BaseURL = strings.TrimRight(strings.TrimSpace(c.Trading.BaseURL), "/")
 	if c.Trading.BaseURL == "" {
 		c.Trading.BaseURL = "https://www.okx.com"
@@ -471,6 +484,12 @@ func (c Config) Validate() error {
 	case EnvDemo, EnvLive:
 	default:
 		return fmt.Errorf("unsupported trading env %q", c.Trading.Env)
+	}
+	if c.Trading.TargetExchange != "" && !trading.ValidTargetExchange(c.Trading.TargetExchange) {
+		return fmt.Errorf("unsupported target exchange %q", c.Trading.TargetExchange)
+	}
+	if c.Trading.TargetTradeEnv != "" && c.Trading.TargetTradeEnv != EnvDemo && c.Trading.TargetTradeEnv != EnvLive {
+		return fmt.Errorf("unsupported target trade env %q", c.Trading.TargetTradeEnv)
 	}
 	switch c.Trading.DefaultMarginMode {
 	case MarginIsolated, MarginCross:

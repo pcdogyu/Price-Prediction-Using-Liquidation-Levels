@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net"
 	"net/http"
@@ -43,6 +44,8 @@ type Server struct {
 	cg        *coinglass.Capturer
 	tvbot     http.Handler
 	userStore adminUserStore
+	symbols   []string
+	symbolSet map[string]struct{}
 	menuMu    sync.RWMutex
 	menu      []adminMenuItem
 
@@ -56,7 +59,12 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{svc: svc, log: log, auth: auth, logs: logs, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), menu: defaultAdminMenu()}
+	symbols := normalizeDashboardSymbols(cfg.Symbols)
+	symbolSet := make(map[string]struct{}, len(symbols))
+	for _, symbol := range symbols {
+		symbolSet[symbol] = struct{}{}
+	}
+	s := &Server{svc: svc, log: log, auth: auth, logs: logs, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), menu: defaultAdminMenu(), symbols: symbols, symbolSet: symbolSet}
 	for _, candidate := range sessionStores {
 		if users, ok := candidate.(adminUserStore); ok {
 			s.userStore = users
@@ -273,7 +281,9 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(s.renderPage(indexHTML, "bubbles", "气泡图", r))
+	page := s.renderPage(indexHTML, "bubbles", "气泡图", r)
+	page = []byte(strings.Replace(string(page), `<div class="controls"><button type="button" data-symbol="BTCUSDT">BTC</button><button type="button" data-symbol="ETHUSDT" class="active">ETH</button>`, `<div class="controls">`+s.dashboardSymbolButtons(), 1))
+	_, _ = w.Write(page)
 }
 func (s *Server) dashboardScript(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
@@ -410,15 +420,63 @@ func (s *Server) clearSessionCookies(w http.ResponseWriter) {
 		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: path, MaxAge: -1, Expires: time.Unix(1, 0), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
 	}
 }
-func symbol(r *http.Request) (string, error) {
+func normalizeDashboardSymbols(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, raw := range values {
+		value := strings.ToUpper(strings.TrimSpace(raw))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	if len(result) == 0 {
+		return []string{"BTCUSDT", "ETHUSDT"}
+	}
+	return result
+}
+
+func (s *Server) dashboardSymbolButtons() string {
+	if len(s.symbols) == 0 {
+		s.symbols = normalizeDashboardSymbols(nil)
+	}
+	buttons := make([]string, 0, len(s.symbols))
+	for _, value := range s.symbols {
+		label := strings.TrimSuffix(value, "USDT")
+		if label == "" {
+			label = value
+		}
+		class := ""
+		if value == "ETHUSDT" || (value != "BTCUSDT" && !containsString(s.symbols, "ETHUSDT")) {
+			class = ` class="active"`
+		}
+		buttons = append(buttons, `<button type="button" data-symbol="`+htmlEscapeAttribute(value)+`"`+class+`>`+html.EscapeString(label)+`</button>`)
+	}
+	return strings.Join(buttons, "")
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) symbol(r *http.Request) (string, error) {
 	v := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("symbol")))
-	if v != "BTCUSDT" && v != "ETHUSDT" {
-		return "", fmt.Errorf("symbol must be BTCUSDT or ETHUSDT")
+	if _, ok := s.symbolSet[v]; !ok {
+		return "", fmt.Errorf("symbol must be one of %s", strings.Join(s.symbols, ", "))
 	}
 	return v, nil
 }
 func (s *Server) signal(w http.ResponseWriter, r *http.Request) {
-	sym, e := symbol(r)
+	sym, e := s.symbol(r)
 	if e != nil {
 		problem(w, http.StatusBadRequest, e)
 		return
@@ -431,7 +489,7 @@ func (s *Server) signal(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 func (s *Server) liquidationMap(w http.ResponseWriter, r *http.Request) {
-	sym, e := symbol(r)
+	sym, e := s.symbol(r)
 	if e != nil {
 		problem(w, http.StatusBadRequest, e)
 		return
@@ -445,7 +503,7 @@ func (s *Server) liquidationMap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m)
 }
 func (s *Server) market(w http.ResponseWriter, r *http.Request) {
-	sym, e := symbol(r)
+	sym, e := s.symbol(r)
 	if e != nil {
 		problem(w, http.StatusBadRequest, e)
 		return
@@ -484,7 +542,7 @@ func (s *Server) market(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) volumeProfile(w http.ResponseWriter, r *http.Request) {
-	sym, err := symbol(r)
+	sym, err := s.symbol(r)
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return
@@ -497,7 +555,7 @@ func (s *Server) volumeProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, profile)
 }
 func (s *Server) backtest(w http.ResponseWriter, r *http.Request) {
-	sym, e := symbol(r)
+	sym, e := s.symbol(r)
 	if e != nil {
 		problem(w, http.StatusBadRequest, e)
 		return

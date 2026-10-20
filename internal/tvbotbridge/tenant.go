@@ -12,6 +12,7 @@ import (
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	tvbotserver "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotserver"
 	tvbotstorage "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotstorage"
+	tvbottrading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
 // tenantManager keeps the user-owned TVBot configuration and order database
@@ -82,6 +83,29 @@ func (m *tenantManager) ForUserScope(username string) (tvbotserver.UserScope, er
 	scope := tvbotserver.UserScope{TenantID: resource.tenantID, ConfigStore: resource.config, Orders: resource.orders, Credentials: credentials}
 	m.startScope(username, scope)
 	return scope, nil
+}
+
+// TradeTargetForUser returns the destination selected by the user in API-key
+// settings. An empty result deliberately means “use the legacy process-wide
+// webhook target”, preserving old installations until a user selects an API.
+func (m *tenantManager) TradeTargetForUser(username string) (string, string, string, bool) {
+	scope, err := m.ForUserScope(username)
+	if err != nil || scope.ConfigStore == nil {
+		return "", "", "", false
+	}
+	cfg := scope.ConfigStore.Get()
+	exchange := tvbottrading.NormalizeExchange(cfg.Trading.TargetExchange)
+	if !tvbottrading.ValidTargetExchange(exchange) {
+		return "", "", "", false
+	}
+	env := strings.ToLower(strings.TrimSpace(cfg.Trading.TargetTradeEnv))
+	if env != tvbottrading.TradeEnvDemo && env != tvbottrading.TradeEnvLive {
+		env = strings.ToLower(strings.TrimSpace(cfg.Trading.Env))
+	}
+	if env != tvbottrading.TradeEnvDemo && env != tvbottrading.TradeEnvLive {
+		return "", "", "", false
+	}
+	return exchange, strings.TrimSpace(cfg.Trading.TargetAPIID), env, true
 }
 
 func (m *tenantManager) SetStart(fn func(tvbotserver.UserScope)) {

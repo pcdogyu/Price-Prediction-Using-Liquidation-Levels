@@ -29,6 +29,8 @@ const chart = {
   atLatest: true, newData: false, drag: null
 };
 let symbol = 'ETHUSDT';
+const initialSymbolButton = document.querySelector('button[data-symbol].active');
+if (initialSymbolButton) symbol = initialSymbolButton.dataset.symbol;
 let refreshing = false;
 let refreshSequence = 0;
 let refreshController;

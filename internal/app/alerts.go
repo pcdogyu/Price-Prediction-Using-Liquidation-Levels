@@ -486,7 +486,15 @@ func (rtm *alertRuntime) submitPrecloseWebhook(signal domain.TradeSignal) bool {
 }
 
 func (rtm *alertRuntime) serviceConfig() config.Config {
-	return rtm.webhookConfig
+	cfg := rtm.webhookConfig
+	if rtm.service != nil {
+		if target, ok := rtm.service.webhookTargetForTenant(rtm.tenantID); ok {
+			cfg.SteadyWebhookTargetExchange = target.Exchange
+			cfg.SteadyWebhookAPIID = target.APIID
+			cfg.SteadyWebhookTradeEnv = target.TradeEnv
+		}
+	}
+	return cfg
 }
 
 type manualTriggerResult struct {

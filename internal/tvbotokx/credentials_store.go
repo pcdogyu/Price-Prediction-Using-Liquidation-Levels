@@ -65,7 +65,7 @@ type credentialAccount struct {
 }
 
 type credentialFile struct {
-	ActiveID    string                `json:"active_id"`
+	ActiveID    *string               `json:"active_id"`
 	Credentials []credentialFileEntry `json:"credentials"`
 
 	// Legacy single-account format.
@@ -128,6 +128,18 @@ func (s *CredentialStore) Status() CredentialStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.statusLocked()
+}
+
+// ClearActive keeps the account credentials but disables this exchange as an
+// active trading source and persists that choice across restarts.
+func (s *CredentialStore) ClearActive() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeID = ""
+	if s.path == "" {
+		return nil
+	}
+	return s.saveLocked()
 }
 
 func (s *CredentialStore) Update(creds Credentials) (CredentialStatus, error) {
@@ -306,8 +318,16 @@ func (s *CredentialStore) load() error {
 		return nil
 	}
 	s.accounts = loaded
-	s.activeID = normalizeCredentialID(file.ActiveID)
-	if !s.hasConfiguredLocked(s.activeID) {
+	if file.ActiveID != nil {
+		activeID := normalizeCredentialID(*file.ActiveID)
+		if activeID != "" && s.hasConfiguredLocked(activeID) {
+			s.activeID = activeID
+		} else if strings.TrimSpace(*file.ActiveID) == "" {
+			s.activeID = ""
+		} else if s.activeID == "" {
+			s.activeID = s.firstConfiguredIDLocked()
+		}
+	} else if s.activeID == "" {
 		s.activeID = s.firstConfiguredIDLocked()
 	}
 	return nil
@@ -317,8 +337,9 @@ func (s *CredentialStore) saveLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil && filepath.Dir(s.path) != "." {
 		return err
 	}
+	activeID := s.activeID
 	file := credentialFile{
-		ActiveID:    s.activeID,
+		ActiveID:    &activeID,
 		Credentials: []credentialFileEntry{},
 	}
 	for _, account := range s.sortedAccountsLocked() {
