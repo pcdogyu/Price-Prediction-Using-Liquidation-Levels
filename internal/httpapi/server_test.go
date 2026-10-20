@@ -421,3 +421,98 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 		t.Fatalf("logged-out session status=%d", w.Code)
 	}
 }
+
+func TestUserThemeAPIIsUserScoped(t *testing.T) {
+	const adminPassword = "admin-theme-password"
+	adminHash, err := authn.HashPassword(adminPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := config.Config{BasePath: "/liquidation/", AuthUsername: "pcdog", AuthPasswordHash: adminHash}
+	srv, st := testService(t, cfg, logger, nil)
+	defer st.Close()
+
+	login := func(username, password string) *http.Cookie {
+		t.Helper()
+		form := url.Values{"username": {username}, "password": {password}}
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(w, r)
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("login status=%d body=%s", w.Code, w.Body.String())
+		}
+		for _, cookie := range w.Result().Cookies() {
+			if cookie.Name == sessionCookie {
+				return cookie
+			}
+		}
+		t.Fatal("theme test login did not return a session cookie")
+		return nil
+	}
+
+	adminSession := login("pcdog", adminPassword)
+	request := func(method, body string, session *http.Cookie) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, "/api/v1/user/theme", strings.NewReader(body))
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		if session != nil {
+			r.AddCookie(session)
+		}
+		w := httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(w, r)
+		return w
+	}
+
+	if w := request(http.MethodGet, "", adminSession); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"theme":"dark"`) {
+		t.Fatalf("default theme status=%d body=%s", w.Code, w.Body.String())
+	}
+	if w := request(http.MethodPut, `{"theme":"light"}`, adminSession); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"theme":"light"`) {
+		t.Fatalf("save theme status=%d body=%s", w.Code, w.Body.String())
+	}
+	if theme, found, loadErr := st.LoadUserTheme(context.Background(), "pcdog"); loadErr != nil || !found || theme != "light" {
+		t.Fatalf("stored theme=%q found=%v err=%v", theme, found, loadErr)
+	}
+	if w := request(http.MethodGet, "", nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated theme status=%d body=%s", w.Code, w.Body.String())
+	}
+	if w := request(http.MethodPut, `{"theme":"blue"}`, adminSession); w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid theme status=%d body=%s", w.Code, w.Body.String())
+	}
+	if w := request(http.MethodPut, `{"theme":"dark","username":"other"}`, adminSession); w.Code != http.StatusBadRequest {
+		t.Fatalf("client user field status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	const otherPassword = "other-theme-password"
+	otherHash, err := authn.HashPassword(otherPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.CreateAuthUser(context.Background(), "other", otherHash, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if err = srv.auth.ReloadUsers(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	otherSession := login("other", otherPassword)
+	if w := request(http.MethodGet, "", otherSession); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"theme":"dark"`) {
+		t.Fatalf("other user theme status=%d body=%s", w.Code, w.Body.String())
+	}
+	if w := request(http.MethodGet, "", adminSession); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"theme":"light"`) {
+		t.Fatalf("admin theme after other login status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestUserThemeRequiresAuthentication(t *testing.T) {
+	srv, st := testService(t, config.Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	defer st.Close()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/user/theme", nil)
+	response := httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated/no-auth theme status=%d body=%s", response.Code, response.Body.String())
+	}
+}

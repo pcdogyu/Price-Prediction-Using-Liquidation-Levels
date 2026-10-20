@@ -28,6 +28,8 @@ type adminUserStore interface {
 	SaveAdminMenu(context.Context, []byte) error
 	LoadUserMenu(context.Context, string) ([]byte, bool, error)
 	SaveUserMenu(context.Context, string, []byte) error
+	LoadUserTheme(context.Context, string) (string, bool, error)
+	SaveUserTheme(context.Context, string, string) error
 }
 
 type adminMenuItem struct {

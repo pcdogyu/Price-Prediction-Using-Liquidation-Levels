@@ -163,6 +163,34 @@ func TestStoreRoundTripAndDedup(t *testing.T) {
 	}
 }
 
+func TestUserThemeRoundTripAndIsolation(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "theme.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	if theme, found, err := s.LoadUserTheme(ctx, "alice"); err != nil || found || theme != "" {
+		t.Fatalf("missing theme = %q found=%v err=%v", theme, found, err)
+	}
+	if err := s.SaveUserTheme(ctx, " alice ", "LIGHT"); err != nil {
+		t.Fatal(err)
+	}
+	if theme, found, err := s.LoadUserTheme(ctx, "alice"); err != nil || !found || theme != "light" {
+		t.Fatalf("saved theme = %q found=%v err=%v", theme, found, err)
+	}
+	if theme, found, err := s.LoadUserTheme(ctx, "bob"); err != nil || found || theme != "" {
+		t.Fatalf("isolated theme = %q found=%v err=%v", theme, found, err)
+	}
+	if err := s.SaveUserTheme(ctx, "alice", "blue"); err == nil {
+		t.Fatal("invalid theme was accepted")
+	}
+	if err := s.SaveUserTheme(ctx, "", "dark"); err == nil {
+		t.Fatal("empty username was accepted")
+	}
+}
+
 func TestArchiveCompletionIsVersionedByProfileRows(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

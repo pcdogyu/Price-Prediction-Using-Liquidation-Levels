@@ -92,6 +92,7 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.Handle("/tvorder", http.HandlerFunc(s.tvbotRoute))
 	mux.Handle("/upgrade", http.HandlerFunc(s.tvbotRoute))
 	mux.HandleFunc("/api/v1/auth/check", getOnly(s.authCheck))
+	mux.HandleFunc("/api/v1/user/theme", s.userTheme)
 	mux.HandleFunc("/admin", getOnly(s.adminPage))
 	mux.Handle("/system", http.HandlerFunc(s.systemPage))
 	mux.HandleFunc("/api/v1/admin/users", s.adminUsers)

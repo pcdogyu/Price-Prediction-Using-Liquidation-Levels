@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS auth_users(username TEXT PRIMARY KEY,password_hash TE
 CREATE TABLE IF NOT EXISTS auth_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL,created_ts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS auth_audit_created ON auth_audit(created_ts DESC);
 CREATE TABLE IF NOT EXISTS admin_menu(id INTEGER PRIMARY KEY CHECK(id=1),payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS user_menu(username TEXT PRIMARY KEY,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);`
+CREATE TABLE IF NOT EXISTS user_menu(username TEXT PRIMARY KEY,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS user_theme(username TEXT PRIMARY KEY,theme TEXT NOT NULL,updated_ts INTEGER NOT NULL);`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
@@ -251,8 +252,22 @@ func (s *Store) SetAuthUserState(ctx context.Context, username, role string, dis
 }
 
 func (s *Store) DeleteAuthUser(ctx context.Context, username string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM auth_users WHERE username=?`, strings.TrimSpace(username))
-	return err
+	username = strings.TrimSpace(username)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM auth_users WHERE username=?`, username); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM user_theme WHERE username=?`, username); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) RecordAuthAudit(ctx context.Context, actor, action, target string) error {
@@ -305,6 +320,35 @@ func (s *Store) SaveUserMenu(ctx context.Context, username string, payload []byt
 		return errors.New("menu payload is empty")
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO user_menu(username,payload,updated_ts) VALUES(?,?,?) ON CONFLICT(username) DO UPDATE SET payload=excluded.payload,updated_ts=excluded.updated_ts`, username, payload, time.Now().UTC().UnixMilli())
+	return err
+}
+
+func (s *Store) LoadUserTheme(ctx context.Context, username string) (string, bool, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return "", false, errors.New("theme username is empty")
+	}
+	var theme string
+	err := s.db.QueryRowContext(ctx, `SELECT theme FROM user_theme WHERE username=?`, username).Scan(&theme)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return theme, true, nil
+}
+
+func (s *Store) SaveUserTheme(ctx context.Context, username, theme string) error {
+	username = strings.TrimSpace(username)
+	theme = strings.ToLower(strings.TrimSpace(theme))
+	if username == "" {
+		return errors.New("theme username is empty")
+	}
+	if theme != "dark" && theme != "light" {
+		return errors.New("theme must be dark or light")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO user_theme(username,theme,updated_ts) VALUES(?,?,?) ON CONFLICT(username) DO UPDATE SET theme=excluded.theme,updated_ts=excluded.updated_ts`, username, theme, time.Now().UTC().UnixMilli())
 	return err
 }
 
