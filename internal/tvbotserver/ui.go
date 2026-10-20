@@ -140,18 +140,18 @@ func defaultTopMenu() []TopMenuItem {
 		{Key: "options", Title: "期权", Href: "/options"},
 		{Key: "overview", Title: "资金", Href: "/tvbot/view/dashboard"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions"},
-		{Key: "orders", Title: "订单", Href: "/tvbot/view/orders"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis"},
-		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot/view/trade-monitor"},
 		{Key: "symbols", Title: "币对配置", Href: "/tvbot/view/symbols"},
+		{Key: "config", Title: "订单配置", Href: "/tvbot/view/config"},
 		{Key: "api-keys", Title: "API Key", Href: "/tvbot/view/api-keys"},
 		{Key: "order-settings", Title: "下单设置", Href: "/tvbot/view/order-settings"},
 		{Key: "template", Title: "告警模板", Href: "/tvbot/view/template"},
-		{Key: "config", Title: "订单配置", Href: "/tvbot/view/config"},
+		{Key: "orders", Title: "订单", Href: "/tvbot/view/orders"},
+		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot/view/trade-monitor"},
+		{Key: "upgrade", Title: "升级", Href: "/tvbot/view/upgrade"},
 		{Key: "system-info", Title: "系统信息", Href: "/system"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu"},
 		{Key: "system", Title: "用户管理", Href: "/admin"},
-		{Key: "upgrade", Title: "升级", Href: "/tvbot/view/upgrade"},
 	}
 }
 

@@ -32,11 +32,56 @@ func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
 	if migrated[0].Key != "menu" || migrated[0].Title != "菜单管理" || migrated[0].Href != "/menu" || migrated[0].Group != "admin" {
 		t.Fatalf("migrated menu item=%#v", migrated[0])
 	}
-	if migrated[1].Href != "/tvbot/view/positions" || migrated[2].Title != "下单信号" || migrated[2].Href != "/tvbot/view/orders" || migrated[3].Href != "/tvbot/view/analysis" || migrated[4].Title != "资金" {
+	if migrated[1].Href != "/tvbot/view/positions" || migrated[2].Title != "订单" || migrated[2].Href != "/tvbot/view/orders" || migrated[3].Href != "/tvbot/view/analysis" || migrated[4].Title != "资金" {
 		t.Fatalf("migrated trading menu=%#v", migrated[1:4])
 	}
 	if migrated[5] != legacy[5] {
 		t.Fatalf("custom menu item should remain unchanged: %#v", migrated[5])
+	}
+}
+
+func TestDefaultAdminMenuUsesRequestedTopOrder(t *testing.T) {
+	menu := defaultAdminMenu()
+	want := []string{
+		"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+		"overview", "positions", "analysis", "symbols", "config", "api-keys",
+		"order-settings", "template", "orders", "trade-monitor", "upgrade", "system-info",
+		"menu", "system",
+	}
+	if len(menu) != len(want) {
+		t.Fatalf("default menu length=%d, want=%d", len(menu), len(want))
+	}
+	for i, key := range want {
+		if menu[i].Key != key {
+			t.Fatalf("default menu[%d]=%q, want=%q", i, menu[i].Key, key)
+		}
+	}
+	if menu[14].Title != "订单" {
+		t.Fatalf("orders menu title=%q, want=订单", menu[14].Title)
+	}
+}
+
+func TestMigrateAdminMenuReordersLegacyDefaultOnly(t *testing.T) {
+	legacy := defaultAdminMenu()
+	legacy = append([]adminMenuItem(nil), legacy...)
+	for i, key := range legacyDefaultAdminMenuKeys {
+		legacy[i] = adminMenuItem{Key: key, Title: key, Href: "/" + key, Group: "trading"}
+	}
+	migrated, changed := migrateAdminMenu(legacy)
+	if !changed {
+		t.Fatal("legacy default menu should be migrated")
+	}
+	for i, key := range canonicalDefaultAdminMenuKeys {
+		if migrated[i].Key != key {
+			t.Fatalf("migrated menu[%d]=%q, want=%q", i, migrated[i].Key, key)
+		}
+	}
+
+	custom := append([]adminMenuItem(nil), legacy...)
+	custom[0], custom[1] = custom[1], custom[0]
+	kept, changedCustom := migrateAdminMenu(custom)
+	if kept[0].Key != custom[0].Key || kept[1].Key != custom[1].Key {
+		t.Fatalf("custom menu order should remain unchanged: changed=%v menu=%#v", changedCustom, kept[:2])
 	}
 }
 
@@ -205,7 +250,7 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 	menuChecks := map[string]bool{
 		"main-menu":       strings.Count(tvbotPage, `aria-label="主菜单"`) == 1,
 		"menu-link":       strings.Contains(tvbotPage, `href="/menu">菜单管理`),
-		"orders-link":     strings.Contains(tvbotPage, `href="/tvbot/view/orders">下单信号`),
+		"orders-link":     strings.Contains(tvbotPage, `href="/tvbot/view/orders">订单`),
 		"exchange-link":   strings.Contains(tvbotPage, `data-tab="system" href="/system">交易所信息`),
 		"system-dropdown": strings.Contains(tvbotPage, `data-system-menu="true"`),
 	}

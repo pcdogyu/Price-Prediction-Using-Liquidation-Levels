@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// RenderTopMenuLinks renders the non-administrative links for the shared top
-// navigation. The administrative links are intentionally rendered by
-// RenderSystemMenu as one compact dropdown.
+// RenderTopMenuLinks renders the main links for the shared top navigation.
+// Account-management links are intentionally rendered by RenderSystemMenu as
+// one compact dropdown; the upgrade page remains directly accessible.
 func RenderTopMenuLinks(items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool) string {
 	var out strings.Builder
 	for _, item := range items {
@@ -90,11 +90,11 @@ func RenderSharedLogsDialog() string {
 
 func isSystemMenuItem(item TopMenuItem) bool {
 	switch item.Key {
-	case "system-info", "menu", "system", "upgrade":
+	case "system-info", "menu", "system":
 		return true
 	}
 	switch item.Href {
-	case "/system", "/menu", "/admin", "/upgrade", "/tvbot/view/upgrade":
+	case "/system", "/menu", "/admin":
 		return true
 	default:
 		return false
