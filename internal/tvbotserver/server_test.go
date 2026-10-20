@@ -3057,8 +3057,8 @@ func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T
 
 func TestUSDTBalanceSamplerStoresConfiguredAccounts(t *testing.T) {
 	srv := newTestServer(t)
-	if usdtSampleInterval != time.Minute {
-		t.Fatalf("USDT balance sampler interval = %s, want 1m", usdtSampleInterval)
+	if usdtSampleInterval != 15*time.Minute {
+		t.Fatalf("USDT balance sampler interval = %s, want 15m", usdtSampleInterval)
 	}
 	observedAt := time.Date(2026, 7, 24, 3, 4, 45, 0, time.UTC)
 	srv.Now = func() time.Time { return observedAt }
@@ -3118,6 +3118,57 @@ func TestUSDTBalanceSamplerStoresConfiguredAccounts(t *testing.T) {
 		if len(snapshots) != 1 || snapshots[0].EqUsd != eqUSD || snapshots[0].BucketTS != observedAt.Truncate(time.Minute).UnixMilli() {
 			t.Fatalf("bad %s snapshots: %#v", apiID, snapshots)
 		}
+	}
+}
+
+func TestUSDTBalanceSamplerStoresConfiguredGateAccount(t *testing.T) {
+	srv := newTestServer(t)
+	var calls int
+	gateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/futures/usdt/accounts" {
+			t.Fatalf("unexpected Gate path %s", r.URL.Path)
+		}
+		if r.Header.Get("KEY") != "gate-key" {
+			t.Fatalf("missing Gate API key")
+		}
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"user":1,"currency":"USDT","total":"321.5","available":"300.25"}`))
+	}))
+	defer gateServer.Close()
+
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.GateDemoBaseURL = gateServer.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.GateHTTPClient = gateServer.Client()
+	gateStore, err := gate.NewCredentialStore("", gate.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.GateCredentials = gateStore
+	srv.Now = func() time.Time { return time.Date(2026, 7, 24, 3, 4, 45, 0, time.UTC) }
+	srv.sampleConfiguredUSDTBalances(context.Background())
+	if calls != 0 {
+		t.Fatalf("unconfigured Gate should be skipped, got %d requests", calls)
+	}
+	if _, err := gateStore.UpdateAccount(gate.CredentialAccountUpdate{
+		ID: "gate-main", Active: true, Credentials: gate.Credentials{APIKey: "gate-key", SecretKey: "gate-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	observedAt := time.Date(2026, 7, 24, 3, 4, 45, 0, time.UTC)
+	srv.Now = func() time.Time { return observedAt }
+	srv.sampleConfiguredUSDTBalances(context.Background())
+	if calls != 1 {
+		t.Fatalf("expected one configured Gate balance request, got %d", calls)
+	}
+	snapshots, err := srv.Orders.ListExchangeUSDTBalanceSnapshots(trading.ExchangeGate, "gate-main", cfg.Trading.Env, observedAt.Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 || snapshots[0].Eq != "321.5" || snapshots[0].EqUsd != "321.5" || snapshots[0].AvailBal != "300.25" || snapshots[0].BucketTS != observedAt.Truncate(time.Minute).UnixMilli() {
+		t.Fatalf("bad Gate balance snapshot: %#v", snapshots)
 	}
 }
 

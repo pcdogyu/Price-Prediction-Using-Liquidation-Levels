@@ -31,7 +31,7 @@ const (
 	maxAnalysisPNLMinutes      = maxAnalysisPNLDays * 24 * 60
 	minPositionLookbackMinutes = 30 * 24 * 60
 	analysisCacheTTL           = 60 * time.Second
-	usdtSampleInterval         = time.Minute
+	usdtSampleInterval         = 15 * time.Minute
 	maxBalanceMinutes          = 90 * 24 * 60
 
 	binanceAnalysisTradeWindow = 7 * 24 * time.Hour
@@ -219,7 +219,7 @@ type analysisPositionTrade struct {
 }
 
 func (s *Server) StartUSDTBalanceSampler(ctx context.Context) {
-	if s.ConfigStore == nil || s.Orders == nil || (s.OKXCredentials == nil && s.OKXLiveCredentials == nil && s.BinanceCredentials == nil && s.BinanceLiveCredentials == nil) {
+	if s.ConfigStore == nil || s.Orders == nil || (s.OKXCredentials == nil && s.OKXLiveCredentials == nil && s.BinanceCredentials == nil && s.BinanceLiveCredentials == nil && s.GateCredentials == nil && s.GateLiveCredentials == nil) {
 		return
 	}
 	go s.runUSDTBalanceSampler(ctx, usdtSampleInterval)
@@ -268,6 +268,17 @@ func (s *Server) sampleConfiguredUSDTBalances(ctx context.Context) {
 			}
 		}
 	}
+	gateStore := s.gateCredentialStore(cfg.Trading.Env)
+	if gateStore != nil {
+		for _, requestedAPIID := range configuredGateAPIIDs(gateStore.Status()) {
+			sampleCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			err := s.sampleGateUSDTBalance(sampleCtx, cfg, requestedAPIID, envName, now)
+			cancel()
+			if err != nil && s.Logger != nil {
+				s.Logger.Warn("failed to sample USDT balance", "exchange", trading.ExchangeGate, "api_id", requestedAPIID, "env", envName, "error", err)
+			}
+		}
+	}
 }
 
 func configuredAPIIDs(status okx.CredentialStatus) []string {
@@ -289,6 +300,24 @@ func configuredAPIIDs(status okx.CredentialStatus) []string {
 }
 
 func configuredBinanceAPIIDs(status binance.CredentialStatus) []string {
+	ids := make([]string, 0, len(status.Credentials))
+	seen := map[string]bool{}
+	for _, account := range status.Credentials {
+		id := strings.TrimSpace(account.ID)
+		if id == "" || !account.Configured || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	activeID := strings.TrimSpace(status.ActiveID)
+	if len(ids) == 0 && status.Configured && activeID != "" {
+		ids = append(ids, activeID)
+	}
+	return ids
+}
+
+func configuredGateAPIIDs(status gate.CredentialStatus) []string {
 	ids := make([]string, 0, len(status.Credentials))
 	seen := map[string]bool{}
 	for _, account := range status.Credentials {
@@ -332,6 +361,26 @@ func (s *Server) sampleBinanceUSDTBalance(ctx context.Context, cfg config.Config
 	client := s.analysisBinanceClient(cfg, creds)
 	_, err = s.fetchBinanceAnalysisBalance(ctx, client, apiID, envName, now)
 	return err
+}
+
+func (s *Server) sampleGateUSDTBalance(ctx context.Context, cfg config.Config, requestedAPIID, envName string, now time.Time) error {
+	store := s.gateCredentialStore(cfg.Trading.Env)
+	if store == nil {
+		return errors.New("Gate credential store is not configured")
+	}
+	creds, apiID, err := store.GateCredentials(requestedAPIID)
+	if err != nil {
+		return err
+	}
+	account, err := (gate.Client{BaseURL: cfg.GateBaseURL(), Credentials: creds, HTTPClient: s.GateHTTPClient}).Account(ctx)
+	if err != nil {
+		return err
+	}
+	balance := analysisBalanceFromGate(account, now)
+	if err := s.recordGateUSDTBalanceSnapshot(apiID, envName, balance, now); err != nil && s.Logger != nil {
+		s.Logger.Warn("failed to write USDT balance snapshot", "exchange", trading.ExchangeGate, "api_id", apiID, "env", envName, "error", err)
+	}
+	return nil
 }
 
 func (s *Server) handleBalanceOverview(w http.ResponseWriter, r *http.Request) {
@@ -872,6 +921,41 @@ func (s *Server) recordBinanceUSDTBalanceSnapshot(apiID, envName string, balance
 	}
 	return s.Orders.UpsertUSDTBalanceSnapshot(storage.USDTBalanceSnapshot{
 		Exchange:         trading.ExchangeBinance,
+		APIID:            apiID,
+		Env:              envName,
+		ObservedAt:       observedAt.UTC(),
+		TotalEq:          strings.TrimSpace(balance.TotalEq),
+		Eq:               strings.TrimSpace(detail.Eq),
+		EqUsd:            strings.TrimSpace(detail.EqUsd),
+		AvailEq:          strings.TrimSpace(detail.AvailEq),
+		AvailBal:         strings.TrimSpace(detail.AvailBal),
+		CashBal:          strings.TrimSpace(detail.CashBal),
+		FrozenBal:        strings.TrimSpace(detail.FrozenBal),
+		DisEq:            strings.TrimSpace(detail.DisEq),
+		BalanceUpdatedAt: updatedAt,
+	})
+}
+
+func (s *Server) recordGateUSDTBalanceSnapshot(apiID, envName string, balance analysisBalance, observedAt time.Time) error {
+	if s.Orders == nil {
+		return nil
+	}
+	var detail analysisBalanceDetail
+	for _, row := range balance.Details {
+		if strings.EqualFold(strings.TrimSpace(row.Ccy), "USDT") {
+			detail = row
+			break
+		}
+	}
+	if strings.TrimSpace(detail.Ccy) == "" {
+		return nil
+	}
+	updatedAt := detail.UpdatedAt
+	if updatedAt == "" {
+		updatedAt = balance.UpdatedAt
+	}
+	return s.Orders.UpsertUSDTBalanceSnapshot(storage.USDTBalanceSnapshot{
+		Exchange:         trading.ExchangeGate,
 		APIID:            apiID,
 		Env:              envName,
 		ObservedAt:       observedAt.UTC(),

@@ -1639,6 +1639,7 @@ const tvbotHTML = `<!doctype html>
           <button class="btn" type="button" id="refresh-all">刷新</button>
         </div>
       </div>
+      <p class="muted" id="dashboard-balance-sampling-note">后台每 15 分钟采集一次三家交易所余额并生成数据点；未配置 API Key 的交易所自动跳过。</p>
       <div class="analysis-period-row dashboard-balance-period-row">
         <div class="analysis-time-status">
           <div class="label">资金回看</div>
@@ -2287,6 +2288,8 @@ const tvbotHTML = `<!doctype html>
     let positionEntryTimeSyncBusy = false;
     let analysisBalanceRefreshTimer = null;
     let analysisBalanceRefreshBusy = false;
+    let dashboardBalanceRefreshTimer = null;
+    let dashboardBalanceRefreshBusy = false;
     let coinpairBlockPollTimer = null;
     let coinpairBlockPollBusy = false;
     let coinpairBlockCountdownTimer = null;
@@ -2298,6 +2301,7 @@ const tvbotHTML = `<!doctype html>
     const pendingLimitCloseOrderCacheMs = 90000;
     const missingPositionEntrySyncIntervalMs = 180000;
     const analysisBalanceRefreshIntervalMs = 60000;
+    const dashboardBalanceRefreshIntervalMs = 15 * 60 * 1000;
     const coinpairBlockPollIntervalMs = 20000;
     const defaultMenuItems = [
       { tab: "dashboard", label: "资金" },
@@ -3381,6 +3385,40 @@ const tvbotHTML = `<!doctype html>
       analysisBalanceRefreshBusy = false;
     }
 
+    function dashboardTabActive() {
+      const section = $("dashboard");
+      return !!(section && section.classList.contains("active"));
+    }
+
+    function dashboardBalanceAutoRefreshAllowed() {
+      return dashboardTabActive() && !(document.hidden);
+    }
+
+    function startDashboardBalanceAutoRefresh() {
+      if (dashboardBalanceRefreshTimer) return;
+      dashboardBalanceRefreshTimer = window.setInterval(() => {
+        refreshDashboardBalanceOverviewAuto();
+      }, dashboardBalanceRefreshIntervalMs);
+    }
+
+    function stopDashboardBalanceAutoRefresh() {
+      if (!dashboardBalanceRefreshTimer) return;
+      window.clearInterval(dashboardBalanceRefreshTimer);
+      dashboardBalanceRefreshTimer = null;
+      dashboardBalanceRefreshBusy = false;
+    }
+
+    async function refreshDashboardBalanceOverviewAuto() {
+      if (dashboardBalanceRefreshBusy || !dashboardBalanceAutoRefreshAllowed()) return;
+      dashboardBalanceRefreshBusy = true;
+      try {
+        await loadBalanceOverview(false, state.dashboardBalanceWindowMinutes);
+        renderDashboard();
+      } finally {
+        dashboardBalanceRefreshBusy = false;
+      }
+    }
+
     async function refreshAnalysisBalanceOverviewAuto() {
       if (analysisBalanceRefreshBusy || !analysisBalanceAutoRefreshAllowed()) return;
       analysisBalanceRefreshBusy = true;
@@ -3457,6 +3495,11 @@ const tvbotHTML = `<!doctype html>
         startAnalysisBalanceAutoRefresh();
       } else {
         stopAnalysisBalanceAutoRefresh();
+      }
+      if (target === "dashboard") {
+        startDashboardBalanceAutoRefresh();
+      } else {
+        stopDashboardBalanceAutoRefresh();
       }
       if (target === "orders" || target === "analysis") {
         startCoinpairBlockPolling();
@@ -7142,6 +7185,9 @@ const tvbotHTML = `<!doctype html>
     $("refresh-upgrade").addEventListener("click", () => loadUpgrade().then(() => toast("升级状态已刷新")).catch((err) => toast(err.message)));
     $("start-upgrade").addEventListener("click", () => startUpgrade().catch((err) => toast(err.message)));
     document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && dashboardTabActive()) {
+        refreshDashboardBalanceOverviewAuto();
+      }
       if (!document.hidden && analysisTabActive()) {
         refreshAnalysisBalanceOverviewAuto();
       }
