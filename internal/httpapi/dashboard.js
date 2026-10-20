@@ -8,6 +8,13 @@ let savedInterval = '15m';
 try { savedInterval = localStorage.getItem('liquidation.interval') || savedInterval; } catch (_) { /* browser storage is optional */ }
 const defaultLiquidationMinimumUSD = 0;
 const defaultVisibleCandles = 120;
+const chartHeightLimits = { minimum: 320, maximum: 1600 };
+const storedChartHeight = (() => {
+  try {
+    const value = Number(localStorage.getItem('liquidation.chartHeight'));
+    return Number.isFinite(value) ? Math.max(chartHeightLimits.minimum, Math.min(chartHeightLimits.maximum, Math.round(value))) : null;
+  } catch (_) { return null; }
+})();
 // Wheel zoom is regional: the candle strip changes how many candles it shows, and
 // /api/v1/market caps one page at 500 candles, so that is the widest zoom out. The two
 // profile panels cannot fetch anything, so their wheel scales the bar lengths instead.
@@ -18,6 +25,7 @@ const chart = {
   candles: [], signals: [], liquidations: [], liquidationsTruncated: false, liquidationMinimumUSD: defaultLiquidationMinimumUSD, latestPriceTradeID: 0, latestPriceTick: null, windowEnd: 0, visibleCount: defaultVisibleCandles, volumeZoom: 1, liquidationZoom: 1,
   hasMore: false, nextBefore: '', loadingOlder: false,
   yLow: null, yHigh: null, autoSpan: null, yManual: false,
+  manualHeight: storedChartHeight,
   atLatest: true, newData: false, drag: null
 };
 let symbol = 'ETHUSDT';
@@ -57,7 +65,10 @@ const rightPriceAxisShift = (1740 - 1510) * (1 - rightPriceAxisWidthScale);
 const liquidationWallRight = 1510 + rightPriceAxisShift;
 const liquidationWallWidth = Math.round((1510 - 1315) * liquidationWallWidthScale);
 const rightPriceAxisX = x => liquidationWallRight + (x - 1510) * rightPriceAxisWidthScale;
-const dims = { height: 560, width: 1740, left: 72, top: 24, bottom: 42, candleRight: 1025 + rightPriceAxisShift, volumeLeft: 1060 + rightPriceAxisShift, volumeRight: 1280 + rightPriceAxisShift, liquidationLeft: liquidationWallRight - liquidationWallWidth, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft: rightPriceAxisX(1614), rankLabelRight: rightPriceAxisX(1728) };
+const rankLabelWidthScale = .8;
+const rankLabelLeft = rightPriceAxisX(1614);
+const rankLabelRight = rankLabelLeft + (rightPriceAxisX(1728) - rankLabelLeft) * rankLabelWidthScale;
+const dims = { height: 560, width: 1740, left: 72, top: 24, bottom: 42, candleRight: 1025 + rightPriceAxisShift, volumeLeft: 1060 + rightPriceAxisShift, volumeRight: 1280 + rightPriceAxisShift, liquidationLeft: liquidationWallRight - liquidationWallWidth, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft, rankLabelRight };
 if (!intervalName[chart.interval]) chart.interval = '15m';
 
 function svgNode(tag, attrs = {}, text = '') {
@@ -138,6 +149,10 @@ function fitBubbleChartViewport() {
   const bubbleChartViewportScale = 1.3;
   const wrap = document.querySelector('.chart-wrap');
   if (!wrap) return;
+  if (Number.isFinite(chart.manualHeight)) {
+    wrap.style.height = chart.manualHeight + 'px';
+    return;
+  }
   const largeViewport = window.innerWidth >= 700;
   wrap.style.removeProperty('height');
   if (!largeViewport) return;
@@ -793,6 +808,89 @@ function zoomPriceAxis(point, factor) {
   return true;
 }
 
+function normalizedChartHeight(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(chartHeightLimits.minimum, Math.min(chartHeightLimits.maximum, Math.round(number)));
+}
+
+function setChartHeight(value, persist = true, render = true) {
+  const height = normalizedChartHeight(value);
+  if (height === null) return false;
+  chart.manualHeight = height;
+  const wrap = document.querySelector('.chart-wrap');
+  if (wrap) wrap.style.height = height + 'px';
+  const input = $('chart-height');
+  if (input) input.value = String(height);
+  if (persist) {
+    try { localStorage.setItem('liquidation.chartHeight', String(height)); } catch (_) { /* browser storage is optional */ }
+  }
+  if (render) draw(cache.market, cache.map, cache.signal, cache.volume);
+  return true;
+}
+
+function useAutomaticChartHeight(render = true) {
+  chart.manualHeight = null;
+  try { localStorage.removeItem('liquidation.chartHeight'); } catch (_) { /* browser storage is optional */ }
+  const wrap = document.querySelector('.chart-wrap');
+  if (wrap) wrap.style.removeProperty('height');
+  fitBubbleChartViewport();
+  const input = $('chart-height');
+  if (input) input.value = String(Math.round((wrap?.getBoundingClientRect().height || 874)));
+  if (render) draw(cache.market, cache.map, cache.signal, cache.volume);
+}
+
+function installChartSizeControls() {
+  const wrap = document.querySelector('.chart-wrap');
+  const handle = $('chart-resize-handle');
+  const input = $('chart-height');
+  if (!wrap || !handle || !input) return;
+  input.min = String(chartHeightLimits.minimum);
+  input.max = String(chartHeightLimits.maximum);
+  input.value = String(chart.manualHeight || Math.round(wrap.getBoundingClientRect().height || 874));
+  const applyInput = () => {
+    if (!setChartHeight(input.value)) input.value = String(chart.manualHeight || Math.round(wrap.getBoundingClientRect().height || 874));
+  };
+  input.addEventListener('change', applyInput);
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); applyInput(); }
+  });
+  $('chart-height-apply').addEventListener('click', applyInput);
+  $('chart-height-auto').addEventListener('click', () => useAutomaticChartHeight());
+
+  let resize = null;
+  handle.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    resize = { pointerId: event.pointerId, startY: event.clientY, startHeight: wrap.getBoundingClientRect().height };
+    handle.setPointerCapture(event.pointerId);
+    wrap.classList.add('resizing');
+  });
+  handle.addEventListener('pointermove', event => {
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    setChartHeight(resize.startHeight + event.clientY - resize.startY, false);
+  });
+  const endResize = event => {
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    setChartHeight(wrap.getBoundingClientRect().height, true, false);
+    resize = null;
+    wrap.classList.remove('resizing');
+  };
+  handle.addEventListener('pointerup', endResize);
+  handle.addEventListener('pointercancel', endResize);
+  handle.addEventListener('keydown', event => {
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      setChartHeight(Number(input.value) + (event.key === 'ArrowUp' ? 10 : -10));
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      setChartHeight(chartHeightLimits.minimum);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      setChartHeight(chartHeightLimits.maximum);
+    }
+  });
+}
+
 function installChartInteractions() {
   const svg = $('market-chart');
   const wrap = svg.parentElement;
@@ -1028,6 +1126,7 @@ $('log-copy').addEventListener('click', async () => {
   catch (_) { $('log-error').textContent = '浏览器不允许复制日志'; $('log-error').classList.remove('hidden'); }
 });
 
+installChartSizeControls();
 installChartInteractions();
 refresh(true);
 setInterval(() => refresh(false), 10000);

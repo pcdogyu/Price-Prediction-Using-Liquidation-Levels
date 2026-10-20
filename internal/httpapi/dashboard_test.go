@@ -122,9 +122,25 @@ func TestBubbleChartHasShortLandscapeViewportFit(t *testing.T) {
 		".chart-wrap{height:874px}",
 		".chart-wrap{height:733px}",
 		".chart-wrap{height:967px}",
+		`id="chart-height"`,
+		`id="chart-height-apply"`,
+		`id="chart-height-auto"`,
+		`id="chart-resize-handle"`,
+		`拖动调整K线图高度`,
 	} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("bubble chart missing enlarged chart height %q", marker)
+		}
+	}
+	for _, marker := range []string{
+		"liquidation.chartHeight",
+		"installChartSizeControls",
+		"setChartHeight",
+		"useAutomaticChartHeight",
+		"const rankLabelWidthScale = .8",
+	} {
+		if !strings.Contains(string(dashboardJS), marker) {
+			t.Fatalf("bubble chart missing manual sizing support %q", marker)
 		}
 	}
 }
