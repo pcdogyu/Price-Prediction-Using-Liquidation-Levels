@@ -120,27 +120,62 @@ if [[ -f "$backup/liquidation-predictor.env" ]]; then
   # Preserve operator-managed authentication and tvorder webhook settings
   # when the checked-in baseline environment file is installed.  The
   # webhook token/nonce are generated credentials and must never be stored in
-  # the repository or printed during an upgrade.
-  for key in \
-    APP_AUTH_USERNAME \
-    APP_AUTH_PASSWORD_HASH \
-    APP_STEADY_WEBHOOK_URL \
-    APP_STEADY_WEBHOOK_API_ID \
-    APP_STEADY_WEBHOOK_TARGET_EXCHANGE \
-    APP_STEADY_WEBHOOK_TRADE_ENV \
-    APP_STEADY_WEBHOOK_EXCHANGE \
-    APP_STEADY_WEBHOOK_INTERVAL \
-    APP_STEADY_WEBHOOK_TOKEN_NONCE \
-    APP_STEADY_WEBHOOK_TOKEN; do
-    value="$(grep -E "^${key}=" "$backup/liquidation-predictor.env" | tail -n 1 || true)"
-    if [[ -n "$value" ]]; then
-      if grep -q -E "^${key}=" /etc/liquidation-predictor.env; then
-        sed -i "s|^${key}=.*|${value}|" /etc/liquidation-predictor.env
-      else
-        printf '%s\n' "$value" >> /etc/liquidation-predictor.env
-      fi
-    fi
-  done
+  # the repository or printed during an upgrade.  Python replaces complete
+  # lines so secret values cannot be corrupted by sed delimiters or escapes.
+  python3 - "$backup/liquidation-predictor.env" /etc/liquidation-predictor.env <<'PY'
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+keys = {
+    "APP_AUTH_USERNAME",
+    "APP_AUTH_PASSWORD_HASH",
+    "APP_STEADY_WEBHOOK_URL",
+    "APP_STEADY_WEBHOOK_API_ID",
+    "APP_STEADY_WEBHOOK_TARGET_EXCHANGE",
+    "APP_STEADY_WEBHOOK_TRADE_ENV",
+    "APP_STEADY_WEBHOOK_EXCHANGE",
+    "APP_STEADY_WEBHOOK_INTERVAL",
+    "APP_STEADY_WEBHOOK_TOKEN_NONCE",
+    "APP_STEADY_WEBHOOK_TOKEN",
+}
+values = {}
+for line in source.read_text(encoding="utf-8").splitlines():
+    if "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    if key in keys:
+        values[key] = value
+
+lines = []
+seen = set()
+for line in target.read_text(encoding="utf-8").splitlines():
+    key = line.split("=", 1)[0] if "=" in line else ""
+    if key in values:
+        lines.append(f"{key}={values[key]}")
+        seen.add(key)
+    else:
+        lines.append(line)
+for key, value in values.items():
+    if key not in seen:
+        lines.append(f"{key}={value}")
+
+fd, temp_name = tempfile.mkstemp(prefix="liquidation-predictor.env.", dir=str(target.parent), text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+    os.chown(temp_name, 0, 0)
+    os.chmod(temp_name, 0o644)
+    os.replace(temp_name, target)
+finally:
+    try:
+        os.unlink(temp_name)
+    except FileNotFoundError:
+        pass
+PY
 fi
 install -o root -g root -m 0440 deploy/liquidation-predictor-upgrade.sudoers /etc/sudoers.d/liquidation-predictor-upgrade
 install -o root -g root -m 0644 deploy/nginx-liquidation-locations.conf /etc/nginx/snippets/liquidation-locations.conf
