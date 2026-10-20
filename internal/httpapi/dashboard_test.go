@@ -99,6 +99,8 @@ func TestBubbleChartHasShortLandscapeViewportFit(t *testing.T) {
 		"fitBubbleChartViewport",
 		"window.visualViewport?.addEventListener('resize', fitBubbleChartViewport)",
 		"const bubbleChartDefaultHeight = 874",
+		"const bubbleChartViewportScale = 1.3",
+		"available * bubbleChartViewportScale",
 	} {
 		if !strings.Contains(string(dashboardJS), marker) {
 			t.Fatalf("bubble chart script missing television viewport support %q", marker)

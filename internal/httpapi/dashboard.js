@@ -135,6 +135,7 @@ function updateTicker(view) {
 // would extend below the current large-screen viewport.
 function fitBubbleChartViewport() {
   const bubbleChartDefaultHeight = 874;
+  const bubbleChartViewportScale = 1.3;
   const wrap = document.querySelector('.chart-wrap');
   if (!wrap) return;
   const largeViewport = window.innerWidth >= 700;
@@ -144,7 +145,7 @@ function fitBubbleChartViewport() {
   const pageTop = wrap.getBoundingClientRect().top + window.scrollY;
   const available = Math.floor(viewportHeight - pageTop - 12);
   if (available >= bubbleChartDefaultHeight) return;
-  const height = Math.max(220, Math.min(bubbleChartDefaultHeight, available));
+  const height = Math.max(220, Math.min(bubbleChartDefaultHeight, Math.round(available * bubbleChartViewportScale)));
   wrap.style.height = height + 'px';
 }
 
