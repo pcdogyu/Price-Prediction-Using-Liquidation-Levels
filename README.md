@@ -38,7 +38,7 @@ go run ./cmd/server
 
 登录后默认进入“气泡图”，导航提供“清算历史”“对冲墙”“市场信息”“期权”“报警”。顶部“程序日志”左侧可切换浅色和深色主题，首次默认深色；登录用户的主题保存在认证 SQLite 数据库中，可在不同电脑间同步，浏览器本地存储仅用于首屏缓存和服务异常时降级。未启用登录时仍只使用当前浏览器主题。
 
-清算历史保存 Binance 全部 USDⓈ-M 币对的公开采样事件，筛选栏支持搜索并选择单个币对，默认全部币对；支持方向、数量和金额过滤及稳定游标分页。页面不提供时间输入，API 的时间参数仍兼容历史查询与内部分页；原气泡图仍仅显示 BTC/ETH。
+清算历史保存 Binance 全部 USDⓈ-M 币对的公开采样事件，筛选栏支持搜索并选择单个币对，默认全部币对；支持方向、数量和金额过滤及稳定游标分页。页面不提供时间输入，API 的时间参数仍兼容历史查询与内部分页；气泡图支持 Binance 全部可交易 USDT 永续，未配置后台持续采集的币对按需读取行情和 CoinGlass 清算图。
 
 清算历史顶部的六周期统计和组合描述固定使用 ETHUSDT 全量双侧数据，按 5M→15M→1H→4H→12H→24H 排列，不受逐笔明细的币对、方向或阈值筛选影响。金额较大的一侧标记为多头或空头清算占优，相等时显示均衡，零金额显示暂无清算；支持全部 64 种多空组合，解析表仅展示当前状态；均衡、暂无清算与缺失周期单独标识。多／空表示强平对应的方向：空头被清算为多，多头被清算为空，重叠窗口间的差异不代表已经发生价格趋势反转。统计与明细共用查询截止时间，历史分页保持该时间，分析更新失败时标记上次成功数据。
 
@@ -126,7 +126,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/pcdogyu/price-pre
 
 统一发布脚本 `deploy/unified-upgrade.sh` 每次发布只保留程序、配置和凭据等回滚文件，不再复制主 SQLite 数据库或旧 TVBot SQLite 数据库，避免发布过程产生重复数据库副本和额外磁盘占用。只有在旧 TVBot 数据库迁移快照尚不存在的首次迁移场景，脚本才创建一次 `tvbot-legacy-migration.db`；后续发布保留该快照，不重复生成。
 
-可选的 CoinGlass 人工登录窗口由服务器上的持久化 Chrome、Xvfb、x11vnc 和 noVNC 组成。相关 systemd 单元位于 `deploy/coinglass-*.service`；VNC、noVNC 和 Chrome CDP 分别只监听 `127.0.0.1:5900`、`127.0.0.1:6080` 和 `127.0.0.1:9222`。Nginx 的 `/liquidation/coinglass-login/` 必须通过应用的 `/api/v1/auth/check` 子请求鉴权，不能将这些端口直接暴露到公网。Chrome 登录状态保存在 `/var/lib/liquidation-predictor/coinglass-profile`，其权限应限制为服务用户可读写。登录后可由仪表盘的“抓取 CoinGlass”按钮调用 `POST /api/v1/coinglass/capture`；服务也会按照 `APP_COINGLASS_CAPTURE_INTERVAL`（默认 10 分钟）自动抓取。每次结果保存由 CoinGlass 页面自身运行时解码得到的 BTC/ETH、Binance/全交易所四组结构化 JSON；浏览器 Cookie 不会写入结果。仪表盘选择 BTC 或 ETH 后，`/api/v1/map` 会自动使用对应的 `Binance_BTCUSDT` 或 `Binance_ETHUSDT` 数据，并在最右侧清算墙按 10x/25x/50x/100x 分色显示，同时列出多头与空头清算强度 Top 3 价格。每次抓取还会以该快照现价分别汇总上下方清算金额：下方更大时显示绿色向上箭头，上方更大时显示红色向下箭头；金额相等时不显示方向箭头，方向仅随下一次 CoinGlass 抓取重新计算。该接口只提供两小时内的 CoinGlass 数据，过期或解析不可用时返回 503，不再回退本地估算地图。原始抓取文件只保留最近 3 天，由每日维护窗口删除，`latest.json` 作为实时指针不参与清理，避免抓取目录无限增长。
+可选的 CoinGlass 人工登录窗口由服务器上的持久化 Chrome、Xvfb、x11vnc 和 noVNC 组成。相关 systemd 单元位于 `deploy/coinglass-*.service`；VNC、noVNC 和 Chrome CDP 分别只监听 `127.0.0.1:5900`、`127.0.0.1:6080` 和 `127.0.0.1:9222`。Nginx 的 `/liquidation/coinglass-login/` 必须通过应用的 `/api/v1/auth/check` 子请求鉴权，不能将这些端口直接暴露到公网。Chrome 登录状态保存在 `/var/lib/liquidation-predictor/coinglass-profile`，其权限应限制为服务用户可读写。登录后可由仪表盘的“抓取 CoinGlass”按钮调用 `POST /api/v1/coinglass/capture`；服务也会按照 `APP_COINGLASS_CAPTURE_INTERVAL`（默认 10 分钟）自动抓取 BTC/ETH。选择其它 Binance USDT 永续时，`/api/v1/map` 会按需请求对应的 CoinGlass Binance 图并合并到缓存；每个币对独立计算两小时有效期。每次结果保存由 CoinGlass 页面自身运行时解码得到 Binance/全交易所结构化 JSON；浏览器 Cookie 不会写入结果。清算墙按 10x/25x/50x/100x 分色显示，同时列出多头与空头清算强度 Top 3 价格。每次抓取还会以该快照现价分别汇总上下方清算金额：下方更大时显示绿色向上箭头，上方更大时显示红色向下箭头；金额相等时不显示方向箭头，方向仅随下一次 CoinGlass 抓取重新计算。该接口只提供两小时内的 CoinGlass 数据，过期或解析不可用时返回 503，不回退本地估算地图。原始抓取文件只保留最近 3 天，由每日维护窗口删除，`latest.json` 作为实时指针不参与清理，避免抓取目录无限增长。
 
 每天北京时间 03:30（服务启动后立即先执行一次）自动完成一次数据库与磁盘清理：按各自保留期分批删除 K 线、清算事件、盘口快照、墙事件、市场指标、报警与信号；Deribit 期权 Gamma 会先删除 90 天外数据，近 24 小时按 5 分钟时间槽去重，再把 24 小时外的数据按整点/半点时间槽降为每小时两条。随后删除超过 3 天的 CoinGlass 原始抓取文件，最后把 WAL 检查点回主库并更新查询计划器统计。只有当删除释放的空闲页累计达到 512 MB 时才执行一次 `VACUUM` 真正回收磁盘空间，避免每天重写整库。清理按每批最多 2000 行分批提交，不会长时间阻塞实时采集；任何一步失败只记录 WARN 日志，不影响服务运行。
 

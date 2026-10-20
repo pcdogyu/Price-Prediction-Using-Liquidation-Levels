@@ -1187,7 +1187,6 @@ $('log-copy').addEventListener('click', async () => {
 
 installChartSizeControls();
 installChartInteractions();
-if ($('symbol-search')) $('symbol-search').value = symbol;
 loadSymbolCatalog().finally(() => refresh(true));
 setInterval(() => refresh(false), 10000);
 setInterval(updateCoinGlassCountdown, 1000);

@@ -49,12 +49,13 @@ type Result struct {
 }
 
 type ParsedResponse struct {
-	Symbol  string          `json:"symbol"`
-	Scope   string          `json:"scope"`
-	Code    string          `json:"code"`
-	Success bool            `json:"success"`
-	Bytes   int             `json:"bytes"`
-	Data    json.RawMessage `json:"data"`
+	Symbol     string          `json:"symbol"`
+	Scope      string          `json:"scope"`
+	Code       string          `json:"code"`
+	Success    bool            `json:"success"`
+	Bytes      int             `json:"bytes"`
+	CapturedAt time.Time       `json:"captured_at,omitempty"`
+	Data       json.RawMessage `json:"data"`
 }
 
 type target struct {
@@ -82,10 +83,25 @@ func New(debugURL, dir string) *Capturer {
 }
 
 func (c *Capturer) Capture(ctx context.Context) (Result, error) {
+	return c.capture(ctx, "BTCUSDT", "ETHUSDT")
+}
+
+// CaptureSymbol refreshes one Binance perpetual pair on demand. Scheduled
+// captures keep the common BTC/ETH data warm, while arbitrary dashboard pairs
+// such as SOLUSDT are fetched only when a user opens them.
+func (c *Capturer) CaptureSymbol(ctx context.Context, symbol string) (Result, error) {
+	return c.capture(ctx, symbol)
+}
+
+func (c *Capturer) capture(ctx context.Context, rawSymbols ...string) (Result, error) {
 	if !c.mu.TryLock() {
 		return Result{}, ErrBusy
 	}
 	defer c.mu.Unlock()
+	symbols, err := normalizeCaptureSymbols(rawSymbols...)
+	if err != nil {
+		return Result{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, requestTimout)
 	defer cancel()
@@ -102,9 +118,12 @@ func (c *Capturer) Capture(ctx context.Context) (Result, error) {
 	_ = conn.SetReadDeadline(time.Now().Add(requestTimout))
 
 	result := Result{CapturedAt: time.Now().UTC(), PageURL: page.URL}
-	result.Parsed, err = decodeMapResponses(conn, 1)
+	result.Parsed, err = decodeMapResponses(conn, 1, symbols)
 	if err != nil {
 		return Result{}, err
+	}
+	for index := range result.Parsed {
+		result.Parsed[index].CapturedAt = result.CapturedAt
 	}
 	result.File, err = c.save(result)
 	if err != nil {
@@ -183,9 +202,6 @@ func (c *Capturer) LiquidationMap(symbol string, maxAge time.Duration) (engine.M
 	if err != nil {
 		return engine.MapResult{}, err
 	}
-	if maxAge > 0 && time.Since(latest.CapturedAt) > maxAge {
-		return engine.MapResult{}, fmt.Errorf("latest CoinGlass capture is stale: %s", latest.CapturedAt.Format(time.RFC3339))
-	}
 	symbol = strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(symbol)), "USDT")
 	var selected *ParsedResponse
 	for index := range latest.Parsed {
@@ -197,6 +213,15 @@ func (c *Capturer) LiquidationMap(symbol string, maxAge time.Duration) (engine.M
 	}
 	if selected == nil {
 		return engine.MapResult{}, fmt.Errorf("CoinGlass Binance map for %s is unavailable", symbol)
+	}
+	capturedAt := selected.CapturedAt
+	if capturedAt.IsZero() {
+		// Captures written before per-symbol timestamps were introduced remain
+		// readable and use the capture-level timestamp as a compatibility path.
+		capturedAt = latest.CapturedAt
+	}
+	if maxAge > 0 && time.Since(capturedAt) > maxAge {
+		return engine.MapResult{}, fmt.Errorf("latest CoinGlass capture is stale: %s", capturedAt.Format(time.RFC3339))
 	}
 	var data struct {
 		LastPrice float64            `json:"lastPrice"`
@@ -255,7 +280,6 @@ func (c *Capturer) LiquidationMap(symbol string, maxAge time.Duration) (engine.M
 		binWidth = widths[len(widths)/2]
 	}
 	aboveUSD, belowUSD, direction := liquidationDirection(bins, data.LastPrice)
-	capturedAt := latest.CapturedAt
 	return engine.MapResult{
 		DataSource:           "coinglass_binance_liqmap",
 		Leverages:            []float64{10, 25, 50, 100},
@@ -313,24 +337,76 @@ func strongestLiquidations(bins []domain.MapBin, long bool, limit int) []domain.
 	return peaks
 }
 
-func decodeMapResponses(conn *websocket.Conn, id int) ([]ParsedResponse, error) {
-	const expression = `(async()=>{
+func normalizeCaptureSymbols(rawSymbols ...string) ([]string, error) {
+	if len(rawSymbols) == 0 {
+		return nil, errors.New("at least one CoinGlass symbol is required")
+	}
+	seen := make(map[string]struct{}, len(rawSymbols))
+	symbols := make([]string, 0, len(rawSymbols))
+	for _, raw := range rawSymbols {
+		raw = strings.ToUpper(strings.TrimSpace(raw))
+		raw = strings.TrimSuffix(raw, "USDT")
+		if raw == "" {
+			return nil, errors.New("CoinGlass symbol is empty")
+		}
+		for _, r := range raw {
+			if (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+				return nil, fmt.Errorf("invalid CoinGlass symbol %q", raw)
+			}
+		}
+		if _, ok := seen[raw]; ok {
+			continue
+		}
+		seen[raw] = struct{}{}
+		symbols = append(symbols, raw)
+	}
+	return symbols, nil
+}
+
+func mergeParsedResponses(previous, current []ParsedResponse, capturedAt time.Time) []ParsedResponse {
+	merged := make([]ParsedResponse, 0, len(previous)+len(current))
+	positions := make(map[string]int, len(previous)+len(current))
+	for _, item := range previous {
+		if item.CapturedAt.IsZero() {
+			item.CapturedAt = capturedAt
+		}
+		key := strings.ToUpper(item.Symbol) + "|" + strings.ToLower(item.Scope)
+		positions[key] = len(merged)
+		merged = append(merged, item)
+	}
+	for _, item := range current {
+		key := strings.ToUpper(item.Symbol) + "|" + strings.ToLower(item.Scope)
+		if index, ok := positions[key]; ok {
+			merged[index] = item
+			continue
+		}
+		positions[key] = len(merged)
+		merged = append(merged, item)
+	}
+	return merged
+}
+
+func decodeMapResponses(conn *websocket.Conn, id int, symbols []string) ([]ParsedResponse, error) {
+	symbolJSON, err := json.Marshal(symbols)
+	if err != nil {
+		return nil, fmt.Errorf("encode CoinGlass symbols: %w", err)
+	}
+	expression := fmt.Sprintf(`(async()=>{
 		let requireModule;
 		window.webpackChunk_N_E.push([[Date.now()],{},value=>{requireModule=value}]);
 		if(!requireModule) throw new Error('CoinGlass webpack runtime is unavailable');
 		const api=requireModule(89390), common={merge:true,interval:1,limit:1500};
-		const jobs=[
-			['BTC','binance',api.QSv({...common,symbol:'Binance_BTCUSDT'})],
-			['BTC','aggregate',api.bvP({...common,symbol:'BTC'})],
-			['ETH','binance',api.QSv({...common,symbol:'Binance_ETHUSDT'})],
-			['ETH','aggregate',api.bvP({...common,symbol:'ETH'})]
-		];
+		const symbols=%s;
+		const jobs=symbols.flatMap(symbol=>[
+			[symbol,'binance',api.QSv({...common,symbol:'Binance_'+symbol+'USDT'})],
+			[symbol,'aggregate',api.bvP({...common,symbol})]
+		]);
 		const values=await Promise.all(jobs.map(async([symbol,scope,promise])=>{
 			const value=await promise;
 			return {symbol,scope,code:String(value?.code??''),success:Boolean(value?.success),data:value?.data??null};
 		}));
 		return JSON.stringify(values);
-	})()`
+	})()`, string(symbolJSON))
 	if err := writeCommand(conn, id, "Runtime.evaluate", map[string]any{"expression": expression, "awaitPromise": true, "returnByValue": true, "timeout": 40000}); err != nil {
 		return nil, err
 	}
@@ -363,8 +439,9 @@ func decodeMapResponses(conn *websocket.Conn, id int) ([]ParsedResponse, error) 
 		if err := json.Unmarshal([]byte(evaluation.Result.Value), &parsed); err != nil {
 			return nil, fmt.Errorf("decode structured CoinGlass JSON: %w", err)
 		}
-		if len(parsed) != 4 {
-			return nil, fmt.Errorf("expected 4 parsed CoinGlass maps, got %d", len(parsed))
+		expected := len(symbols) * 2
+		if len(parsed) != expected {
+			return nil, fmt.Errorf("expected %d parsed CoinGlass maps, got %d", expected, len(parsed))
 		}
 		for index := range parsed {
 			parsed[index].Bytes = len(parsed[index].Data)
@@ -404,6 +481,9 @@ func (c *Capturer) page(ctx context.Context) (target, error) {
 func (c *Capturer) save(result Result) (string, error) {
 	if err := os.MkdirAll(c.dir, 0700); err != nil {
 		return "", fmt.Errorf("create capture directory: %w", err)
+	}
+	if previous, err := c.Latest(); err == nil {
+		result.Parsed = mergeParsedResponses(previous.Parsed, result.Parsed, previous.CapturedAt)
 	}
 	name := capturePrefix + result.CapturedAt.Format("20060102T150405.000000000Z") + ".json"
 	path := filepath.Join(c.dir, name)

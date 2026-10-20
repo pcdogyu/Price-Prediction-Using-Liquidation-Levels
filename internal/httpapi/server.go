@@ -525,6 +525,17 @@ func (s *Server) liquidationMap(w http.ResponseWriter, r *http.Request) {
 	}
 	m, err := s.cg.LiquidationMap(sym, 2*time.Hour)
 	if err != nil {
+		// The scheduled capture intentionally keeps the common BTC/ETH maps
+		// warm. A pair selected from the exchange-wide catalog is refreshed on
+		// demand so it does not have to be added to APP_SYMBOLS or hardcoded in
+		// the browser capture list.
+		if _, captureErr := s.cg.CaptureSymbol(r.Context(), sym); captureErr == nil {
+			m, err = s.cg.LiquidationMap(sym, 2*time.Hour)
+		} else {
+			s.log.Warn("CoinGlass liquidation map refresh failed", "symbol", sym, "error", captureErr, "previous_error", err)
+		}
+	}
+	if err != nil {
 		s.log.Warn("CoinGlass liquidation map unavailable", "symbol", sym, "error", err)
 		problem(w, http.StatusServiceUnavailable, fmt.Errorf("CoinGlass liquidation map unavailable: %w", err))
 		return

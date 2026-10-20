@@ -73,22 +73,33 @@ func TestCaptureStoresMapResponses(t *testing.T) {
 		}
 		defer connection.Close()
 		var decodeCommand struct {
-			ID     int    `json:"id"`
-			Method string `json:"method"`
+			ID     int             `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 		}
 		if err = connection.ReadJSON(&decodeCommand); err != nil {
 			t.Error(err)
 			return
 		}
-		decoded, _ := json.Marshal([]map[string]any{
-			{"symbol": "BTC", "scope": "binance", "code": "0", "success": true, "data": map[string]any{"lastPrice": 100, "liqMapV2": map[string]any{
-				"90":  [][]any{{90, 1000, 10, "h1"}, {90, 500, 25, "h2"}},
-				"110": [][]any{{110, 2000, 50, "h2"}, {110, 3000, 100, "h3"}},
-			}}},
-			{"symbol": "BTC", "scope": "aggregate", "code": "0", "success": true, "data": map[string]any{"lastPrice": 100}},
-			{"symbol": "ETH", "scope": "binance", "code": "0", "success": true, "data": map[string]any{"lastPrice": 10}},
-			{"symbol": "ETH", "scope": "aggregate", "code": "0", "success": true, "data": map[string]any{"lastPrice": 10}},
-		})
+		var params struct {
+			Expression string `json:"expression"`
+		}
+		_ = json.Unmarshal(decodeCommand.Params, &params)
+		symbols := []string{"BTC", "ETH"}
+		if strings.Contains(params.Expression, `["SOL"]`) {
+			symbols = []string{"SOL"}
+		}
+		maps := make([]map[string]any, 0, len(symbols)*2)
+		for _, symbol := range symbols {
+			maps = append(maps,
+				map[string]any{"symbol": symbol, "scope": "binance", "code": "0", "success": true, "data": map[string]any{"lastPrice": 100, "liqMapV2": map[string]any{
+					"90":  [][]any{{90, 1000, 10, "h1"}, {90, 500, 25, "h2"}},
+					"110": [][]any{{110, 2000, 50, "h2"}, {110, 3000, 100, "h3"}},
+				}}},
+				map[string]any{"symbol": symbol, "scope": "aggregate", "code": "0", "success": true, "data": map[string]any{"lastPrice": 100}},
+			)
+		}
+		decoded, _ := json.Marshal(maps)
 		_ = connection.WriteJSON(map[string]any{"id": decodeCommand.ID, "result": map[string]any{"result": map[string]any{"type": "string", "value": string(decoded)}}})
 	})
 	server = httptest.NewServer(handler)
@@ -132,6 +143,29 @@ func TestCaptureStoresMapResponses(t *testing.T) {
 	}
 	if len(liquidationMap.TopLong) != 1 || liquidationMap.TopLong[0].Price != 90 || liquidationMap.TopLong[0].AmountUSD != 1500 || len(liquidationMap.TopShort) != 1 || liquidationMap.TopShort[0].Price != 110 || liquidationMap.TopShort[0].AmountUSD != 5000 {
 		t.Fatalf("top liquidations long=%+v short=%+v", liquidationMap.TopLong, liquidationMap.TopShort)
+	}
+
+	onDemand, err := New(server.URL, dir).CaptureSymbol(context.Background(), "SOLUSDT")
+	if err != nil || len(onDemand.Parsed) != 2 {
+		t.Fatalf("on-demand capture=%+v error=%v", onDemand, err)
+	}
+	latest, err = New(server.URL, dir).Latest()
+	if err != nil || len(latest.Parsed) != 6 {
+		t.Fatalf("merged latest=%+v error=%v", latest, err)
+	}
+	solMap, err := New(server.URL, dir).LiquidationMap("SOLUSDT", time.Hour)
+	if err != nil || solMap.MarkPrice != 100 || len(solMap.Bins) != 2 {
+		t.Fatalf("on-demand SOL map=%+v error=%v", solMap, err)
+	}
+}
+
+func TestNormalizeCaptureSymbols(t *testing.T) {
+	symbols, err := normalizeCaptureSymbols("btc", "BTCUSDT", "SOLUSDT")
+	if err != nil || strings.Join(symbols, ",") != "BTC,SOL" {
+		t.Fatalf("normalized symbols=%v error=%v", symbols, err)
+	}
+	if _, err := normalizeCaptureSymbols("SOL-USDT"); err == nil {
+		t.Fatal("invalid symbol accepted")
 	}
 }
 
