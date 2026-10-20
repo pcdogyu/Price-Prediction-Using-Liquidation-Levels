@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -689,12 +690,17 @@ func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t 
 	t.Cleanup(func() { binanceReduceOnlyRetryDelay = oldDelay })
 
 	var orderForms []url.Values
-	marketAttempts := 0
+	positionQueries := 0
 	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/fapi/v3/positionRisk":
-			_, _ = w.Write([]byte(`[{"symbol":"ZECUSDT","positionSide":"BOTH","positionAmt":"4.327","entryPrice":"1073.1994","markPrice":"1145.8","unRealizedProfit":"313.2","liquidationPrice":"980","isolatedMargin":"765","notional":"4959","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+			positionQueries++
+			positionAmt := "4.327"
+			if positionQueries > 1 {
+				positionAmt = "4.319"
+			}
+			_, _ = fmt.Fprintf(w, `[{"symbol":"ZECUSDT","positionSide":"BOTH","positionAmt":%q,"entryPrice":"1073.1994","markPrice":"1145.8","unRealizedProfit":"313.2","liquidationPrice":"980","isolatedMargin":"765","notional":"4959","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`, positionAmt)
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"ZECUSDT","status":"TRADING","pricePrecision":2,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":
@@ -717,13 +723,12 @@ func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t 
 				_, _ = w.Write([]byte(`{"code":-2022,"msg":"ReduceOnly Order is rejected."}`))
 				return
 			}
-			marketAttempts++
-			if marketAttempts == 1 {
+			if form.Get("reduceOnly") == "true" {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(`{"code":-2022,"msg":"ReduceOnly Order is rejected."}`))
 				return
 			}
-			_, _ = w.Write([]byte(`{"orderId":900,"symbol":"ZECUSDT","status":"NEW","clientOrderId":"market-fallback","price":"0","origQty":"0.432","executedQty":"0","type":"MARKET","side":"SELL","positionSide":"BOTH"}`))
+			_, _ = w.Write([]byte(`{"orderId":900,"symbol":"ZECUSDT","status":"NEW","clientOrderId":"market-fallback","price":"0","origQty":"0.431","executedQty":"0","type":"MARKET","side":"SELL","positionSide":"BOTH"}`))
 		default:
 			t.Fatalf("unexpected Binance path %s", r.URL.Path)
 		}
@@ -736,15 +741,20 @@ func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t 
 	if err != nil {
 		t.Fatalf("expected market fallback to close, got %v", err)
 	}
-	if !order.MarketFallback || order.Ack.OrdID != "900" || order.CloseSz != "0.432" {
+	if !order.MarketFallback || !order.NonReduceOnlyFallback || order.Ack.OrdID != "900" || order.CloseSz != "0.431" {
 		t.Fatalf("bad market fallback result: %#v", order)
 	}
-	if len(orderForms) != 6 {
-		t.Fatalf("expected four rejected limit attempts and two market fallback attempts, got %#v", orderForms)
+	if len(orderForms) != 9 {
+		t.Fatalf("expected four rejected limit attempts, four rejected reduce-only market attempts, and one non-reduce-only fallback, got %#v", orderForms)
 	}
 	market := orderForms[len(orderForms)-1]
-	if market.Get("type") != "MARKET" || market.Get("side") != "SELL" || market.Get("quantity") != "0.432" || market.Get("positionSide") != "BOTH" || market.Get("reduceOnly") != "true" || market.Get("price") != "" || market.Get("timeInForce") != "" {
+	if market.Get("type") != "MARKET" || market.Get("side") != "SELL" || market.Get("quantity") != "0.431" || market.Get("positionSide") != "BOTH" || market.Get("reduceOnly") != "" || market.Get("price") != "" || market.Get("timeInForce") != "" {
 		t.Fatalf("bad market fallback form: %#v", market)
+	}
+	for _, reduceOnlyOrder := range orderForms[:len(orderForms)-1] {
+		if reduceOnlyOrder.Get("reduceOnly") != "true" {
+			t.Fatalf("non-reduce-only order was submitted before the final fallback: %#v", reduceOnlyOrder)
+		}
 	}
 }
 

@@ -225,14 +225,15 @@ type positionProtectionResponse struct {
 }
 
 type positionCloseOrder struct {
-	Position       okx.Position
-	Ack            okx.OrderAck
-	Acks           []okx.OrderAck
-	Px             string
-	CloseSz        string
-	Partial        bool
-	Unknown        bool
-	MarketFallback bool
+	Position              okx.Position
+	Ack                   okx.OrderAck
+	Acks                  []okx.OrderAck
+	Px                    string
+	CloseSz               string
+	Partial               bool
+	Unknown               bool
+	MarketFallback        bool
+	NonReduceOnlyFallback bool
 }
 
 type positionCloseRegistry struct {
@@ -1893,6 +1894,10 @@ func (s *Server) handleBinancePositionClose(w http.ResponseWriter, r *http.Reque
 		if order.MarketFallback {
 			status = "market_fallback"
 			message = "Binance limit close was rejected by reduce-only conflict; market reduce-only fallback submitted"
+		}
+		if order.NonReduceOnlyFallback {
+			status = "market_fallback"
+			message = "Binance reduce-only close was rejected; market close without reduceOnly submitted after canceling symbol orders"
 		}
 		if order.Unknown {
 			status = "unknown"
@@ -5385,6 +5390,13 @@ func placeBinancePositionClose(ctx context.Context, client binance.Client, posit
 			if fallbackErr == nil {
 				return fallback, nil
 			}
+			if binance.IsAPIErrorCode(fallbackErr, -2022) {
+				plainFallback, plainErr := placeBinanceNonReduceOnlyMarketFallback(ctx, client, position, req)
+				if plainErr == nil {
+					return plainFallback, nil
+				}
+				fallbackErr = fmt.Errorf("market close without reduceOnly failed: %w", plainErr)
+			}
 			err = fmt.Errorf("Binance limit close rejected after reduce-only retries; market reduce-only fallback failed: %w", fallbackErr)
 		}
 		if err != nil {
@@ -5392,6 +5404,54 @@ func placeBinancePositionClose(ctx context.Context, client binance.Client, posit
 		}
 	}
 	return binancePositionCloseOrderFromAcks(position, []binance.OrderAck{ack}, px, req.Quantity, partial, unknown), nil
+}
+
+// placeBinanceNonReduceOnlyMarketFallback is the last-resort path for a
+// one-way position when Binance persistently rejects reduceOnly with -2022.
+// It clears and verifies all symbol orders, refreshes the live position, and
+// caps the order to the equivalent fraction of that refreshed position.
+func placeBinanceNonReduceOnlyMarketFallback(ctx context.Context, client binance.Client, originalPosition okx.Position, originalReq binance.PlaceOrderRequest) (positionCloseOrder, error) {
+	if err := cancelAllBinanceSymbolOrders(ctx, client, originalReq.Symbol); err != nil {
+		return positionCloseOrder{}, fmt.Errorf("cancel Binance symbol orders before non-reduce-only fallback failed: %w", err)
+	}
+	position, err := currentBinanceOpenPosition(ctx, client, originalPosition.InstID, originalPosition.PosSide)
+	if err != nil {
+		return positionCloseOrder{}, fmt.Errorf("refresh Binance position before non-reduce-only fallback failed: %w", err)
+	}
+	ratio := 1.0
+	originalSize, originalErr := positiveRatFromDecimal(originalPosition.Pos)
+	requestedSize, requestedErr := positiveRatFromDecimal(originalReq.Quantity)
+	if originalErr != nil || requestedErr != nil || originalSize.Sign() <= 0 || requestedSize.Sign() <= 0 {
+		return positionCloseOrder{}, errors.New("invalid original position or close quantity for non-reduce-only fallback")
+	}
+	if requestedSize.Cmp(originalSize) < 0 {
+		ratioRat := new(big.Rat).Quo(requestedSize, originalSize)
+		ratioFloat, _ := ratioRat.Float64()
+		ratio = ratioFloat
+	}
+	size, err := binancePositionCloseSize(ctx, client, position, ratio)
+	if err != nil {
+		return positionCloseOrder{}, fmt.Errorf("size non-reduce-only fallback from refreshed position failed: %w", err)
+	}
+	size = capCloseSizeToPosition(position.Pos, size)
+	if size == "" || size == "0" {
+		return positionCloseOrder{}, errPositionNotOpen
+	}
+	req, partial, err := binancePositionCloseOrderRequest(position, "market", "", size)
+	if err != nil {
+		return positionCloseOrder{}, err
+	}
+	// This is deliberately the only path that submits an order without
+	// reduceOnly, and is reached only after an explicit -2022 rejection.
+	req.ReduceOnly = false
+	ack, unknown, err := placeBinanceOrderWithUnknownRecovery(ctx, client, req)
+	if err != nil {
+		return positionCloseOrder{}, fmt.Errorf("Binance market close without reduceOnly failed: %w", err)
+	}
+	order := binancePositionCloseOrderFromAcks(position, []binance.OrderAck{ack}, "", req.Quantity, partial, unknown)
+	order.MarketFallback = true
+	order.NonReduceOnlyFallback = true
+	return order, nil
 }
 
 func placeBinanceReduceOnlyMarketFallback(ctx context.Context, client binance.Client, originalPosition okx.Position, originalReq binance.PlaceOrderRequest) (positionCloseOrder, error) {
