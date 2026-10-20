@@ -82,6 +82,12 @@ var legacyPersonalMenuKeys = []string{
 	"api-keys", "order-settings", "template", "config", "upgrade", "system-info",
 }
 
+var legacyOrdersFirstAdminMenuKeys = []string{
+	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+	"overview", "orders", "positions", "analysis", "trade-monitor", "symbols",
+	"api-keys", "order-settings", "template", "config", "system-info", "menu", "system", "upgrade",
+}
+
 var canonicalPersonalMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
 	"overview", "positions", "analysis", "symbols", "config", "api-keys",
@@ -123,6 +129,28 @@ func reorderLegacyPersonalMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	}
 	ordered := make([]adminMenuItem, 0, len(canonicalPersonalMenuKeys))
 	for _, key := range canonicalPersonalMenuKeys {
+		item, ok := byKey[key]
+		if !ok {
+			return menu, false
+		}
+		ordered = append(ordered, item)
+	}
+	return ordered, true
+}
+
+func reorderLegacyOrdersFirstAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
+	if len(menu) != len(legacyOrdersFirstAdminMenuKeys) {
+		return menu, false
+	}
+	byKey := make(map[string]adminMenuItem, len(menu))
+	for i, item := range menu {
+		if item.Key != legacyOrdersFirstAdminMenuKeys[i] {
+			return menu, false
+		}
+		byKey[item.Key] = item
+	}
+	ordered := make([]adminMenuItem, 0, len(canonicalDefaultAdminMenuKeys))
+	for _, key := range canonicalDefaultAdminMenuKeys {
 		item, ok := byKey[key]
 		if !ok {
 			return menu, false
@@ -189,6 +217,9 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 		return reordered, true
 	}
 	if reordered, ok := reorderLegacyPersonalMenu(migrated); ok {
+		return reordered, true
+	}
+	if reordered, ok := reorderLegacyOrdersFirstAdminMenu(migrated); ok {
 		return reordered, true
 	}
 	return migrated, changed
