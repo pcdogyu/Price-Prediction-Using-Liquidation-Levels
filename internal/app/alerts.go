@@ -492,6 +492,9 @@ func (rtm *alertRuntime) serviceConfig() config.Config {
 			cfg.SteadyWebhookTargetExchange = target.Exchange
 			cfg.SteadyWebhookAPIID = target.APIID
 			cfg.SteadyWebhookTradeEnv = target.TradeEnv
+			if target.Token != "" {
+				cfg.SteadyWebhookToken = target.Token
+			}
 		}
 	}
 	return cfg

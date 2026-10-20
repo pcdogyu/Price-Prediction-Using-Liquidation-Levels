@@ -12,7 +12,7 @@ func TestAlertRuntimeServiceConfigUsesTenantWebhookTarget(t *testing.T) {
 		if tenantID != "wyx" {
 			return WebhookTarget{}, false
 		}
-		return WebhookTarget{Exchange: "gate", APIID: "gate-main", TradeEnv: "demo"}, true
+		return WebhookTarget{Exchange: "gate", APIID: "gate-main", TradeEnv: "demo", Token: "tenant-token"}, true
 	})
 	rtm := &alertRuntime{service: svc, tenantID: "wyx", webhookConfig: config.Config{
 		SteadyWebhookTargetExchange: "binance",
@@ -22,5 +22,8 @@ func TestAlertRuntimeServiceConfigUsesTenantWebhookTarget(t *testing.T) {
 	got := rtm.serviceConfig()
 	if got.SteadyWebhookTargetExchange != "gate" || got.SteadyWebhookAPIID != "gate-main" || got.SteadyWebhookTradeEnv != "demo" {
 		t.Fatalf("tenant target did not override process default: %#v", got)
+	}
+	if got.SteadyWebhookToken != "tenant-token" {
+		t.Fatalf("tenant webhook token did not override process default: %#v", got)
 	}
 }

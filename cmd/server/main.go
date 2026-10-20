@@ -67,7 +67,11 @@ func main() {
 		if !ok {
 			return app.WebhookTarget{}, false
 		}
-		return app.WebhookTarget{Exchange: exchange, APIID: apiID, TradeEnv: tradeEnv}, true
+		target := app.WebhookTarget{Exchange: exchange, APIID: apiID, TradeEnv: tradeEnv}
+		if token, tokenOK := bridge.WebhookTokenForUser(username, cfg.SteadyWebhookTokenNonce); tokenOK {
+			target.Token = token
+		}
+		return target, true
 	})
 	bridge.Start(ctx)
 	srv, err := httpapi.New(cfg, svc, log, logStore, st)

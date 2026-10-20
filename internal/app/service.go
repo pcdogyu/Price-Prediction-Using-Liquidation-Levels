@@ -28,6 +28,9 @@ type WebhookTarget struct {
 	Exchange string
 	APIID    string
 	TradeEnv string
+	// Token is generated for the same tenant/target tuple as the payload. The
+	// process-wide webhook token remains the fallback for legacy tenants.
+	Token string
 }
 
 type WebhookTargetResolver func(tenantID string) (WebhookTarget, bool)
@@ -90,6 +93,7 @@ func (s *Service) webhookTargetForTenant(tenantID string) (WebhookTarget, bool) 
 	target.Exchange = strings.TrimSpace(target.Exchange)
 	target.APIID = strings.TrimSpace(target.APIID)
 	target.TradeEnv = strings.TrimSpace(target.TradeEnv)
+	target.Token = strings.TrimSpace(target.Token)
 	if target.Exchange == "" || target.TradeEnv == "" {
 		return WebhookTarget{}, false
 	}

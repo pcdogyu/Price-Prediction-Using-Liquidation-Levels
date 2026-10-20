@@ -45,6 +45,45 @@ func (b *Bridge) TradeTargetForUser(username string) (string, string, string, bo
 	return b.Tenants.TradeTargetForUser(username)
 }
 
+// WebhookTokenForUser generates the tenant-scoped token used by liquidation
+// alert webhooks. The alert service sends the authenticated username as its
+// tenant id, while TVBot templates use the encoded tenant id; the former is
+// intentional because the webhook router accepts both representations.
+func (b *Bridge) WebhookTokenForUser(username, tokenNonce string) (string, bool) {
+	if b == nil || b.Tenants == nil || b.Handler == nil {
+		return "", false
+	}
+	username = strings.TrimSpace(username)
+	tokenNonce = strings.TrimSpace(tokenNonce)
+	if username == "" || tokenNonce == "" {
+		return "", false
+	}
+	scope, err := b.Tenants.ForUserScope(username)
+	if err != nil || scope.ConfigStore == nil {
+		return "", false
+	}
+	tradingCfg := scope.ConfigStore.Get().Trading
+	exchange := tvbottrading.NormalizeExchange(tradingCfg.TargetExchange)
+	if !tvbottrading.ValidTargetExchange(exchange) {
+		return "", false
+	}
+	tradeEnv := strings.ToLower(strings.TrimSpace(tradingCfg.TargetTradeEnv))
+	if tradeEnv != tvbottrading.TradeEnvDemo && tradeEnv != tvbottrading.TradeEnvLive {
+		tradeEnv = strings.ToLower(strings.TrimSpace(tradingCfg.Env))
+	}
+	if tradeEnv != tvbottrading.TradeEnvDemo && tradeEnv != tvbottrading.TradeEnvLive {
+		return "", false
+	}
+	signal := tvbottrading.Signal{
+		TenantID:       username,
+		TargetExchange: exchange,
+		APIID:          strings.TrimSpace(tradingCfg.TargetAPIID),
+		TradeEnv:       tradeEnv,
+		TokenNonce:     tokenNonce,
+	}
+	return b.Handler.Token.Generate(signal.CanonicalNonceWebhookTokenPayload()), true
+}
+
 func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*Bridge, error) {
 	tvCfg, err := loadConfig(cfg.TVBotConfigPath)
 	if err != nil {
