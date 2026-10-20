@@ -78,6 +78,33 @@ func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 	}
 }
 
+func TestBubbleChartHasShortLandscapeViewportFit(t *testing.T) {
+	srv, st := testService(t, config.Config{BasePath: "/liquidation/"}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	defer st.Close()
+	w := httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/bubbles", nil))
+	if w.Code != 200 {
+		t.Fatalf("bubbles status=%d", w.Code)
+	}
+	body := w.Body.String()
+	for _, marker := range []string{
+		"orientation:landscape",
+		"max-height:900px",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("bubble chart missing television viewport support %q", marker)
+		}
+	}
+	for _, marker := range []string{
+		"fitBubbleChartViewport",
+		"window.visualViewport?.addEventListener('resize', fitBubbleChartViewport)",
+	} {
+		if !strings.Contains(string(dashboardJS), marker) {
+			t.Fatalf("bubble chart script missing television viewport support %q", marker)
+		}
+	}
+}
+
 func TestLiquidationAnalysisRules(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

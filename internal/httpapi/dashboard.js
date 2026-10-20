@@ -129,6 +129,24 @@ function updateTicker(view) {
   $('ticker-coverage').textContent = 'Binance USDⓈ-M · ' + (view.realtime_price ? 'aggTrade 实时' : 'REST 校准');
 }
 
+// TVs commonly expose a large but short viewport (for example 1366x768). The
+// chart used to keep its desktop height and let the lower part fall below the
+// first screen. Keep the normal desktop canvas unchanged unless the chart
+// would extend below the current large-screen viewport.
+function fitBubbleChartViewport() {
+  const wrap = document.querySelector('.chart-wrap');
+  if (!wrap) return;
+  const largeViewport = window.innerWidth >= 700;
+  wrap.style.removeProperty('height');
+  if (!largeViewport) return;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const pageTop = wrap.getBoundingClientRect().top + window.scrollY;
+  const available = Math.floor(viewportHeight - pageTop - 12);
+  if (available >= 672) return;
+  const height = Math.max(220, Math.min(672, available));
+  wrap.style.height = height + 'px';
+}
+
 function updateProbabilities(probabilities) {
   [['up', 'upper_first'], ['down', 'lower_first'], ['none', 'neither']].forEach(([id, key]) => {
     const value = probabilities?.[key];
@@ -441,6 +459,7 @@ function drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high) {
 }
 
 function draw(view, map, signal, volume) {
+  fitBubbleChartViewport();
   const svg = $('market-chart');
   svg.replaceChildren();
   const candles = visibleCandles();
@@ -1054,3 +1073,5 @@ events.addEventListener('liquidation', event => {
 events.onerror = () => { streamNeedsCalibration = true; streamError = '连接中断，正在重试'; showFailures(lastFailures); };
 window.addEventListener('themechange', () => draw(cache.market, cache.map, cache.signal, cache.volume));
 window.addEventListener('resize', () => draw(cache.market, cache.map, cache.signal, cache.volume));
+window.visualViewport?.addEventListener('resize', fitBubbleChartViewport);
+requestAnimationFrame(fitBubbleChartViewport);
