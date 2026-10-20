@@ -45,6 +45,8 @@ func TestBinanceConflictingReduceOnlyCloseOrderIncludesConditionalOrders(t *test
 		{name: "limit reduce only", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", Type: "LIMIT", ReduceOnly: true}, wantConflict: true},
 		{name: "stop reduce only", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", Type: "STOP_MARKET", ReduceOnly: true}, wantConflict: true},
 		{name: "close position conditional", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", Type: "STOP_MARKET", ClosePosition: true}, wantConflict: true},
+		{name: "managed close without flags", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", Type: "LIMIT", ClientOrderID: "PC123"}, wantConflict: true},
+		{name: "managed protection without flags", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", Type: "STOP_MARKET", ClientOrderID: "PP123SL"}, wantConflict: true},
 		{name: "same side entry", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", Type: "LIMIT"}, wantConflict: false},
 		{name: "opposite side close", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "SELL", PositionSide: "BOTH", Type: "LIMIT", ReduceOnly: true}, wantConflict: false},
 		{name: "different symbol close", order: binance.OpenOrder{Symbol: "ETHUSDT", Side: "BUY", PositionSide: "BOTH", Type: "LIMIT", ReduceOnly: true}, wantConflict: false},
@@ -115,13 +117,14 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		mode string
-		code int
+		mode  string
+		ratio string
+		code  int
 	}{
 		{mode: "market", code: http.StatusOK},
-		{mode: "limit", code: http.StatusAccepted},
+		{mode: "limit", ratio: `,"ratio":0.1`, code: http.StatusAccepted},
 	} {
-		body := []byte(`{"exchange":"binance","api_id":"main","inst_id":"BTCUSDT","pos_side":"net","mode":"` + tc.mode + `"}`)
+		body := []byte(`{"exchange":"binance","api_id":"main","inst_id":"BTCUSDT","pos_side":"net","mode":"` + tc.mode + `"` + tc.ratio + `}`)
 		req := httptest.NewRequest(http.MethodPost, "/tvbot/positions/close", bytes.NewReader(body))
 		req.SetBasicAuth("admin", "Admin123")
 		rr := httptest.NewRecorder()
@@ -145,7 +148,7 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 		t.Fatalf("bad market close form: %#v", market)
 	}
 	limit := orderForms[1]
-	if limit.Get("symbol") != "BTCUSDT" || limit.Get("side") != "BUY" || limit.Get("type") != "LIMIT" || limit.Get("timeInForce") != "GTC" || limit.Get("quantity") != "2" || limit.Get("price") != "100.2" || limit.Get("reduceOnly") != "true" {
+	if limit.Get("symbol") != "BTCUSDT" || limit.Get("side") != "BUY" || limit.Get("type") != "LIMIT" || limit.Get("timeInForce") != "GTC" || limit.Get("quantity") != "0.2" || limit.Get("price") != "100.2" || limit.Get("reduceOnly") != "true" {
 		t.Fatalf("bad limit close form: %#v", limit)
 	}
 }
