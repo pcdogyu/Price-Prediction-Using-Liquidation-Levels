@@ -5561,10 +5561,7 @@ func cancelBinanceConflictingReduceOnlyAlgoOrders(ctx context.Context, client bi
 }
 
 func binanceConflictingReduceOnlyCloseOrder(order binance.OpenOrder, req binance.PlaceOrderRequest) bool {
-	if !order.ReduceOnly || !strings.EqualFold(order.Symbol, req.Symbol) || !strings.EqualFold(order.Side, req.Side) {
-		return false
-	}
-	if !strings.EqualFold(strings.TrimSpace(order.Type), "LIMIT") {
+	if (!order.ReduceOnly && !order.ClosePosition) || !strings.EqualFold(order.Symbol, req.Symbol) || !strings.EqualFold(order.Side, req.Side) {
 		return false
 	}
 	reqPosSide := normalizedBinanceClosePositionSide(req.PositionSide)

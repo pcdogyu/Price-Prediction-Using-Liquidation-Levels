@@ -35,6 +35,29 @@ func TestBinancePositionToOKXDerivesLeverageAndNotional(t *testing.T) {
 	}
 }
 
+func TestBinanceConflictingReduceOnlyCloseOrderIncludesConditionalOrders(t *testing.T) {
+	req := binance.PlaceOrderRequest{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", ReduceOnly: true}
+	tests := []struct {
+		name         string
+		order        binance.OpenOrder
+		wantConflict bool
+	}{
+		{name: "limit reduce only", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", Type: "LIMIT", ReduceOnly: true}, wantConflict: true},
+		{name: "stop reduce only", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", Type: "STOP_MARKET", ReduceOnly: true}, wantConflict: true},
+		{name: "close position conditional", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", Type: "STOP_MARKET", ClosePosition: true}, wantConflict: true},
+		{name: "same side entry", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "BUY", PositionSide: "BOTH", Type: "LIMIT"}, wantConflict: false},
+		{name: "opposite side close", order: binance.OpenOrder{Symbol: "BTCUSDT", Side: "SELL", PositionSide: "BOTH", Type: "LIMIT", ReduceOnly: true}, wantConflict: false},
+		{name: "different symbol close", order: binance.OpenOrder{Symbol: "ETHUSDT", Side: "BUY", PositionSide: "BOTH", Type: "LIMIT", ReduceOnly: true}, wantConflict: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := binanceConflictingReduceOnlyCloseOrder(tc.order, req); got != tc.wantConflict {
+				t.Fatalf("conflict=%v, want %v for %#v", got, tc.wantConflict, tc.order)
+			}
+		})
+	}
+}
+
 func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 	oldPoll := positionClosePollInterval
 	oldTimeout := positionCloseLimitTimeout
@@ -401,7 +424,7 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyConflict(t *testing.T) {
 				t.Fatalf("bad open orders query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`[
-				{"symbol":"AVAXUSDT","orderId":100,"clientOrderId":"old-close","price":"6.6285","origQty":"15","executedQty":"0","side":"BUY","positionSide":"BOTH","type":"LIMIT","status":"NEW","time":1784880000000,"updateTime":1784880000000,"reduceOnly":true},
+				{"symbol":"AVAXUSDT","orderId":100,"clientOrderId":"old-close","price":"6.6285","origQty":"15","executedQty":"0","side":"BUY","positionSide":"BOTH","type":"STOP_MARKET","status":"NEW","time":1784880000000,"updateTime":1784880000000,"reduceOnly":true},
 				{"symbol":"AVAXUSDT","orderId":101,"clientOrderId":"entry","price":"6.5","origQty":"2","executedQty":"0","side":"BUY","positionSide":"BOTH","type":"LIMIT","status":"NEW","time":1784880000000,"updateTime":1784880000000,"reduceOnly":false},
 				{"symbol":"AVAXUSDT","orderId":102,"clientOrderId":"other-side","price":"7","origQty":"1","executedQty":"0","side":"SELL","positionSide":"BOTH","type":"LIMIT","status":"NEW","time":1784880000000,"updateTime":1784880000000,"reduceOnly":true}
 			]`))
@@ -425,7 +448,7 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyConflict(t *testing.T) {
 				_, _ = w.Write([]byte(`{"orderId":789,"symbol":"AVAXUSDT","status":"NEW","clientOrderId":"close-1","price":"6.6285","origQty":"15","executedQty":"0","type":"LIMIT","side":"BUY","positionSide":"BOTH"}`))
 			case http.MethodDelete:
 				cancelForms = append(cancelForms, cloneValues(r.Form))
-				_, _ = w.Write([]byte(`{"orderId":100,"symbol":"AVAXUSDT","status":"CANCELED","clientOrderId":"old-close","price":"6.6285","origQty":"15","executedQty":"0","type":"LIMIT","side":"BUY","positionSide":"BOTH"}`))
+				_, _ = w.Write([]byte(`{"orderId":100,"symbol":"AVAXUSDT","status":"CANCELED","clientOrderId":"old-close","price":"6.6285","origQty":"15","executedQty":"0","type":"STOP_MARKET","side":"BUY","positionSide":"BOTH"}`))
 			default:
 				t.Fatalf("unexpected Binance order method %s", r.Method)
 			}
