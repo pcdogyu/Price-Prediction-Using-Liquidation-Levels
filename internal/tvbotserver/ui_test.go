@@ -55,10 +55,12 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	saveButton := strings.Index(page, `id="save-api-keys"`)
 	testButton := strings.Index(page, `id="test-api-keys"`)
 	addButton := strings.Index(page, `id="add-api-key"`)
-	deleteButton := strings.Index(page, `id="delete-api-key"`)
+	apiList := strings.Index(page, `id="api-key-accounts"`)
+	operationHeader := strings.Index(page, `<th>操作</th>`)
+	deleteButton := strings.Index(page, `data-delete-api-id=`)
 	apiIDControl := strings.Index(page, `class="api-id-control"`)
-	if saveButton < 0 || testButton < 0 || addButton < 0 || deleteButton < 0 || apiIDControl < 0 || !(apiIDControl < deleteButton && deleteButton < saveButton && saveButton < testButton && testButton < addButton) {
-		t.Fatalf("API key controls should place delete beside API ID and save/test before add: control=%d delete=%d save=%d test=%d add=%d", apiIDControl, deleteButton, saveButton, testButton, addButton)
+	if saveButton < 0 || testButton < 0 || addButton < 0 || apiList < 0 || operationHeader < 0 || deleteButton < 0 || apiIDControl >= 0 || !(testButton < saveButton && saveButton < addButton) || !(operationHeader < apiList && apiList < deleteButton) {
+		t.Fatalf("API key controls should put per-row delete in the rightmost list column and test/save before add: list=%d operation=%d delete=%d oldControl=%d save=%d test=%d add=%d", apiList, operationHeader, deleteButton, apiIDControl, saveButton, testButton, addButton)
 	}
 	for _, want := range []string{
 		`function fillAPIForm(id, preserveCredentials)`,
@@ -69,6 +71,10 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`apiKeyTestEnv`,
 		`apiKeyTestStale`,
 		`apiKeyTestError`,
+		`data-delete-api-id=`,
+		`async function deleteAPIKey(apiID)`,
+		`button.dataset.deleteApiId`,
+		`colspan="5"`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("API key form should preserve entered credentials after saving; missing %q", want)

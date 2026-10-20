@@ -771,13 +771,8 @@ const tvbotHTML = `<!doctype html>
       padding-top: 5px;
       padding-bottom: 5px;
     }
-    .api-id-control {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 8px;
-      align-items: end;
-    }
-    .api-id-control .btn {
+    .api-key-action-cell {
+      text-align: right;
       white-space: nowrap;
     }
     .exchange-tabs {
@@ -1524,7 +1519,6 @@ const tvbotHTML = `<!doctype html>
       .liquidation-links { gap: 0; }
       .liquidation-links a { padding-left: 6px; padding-right: 6px; }
       .status, .grid, .grid.two, .split, .api-key-layout, .analysis-metrics, .asset-metrics, .symbol-metrics, .position-metrics, .dashboard-balance-grid, .analysis-balance-grid, .position-monitor-grid { grid-template-columns: 1fr; }
-      .api-id-control { grid-template-columns: 1fr; }
       .template-title-row { grid-template-columns: 1fr; }
       .analysis-period-row { flex-direction: column; }
       .analysis-time-status { min-width: 0; }
@@ -1932,10 +1926,7 @@ const tvbotHTML = `<!doctype html>
           <div class="grid two">
             <label>交易 API<select id="key-selected"></select></label>
             <label>账户名称<input id="key-name" autocomplete="off" spellcheck="false"></label>
-            <div class="api-id-control">
-              <label>API ID<input id="key-id" autocomplete="off" spellcheck="false" placeholder="default"></label>
-              <button class="btn danger" type="button" id="delete-api-key">删除当前 API</button>
-            </div>
+            <label>API ID<input id="key-id" autocomplete="off" spellcheck="false" placeholder="default"></label>
             <label class="check"><input id="key-active" type="checkbox">设为交易 API</label>
           </div>
           <div class="grid api-key-inputs">
@@ -1944,8 +1935,8 @@ const tvbotHTML = `<!doctype html>
             <label id="key-passphrase-label">OKX Passphrase<input id="key-passphrase" type="password" autocomplete="new-password" spellcheck="false"></label>
           </div>
           <div class="actions api-key-actions">
-            <button class="btn primary" type="button" id="save-api-keys">保存 API Key</button>
             <button class="btn success" type="button" id="test-api-keys">测试 API</button>
+            <button class="btn primary" type="button" id="save-api-keys">保存 API Key</button>
             <button class="btn" type="button" id="add-api-key">新增 API</button>
           </div>
         </div>
@@ -1956,7 +1947,7 @@ const tvbotHTML = `<!doctype html>
           </table>
           <h3 style="margin-top:14px">API 列表</h3>
           <table style="margin-top:10px">
-            <thead><tr><th>API ID</th><th>名称</th><th>状态</th><th>API Key</th></tr></thead>
+            <thead><tr><th>API ID</th><th>名称</th><th>状态</th><th>API Key</th><th>操作</th></tr></thead>
             <tbody id="api-key-accounts"></tbody>
           </table>
         </div>
@@ -4466,13 +4457,15 @@ const tvbotHTML = `<!doctype html>
       fillAPIForm(selected, preserveCredentials);
       renderAPIKeyStatus(selected);
       $("api-key-accounts").innerHTML = accounts.map((account) => {
+        const escapedID = escapeHTML(account.id);
         return "<tr>" +
-          "<td>" + escapeHTML(account.id) + "</td>" +
+          "<td>" + escapedID + "</td>" +
           "<td>" + escapeHTML(account.name || "-") + "</td>" +
           "<td>" + pill(account.active ? "交易 API" : (account.configured ? "已配置" : "未配置"), account.active ? "ok" : (account.configured ? "warn" : "bad")) + "</td>" +
           "<td>" + escapeHTML(account.api_key_masked || "-") + "</td>" +
+          '<td class="api-key-action-cell"><button class="btn danger small" type="button" data-delete-api-id="' + escapedID + '">删除</button></td>' +
           "</tr>";
-      }).join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
+      }).join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
     }
 
     function activeAPIIDStatusHTML(activeID) {
@@ -6480,10 +6473,10 @@ const tvbotHTML = `<!doctype html>
       toast(exchangeLabel(exchange) + " API 可用");
     }
 
-    async function deleteAPIKey() {
+    async function deleteAPIKey(apiID) {
       const exchange = normalizeExchange(state.apiKeyExchange);
       const env = state.apiKeyEnv === "live" ? "live" : "demo";
-      const id = $("key-id").value.trim() || $("key-selected").value;
+      const id = String(apiID || "").trim();
       if (!id) return;
       state.apiKeysByEnvironment[env][exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange) + "&env=" + env + "&id=" + encodeURIComponent(id), { method: "DELETE" });
       state.apiKeysByExchange = state.apiKeysByEnvironment[env];
@@ -6893,7 +6886,11 @@ const tvbotHTML = `<!doctype html>
       $("okx-output").textContent = err.message;
       toast(err.message);
     }));
-    $("delete-api-key").addEventListener("click", () => deleteAPIKey().catch((err) => toast(err.message)));
+    $("api-key-accounts").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-delete-api-id]");
+      if (!button) return;
+      deleteAPIKey(button.dataset.deleteApiId).catch((err) => toast(err.message));
+    });
     $("api-key-status").addEventListener("click", (event) => {
       const button = event.target.closest("button[data-rename-active-api-id]");
       if (!button) return;
