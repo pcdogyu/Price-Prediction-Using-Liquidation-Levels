@@ -2672,6 +2672,72 @@ func TestTVBotGateAPIKeysSaveAndTest(t *testing.T) {
 	}
 }
 
+func TestTVBotAPIKeysSeparateLiveAndDemoCredentials(t *testing.T) {
+	srv := newTestServer(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v4/futures/usdt/accounts":
+			_, _ = w.Write([]byte(`{"currency":"USDT","total":"1000","available":"900"}`))
+		case "/api/v4/futures/usdt/contracts":
+			_, _ = w.Write([]byte(`[{"name":"BTC_USDT","status":"trading"}]`))
+		default:
+			t.Fatalf("unexpected Gate path %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.GateDemoBaseURL = ts.URL
+	cfg.Trading.GateBaseURL = ts.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	demoStore, err := gate.NewCredentialStore(filepath.Join(t.TempDir(), "gate-demo.json"), gate.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveStore, err := gate.NewCredentialStore(filepath.Join(t.TempDir(), "gate-live.json"), gate.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.GateCredentials = demoStore
+	srv.GateLiveCredentials = liveStore
+
+	put := func(env, apiKey string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/tvbot/api-keys?exchange=gate&env="+env, strings.NewReader(`{"exchange":"gate","env":"`+env+`","id":"same","api_key":"`+apiKey+`","secret_key":"secret-`+env+`","active":true}`))
+		req.SetBasicAuth("admin", "Admin123")
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := put("demo", "demoabcd12345678wxyz"); rr.Code != http.StatusOK {
+		t.Fatalf("demo save status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := put("live", "liveabcd12345678wxyz"); rr.Code != http.StatusOK {
+		t.Fatalf("live save status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	get := func(env string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/tvbot/api-keys?exchange=gate&env="+env, nil)
+		req.SetBasicAuth("admin", "Admin123")
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+	demo := get("demo")
+	live := get("live")
+	if demo.Code != http.StatusOK || !bytes.Contains(demo.Body.Bytes(), []byte("demo...wxyz")) || bytes.Contains(demo.Body.Bytes(), []byte("live...wxyz")) {
+		t.Fatalf("demo credentials were not isolated: %d %s", demo.Code, demo.Body.String())
+	}
+	if live.Code != http.StatusOK || !bytes.Contains(live.Body.Bytes(), []byte("live...wxyz")) || bytes.Contains(live.Body.Bytes(), []byte("demo...wxyz")) {
+		t.Fatalf("live credentials were not isolated: %d %s", live.Code, live.Body.String())
+	}
+	testReq := httptest.NewRequest(http.MethodPost, "/tvbot/api-keys/test", strings.NewReader(`{"exchange":"gate","env":"live","id":"same"}`))
+	testReq.SetBasicAuth("admin", "Admin123")
+	testRR := httptest.NewRecorder()
+	srv.ServeHTTP(testRR, testReq)
+	if testRR.Code != http.StatusOK || !bytes.Contains(testRR.Body.Bytes(), []byte(`"api_id":"same"`)) {
+		t.Fatalf("live credential test failed: %d %s", testRR.Code, testRR.Body.String())
+	}
+}
+
 func TestTVBotAPIKeysRenameActiveID(t *testing.T) {
 	srv := newTestServer(t)
 	reqBody := []byte(`{"exchange":"binance","id":"tvbot","name":"binance-moni","api_key":"bnabcd12345678wxyz","secret_key":"binance-secret-value","active":true}`)

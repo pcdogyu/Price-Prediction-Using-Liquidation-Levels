@@ -266,13 +266,14 @@ func (s *Server) closePositionFromSignal(ctx context.Context, signal trading.Sig
 }
 
 func (s *Server) closeGatePositionFromSignal(ctx context.Context, signal trading.Signal, cfg config.Config) (trading.OrderResult, error) {
-	if s.GateCredentials == nil {
+	store := s.gateCredentialStore(cfg.Trading.Env)
+	if store == nil {
 		return trading.OrderResult{}, errors.New("Gate credential store is not configured")
 	}
 	if !cfg.GateLiveTradingAllowedByEnvironment() {
 		return trading.OrderResult{}, errors.New("Gate live trading is not allowed by environment")
 	}
-	creds, apiID, err := s.GateCredentials.GateCredentials(signal.APIID)
+	creds, apiID, err := store.GateCredentials(signal.APIID)
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
@@ -321,7 +322,7 @@ func (s *Server) closeGatePositionFromSignal(ctx context.Context, signal trading
 }
 
 func (s *Server) closeOKXPositionFromSignal(ctx context.Context, signal trading.Signal, cfg config.Config) (trading.OrderResult, error) {
-	if s.OKXCredentials == nil {
+	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		return trading.OrderResult{}, errors.New("OKX credential store is not configured")
 	}
 	client, apiID, err := s.okxClientForCredentials(cfg, signal.APIID)
@@ -370,7 +371,7 @@ func okxPositionCloseInstrumentID(cfg config.Config, signal trading.Signal) (str
 }
 
 func (s *Server) closeBinancePositionFromSignal(ctx context.Context, signal trading.Signal, cfg config.Config) (trading.OrderResult, error) {
-	if s.BinanceCredentials == nil {
+	if s.binanceCredentialStore(cfg.Trading.Env) == nil {
 		return trading.OrderResult{}, errors.New("Binance credential store is not configured")
 	}
 	if !cfg.BinanceLiveTradingAllowedByEnvironment() {

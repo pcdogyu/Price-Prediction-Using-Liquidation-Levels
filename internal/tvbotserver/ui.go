@@ -775,6 +775,28 @@ const tvbotHTML = `<!doctype html>
       flex-wrap: wrap;
       margin-top: 8px;
     }
+    .environment-tabs {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .environment-tabs button {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--control-bg);
+      color: var(--text);
+      min-height: 32px;
+      padding: 6px 10px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .environment-tabs button[aria-selected="true"] {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: var(--bg);
+    }
     .exchange-tabs button {
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -1884,6 +1906,10 @@ const tvbotHTML = `<!doctype html>
       <div class="section-head">
         <div>
           <h2>API Key</h2>
+          <div class="environment-tabs" id="api-key-environment-tabs" role="group" aria-label="交易环境">
+            <button type="button" data-api-key-env="demo" aria-selected="true">模拟盘</button>
+            <button type="button" data-api-key-env="live">实盘</button>
+          </div>
           <div class="exchange-tabs" id="api-key-exchange-tabs">
             <button type="button" data-api-key-exchange="okx" aria-selected="true">OKX</button>
             <button type="button" data-api-key-exchange="binance">Binance</button>
@@ -1904,7 +1930,7 @@ const tvbotHTML = `<!doctype html>
             <label class="check"><input id="key-active" type="checkbox">设为交易 API</label>
           </div>
           <div class="grid api-key-inputs">
-            <label id="key-api-label">OKX API Key<input id="key-api" autocomplete="off" spellcheck="false"></label>
+            <label id="key-api-label">OKX API Key<input id="key-api" autocomplete="off" spellcheck="false"></label><!-- Binance API Key -->
             <label id="key-secret-label">OKX Secret Key<input id="key-secret" type="password" autocomplete="new-password" spellcheck="false"></label>
             <label id="key-passphrase-label">OKX Passphrase<input id="key-passphrase" type="password" autocomplete="new-password" spellcheck="false"></label>
           </div>
@@ -2179,6 +2205,8 @@ const tvbotHTML = `<!doctype html>
       config: null,
       apiKeys: null,
       apiKeysByExchange: { okx: null, binance: null, gate: null },
+      apiKeysByEnvironment: { demo: { okx: null, binance: null, gate: null }, live: { okx: null, binance: null, gate: null } },
+      apiKeyEnv: "demo",
       apiKeyExchange: "okx",
       selectedAPIID: "",
       selectedAPIIDs: { okx: "", binance: "", gate: "" },
@@ -3466,14 +3494,19 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadAPIKeys() {
-      const [okxResult, binanceResult, gateResult] = await Promise.allSettled([
-        api("/tvbot/api-keys?exchange=okx"),
-        api("/tvbot/api-keys?exchange=binance"),
-        api("/tvbot/api-keys?exchange=gate")
-      ]);
-      state.apiKeysByExchange.okx = okxResult.status === "fulfilled" ? okxResult.value : { configured: false, credentials: [], error: okxResult.reason ? okxResult.reason.message : "OKX API Key 读取失败" };
-      state.apiKeysByExchange.binance = binanceResult.status === "fulfilled" ? binanceResult.value : { configured: false, credentials: [], error: binanceResult.reason ? binanceResult.reason.message : "Binance API Key 读取失败" };
-      state.apiKeysByExchange.gate = gateResult.status === "fulfilled" ? gateResult.value : { configured: false, credentials: [], error: gateResult.reason ? gateResult.reason.message : "Gate API Key 读取失败" };
+      const exchanges = ["okx", "binance", "gate"];
+      const environments = ["demo", "live"];
+      const requests = [];
+      environments.forEach((env) => exchanges.forEach((exchange) => {
+        requests.push({ env: env, exchange: exchange, promise: api("/tvbot/api-keys?exchange=" + exchange + "&env=" + env) });
+      }));
+      const results = await Promise.allSettled(requests.map((item) => item.promise));
+      requests.forEach((item, index) => {
+        const result = results[index];
+        const value = result.status === "fulfilled" ? result.value : { configured: false, credentials: [], error: result.reason ? result.reason.message : exchangeLabel(item.exchange) + " API Key 读取失败" };
+        state.apiKeysByEnvironment[item.env][item.exchange] = value;
+      });
+      state.apiKeysByExchange = state.apiKeysByEnvironment[state.apiKeyEnv];
       state.apiKeys = apiKeyStatus(state.apiKeyExchange);
       renderAPIKeys();
       renderTemplateAPIs();
@@ -3955,7 +3988,7 @@ const tvbotHTML = `<!doctype html>
         $(prefix + "-status").textContent = statusText;
         $(prefix + "-eq").textContent = usdt ? formatUSD(usdt.eq_usd || usdt.eq) : "-";
         $(prefix + "-avail").textContent = usdt ? formatUSDTBalance(usdt.avail_bal || usdt.avail_eq) + " USDT" : "-";
-        $(prefix + "-api").textContent = item.api_id ? apiDisplayName(item.api_id, exchange) : "-";
+        $(prefix + "-api").textContent = item.api_id ? apiDisplayName(item.api_id, exchange, item.env) : "-";
         $(prefix + "-updated").textContent = balance.updated_at ? shanghaiTime(balance.updated_at) : (item.refreshed_at ? shanghaiTime(item.refreshed_at) : "-");
         const points = usdtBalancePoints(item.balance_points || [], balance);
         drawUSDTChart(points, prefix + "-usdt-chart", configured ? "暂无 " + label + " USDT 估值数据" : label + " 未配置", exchange === "binance" ? "#138a55" : (exchange === "gate" ? "#1a9b8a" : "#1f6feb"));
@@ -4394,6 +4427,7 @@ const tvbotHTML = `<!doctype html>
 
     function renderAPIKeys() {
       const exchange = normalizeExchange(state.apiKeyExchange);
+      const env = state.apiKeyEnv === "live" ? "live" : "demo";
       const status = apiKeyStatus(exchange);
       state.apiKeys = status;
       const accounts = apiAccounts(exchange);
@@ -4401,6 +4435,9 @@ const tvbotHTML = `<!doctype html>
       const previous = state.selectedAPIIDs[exchange] || select.value || status.active_id || "";
       document.querySelectorAll("[data-api-key-exchange]").forEach((button) => {
         button.setAttribute("aria-selected", normalizeExchange(button.dataset.apiKeyExchange) === exchange ? "true" : "false");
+      });
+      document.querySelectorAll("[data-api-key-env]").forEach((button) => {
+        button.setAttribute("aria-selected", button.dataset.apiKeyEnv === env ? "true" : "false");
       });
       $("key-api-label").childNodes[0].nodeValue = exchangeLabel(exchange) + " API Key";
       $("key-secret-label").childNodes[0].nodeValue = exchangeLabel(exchange) + " Secret Key";
@@ -4437,6 +4474,7 @@ const tvbotHTML = `<!doctype html>
       const status = apiKeyStatus(exchange);
       const rows = [
         ["交易所", exchangeLabel(exchange)],
+        ["交易环境", state.apiKeyEnv === "live" ? "实盘" : "模拟盘"],
         ["配置状态", status.configured ? "已配置" : "未配置"],
         ["交易 API", activeAPIIDStatusHTML(status.active_id), true],
         ["API Key", status.api_key_masked || "-"],
@@ -4464,8 +4502,14 @@ const tvbotHTML = `<!doctype html>
     }
 
     function apiKeyStatus(exchange) {
+      return apiKeyStatusForEnv(exchange, state.apiKeyEnv);
+    }
+
+    function apiKeyStatusForEnv(exchange, env) {
       exchange = normalizeExchange(exchange);
-      return state.apiKeysByExchange[exchange] || { configured: false, credentials: [] };
+      env = env === "live" ? "live" : "demo";
+      const byEnvironment = state.apiKeysByEnvironment && state.apiKeysByEnvironment[env];
+      return (byEnvironment && byEnvironment[exchange]) || { configured: false, credentials: [] };
     }
 
     function apiMetricText(exchange) {
@@ -4478,19 +4522,19 @@ const tvbotHTML = `<!doctype html>
       return status && status.configured && status.active_id ? status.active_id : "";
     }
 
-    function apiAccounts(exchange) {
-      const status = apiKeyStatus(exchange || state.apiKeyExchange);
+    function apiAccounts(exchange, env) {
+      const status = apiKeyStatusForEnv(exchange || state.apiKeyExchange, env === undefined ? state.apiKeyEnv : env);
       return status && Array.isArray(status.credentials) ? status.credentials : [];
     }
 
-    function selectedAPIAccount(id, exchange) {
-      return apiAccounts(exchange).find((account) => account.id === id) || null;
+    function selectedAPIAccount(id, exchange, env) {
+      return apiAccounts(exchange, env).find((account) => account.id === id) || null;
     }
 
-    function apiDisplayName(id, exchange) {
+    function apiDisplayName(id, exchange, env) {
       const apiID = String(id || "").trim();
       if (!apiID) return "-";
-      const account = selectedAPIAccount(apiID, exchange) || selectedAPIAccount(apiID, "okx") || selectedAPIAccount(apiID, "binance") || selectedAPIAccount(apiID, "gate");
+      const account = selectedAPIAccount(apiID, exchange, env) || selectedAPIAccount(apiID, "okx", env) || selectedAPIAccount(apiID, "binance", env) || selectedAPIAccount(apiID, "gate", env);
       return account && account.name ? account.name : apiID;
     }
 
@@ -4506,8 +4550,9 @@ const tvbotHTML = `<!doctype html>
 
     function renderTemplateAPIs() {
       const exchange = $("tpl-target-exchange") ? normalizeExchange($("tpl-target-exchange").value) : "okx";
-      const status = apiKeyStatus(exchange);
-      const options = apiAccounts(exchange).map((account) => '<option value="' + escapeHTML(account.id) + '">' + escapeHTML(account.id + (account.name ? " - " + account.name : "") + (account.active ? " (交易)" : "")) + '</option>');
+      const env = templateTradeEnv();
+      const status = apiKeyStatusForEnv(exchange, env);
+      const options = apiAccounts(exchange, env).map((account) => '<option value="' + escapeHTML(account.id) + '">' + escapeHTML(account.id + (account.name ? " - " + account.name : "") + (account.active ? " (交易)" : "")) + '</option>');
       $("tpl-api-id").innerHTML = '<option value="">默认交易 API</option>' + options.join("");
       if (status && status.active_id) {
         $("tpl-api-id").value = status.active_id;
@@ -6054,7 +6099,7 @@ const tvbotHTML = `<!doctype html>
         const apiID = order.api_id || (order.result && order.result.api_id);
         const sourceExchange = order.source_exchange || "-";
         const tradeEnvText = order.trade_env === "live" ? "实盘" : "模拟";
-        const targetText = exchangeLabel(targetExchange) + " " + tradeEnvText + " / " + apiDisplayName(apiID, targetExchange);
+        const targetText = exchangeLabel(targetExchange) + " " + tradeEnvText + " / " + apiDisplayName(apiID, targetExchange, order.trade_env);
         const tone = order.status === "submitted" ? "ok" : (order.status === "failed" || order.status === "rejected" ? "bad" : "warn");
         const canRetry = orderCanRetry(order);
         const retrying = canRetry && state.retrying[order.signal_id];
@@ -6327,8 +6372,10 @@ const tvbotHTML = `<!doctype html>
 
     async function saveAPIKeys() {
       const exchange = normalizeExchange(state.apiKeyExchange);
+      const env = state.apiKeyEnv === "live" ? "live" : "demo";
       const body = {
         exchange: exchange,
+        env: env,
         id: $("key-id").value.trim(),
         name: $("key-name").value.trim(),
         api_key: $("key-api").value.trim(),
@@ -6336,7 +6383,8 @@ const tvbotHTML = `<!doctype html>
         passphrase: exchange === "okx" ? $("key-passphrase").value.trim() : "",
         active: $("key-active").checked
       };
-      state.apiKeysByExchange[exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      state.apiKeysByEnvironment[env][exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange) + "&env=" + env, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      state.apiKeysByExchange = state.apiKeysByEnvironment[env];
       state.apiKeys = apiKeyStatus(exchange);
       state.selectedAPIID = body.id || state.apiKeys.active_id || "default";
       state.selectedAPIIDs[exchange] = state.selectedAPIID;
@@ -6356,8 +6404,10 @@ const tvbotHTML = `<!doctype html>
 
     async function testAPIKeys() {
       const exchange = normalizeExchange(state.apiKeyExchange);
+      const env = state.apiKeyEnv === "live" ? "live" : "demo";
       const body = {
         exchange: exchange,
+        env: env,
         id: $("key-id").value.trim(),
         api_key: $("key-api").value.trim(),
         secret_key: $("key-secret").value.trim(),
@@ -6375,9 +6425,11 @@ const tvbotHTML = `<!doctype html>
 
     async function deleteAPIKey() {
       const exchange = normalizeExchange(state.apiKeyExchange);
+      const env = state.apiKeyEnv === "live" ? "live" : "demo";
       const id = $("key-id").value.trim() || $("key-selected").value;
       if (!id) return;
-      state.apiKeysByExchange[exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange) + "&id=" + encodeURIComponent(id), { method: "DELETE" });
+      state.apiKeysByEnvironment[env][exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange) + "&env=" + env + "&id=" + encodeURIComponent(id), { method: "DELETE" });
+      state.apiKeysByExchange = state.apiKeysByEnvironment[env];
       state.apiKeys = apiKeyStatus(exchange);
       state.selectedAPIID = state.apiKeys.active_id || "";
       state.selectedAPIIDs[exchange] = state.selectedAPIID;
@@ -6394,6 +6446,7 @@ const tvbotHTML = `<!doctype html>
 
     async function renameActiveAPIID(button) {
       const exchange = normalizeExchange(state.apiKeyExchange);
+      const env = state.apiKeyEnv === "live" ? "live" : "demo";
       const status = apiKeyStatus(exchange);
       const currentID = (button && button.dataset.renameActiveApiId) || status.active_id || "";
       if (!currentID) return;
@@ -6407,14 +6460,15 @@ const tvbotHTML = `<!doctype html>
       if (trimmed === currentID) return;
       if (button) button.disabled = true;
       try {
-        state.apiKeysByExchange[exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange), {
+        state.apiKeysByEnvironment[env][exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange) + "&env=" + env, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ exchange: exchange, id: currentID, new_id: trimmed })
+          body: JSON.stringify({ exchange: exchange, env: env, id: currentID, new_id: trimmed })
         });
       } finally {
         if (button) button.disabled = false;
       }
+      state.apiKeysByExchange = state.apiKeysByEnvironment[env];
       state.apiKeys = apiKeyStatus(exchange);
       state.selectedAPIID = state.apiKeys.active_id || trimmed;
       state.selectedAPIIDs[exchange] = state.selectedAPIID;
@@ -6795,6 +6849,21 @@ const tvbotHTML = `<!doctype html>
     document.querySelectorAll("[data-api-key-exchange]").forEach((button) => {
       button.addEventListener("click", () => {
         state.apiKeyExchange = normalizeExchange(button.dataset.apiKeyExchange);
+        state.apiKeysByExchange = state.apiKeysByEnvironment[state.apiKeyEnv];
+        state.apiKeys = apiKeyStatus(state.apiKeyExchange);
+        state.apiKeyTest = null;
+        state.apiKeyTestID = "";
+        state.apiKeyTestExchange = state.apiKeyExchange;
+        renderAPIKeys();
+        renderTemplateAPIs();
+        renderPositionAPIs();
+        updateMetrics();
+      });
+    });
+    document.querySelectorAll("[data-api-key-env]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.apiKeyEnv = button.dataset.apiKeyEnv === "live" ? "live" : "demo";
+        state.apiKeysByExchange = state.apiKeysByEnvironment[state.apiKeyEnv];
         state.apiKeys = apiKeyStatus(state.apiKeyExchange);
         state.apiKeyTest = null;
         state.apiKeyTestID = "";
@@ -6857,6 +6926,7 @@ const tvbotHTML = `<!doctype html>
       renderTemplateTitle(new Date());
     });
     $("tpl-trade-env").addEventListener("change", () => {
+      renderTemplateAPIs();
       renderTemplateCoinpairs();
       renderTemplateTitle(new Date());
     });

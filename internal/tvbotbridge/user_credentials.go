@@ -21,6 +21,7 @@ type userCredentialResolver struct {
 	legacyOKXPath     string
 	legacyBinancePath string
 	legacyGatePath    string
+	legacyEnv         string
 	initialOKX        tvbotokx.Credentials
 	initialBinance    tvbotbinance.Credentials
 	initialGate       tvbotgate.Credentials
@@ -29,10 +30,14 @@ type userCredentialResolver struct {
 	users map[string]tvbotserver.UserCredentials
 }
 
-func newUserCredentialResolver(root, legacyOwner, legacyOKXPath, legacyBinancePath, legacyGatePath string, initialOKX tvbotokx.Credentials, initialBinance tvbotbinance.Credentials, initialGate tvbotgate.Credentials) (*userCredentialResolver, error) {
+func newUserCredentialResolver(root, legacyOwner, legacyOKXPath, legacyBinancePath, legacyGatePath string, initialOKX tvbotokx.Credentials, initialBinance tvbotbinance.Credentials, initialGate tvbotgate.Credentials, defaultEnv ...string) (*userCredentialResolver, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, errors.New("user credential root is required")
+	}
+	legacyEnv := "demo"
+	if len(defaultEnv) > 0 && strings.EqualFold(strings.TrimSpace(defaultEnv[0]), "live") {
+		legacyEnv = "live"
 	}
 	return &userCredentialResolver{
 		root:              root,
@@ -40,6 +45,7 @@ func newUserCredentialResolver(root, legacyOwner, legacyOKXPath, legacyBinancePa
 		legacyOKXPath:     strings.TrimSpace(legacyOKXPath),
 		legacyBinancePath: strings.TrimSpace(legacyBinancePath),
 		legacyGatePath:    strings.TrimSpace(legacyGatePath),
+		legacyEnv:         legacyEnv,
 		initialOKX:        initialOKX,
 		initialBinance:    initialBinance,
 		initialGate:       initialGate,
@@ -60,49 +66,91 @@ func (r *userCredentialResolver) ForUser(username string) (tvbotserver.UserCrede
 	}
 
 	userDir := filepath.Join(r.root, "users", userDirectoryName(username))
-	okxPath := filepath.Join(userDir, "okx-credentials.json")
-	binancePath := filepath.Join(userDir, "binance-credentials.json")
-	gatePath := filepath.Join(userDir, "gate-credentials.json")
+	legacyOKXPath := filepath.Join(userDir, "okx-credentials.json")
+	legacyBinancePath := filepath.Join(userDir, "binance-credentials.json")
+	legacyGatePath := filepath.Join(userDir, "gate-credentials.json")
+	okxDemoPath := filepath.Join(userDir, "okx-credentials-demo.json")
+	okxLivePath := filepath.Join(userDir, "okx-credentials-live.json")
+	binanceDemoPath := filepath.Join(userDir, "binance-credentials-demo.json")
+	binanceLivePath := filepath.Join(userDir, "binance-credentials-live.json")
+	gateDemoPath := filepath.Join(userDir, "gate-credentials-demo.json")
+	gateLivePath := filepath.Join(userDir, "gate-credentials-live.json")
 	if err := os.MkdirAll(userDir, 0o700); err != nil {
 		return tvbotserver.UserCredentials{}, err
 	}
 	isLegacyOwner := r.legacyOwner != "" && username == r.legacyOwner
+	legacyEnvPath := func(demo, live string) string {
+		if r.legacyEnv == "live" {
+			return live
+		}
+		return demo
+	}
 	if isLegacyOwner {
-		if err := copyLegacyCredential(r.legacyOKXPath, okxPath); err != nil {
+		if err := copyLegacyCredential(r.legacyOKXPath, legacyEnvPath(okxDemoPath, okxLivePath)); err != nil {
 			return tvbotserver.UserCredentials{}, err
 		}
-		if err := copyLegacyCredential(r.legacyBinancePath, binancePath); err != nil {
+		if err := copyLegacyCredential(r.legacyBinancePath, legacyEnvPath(binanceDemoPath, binanceLivePath)); err != nil {
 			return tvbotserver.UserCredentials{}, err
 		}
-		if err := copyLegacyCredential(r.legacyGatePath, gatePath); err != nil {
+		if err := copyLegacyCredential(r.legacyGatePath, legacyEnvPath(gateDemoPath, gateLivePath)); err != nil {
+			return tvbotserver.UserCredentials{}, err
+		}
+	} else {
+		if err := copyLegacyCredential(legacyOKXPath, legacyEnvPath(okxDemoPath, okxLivePath)); err != nil {
+			return tvbotserver.UserCredentials{}, err
+		}
+		if err := copyLegacyCredential(legacyBinancePath, legacyEnvPath(binanceDemoPath, binanceLivePath)); err != nil {
+			return tvbotserver.UserCredentials{}, err
+		}
+		if err := copyLegacyCredential(legacyGatePath, legacyEnvPath(gateDemoPath, gateLivePath)); err != nil {
 			return tvbotserver.UserCredentials{}, err
 		}
 	}
 
-	okxCredentials, err := tvbotokx.NewCredentialStore(okxPath, tvbotokx.Credentials{})
+	okxCredentials, err := tvbotokx.NewCredentialStore(okxDemoPath, tvbotokx.Credentials{})
 	if err != nil {
 		return tvbotserver.UserCredentials{}, err
 	}
-	binanceCredentials, err := tvbotbinance.NewCredentialStore(binancePath, tvbotbinance.Credentials{})
+	okxLiveCredentials, err := tvbotokx.NewCredentialStore(okxLivePath, tvbotokx.Credentials{})
 	if err != nil {
 		return tvbotserver.UserCredentials{}, err
 	}
-	gateCredentials, err := tvbotgate.NewCredentialStore(gatePath, tvbotgate.Credentials{})
+	binanceCredentials, err := tvbotbinance.NewCredentialStore(binanceDemoPath, tvbotbinance.Credentials{})
+	if err != nil {
+		return tvbotserver.UserCredentials{}, err
+	}
+	binanceLiveCredentials, err := tvbotbinance.NewCredentialStore(binanceLivePath, tvbotbinance.Credentials{})
+	if err != nil {
+		return tvbotserver.UserCredentials{}, err
+	}
+	gateCredentials, err := tvbotgate.NewCredentialStore(gateDemoPath, tvbotgate.Credentials{})
+	if err != nil {
+		return tvbotserver.UserCredentials{}, err
+	}
+	gateLiveCredentials, err := tvbotgate.NewCredentialStore(gateLivePath, tvbotgate.Credentials{})
 	if err != nil {
 		return tvbotserver.UserCredentials{}, err
 	}
 	if isLegacyOwner {
-		if err := seedInitialOKX(okxCredentials, r.initialOKX); err != nil {
+		okxInitialStore := okxCredentials
+		binanceInitialStore := binanceCredentials
+		gateInitialStore := gateCredentials
+		if r.legacyEnv == "live" {
+			okxInitialStore = okxLiveCredentials
+			binanceInitialStore = binanceLiveCredentials
+			gateInitialStore = gateLiveCredentials
+		}
+		if err := seedInitialOKX(okxInitialStore, r.initialOKX); err != nil {
 			return tvbotserver.UserCredentials{}, err
 		}
-		if err := seedInitialBinance(binanceCredentials, r.initialBinance); err != nil {
+		if err := seedInitialBinance(binanceInitialStore, r.initialBinance); err != nil {
 			return tvbotserver.UserCredentials{}, err
 		}
-		if err := seedInitialGate(gateCredentials, r.initialGate); err != nil {
+		if err := seedInitialGate(gateInitialStore, r.initialGate); err != nil {
 			return tvbotserver.UserCredentials{}, err
 		}
 	}
-	credentials := tvbotserver.UserCredentials{OKX: okxCredentials, Binance: binanceCredentials, Gate: gateCredentials}
+	credentials := tvbotserver.UserCredentials{OKX: okxCredentials, OKXLive: okxLiveCredentials, Binance: binanceCredentials, BinanceLive: binanceLiveCredentials, Gate: gateCredentials, GateLive: gateLiveCredentials}
 	r.users[username] = credentials
 	return credentials, nil
 }

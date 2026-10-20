@@ -333,6 +333,9 @@ func (s *Server) handlePositions(w http.ResponseWriter, r *http.Request) {
 	apiID := strings.TrimSpace(r.URL.Query().Get("api_id"))
 	refresh := strings.EqualFold(r.URL.Query().Get("refresh"), "true")
 	cfg := s.ConfigStore.Get()
+	okxStore := s.okxCredentialStore(cfg.Trading.Env)
+	binanceStore := s.binanceCredentialStore(cfg.Trading.Env)
+	gateStore := s.gateCredentialStore(cfg.Trading.Env)
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	var (
@@ -340,19 +343,19 @@ func (s *Server) handlePositions(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if exchange == trading.ExchangeBinance {
-		if s.BinanceCredentials == nil {
+		if binanceStore == nil {
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 			return
 		}
 		resp, err = s.fetchBinancePositions(ctx, cfg, apiID, refresh)
 	} else if exchange == trading.ExchangeGate {
-		if s.GateCredentials == nil {
+		if gateStore == nil {
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
 			return
 		}
 		resp, err = s.fetchGatePositions(ctx, cfg, apiID)
 	} else {
-		if s.OKXCredentials == nil {
+		if okxStore == nil {
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 			return
 		}
@@ -377,6 +380,9 @@ func (s *Server) handlePendingOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	apiID := strings.TrimSpace(r.URL.Query().Get("api_id"))
 	cfg := s.ConfigStore.Get()
+	okxStore := s.okxCredentialStore(cfg.Trading.Env)
+	binanceStore := s.binanceCredentialStore(cfg.Trading.Env)
+	gateStore := s.gateCredentialStore(cfg.Trading.Env)
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	var (
@@ -384,19 +390,19 @@ func (s *Server) handlePendingOrders(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if exchange == trading.ExchangeBinance {
-		if s.BinanceCredentials == nil {
+		if binanceStore == nil {
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 			return
 		}
 		resp, err = s.fetchBinancePendingOrders(ctx, cfg, apiID)
 	} else if exchange == trading.ExchangeGate {
-		if s.GateCredentials == nil {
+		if gateStore == nil {
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
 			return
 		}
 		resp, err = s.fetchGatePendingOrders(ctx, cfg, apiID)
 	} else {
-		if s.OKXCredentials == nil {
+		if okxStore == nil {
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 			return
 		}
@@ -446,7 +452,7 @@ func (s *Server) handlePendingOrderRisk(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	cfg := s.ConfigStore.Get()
-	if s.OKXCredentials == nil {
+	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 		return
 	}
@@ -527,7 +533,7 @@ func (s *Server) handlePendingOrderCancel(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleOKXPendingOrderCancel(w http.ResponseWriter, r *http.Request, cfg config.Config, req pendingOrderChaseRequest) {
-	if s.OKXCredentials == nil {
+	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 		return
 	}
@@ -579,7 +585,7 @@ func (s *Server) handleOKXPendingOrderCancel(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleBinancePendingOrderCancel(w http.ResponseWriter, r *http.Request, cfg config.Config, req pendingOrderChaseRequest) {
-	if s.BinanceCredentials == nil {
+	if s.binanceCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 		return
 	}
@@ -635,7 +641,7 @@ func (s *Server) handleBinancePendingOrderCancel(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleOKXPendingAlgoOrderCancel(w http.ResponseWriter, r *http.Request, cfg config.Config, req pendingOrderChaseRequest) {
-	if s.OKXCredentials == nil {
+	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 		return
 	}
@@ -678,7 +684,7 @@ func (s *Server) handleOKXPendingAlgoOrderCancel(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleBinancePendingAlgoOrderCancel(w http.ResponseWriter, r *http.Request, cfg config.Config, req pendingOrderChaseRequest) {
-	if s.BinanceCredentials == nil {
+	if s.binanceCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 		return
 	}
@@ -752,7 +758,7 @@ func (s *Server) handlePendingOrderChaseAction(w http.ResponseWriter, r *http.Re
 		s.handleBinancePendingOrderChaseAction(w, r, start, cfg, req)
 		return
 	}
-	if s.OKXCredentials == nil {
+	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 		return
 	}
@@ -829,7 +835,7 @@ func (s *Server) handlePendingOrderChaseAction(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleBinancePendingOrderChaseAction(w http.ResponseWriter, r *http.Request, start bool, cfg config.Config, req pendingOrderChaseRequest) {
-	if s.BinanceCredentials == nil {
+	if s.binanceCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 		return
 	}
@@ -909,7 +915,7 @@ func (s *Server) handleBinancePendingOrderChaseAction(w http.ResponseWriter, r *
 }
 
 func (s *Server) handleOKXPendingAlgoOrderChaseAction(w http.ResponseWriter, r *http.Request, start bool, cfg config.Config, req pendingOrderChaseRequest) {
-	if s.OKXCredentials == nil {
+	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 		return
 	}
@@ -957,7 +963,7 @@ func (s *Server) handleOKXPendingAlgoOrderChaseAction(w http.ResponseWriter, r *
 }
 
 func (s *Server) handleBinancePendingAlgoOrderChaseAction(w http.ResponseWriter, r *http.Request, start bool, cfg config.Config, req pendingOrderChaseRequest) {
-	if s.BinanceCredentials == nil {
+	if s.binanceCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 		return
 	}
@@ -1009,7 +1015,7 @@ func (s *Server) handleBinancePendingAlgoOrderChaseAction(w http.ResponseWriter,
 }
 
 func (s *Server) StartLowMarginPositionMonitor(ctx context.Context) {
-	if s.ConfigStore == nil || s.OKXCredentials == nil {
+	if s.ConfigStore == nil || (s.OKXCredentials == nil && s.OKXLiveCredentials == nil) {
 		return
 	}
 	go s.runLowMarginPositionMonitor(ctx, lowMarginPositionCheckInterval)
@@ -1060,13 +1066,14 @@ func (s *Server) scanPositionMonitor(ctx context.Context) {
 }
 
 func (s *Server) scanOKXPositionMonitor(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig) {
-	if s.OKXCredentials == nil {
+	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		if s.Logger != nil {
 			s.Logger.Warn("OKX position monitor skipped: credential store is not configured")
 		}
 		return
 	}
-	for _, requestedAPIID := range configuredAPIIDs(s.OKXCredentials.Status()) {
+	store := s.okxCredentialStore(cfg.Trading.Env)
+	for _, requestedAPIID := range configuredAPIIDs(store.Status()) {
 		scanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
 		err := s.scanOKXPositionMonitorForAPI(scanCtx, cfg, monitor, requestedAPIID)
 		cancel()
@@ -1129,7 +1136,7 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 }
 
 func (s *Server) scanBinancePositionMonitor(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig) {
-	if s.BinanceCredentials == nil {
+	if s.binanceCredentialStore(cfg.Trading.Env) == nil {
 		if s.Logger != nil {
 			s.Logger.Warn("Binance position monitor skipped: credential store is not configured")
 		}
@@ -1141,7 +1148,8 @@ func (s *Server) scanBinancePositionMonitor(ctx context.Context, cfg config.Conf
 		}
 		return
 	}
-	for _, requestedAPIID := range configuredBinanceAPIIDs(s.BinanceCredentials.Status()) {
+	store := s.binanceCredentialStore(cfg.Trading.Env)
+	for _, requestedAPIID := range configuredBinanceAPIIDs(store.Status()) {
 		scanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
 		err := s.scanBinancePositionMonitorForAPI(scanCtx, cfg, monitor, requestedAPIID)
 		cancel()
@@ -1239,10 +1247,11 @@ func (s *Server) cancelStalePendingOrders(ctx context.Context) {
 }
 
 func (s *Server) scanStaleOKXPendingOrders(ctx context.Context, cfg config.Config, now time.Time) {
-	if s.OKXCredentials == nil {
+	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		return
 	}
-	for _, requestedAPIID := range configuredAPIIDs(s.OKXCredentials.Status()) {
+	store := s.okxCredentialStore(cfg.Trading.Env)
+	for _, requestedAPIID := range configuredAPIIDs(store.Status()) {
 		scanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
 		err := s.cancelStaleOKXPendingOrdersForAPI(scanCtx, cfg, requestedAPIID, now)
 		cancel()
@@ -1296,10 +1305,11 @@ func (s *Server) cancelStaleOKXPendingOrdersForAPI(ctx context.Context, cfg conf
 }
 
 func (s *Server) scanStaleBinancePendingOrders(ctx context.Context, cfg config.Config, now time.Time) {
-	if s.BinanceCredentials == nil {
+	if s.binanceCredentialStore(cfg.Trading.Env) == nil {
 		return
 	}
-	ids := configuredBinanceAPIIDs(s.BinanceCredentials.Status())
+	store := s.binanceCredentialStore(cfg.Trading.Env)
+	ids := configuredBinanceAPIIDs(store.Status())
 	if len(ids) == 0 {
 		return
 	}
@@ -1445,11 +1455,15 @@ func (s *Server) runLowMarginPositionMonitor(ctx context.Context, interval time.
 }
 
 func (s *Server) closeLowMarginPositions(ctx context.Context) {
-	ids := configuredAPIIDs(s.OKXCredentials.Status())
+	cfg := s.ConfigStore.Get()
+	store := s.okxCredentialStore(cfg.Trading.Env)
+	if store == nil {
+		return
+	}
+	ids := configuredAPIIDs(store.Status())
 	if len(ids) == 0 {
 		return
 	}
-	cfg := s.ConfigStore.Get()
 	for _, requestedAPIID := range ids {
 		scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		err := s.closeLowMarginPositionsForAPI(scanCtx, cfg, requestedAPIID)
@@ -1493,7 +1507,7 @@ func (s *Server) closeLowMarginPositionsForAPI(ctx context.Context, cfg config.C
 // StartAutoProfitPositionCloseMonitor closes profitable OKX positions with a
 // repriced limit order before falling back to a market order.
 func (s *Server) StartAutoProfitPositionCloseMonitor(ctx context.Context) {
-	if s.ConfigStore == nil || s.OKXCredentials == nil {
+	if s.ConfigStore == nil || (s.OKXCredentials == nil && s.OKXLiveCredentials == nil) {
 		return
 	}
 	go s.runAutoProfitPositionCloseMonitor(ctx, autoProfitPositionCheckInterval)
@@ -1517,11 +1531,15 @@ func (s *Server) runAutoProfitPositionCloseMonitor(ctx context.Context, interval
 }
 
 func (s *Server) closeProfitablePositions(ctx context.Context) {
-	ids := configuredAPIIDs(s.OKXCredentials.Status())
+	cfg := s.ConfigStore.Get()
+	store := s.okxCredentialStore(cfg.Trading.Env)
+	if store == nil {
+		return
+	}
+	ids := configuredAPIIDs(store.Status())
 	if len(ids) == 0 {
 		return
 	}
-	cfg := s.ConfigStore.Get()
 	for _, requestedAPIID := range ids {
 		scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		err := s.closeProfitablePositionsForAPI(scanCtx, cfg, requestedAPIID)
@@ -1612,7 +1630,7 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 		s.handleBinancePositionClose(w, r, cfg, req, ratio)
 		return
 	}
-	if s.OKXCredentials == nil {
+	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 		return
 	}
@@ -1695,7 +1713,7 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusBadRequest, "unsupported_gate_position_close", "Gate currently supports full market close only")
 		return
 	}
-	if s.GateCredentials == nil {
+	if s.gateCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
 		return
 	}
@@ -1772,7 +1790,7 @@ func (s *Server) handlePositionProtection(w http.ResponseWriter, r *http.Request
 		s.handleBinancePositionProtection(w, r, cfg, req)
 		return
 	}
-	if s.OKXCredentials == nil {
+	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 		return
 	}
@@ -1801,7 +1819,7 @@ func (s *Server) handlePositionProtection(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleBinancePositionProtection(w http.ResponseWriter, r *http.Request, cfg config.Config, req positionProtectionRequest) {
-	if s.BinanceCredentials == nil {
+	if s.binanceCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 		return
 	}
@@ -1834,7 +1852,7 @@ func (s *Server) handleBinancePositionProtection(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleBinancePositionClose(w http.ResponseWriter, r *http.Request, cfg config.Config, req positionCloseRequest, ratio float64) {
-	if s.BinanceCredentials == nil {
+	if s.binanceCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 		return
 	}
@@ -2041,7 +2059,8 @@ func (s *Server) startBinanceLimitPositionClose(ctx context.Context, apiID strin
 }
 
 func (s *Server) fetchPositions(ctx context.Context, cfg config.Config, requestedAPIID, instType string, refresh bool) (positionsResponse, error) {
-	creds, apiID, err := s.OKXCredentials.OKXCredentials(requestedAPIID)
+	store := s.okxCredentialStore(cfg.Trading.Env)
+	creds, apiID, err := store.OKXCredentials(requestedAPIID)
 	if err != nil {
 		return positionsResponse{}, err
 	}
@@ -4834,7 +4853,11 @@ func formatMidPrice(mid float64, tickRaw string) string {
 }
 
 func (s *Server) okxClientForCredentials(cfg config.Config, requestedAPIID string) (okx.Client, string, error) {
-	creds, apiID, err := s.OKXCredentials.OKXCredentials(requestedAPIID)
+	store := s.okxCredentialStore(cfg.Trading.Env)
+	if store == nil {
+		return okx.Client{}, "", errors.New("OKX credential store is not configured")
+	}
+	creds, apiID, err := store.OKXCredentials(requestedAPIID)
 	if err != nil {
 		return okx.Client{}, "", err
 	}
@@ -4847,7 +4870,11 @@ func (s *Server) okxClientForCredentials(cfg config.Config, requestedAPIID strin
 }
 
 func (s *Server) binanceClientForCredentials(cfg config.Config, requestedAPIID string) (binance.Client, string, error) {
-	creds, apiID, err := s.BinanceCredentials.BinanceCredentials(requestedAPIID)
+	store := s.binanceCredentialStore(cfg.Trading.Env)
+	if store == nil {
+		return binance.Client{}, "", errors.New("Binance credential store is not configured")
+	}
+	creds, apiID, err := store.BinanceCredentials(requestedAPIID)
 	if err != nil {
 		return binance.Client{}, "", err
 	}
@@ -4859,7 +4886,11 @@ func (s *Server) binanceClientForCredentials(cfg config.Config, requestedAPIID s
 }
 
 func (s *Server) gateClientForCredentials(cfg config.Config, requestedAPIID string) (gate.Client, string, error) {
-	creds, apiID, err := s.GateCredentials.GateCredentials(requestedAPIID)
+	store := s.gateCredentialStore(cfg.Trading.Env)
+	if store == nil {
+		return gate.Client{}, "", errors.New("Gate credential store is not configured")
+	}
+	creds, apiID, err := store.GateCredentials(requestedAPIID)
 	if err != nil {
 		return gate.Client{}, "", err
 	}

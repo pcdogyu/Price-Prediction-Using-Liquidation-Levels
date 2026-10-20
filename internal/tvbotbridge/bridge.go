@@ -89,23 +89,86 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 	if err := copyLegacyCredential(filepath.Join(cfg.TVBotLegacyCredentialsDir, "gate-credentials.json"), gateFile); err != nil {
 		return nil, err
 	}
-	okxCredentials, err := tvbotokx.NewCredentialStore(okxFile, tvbotokx.Credentials{
-		APIKey: secrets.OKXAPIKey, SecretKey: secrets.OKXSecretKey, Passphrase: secrets.OKXPassphrase,
-	})
+	configuredEnv := strings.ToLower(strings.TrimSpace(tvCfg.Trading.Env))
+	if configuredEnv != "live" {
+		configuredEnv = "demo"
+	}
+	okxDemoFile := environmentCredentialPath(okxFile, "demo")
+	okxLiveFile := environmentCredentialPath(okxFile, "live")
+	binanceDemoFile := environmentCredentialPath(binanceFile, "demo")
+	binanceLiveFile := environmentCredentialPath(binanceFile, "live")
+	gateDemoFile := environmentCredentialPath(gateFile, "demo")
+	gateLiveFile := environmentCredentialPath(gateFile, "live")
+	if configuredEnv == "live" {
+		if err := copyLegacyCredential(okxFile, okxLiveFile); err != nil {
+			return nil, err
+		}
+		if err := copyLegacyCredential(binanceFile, binanceLiveFile); err != nil {
+			return nil, err
+		}
+		if err := copyLegacyCredential(gateFile, gateLiveFile); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := copyLegacyCredential(okxFile, okxDemoFile); err != nil {
+			return nil, err
+		}
+		if err := copyLegacyCredential(binanceFile, binanceDemoFile); err != nil {
+			return nil, err
+		}
+		if err := copyLegacyCredential(gateFile, gateDemoFile); err != nil {
+			return nil, err
+		}
+	}
+	okxInitial := tvbotokx.Credentials{}
+	binanceInitial := tvbotbinance.Credentials{}
+	gateInitial := tvbotgate.Credentials{}
+	if configuredEnv == "live" {
+		okxInitial = tvbotokx.Credentials{APIKey: secrets.OKXAPIKey, SecretKey: secrets.OKXSecretKey, Passphrase: secrets.OKXPassphrase}
+		binanceInitial = tvbotbinance.Credentials{APIKey: secrets.BinanceAPIKey, SecretKey: secrets.BinanceSecretKey}
+		gateInitial = tvbotgate.Credentials{APIKey: secrets.GateAPIKey, SecretKey: secrets.GateSecretKey}
+	}
+	okxCredentials, err := tvbotokx.NewCredentialStore(okxDemoFile, okxInitial)
 	if err != nil {
 		_ = orders.Close()
 		return nil, err
 	}
-	binanceCredentials, err := tvbotbinance.NewCredentialStore(binanceFile, tvbotbinance.Credentials{
-		APIKey: secrets.BinanceAPIKey, SecretKey: secrets.BinanceSecretKey,
-	})
+	okxLiveCredentials, err := tvbotokx.NewCredentialStore(okxLiveFile, func() tvbotokx.Credentials {
+		if configuredEnv == "live" {
+			return tvbotokx.Credentials{APIKey: secrets.OKXAPIKey, SecretKey: secrets.OKXSecretKey, Passphrase: secrets.OKXPassphrase}
+		}
+		return tvbotokx.Credentials{}
+	}())
 	if err != nil {
 		_ = orders.Close()
 		return nil, err
 	}
-	gateCredentials, err := tvbotgate.NewCredentialStore(gateFile, tvbotgate.Credentials{
-		APIKey: secrets.GateAPIKey, SecretKey: secrets.GateSecretKey,
-	})
+	binanceCredentials, err := tvbotbinance.NewCredentialStore(binanceDemoFile, binanceInitial)
+	if err != nil {
+		_ = orders.Close()
+		return nil, err
+	}
+	binanceLiveCredentials, err := tvbotbinance.NewCredentialStore(binanceLiveFile, func() tvbotbinance.Credentials {
+		if configuredEnv == "live" {
+			return tvbotbinance.Credentials{APIKey: secrets.BinanceAPIKey, SecretKey: secrets.BinanceSecretKey}
+		}
+		return tvbotbinance.Credentials{}
+	}())
+	if err != nil {
+		_ = orders.Close()
+		return nil, err
+	}
+	gateCredentials, err := tvbotgate.NewCredentialStore(gateDemoFile, gateInitial)
+	if err != nil {
+		_ = orders.Close()
+		return nil, err
+	}
+	gateLiveCredentials, err := tvbotgate.NewCredentialStore(gateLiveFile, func() tvbotgate.Credentials {
+		if configuredEnv == "live" {
+			return tvbotgate.Credentials{APIKey: secrets.GateAPIKey, SecretKey: secrets.GateSecretKey}
+		}
+		return tvbotgate.Credentials{}
+	}())
 	if err != nil {
 		_ = orders.Close()
 		return nil, err
@@ -119,6 +182,7 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 		tvbotokx.Credentials{APIKey: secrets.OKXAPIKey, SecretKey: secrets.OKXSecretKey, Passphrase: secrets.OKXPassphrase},
 		tvbotbinance.Credentials{APIKey: secrets.BinanceAPIKey, SecretKey: secrets.BinanceSecretKey},
 		tvbotgate.Credentials{APIKey: secrets.GateAPIKey, SecretKey: secrets.GateSecretKey},
+		tvCfg.Trading.Env,
 	)
 	if err != nil {
 		_ = orders.Close()
@@ -156,11 +220,14 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 		Orders:      orders,
 		Token:       tvbotsecurity.NewTokenService(secrets.TVTokenSecret),
 		Executor: tvbotserver.ExchangeExecutor{
-			OKX:     tvbotokx.Trader{CredentialProvider: okxCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
-			Binance: tvbotbinance.Trader{CredentialProvider: binanceCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
-			Gate:    tvbotgate.Trader{CredentialProvider: gateCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
+			OKX:         tvbotokx.Trader{CredentialProvider: okxCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
+			OKXLive:     tvbotokx.Trader{CredentialProvider: okxLiveCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
+			Binance:     tvbotbinance.Trader{CredentialProvider: binanceCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
+			BinanceLive: tvbotbinance.Trader{CredentialProvider: binanceLiveCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
+			Gate:        tvbotgate.Trader{CredentialProvider: gateCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
+			GateLive:    tvbotgate.Trader{CredentialProvider: gateLiveCredentials, HTTPClient: &http.Client{Timeout: 15 * time.Second}, Logger: logger},
 		},
-		OKXCredentials: okxCredentials, BinanceCredentials: binanceCredentials, GateCredentials: gateCredentials,
+		OKXCredentials: okxCredentials, OKXLiveCredentials: okxLiveCredentials, BinanceCredentials: binanceCredentials, BinanceLiveCredentials: binanceLiveCredentials, GateCredentials: gateCredentials, GateLiveCredentials: gateLiveCredentials,
 		UserCredentialResolver: userCredentials,
 		OKXHTTPClient:          &http.Client{Timeout: 15 * time.Second}, BinanceHTTPClient: &http.Client{Timeout: 15 * time.Second}, GateHTTPClient: &http.Client{Timeout: 15 * time.Second},
 		AdminToken: secrets.AdminToken, AdminUser: secrets.AdminUser, AdminPass: secrets.AdminPassword,
@@ -205,6 +272,19 @@ func resolvePath(root, value string) string {
 		return value
 	}
 	return filepath.Join(root, value)
+}
+
+func environmentCredentialPath(path, env string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return path
+	}
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(path, ext)
+	if ext == "" {
+		ext = ".json"
+	}
+	return base + "-" + env + ext
 }
 
 func copyLegacyCredential(source, target string) error {

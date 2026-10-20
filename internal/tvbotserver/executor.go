@@ -6,15 +6,19 @@ import (
 	"strings"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
+	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
 type ExchangeExecutor struct {
-	OKX     trading.Executor
-	Binance trading.Executor
-	Gate    trading.Executor
+	OKX         trading.Executor
+	OKXLive     trading.Executor
+	Binance     trading.Executor
+	BinanceLive trading.Executor
+	Gate        trading.Executor
+	GateLive    trading.Executor
 }
 
 func (e ExchangeExecutor) WithCredentials(okxCredentials *okx.CredentialStore, binanceCredentials *binance.CredentialStore, gateCredentials *gate.CredentialStore) ExchangeExecutor {
@@ -23,6 +27,14 @@ func (e ExchangeExecutor) WithCredentials(okxCredentials *okx.CredentialStore, b
 		Binance: bindBinanceCredentialStore(e.Binance, binanceCredentials),
 		Gate:    bindGateCredentialStore(e.Gate, gateCredentials),
 	}
+}
+
+func (e ExchangeExecutor) WithEnvironmentCredentials(okxDemo, okxLive *okx.CredentialStore, binanceDemo, binanceLive *binance.CredentialStore, gateDemo, gateLive *gate.CredentialStore) ExchangeExecutor {
+	out := e.WithCredentials(okxDemo, binanceDemo, gateDemo)
+	out.OKXLive = bindOKXCredentialStore(e.OKX, okxLive)
+	out.BinanceLive = bindBinanceCredentialStore(e.Binance, binanceLive)
+	out.GateLive = bindGateCredentialStore(e.Gate, gateLive)
+	return out
 }
 
 func bindGateCredentialStore(executor trading.Executor, credentials *gate.CredentialStore) trading.Executor {
@@ -77,30 +89,47 @@ func bindBinanceCredentialStore(executor trading.Executor, credentials *binance.
 }
 
 func (e ExchangeExecutor) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg trading.RuntimeConfig) (trading.OrderResult, error) {
+	tradeEnv := trading.NormalizeTradeEnv(signal.TradeEnv)
 	switch trading.NormalizeExchange(signal.TargetExchange) {
 	case trading.ExchangeBinance:
-		if e.Binance == nil {
+		executor := e.Binance
+		if tradeEnv == trading.TradeEnvLive && e.BinanceLive != nil {
+			executor = e.BinanceLive
+		}
+		if executor == nil {
 			return trading.OrderResult{}, errors.New("Binance executor is not configured")
 		}
-		return e.Binance.ExecuteSignal(ctx, signal, cfg)
+		return executor.ExecuteSignal(ctx, signal, cfg)
 	case trading.ExchangeOKX:
-		if e.OKX == nil {
+		executor := e.OKX
+		if tradeEnv == trading.TradeEnvLive && e.OKXLive != nil {
+			executor = e.OKXLive
+		}
+		if executor == nil {
 			return trading.OrderResult{}, errors.New("OKX executor is not configured")
 		}
-		return e.OKX.ExecuteSignal(ctx, signal, cfg)
+		return executor.ExecuteSignal(ctx, signal, cfg)
 	case trading.ExchangeGate:
-		if e.Gate == nil {
+		executor := e.Gate
+		if tradeEnv == trading.TradeEnvLive && e.GateLive != nil {
+			executor = e.GateLive
+		}
+		if executor == nil {
 			return trading.OrderResult{}, errors.New("Gate executor is not configured")
 		}
-		return e.Gate.ExecuteSignal(ctx, signal, cfg)
+		return executor.ExecuteSignal(ctx, signal, cfg)
 	default:
 		return trading.OrderResult{}, errors.New("unsupported target_exchange " + strings.TrimSpace(signal.TargetExchange))
 	}
 }
 
 func (e ExchangeExecutor) Check(ctx context.Context, cfg trading.RuntimeConfig) (map[string]any, error) {
-	if e.OKX == nil {
+	executor := e.OKX
+	if credentialEnvironmentFromRuntimeConfig(cfg) == tvbotconfig.EnvLive && e.OKXLive != nil {
+		executor = e.OKXLive
+	}
+	if executor == nil {
 		return nil, errors.New("OKX executor is not configured")
 	}
-	return e.OKX.Check(ctx, cfg)
+	return executor.Check(ctx, cfg)
 }

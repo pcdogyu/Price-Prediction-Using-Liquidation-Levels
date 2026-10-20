@@ -35,8 +35,11 @@ type Server struct {
 	Token                  security.TokenService
 	Executor               trading.Executor
 	OKXCredentials         *okx.CredentialStore
+	OKXLiveCredentials     *okx.CredentialStore
 	BinanceCredentials     *binance.CredentialStore
+	BinanceLiveCredentials *binance.CredentialStore
 	GateCredentials        *gate.CredentialStore
+	GateLiveCredentials    *gate.CredentialStore
 	OKXHTTPClient          *http.Client
 	BinanceHTTPClient      *http.Client
 	GateHTTPClient         *http.Client
@@ -58,9 +61,12 @@ type Server struct {
 }
 
 type UserCredentials struct {
-	OKX     *okx.CredentialStore
-	Binance *binance.CredentialStore
-	Gate    *gate.CredentialStore
+	OKX         *okx.CredentialStore
+	OKXLive     *okx.CredentialStore
+	Binance     *binance.CredentialStore
+	BinanceLive *binance.CredentialStore
+	Gate        *gate.CredentialStore
+	GateLive    *gate.CredentialStore
 }
 
 type UserCredentialResolver interface {
@@ -639,31 +645,40 @@ func clientIP(r *http.Request) string {
 
 func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 	exchange := trading.NormalizeExchange(r.URL.Query().Get("exchange"))
+	defaultEnv := config.EnvDemo
+	if s.ConfigStore != nil {
+		defaultEnv = s.ConfigStore.Get().Trading.Env
+	}
+	env := normalizeCredentialEnvironment(r.URL.Query().Get("env"), defaultEnv)
 	switch r.Method {
 	case http.MethodGet:
 		switch exchange {
 		case trading.ExchangeBinance:
-			if s.BinanceCredentials == nil {
+			store := s.binanceCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 				return
 			}
-			writeJSON(w, http.StatusOK, s.BinanceCredentials.Status())
+			writeJSON(w, http.StatusOK, store.Status())
 		case trading.ExchangeGate:
-			if s.GateCredentials == nil {
+			store := s.gateCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
 				return
 			}
-			writeJSON(w, http.StatusOK, s.GateCredentials.Status())
+			writeJSON(w, http.StatusOK, store.Status())
 		default:
-			if s.OKXCredentials == nil {
+			store := s.okxCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 				return
 			}
-			writeJSON(w, http.StatusOK, s.OKXCredentials.Status())
+			writeJSON(w, http.StatusOK, store.Status())
 		}
 	case http.MethodPut:
 		var req struct {
 			Exchange   string `json:"exchange"`
+			Env        string `json:"env"`
 			ID         string `json:"id"`
 			Name       string `json:"name"`
 			APIKey     string `json:"api_key"`
@@ -678,17 +693,19 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 		if req.Exchange != "" {
 			exchange = trading.NormalizeExchange(req.Exchange)
 		}
+		env = normalizeCredentialEnvironment(req.Env, defaultEnv)
 		active := false
 		if req.Active != nil {
 			active = *req.Active
 		}
 		switch exchange {
 		case trading.ExchangeBinance:
-			if s.BinanceCredentials == nil {
+			store := s.binanceCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 				return
 			}
-			status, err := s.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
+			status, err := store.UpdateAccount(binance.CredentialAccountUpdate{
 				ID:              req.ID,
 				Name:            req.Name,
 				Active:          active,
@@ -705,11 +722,12 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, status)
 			return
 		case trading.ExchangeGate:
-			if s.GateCredentials == nil {
+			store := s.gateCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
 				return
 			}
-			status, err := s.GateCredentials.UpdateAccount(gate.CredentialAccountUpdate{ID: req.ID, Name: req.Name, Active: active, PreserveMissing: true, Credentials: gate.Credentials{APIKey: req.APIKey, SecretKey: req.SecretKey}})
+			status, err := store.UpdateAccount(gate.CredentialAccountUpdate{ID: req.ID, Name: req.Name, Active: active, PreserveMissing: true, Credentials: gate.Credentials{APIKey: req.APIKey, SecretKey: req.SecretKey}})
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
@@ -717,11 +735,12 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, status)
 			return
 		default:
-			if s.OKXCredentials == nil {
+			store := s.okxCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 				return
 			}
-			status, err := s.OKXCredentials.UpdateAccount(okx.CredentialAccountUpdate{
+			status, err := store.UpdateAccount(okx.CredentialAccountUpdate{
 				ID:              req.ID,
 				Name:            req.Name,
 				Active:          active,
@@ -741,6 +760,7 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPatch:
 		var req struct {
 			Exchange string `json:"exchange"`
+			Env      string `json:"env"`
 			ID       string `json:"id"`
 			NewID    string `json:"new_id"`
 		}
@@ -751,17 +771,22 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 		if req.Exchange != "" {
 			exchange = trading.NormalizeExchange(req.Exchange)
 		}
+		env = normalizeCredentialEnvironment(req.Env, r.URL.Query().Get("env"))
+		if strings.TrimSpace(req.Env) == "" && strings.TrimSpace(r.URL.Query().Get("env")) == "" {
+			env = normalizeCredentialEnvironment(defaultEnv, defaultEnv)
+		}
 		id := strings.TrimSpace(req.ID)
 		if id == "" {
 			id = r.URL.Query().Get("id")
 		}
 		switch exchange {
 		case trading.ExchangeBinance:
-			if s.BinanceCredentials == nil {
+			store := s.binanceCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 				return
 			}
-			status, err := s.BinanceCredentials.RenameAccount(id, req.NewID)
+			status, err := store.RenameAccount(id, req.NewID)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
@@ -769,11 +794,12 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, status)
 			return
 		case trading.ExchangeGate:
-			if s.GateCredentials == nil {
+			store := s.gateCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
 				return
 			}
-			status, err := s.GateCredentials.RenameAccount(id, req.NewID)
+			status, err := store.RenameAccount(id, req.NewID)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
@@ -781,11 +807,12 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, status)
 			return
 		default:
-			if s.OKXCredentials == nil {
+			store := s.okxCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 				return
 			}
-			status, err := s.OKXCredentials.RenameAccount(id, req.NewID)
+			status, err := store.RenameAccount(id, req.NewID)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
@@ -796,11 +823,12 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		switch exchange {
 		case trading.ExchangeBinance:
-			if s.BinanceCredentials == nil {
+			store := s.binanceCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 				return
 			}
-			status, err := s.BinanceCredentials.DeleteAccount(id)
+			status, err := store.DeleteAccount(id)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
@@ -808,11 +836,12 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, status)
 			return
 		case trading.ExchangeGate:
-			if s.GateCredentials == nil {
+			store := s.gateCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
 				return
 			}
-			status, err := s.GateCredentials.DeleteAccount(id)
+			status, err := store.DeleteAccount(id)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
@@ -820,11 +849,12 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, status)
 			return
 		default:
-			if s.OKXCredentials == nil {
+			store := s.okxCredentialStore(env)
+			if store == nil {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 				return
 			}
-			status, err := s.OKXCredentials.DeleteAccount(id)
+			status, err := store.DeleteAccount(id)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
@@ -843,6 +873,7 @@ func (s *Server) handleAPIKeyTest(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Exchange   string `json:"exchange"`
+		Env        string `json:"env"`
 		ID         string `json:"id"`
 		APIKey     string `json:"api_key"`
 		SecretKey  string `json:"secret_key"`
@@ -853,14 +884,20 @@ func (s *Server) handleAPIKeyTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exchange := trading.NormalizeExchange(req.Exchange)
-	cfg := s.ConfigStore.Get()
+	defaultEnv := config.EnvDemo
+	if s.ConfigStore != nil {
+		defaultEnv = s.ConfigStore.Get().Trading.Env
+	}
+	env := normalizeCredentialEnvironment(req.Env, defaultEnv)
+	cfg := configForTradeEnv(s.ConfigStore.Get(), env)
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	if exchange == trading.ExchangeGate {
 		creds := gate.Credentials{APIKey: strings.TrimSpace(req.APIKey), SecretKey: strings.TrimSpace(req.SecretKey)}
 		if gateCredentialFieldsProvided(creds) {
-			if s.GateCredentials != nil {
-				if stored, resolvedID, err := s.GateCredentials.GateCredentials(req.ID); err == nil {
+			store := s.gateCredentialStore(env)
+			if store != nil {
+				if stored, resolvedID, err := store.GateCredentials(req.ID); err == nil {
 					req.ID = resolvedID
 					mergeMissingGateCredentials(&creds, stored)
 				}
@@ -884,8 +921,9 @@ func (s *Server) handleAPIKeyTest(w http.ResponseWriter, r *http.Request) {
 	if exchange == trading.ExchangeBinance {
 		creds := binance.Credentials{APIKey: strings.TrimSpace(req.APIKey), SecretKey: strings.TrimSpace(req.SecretKey)}
 		if binanceCredentialFieldsProvided(creds) {
-			if s.BinanceCredentials != nil {
-				if stored, resolvedID, err := s.BinanceCredentials.BinanceCredentials(req.ID); err == nil {
+			store := s.binanceCredentialStore(env)
+			if store != nil {
+				if stored, resolvedID, err := store.BinanceCredentials(req.ID); err == nil {
 					req.ID = resolvedID
 					mergeMissingBinanceCredentials(&creds, stored)
 				}
@@ -912,8 +950,9 @@ func (s *Server) handleAPIKeyTest(w http.ResponseWriter, r *http.Request) {
 		Passphrase: strings.TrimSpace(req.Passphrase),
 	}
 	if credentialFieldsProvided(creds) {
-		if s.OKXCredentials != nil {
-			if stored, resolvedID, err := s.OKXCredentials.OKXCredentials(req.ID); err == nil {
+		store := s.okxCredentialStore(env)
+		if store != nil {
+			if stored, resolvedID, err := store.OKXCredentials(req.ID); err == nil {
 				req.ID = resolvedID
 				mergeMissingCredentials(&creds, stored)
 			}
@@ -2356,10 +2395,11 @@ func (s *Server) handleCheckOKX(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) checkStoredOKX(ctx context.Context, cfg trading.RuntimeConfig, apiID string) (map[string]any, error) {
-	if s.OKXCredentials == nil {
+	store := s.okxCredentialStore(credentialEnvironmentFromRuntimeConfig(cfg))
+	if store == nil {
 		return nil, errors.New("OKX credential store is not configured")
 	}
-	creds, resolvedID, err := s.OKXCredentials.OKXCredentials(apiID)
+	creds, resolvedID, err := store.OKXCredentials(apiID)
 	if err != nil {
 		return nil, err
 	}
@@ -2375,10 +2415,11 @@ func checkOKXCredentials(ctx context.Context, cfg trading.RuntimeConfig, apiID s
 }
 
 func (s *Server) checkStoredBinance(ctx context.Context, cfg trading.RuntimeConfig, apiID string) (map[string]any, error) {
-	if s.BinanceCredentials == nil {
+	store := s.binanceCredentialStore(credentialEnvironmentFromRuntimeConfig(cfg))
+	if store == nil {
 		return nil, errors.New("Binance credential store is not configured")
 	}
-	creds, resolvedID, err := s.BinanceCredentials.BinanceCredentials(apiID)
+	creds, resolvedID, err := store.BinanceCredentials(apiID)
 	if err != nil {
 		return nil, err
 	}
@@ -2386,10 +2427,11 @@ func (s *Server) checkStoredBinance(ctx context.Context, cfg trading.RuntimeConf
 }
 
 func (s *Server) checkStoredGate(ctx context.Context, cfg trading.RuntimeConfig, apiID string) (map[string]any, error) {
-	if s.GateCredentials == nil {
+	store := s.gateCredentialStore(credentialEnvironmentFromRuntimeConfig(cfg))
+	if store == nil {
 		return nil, errors.New("Gate credential store is not configured")
 	}
-	creds, resolvedID, err := s.GateCredentials.GateCredentials(apiID)
+	creds, resolvedID, err := store.GateCredentials(apiID)
 	if err != nil {
 		return nil, err
 	}

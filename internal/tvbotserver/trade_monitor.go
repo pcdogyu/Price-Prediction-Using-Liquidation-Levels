@@ -27,7 +27,7 @@ const (
 )
 
 func (s *Server) StartTradeFillMonitor(ctx context.Context) {
-	if s.ConfigStore == nil || s.Orders == nil || (s.BinanceCredentials == nil && s.OKXCredentials == nil) {
+	if s.ConfigStore == nil || s.Orders == nil || (s.BinanceCredentials == nil && s.BinanceLiveCredentials == nil && s.OKXCredentials == nil && s.OKXLiveCredentials == nil) {
 		return
 	}
 	go s.runTradeFillMonitor(ctx)
@@ -57,7 +57,8 @@ func (s *Server) runTradeFillMonitorOnce(ctx context.Context) {
 	cfg := s.ConfigStore.Get()
 	now := s.now()
 	s.scanOKXCoinpairCooldownFills(ctx, cfg, now)
-	if s.BinanceCredentials == nil {
+	binanceStore := s.binanceCredentialStore(cfg.Trading.Env)
+	if binanceStore == nil {
 		return
 	}
 	lifecycleEnabled := tradeFillMonitorBinanceEnabled(cfg)
@@ -74,7 +75,7 @@ func (s *Server) runTradeFillMonitorOnce(ctx context.Context) {
 	if len(symbols) == 0 {
 		return
 	}
-	for _, requestedAPIID := range configuredBinanceAPIIDs(s.BinanceCredentials.Status()) {
+	for _, requestedAPIID := range configuredBinanceAPIIDs(binanceStore.Status()) {
 		client, apiID, err := s.binanceClientForCredentials(cfg, requestedAPIID)
 		if err != nil {
 			if s.Logger != nil {
@@ -125,10 +126,11 @@ type cooldownOrderAggregate struct {
 }
 
 func (s *Server) scanOKXCoinpairCooldownFills(ctx context.Context, cfg config.Config, now time.Time) {
-	if s.OKXCredentials == nil {
+	okxStore := s.okxCredentialStore(cfg.Trading.Env)
+	if okxStore == nil {
 		return
 	}
-	for _, requestedAPIID := range configuredAPIIDs(s.OKXCredentials.Status()) {
+	for _, requestedAPIID := range configuredAPIIDs(okxStore.Status()) {
 		client, apiID, err := s.okxClientForCredentials(cfg, requestedAPIID)
 		if err != nil {
 			if s.Logger != nil {
