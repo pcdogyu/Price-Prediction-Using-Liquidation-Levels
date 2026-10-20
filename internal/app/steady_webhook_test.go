@@ -353,6 +353,7 @@ func TestManualAlertTriggerUsesPersistedDirectionAndPrice(t *testing.T) {
 	svc.alerts.webhookConfig = cfg
 	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
 	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	svc.alerts.tenantID = "pcdog"
 	created := time.Date(2026, 10, 16, 3, 4, 5, 0, time.UTC)
 	if _, err := st.SaveLiquidationAlert(context.Background(), domain.LiquidationAlert{
 		ID: "manual-alert", Symbol: "BTCUSDT", Side: "long", TradeSide: "long",
@@ -374,7 +375,7 @@ func TestManualAlertTriggerUsesPersistedDirectionAndPrice(t *testing.T) {
 		if err := json.Unmarshal(raw, &got); err != nil {
 			t.Fatalf("webhook body is not JSON: %v", err)
 		}
-		if got["action"] != "buy" || got["price"] != "67123.45" || got["condition"] != "manual_liquidation_trigger" || got["source"] != "liquidation_alert_manual" {
+		if got["action"] != "buy" || got["price"] != "67123.45" || got["condition"] != "manual_liquidation_trigger" || got["source"] != "liquidation_alert_manual" || got["tenant_id"] != "pcdog" {
 			t.Fatalf("unexpected manual payload: %s", raw)
 		}
 	case <-time.After(2 * time.Second):

@@ -177,7 +177,7 @@ func TestManualAlertTriggerEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := serveAlert(srv, http.MethodPost, "/api/v1/alerts/trigger", strings.NewReader(`{"record_type":"steady","record_id":"manual-signal"}`))
-	if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"status":"accepted"`) {
+	if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"status":"accepted"`) || !strings.Contains(w.Body.String(), `"target_exchange":"okx"`) || !strings.Contains(w.Body.String(), `"trade_env":"demo"`) {
 		t.Fatalf("trigger status=%d body=%s", w.Code, w.Body.String())
 	}
 	select {

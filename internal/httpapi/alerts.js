@@ -42,8 +42,9 @@
 
   let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false;
 
-  function error(message) { $('alerts-error').textContent = message; $('alerts-error').hidden = false; }
-  function clearError() { $('alerts-error').hidden = true; }
+  function error(message) { const node = $('alerts-error'); node.classList.remove('success'); node.textContent = message; node.hidden = false; }
+  function success(message) { const node = $('alerts-error'); node.classList.add('success'); node.innerHTML = message; node.hidden = false; }
+  function clearError() { const node = $('alerts-error'); node.classList.remove('success'); node.hidden = true; }
 
   function metrics(data) {
     const cells = [
@@ -363,7 +364,11 @@
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       button.textContent = original;
       button.disabled = false;
-      clearError();
+      const exchange = String(packet.target_exchange || '').toLowerCase();
+      const exchangeLabel = exchange === 'gate' ? 'Gate' : exchange === 'okx' ? 'OKX' : exchange === 'binance' ? 'Binance' : '配置目标交易所';
+      const envLabel = packet.trade_env === 'live' ? '实盘' : '模拟盘';
+      const ordersURL = base + 'tvbot/view/orders' + (exchange ? '?exchange=' + encodeURIComponent(exchange) : '');
+      success('下单信号已发送到 ' + escape(exchangeLabel) + ' ' + escape(envLabel) + '。订单历史按交易所分开，请刷新对应页面查看。 <a href="' + escape(ordersURL) + '">打开订单历史</a>');
     } catch (caught) {
       button.disabled = false;
       button.textContent = original;

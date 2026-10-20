@@ -180,7 +180,14 @@ func tenantIDForUser(username string) string {
 func userForTenantID(tenantID string) (string, error) {
 	tenantID = strings.TrimSpace(tenantID)
 	if !strings.HasPrefix(tenantID, "u_") {
-		return "", errors.New("tenant_id has an invalid format")
+		// The liquidation alert service uses the authenticated username as its
+		// tenant key. Accept that internal form in addition to the encoded ID
+		// emitted by TVBot templates so alert webhooks reach the same tenant
+		// order store instead of falling back to the default owner.
+		if tenantID == "" || strings.ContainsAny(tenantID, `/\\`) {
+			return "", errors.New("tenant_id has an invalid format")
+		}
+		return tenantID, nil
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(tenantID, "u_"))
 	if err != nil || strings.TrimSpace(string(decoded)) == "" {

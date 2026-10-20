@@ -377,8 +377,17 @@ func (s *Server) validSignalToken(raw, applied trading.Signal, tradeEnvProvided 
 		applied.CanonicalWebhookTokenPayload(),
 		raw.CanonicalWebhookTokenPayload(),
 	}
-	if !tradeEnvProvided {
+	// The liquidation alert service historically used one operator-managed
+	// webhook token without an embedded tenant. Keep accepting that token for
+	// tenant-routed alert payloads while tenant-specific template tokens use the
+	// stronger v8 payload above. Explicit trade_env requests without a tenant
+	// still retain the existing legacy-token rejection behavior.
+	if !tradeEnvProvided || strings.TrimSpace(applied.TenantID) != "" || strings.TrimSpace(raw.TenantID) != "" {
 		payloads = append(payloads,
+			trading.CanonicalTargetTradeEnvWebhookTokenPayloadWithNonce(applied.TargetExchange, applied.APIID, applied.TradeEnv, applied.TokenNonce),
+			trading.CanonicalTargetTradeEnvWebhookTokenPayloadWithNonce(raw.TargetExchange, raw.APIID, raw.TradeEnv, raw.TokenNonce),
+			trading.CanonicalTargetTradeEnvWebhookTokenPayload(applied.TargetExchange, applied.APIID, applied.TradeEnv),
+			trading.CanonicalTargetTradeEnvWebhookTokenPayload(raw.TargetExchange, raw.APIID, raw.TradeEnv),
 			trading.CanonicalTargetWebhookTokenPayloadWithNonce(applied.TargetExchange, applied.APIID, applied.TokenNonce),
 			trading.CanonicalTargetWebhookTokenPayloadWithNonce(raw.TargetExchange, raw.APIID, raw.TokenNonce),
 			trading.CanonicalTargetWebhookTokenPayload(applied.TargetExchange, applied.APIID),

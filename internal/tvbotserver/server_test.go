@@ -590,6 +590,20 @@ func TestRoutes(t *testing.T) {
 	}
 }
 
+func TestTenantPayloadAcceptsLegacyServiceWebhookToken(t *testing.T) {
+	srv := newTestServer(t)
+	signal := validSignal(t, srv)
+	signal.TargetExchange = trading.ExchangeBinance
+	signal.TradeEnv = trading.TradeEnvDemo
+	signal.TenantID = "pcdog"
+	signal.TokenNonce = "legacy-nonce"
+	legacy := trading.Signal{TargetExchange: signal.TargetExchange, APIID: signal.APIID, TradeEnv: signal.TradeEnv, TokenNonce: signal.TokenNonce}
+	signal.Token = srv.Token.Generate(legacy.CanonicalNonceWebhookTokenPayload())
+	if !srv.validSignalToken(signal, signal, true) {
+		t.Fatal("tenant-routed alert payload should accept the operator-managed legacy webhook token")
+	}
+}
+
 func TestTVBotUIOrderHistorySearchControls(t *testing.T) {
 	srv := newTestServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/tvbot/", nil)

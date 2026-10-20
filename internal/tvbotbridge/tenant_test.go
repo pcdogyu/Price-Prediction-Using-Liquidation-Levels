@@ -55,4 +55,11 @@ func TestTenantManagerSeparatesConfigAndOrderData(t *testing.T) {
 	if got := manager.DefaultTenantID(); got != tenantIDForUser("admin") {
 		t.Fatalf("default tenant=%q", got)
 	}
+	routed, err := manager.ForTenantID("alice")
+	if err != nil {
+		t.Fatalf("username tenant route: %v", err)
+	}
+	if routed.Orders != alice.Orders || routed.ConfigStore != alice.ConfigStore {
+		t.Fatal("username tenant route did not resolve alice resources")
+	}
 }

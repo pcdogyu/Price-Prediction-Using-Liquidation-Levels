@@ -490,11 +490,14 @@ func (rtm *alertRuntime) serviceConfig() config.Config {
 }
 
 type manualTriggerResult struct {
-	RecordType string `json:"record_type"`
-	RecordID   string `json:"record_id"`
-	Symbol     string `json:"symbol"`
-	Side       string `json:"side"`
-	Status     string `json:"status"`
+	RecordType     string `json:"record_type"`
+	RecordID       string `json:"record_id"`
+	Symbol         string `json:"symbol"`
+	Side           string `json:"side"`
+	Status         string `json:"status"`
+	TargetExchange string `json:"target_exchange"`
+	TradeEnv       string `json:"trade_env"`
+	APIID          string `json:"api_id,omitempty"`
 }
 
 type manualNotifyResult struct {
@@ -517,7 +520,7 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 			return manualTriggerResult{}, err
 		}
 		signal = domain.TradeSignal{
-			ID: row.ID, AlertID: row.ID, Symbol: row.Symbol, Side: row.TradeSide,
+			ID: row.ID, AlertID: row.ID, TenantID: rtm.tenantID, Symbol: row.Symbol, Side: row.TradeSide,
 			LiquidationSide: row.Side, CreatedAt: time.Now().UTC(), ReferencePrice: row.ReferencePrice,
 			AlertNotionalUSD: row.NotionalUSD, ThresholdUSD: row.ThresholdUSD, WindowMinutes: row.WindowMinutes,
 		}
@@ -541,7 +544,11 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 	if err = rtm.webhookSender.Send(ctx, rtm.webhookURL, "", string(payload)); err != nil {
 		return manualTriggerResult{}, err
 	}
-	return manualTriggerResult{RecordType: recordType, RecordID: recordID, Symbol: signal.Symbol, Side: signal.Side, Status: "accepted"}, nil
+	cfg := rtm.serviceConfig()
+	return manualTriggerResult{
+		RecordType: recordType, RecordID: recordID, Symbol: signal.Symbol, Side: signal.Side, Status: "accepted",
+		TargetExchange: cfg.SteadyWebhookTargetExchange, TradeEnv: cfg.SteadyWebhookTradeEnv, APIID: cfg.SteadyWebhookAPIID,
+	}, nil
 }
 
 func (rtm *alertRuntime) notifyTelegram(ctx context.Context, recordType, recordID string) (manualNotifyResult, error) {

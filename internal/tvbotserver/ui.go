@@ -2676,6 +2676,11 @@ const tvbotHTML = `<!doctype html>
       return normalizeExchange(state.selectedExchange || "okx");
     }
 
+    function initialExchangeSelection() {
+      const requested = new URLSearchParams(window.location.search).get("exchange");
+      return requested ? normalizeExchange(requested) : storedSelectedExchange();
+    }
+
     function sectionActive(tabID) {
       const section = $(tabID);
       return !!(section && section.classList.contains("active"));
@@ -7286,7 +7291,7 @@ const tvbotHTML = `<!doctype html>
       }
     });
 
-    state.selectedExchange = storedSelectedExchange();
+    state.selectedExchange = initialExchangeSelection();
     renderGlobalExchangeSwitch();
     renderTemplateWebhookURL();
     renderTemplateTitle(new Date());
