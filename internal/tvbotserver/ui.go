@@ -119,7 +119,11 @@ func (s *Server) renderTVBotHTML(r *http.Request) string {
 	if s.TopMenuProvider != nil {
 		menu = s.TopMenuProvider(r)
 	}
-	return renderTVBotHTMLWithTenantMenu(s.BuildInfo, r, menu, s.TenantID)
+	username := ""
+	if s.CurrentUser != nil {
+		username, _ = s.CurrentUser(r)
+	}
+	return renderTVBotHTMLWithTenantMenuAndUser(s.BuildInfo, r, menu, s.TenantID, username)
 }
 
 func renderTVBotHTML(info BuildInfo, r *http.Request) string {
@@ -156,12 +160,16 @@ func renderTVBotHTMLWithMenu(info BuildInfo, r *http.Request, menu []TopMenuItem
 }
 
 func renderTVBotHTMLWithTenantMenu(info BuildInfo, r *http.Request, menu []TopMenuItem, tenantID string) string {
+	return renderTVBotHTMLWithTenantMenuAndUser(info, r, menu, tenantID, "")
+}
+
+func renderTVBotHTMLWithTenantMenuAndUser(info BuildInfo, r *http.Request, menu []TopMenuItem, tenantID, username string) string {
 	prefix := strings.TrimRight(strings.TrimSpace(r.Header.Get("X-Forwarded-Prefix")), "/")
 	if prefix == "" {
 		prefix = ""
 	}
 	link := func(path string) string { return prefix + path }
-	assets := `<script src="` + html.EscapeString(link("/assets/theme.js")) + `"></script><link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `">`
+	assets := `<meta name="app-base" content="` + html.EscapeString(link("/")) + `"><script src="` + html.EscapeString(link("/assets/theme.js")) + `"></script><link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `"><script src="` + html.EscapeString(link("/assets/shared.js")) + `" defer></script>`
 	page := strings.Replace(tvbotHTML, "</head>", assets+"</head>", 1)
 	currentTab := ""
 	if path := strings.TrimPrefix(r.URL.Path, "/tvbot"); path != r.URL.Path {
@@ -169,25 +177,14 @@ func renderTVBotHTMLWithTenantMenu(info BuildInfo, r *http.Request, menu []TopMe
 			currentTab = route.Tab
 		}
 	}
-	var topMenu strings.Builder
-	topMenu.WriteString(`<div class="tvbot-menu-row">`)
-	topMenu.WriteString(`<nav class="app-links tvbot-sections tvbot-top-menu" data-unified-menu="true" aria-label="主菜单">`)
-	topMenu.WriteString(RenderTopMenuLinks(menu, link, func(item TopMenuItem) bool {
+	active := func(item TopMenuItem) bool {
 		tab := topMenuTab(item)
 		return tab != "" && tab == currentTab
-	}))
-	topMenu.WriteString(`</nav></div>`)
-	topMenu.WriteString(`<div class="header-controls">`)
-	topMenu.WriteString(RenderSystemMenu(menu, link, func(item TopMenuItem) bool {
-		tab := topMenuTab(item)
-		return tab != "" && tab == currentTab
-	}))
-	topMenu.WriteString(`<button type="button" class="header-action theme-toggle" id="tvbot-theme" aria-label="切换主题"></button>`)
-	topMenu.WriteString(`<form class="tvbot-logout-form" method="post" action="` + html.EscapeString(link("/auth/logout")) + `"><button type="submit" class="header-action tvbot-logout" aria-label="退出登录">退出</button></form>`)
-	topMenu.WriteString(`</div>`)
-	themeScript := `<script>(()=>{const button=document.getElementById('tvbot-theme');const update=()=>{const light=document.documentElement.dataset.theme==='light';button.textContent=light?'深色主题':'浅色主题';button.setAttribute('aria-label','当前'+(light?'浅色':'深色')+'主题，切换至'+(light?'深色':'浅色')+'主题')};button.addEventListener('click',()=>window.LiquidationTheme.toggle());window.addEventListener('themechange',update);update()})();</script>`
+	}
+	username = strings.TrimSpace(username)
 	page = strings.Replace(page, "{{HOME_LINK}}", html.EscapeString(link("/alerts")), 1)
-	page = strings.Replace(page, "{{TVBOT_TOP_MENU}}", topMenu.String(), 1)
+	page = strings.Replace(page, "{{UNIFIED_NAV}}", RenderUnifiedNav(menu, link, active, username, link("/auth/logout")), 1)
+	page = strings.Replace(page, "{{SHARED_LOGS}}", RenderSharedLogsDialog(), 1)
 	if tenantID = strings.TrimSpace(tenantID); tenantID != "" {
 		// tenant IDs are generated from URL-safe base64 usernames, so they are
 		// safe to embed in these localStorage key literals.
@@ -195,7 +192,6 @@ func renderTVBotHTMLWithTenantMenu(info BuildInfo, r *http.Request, menu []TopMe
 		page = strings.Replace(page, `const globalExchangeStorageKey = "tvbot.selectedExchange";`, `const globalExchangeStorageKey = "tvbot.selectedExchange`+suffix+`";`, 1)
 		page = strings.Replace(page, `const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3";`, `const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3`+suffix+`";`, 1)
 	}
-	page = strings.Replace(page, "</body>", themeScript+"</body>", 1)
 	return strings.Replace(page, "{{APP_FOOTER}}", html.EscapeString(info.FooterText()), 1)
 }
 
@@ -1617,9 +1613,8 @@ const tvbotHTML = `<!doctype html>
   </style>
 </head>
 <body>
-    <header class="app-nav tvbot-nav">
-      {{TVBOT_TOP_MENU}}
-  </header>
+  {{UNIFIED_NAV}}
+  {{SHARED_LOGS}}
 
   <main>
     <div class="tvbot-page-toolbar">

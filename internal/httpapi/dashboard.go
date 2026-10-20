@@ -69,12 +69,14 @@ func (s *Server) renderPage(body []byte, page, title string, r *http.Request) []
 		}
 		return path
 	}
-	nav := `<style>.app-nav{flex-wrap:wrap;overflow:visible}.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.app-nav>button,.app-nav>form,.app-nav>.nav-system-menu{flex:0 0 auto}.app-links{order:initial;flex-basis:auto}@media(max-width:720px){.app-nav{gap:6px;flex-wrap:wrap}.app-links{order:3;flex:1 0 100%;flex-basis:100%;min-width:0;scrollbar-width:thin}.app-links a{flex:0 0 auto}}</style><nav class="app-nav" aria-label="主菜单"><div class="app-links">` + tvbotserver.RenderTopMenuLinks(items, link, func(item tvbotserver.TopMenuItem) bool {
+	username := ""
+	if current, ok := s.unifiedUser(r); ok {
+		username = strings.TrimSpace(current)
+	}
+	active := func(item tvbotserver.TopMenuItem) bool {
 		return item.Key == page || strings.HasPrefix(item.Key, page+"#")
-	}) + `</div>` + tvbotserver.RenderSystemMenu(items, link, func(item tvbotserver.TopMenuItem) bool {
-		return item.Key == page || strings.HasPrefix(item.Key, page+"#")
-	})
-	nav += `</div><button id="nav-theme" type="button">浅色主题</button><button id="nav-logs" type="button">程序日志</button><form method="post" action="` + base + `auth/logout"><button type="submit">退出</button></form></nav><dialog id="shared-logs"><div class="dialog-head"><h2>程序日志</h2><button id="shared-logs-close" type="button">关闭</button></div><select id="shared-log-level"><option value="DEBUG">全部级别</option><option value="INFO">INFO+</option><option value="WARN">WARN+</option><option value="ERROR">ERROR</option></select><button id="shared-log-refresh" type="button">刷新</button><pre id="shared-log-content">等待加载</pre></dialog>`
+	}
+	nav := tvbotserver.RenderUnifiedNav(items, link, active, username, base+`auth/logout`) + tvbotserver.RenderSharedLogsDialog()
 	replacer := strings.NewReplacer("{{BASE}}", base, "{{NAV}}", nav, "{{PAGE}}", page, "{{TITLE}}", title, "{{VERSION}}", versionFooter())
 	return []byte(replacer.Replace(string(body)))
 }

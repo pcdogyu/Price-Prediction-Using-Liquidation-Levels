@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -11,17 +12,13 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	req.Header.Set("X-Forwarded-Prefix", "/liquidation")
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, req)
 
-	if strings.Count(page, "<header") != 1 {
-		t.Fatalf("tvbot page should have one header, got %d", strings.Count(page, "<header"))
-	}
-	if strings.Contains(page, "{{TVBOT_TOP_MENU}}") || strings.Contains(page, "{{LIQUIDATION_LINKS}}") || strings.Contains(page, "merged-liquidation-nav") {
+	if strings.Contains(page, "{{UNIFIED_NAV}}") || strings.Contains(page, "{{TVBOT_TOP_MENU}}") || strings.Contains(page, "{{LIQUIDATION_LINKS}}") || strings.Contains(page, "merged-liquidation-nav") {
 		t.Fatalf("tvbot page contains an unrendered or legacy second navigation")
 	}
-	links := strings.Index(page, `class="app-links tvbot-sections tvbot-top-menu"`)
-	menuRow := strings.Index(page, `class="tvbot-menu-row"`)
-	controls := strings.Index(page, `class="header-controls"`)
-	if menuRow < 0 || links < 0 || controls < 0 || !(menuRow < links && links < controls) {
-		t.Fatalf("unified header order is wrong: menuRow=%d links=%d controls=%d", menuRow, links, controls)
+	nav := strings.Index(page, `<nav class="app-nav" aria-label="主菜单">`)
+	links := strings.Index(page, `<div class="app-links">`)
+	if nav < 0 || links < 0 || links < nav {
+		t.Fatalf("unified navigation is missing or out of order: nav=%d links=%d", nav, links)
 	}
 	main := strings.Index(page, "<main>")
 	pageToolbar := strings.Index(page, `class="tvbot-page-toolbar"`)
@@ -30,21 +27,21 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		t.Fatalf("exchange switch should be inside the page content: main=%d toolbar=%d switch=%d", main, pageToolbar, exchangeSwitch)
 	}
 	for _, want := range []string{
-		`class="app-links tvbot-sections tvbot-top-menu" data-unified-menu="true" aria-label="主菜单"`,
+		`<nav class="app-nav" aria-label="主菜单">`,
+		`<div class="app-links">`,
 		`data-system-menu="true"`,
 		`class="nav-system-trigger header-action"`,
 		`交易所信息`,
-		`.app-nav.tvbot-nav .tvbot-sections a`,
-		`class="tvbot-menu-row"`,
-		`overflow-x: auto`,
 		`href="/liquidation/alerts"`,
 		`data-tab="dashboard" href="/liquidation/tvbot/view/dashboard"`,
 		`data-tab="positions" href="/liquidation/tvbot/view/positions"`,
 		`href="/liquidation/admin">用户管理`,
 		`data-tab="apiKeys" href="/liquidation/tvbot/view/api-keys"`,
 		`href="/liquidation/admin"`,
-		`class="header-action theme-toggle" id="tvbot-theme"`,
-		`class="tvbot-logout-form" method="post" action="/liquidation/auth/logout"><button type="submit" class="header-action tvbot-logout" aria-label="退出登录">退出</button></form>`,
+		`id="nav-theme"`,
+		`id="nav-logs">程序日志</button>`,
+		`id="shared-logs"`,
+		`method="post" action="/liquidation/auth/logout"><button type="submit">退出</button></form>`,
 		`data-global-exchange="okx" aria-selected="true"`,
 		`data-global-exchange="binance"`,
 		`id="close-all-positions"`,
@@ -111,6 +108,27 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		if strings.Contains(page, removed) {
 			t.Fatalf("tvbot page still contains hash navigation marker %q", removed)
 		}
+	}
+}
+
+func TestRenderTVBotHTMLShowsCurrentUserBeforeLogout(t *testing.T) {
+	req := httptest.NewRequest("GET", "/tvbot/view/dashboard", nil)
+	req.Header.Set("X-Forwarded-Prefix", "/liquidation")
+	page := (&Server{
+		BuildInfo: BuildInfo{CommitHash: "test"},
+		CurrentUser: func(*http.Request) (string, bool) {
+			return `operator<>`, true
+		},
+	}).renderTVBotHTML(req)
+
+	want := `<span class="nav-user" aria-label="当前登录用户">operator&lt;&gt;</span>`
+	if !strings.Contains(page, want) {
+		t.Fatalf("tvbot page should show the escaped current user: %q", want)
+	}
+	userIndex := strings.Index(page, want)
+	logoutIndex := strings.Index(page, `method="post" action="/liquidation/auth/logout"`)
+	if userIndex < 0 || logoutIndex <= userIndex {
+		t.Fatalf("current user should appear immediately before logout: user=%d logout=%d", userIndex, logoutIndex)
 	}
 }
 
