@@ -5344,7 +5344,10 @@ func placeBinanceReduceOnlyMarketFallback(ctx context.Context, client binance.Cl
 	}
 	ack, unknown, err := placeBinanceOrderWithUnknownRecovery(ctx, client, req)
 	if err != nil {
-		return positionCloseOrder{}, err
+		ack, unknown, err = retryBinanceReduceOnlyPositionClose(ctx, client, req, err)
+		if err != nil {
+			return positionCloseOrder{}, fmt.Errorf("Binance market reduce-only fallback retry failed: %w", err)
+		}
 	}
 	order := binancePositionCloseOrderFromAcks(position, []binance.OrderAck{ack}, "", req.Quantity, partial, unknown)
 	order.MarketFallback = true

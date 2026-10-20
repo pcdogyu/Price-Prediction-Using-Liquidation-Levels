@@ -667,6 +667,7 @@ func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t 
 	t.Cleanup(func() { binanceReduceOnlyRetryDelay = oldDelay })
 
 	var orderForms []url.Values
+	marketAttempts := 0
 	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -694,6 +695,12 @@ func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t 
 				_, _ = w.Write([]byte(`{"code":-2022,"msg":"ReduceOnly Order is rejected."}`))
 				return
 			}
+			marketAttempts++
+			if marketAttempts == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"code":-2022,"msg":"ReduceOnly Order is rejected."}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"orderId":900,"symbol":"ZECUSDT","status":"NEW","clientOrderId":"market-fallback","price":"0","origQty":"0.432","executedQty":"0","type":"MARKET","side":"SELL","positionSide":"BOTH"}`))
 		default:
 			t.Fatalf("unexpected Binance path %s", r.URL.Path)
@@ -710,8 +717,8 @@ func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t 
 	if !order.MarketFallback || order.Ack.OrdID != "900" || order.CloseSz != "0.432" {
 		t.Fatalf("bad market fallback result: %#v", order)
 	}
-	if len(orderForms) != 5 {
-		t.Fatalf("expected four rejected limit attempts and one market fallback, got %#v", orderForms)
+	if len(orderForms) != 6 {
+		t.Fatalf("expected four rejected limit attempts and two market fallback attempts, got %#v", orderForms)
 	}
 	market := orderForms[len(orderForms)-1]
 	if market.Get("type") != "MARKET" || market.Get("side") != "SELL" || market.Get("quantity") != "0.432" || market.Get("reduceOnly") != "true" || market.Get("price") != "" || market.Get("timeInForce") != "" {
