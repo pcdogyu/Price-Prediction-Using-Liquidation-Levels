@@ -732,35 +732,15 @@ const tvbotHTML = `<!doctype html>
       flex-wrap: wrap;
       margin-top: 8px;
     }
-    .environment-tabs {
-      display: inline-flex;
-      gap: 6px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
     .api-key-environment-field {
       display: grid;
       gap: 6px;
       align-content: start;
-    }
-    .api-key-environment-field > span {
       color: var(--muted);
       font-size: 12px;
     }
-    .environment-tabs button {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--control-bg);
-      color: var(--text);
-      min-height: 32px;
-      padding: 6px 10px;
-      font: inherit;
-      cursor: pointer;
-    }
-    .environment-tabs button[aria-selected="true"] {
-      background: var(--blue);
-      border-color: var(--blue);
-      color: var(--bg);
+    .api-key-environment-field select {
+      min-height: 36px;
     }
     .exchange-tabs button {
       border: 1px solid var(--line);
@@ -1836,13 +1816,10 @@ const tvbotHTML = `<!doctype html>
       <div class="api-key-layout">
         <div class="api-key-form">
           <div class="grid two">
-            <div class="api-key-environment-field">
-              <span>交易环境</span>
-              <div class="environment-tabs" id="api-key-environment-tabs" role="group" aria-label="交易环境">
-                <button type="button" data-api-key-env="demo" aria-selected="true">模拟盘</button>
-                <button type="button" data-api-key-env="live">实盘</button>
-              </div>
-            </div>
+            <label class="api-key-environment-field">交易环境<select id="api-key-environment" aria-label="交易环境">
+              <option value="demo">模拟盘</option>
+              <option value="live">实盘</option>
+            </select></label>
             <label>账户名称<input id="key-name" autocomplete="off" spellcheck="false"></label>
             <label>API ID<input id="key-id" autocomplete="off" spellcheck="false" placeholder="default" readonly></label>
             <label class="check"><input id="key-active" type="checkbox">设为交易 API</label>
@@ -4512,9 +4489,8 @@ const tvbotHTML = `<!doctype html>
         button.classList.toggle("trade-target", isTarget);
         button.title = isTarget ? "当前报警交易目标" : "";
       });
-      document.querySelectorAll("[data-api-key-env]").forEach((button) => {
-        button.setAttribute("aria-selected", button.dataset.apiKeyEnv === env ? "true" : "false");
-      });
+      const environmentSelect = $("api-key-environment");
+      if (environmentSelect) environmentSelect.value = env;
       $("key-api-label").childNodes[0].nodeValue = exchangeLabel(exchange) + " API Key";
       $("key-secret-label").childNodes[0].nodeValue = exchangeLabel(exchange) + " Secret Key";
       $("key-passphrase-label").style.display = exchange === "okx" ? "" : "none";
@@ -7105,9 +7081,10 @@ const tvbotHTML = `<!doctype html>
         updateMetrics();
       });
     });
-    document.querySelectorAll("[data-api-key-env]").forEach((button) => {
-      button.addEventListener("click", () => {
-        state.apiKeyEnv = button.dataset.apiKeyEnv === "live" ? "live" : "demo";
+    const apiKeyEnvironment = $("api-key-environment");
+    if (apiKeyEnvironment) {
+      apiKeyEnvironment.addEventListener("change", (event) => {
+        state.apiKeyEnv = event.target.value === "live" ? "live" : "demo";
         state.apiKeysByExchange = state.apiKeysByEnvironment[state.apiKeyEnv];
         state.apiKeys = apiKeyStatus(state.apiKeyExchange);
         clearAPIKeyTestState(state.apiKeyExchange);
@@ -7116,7 +7093,7 @@ const tvbotHTML = `<!doctype html>
         renderPositionAPIs();
         updateMetrics();
       });
-    });
+    }
     document.querySelectorAll("[data-balance-minutes]").forEach((button) => {
       button.addEventListener("click", () => setBalanceWindow(button.dataset.balanceMinutes).catch((err) => toast(err.message)));
     });

@@ -61,10 +61,10 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 	saveButton := strings.Index(page, `id="save-api-keys"`)
 	testButton := strings.Index(page, `id="test-api-keys"`)
-	environmentTabs := strings.Index(page, `id="api-key-environment-tabs"`)
+	environmentSelect := strings.Index(page, `id="api-key-environment"`)
 	accountName := strings.Index(page, `<label>账户名称<input id="key-name"`)
-	if saveButton < 0 || testButton < 0 || strings.Contains(page, `id="add-api-key"`) || strings.Contains(page, `id="key-selected"`) || strings.Contains(page, `id="api-key-accounts"`) || strings.Contains(page, `data-delete-api-id=`) || strings.Contains(page, `data-rename-active-api-id=`) || environmentTabs < 0 || accountName < 0 || !(environmentTabs < accountName) || !(testButton < saveButton) || !strings.Contains(page, `id="save-api-keys" disabled`) {
-		t.Fatalf("API key page should expose one account form with environment before account name: env=%d name=%d save=%d test=%d", environmentTabs, accountName, saveButton, testButton)
+	if saveButton < 0 || testButton < 0 || strings.Contains(page, `id="add-api-key"`) || strings.Contains(page, `id="key-selected"`) || strings.Contains(page, `id="api-key-accounts"`) || strings.Contains(page, `data-delete-api-id=`) || strings.Contains(page, `data-rename-active-api-id=`) || strings.Contains(page, `id="api-key-environment-tabs"`) || strings.Contains(page, `data-api-key-env=`) || environmentSelect < 0 || accountName < 0 || !(environmentSelect < accountName) || !(testButton < saveButton) || !strings.Contains(page, `id="save-api-keys" disabled`) {
+		t.Fatalf("API key page should expose one account form with environment select before account name: env=%d name=%d save=%d test=%d", environmentSelect, accountName, saveButton, testButton)
 	}
 	for _, want := range []string{
 		`function fillAPIForm(id, preserveCredentials)`,
