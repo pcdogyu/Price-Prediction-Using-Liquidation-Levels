@@ -1,6 +1,8 @@
 package tvbotbridge
 
 import (
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	tvbotbinance "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
@@ -57,5 +59,42 @@ func TestWebhookTokenForUserMatchesUsernameScopedPayload(t *testing.T) {
 	}
 	if !bridge.Handler.Token.Validate(signal.CanonicalNonceWebhookTokenPayload(), token) {
 		t.Fatal("tenant webhook token does not validate for the username-scoped payload")
+	}
+}
+
+func TestTenantConfigPersistsTableColumnsForUser(t *testing.T) {
+	root := t.TempDir()
+	rootConfig := tvbotconfig.NewStore(root+"/root-config.json", tvbotconfig.Default())
+	rootOrders, err := tvbotstorage.NewSQLiteOrderStore(root+"/root.db", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rootOrders.Close()
+	credentials, err := newUserCredentialResolver(root+"/credentials", "admin", "", "", "", tvbotokx.Credentials{}, tvbotbinance.Credentials{}, tvbotgate.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newTenantManager(root+"/tenants", "admin", rootConfig, rootOrders, credentials)
+	scope, err := manager.ForUserScope("wyx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"actions", "avg_price", "exchange"}
+	if _, err := scope.ConfigStore.Update(func(cfg *tvbotconfig.Config) error {
+		cfg.UI.TableColumns.Positions = want
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	persisted, err := tvbotconfig.Load(filepath.Join(root, "tenants", userDirectoryName("wyx"), "tvbot-config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.UI.TableColumns.Positions) < len(want) || !reflect.DeepEqual(persisted.UI.TableColumns.Positions[:len(want)], want) {
+		t.Fatalf("user table column order was not persisted: %#v", persisted.UI.TableColumns.Positions)
 	}
 }

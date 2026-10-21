@@ -2318,7 +2318,7 @@ const tvbotHTML = `<!doctype html>
       { id: "side", title: "方向", colClass: "pos-side-col", cell: (row) => positionSideCell(row) },
       { id: "strategy", title: "策略", colClass: "pos-strategy-col", cell: (row) => textTableCell(positionSignalTriggerText(row)) },
       { id: "size", title: "持仓量", colClass: "pos-size-col", cell: (row) => textTableCell(formatQuantityAmount(row, row.pos)) },
-      { id: "avg_price", title: "均价", colClass: "pos-price-col", cell: (row) => textTableCell(formatPriceAmount(row, row.avgPx)) },
+      { id: "avg_price", title: "均价", colClass: "pos-price-col", cell: (row) => textTableCell(formatAveragePriceAmount(row, row.avgPx)) },
       { id: "margin", title: "保证金", colClass: "pos-margin-col", cell: (row) => textTableCell(formatFixed2(row.margin)) },
       { id: "leverage", title: "杠杆", colClass: "pos-leverage-col", cell: (row) => textTableCell(asText(row.lever)) },
       { id: "position_amount", title: "仓位金额", colClass: "pos-position-amount-col", cell: (row) => textTableCell(positionAmount(row)) },
@@ -2805,6 +2805,20 @@ const tvbotHTML = `<!doctype html>
     }
 
     function formatPriceAmount(row, value) {
+      return formatFixedPrecision(value, row ? row.price_precision : null, formatNumber);
+    }
+
+    function rawDecimalPrecision(value) {
+      const raw = String(value === null || value === undefined ? "" : value).trim();
+      if (!raw) return null;
+      const match = raw.match(/^[+-]?\d+\.(\d+)$/);
+      if (match) return normalizedPrecision(match[1].length);
+      return /^[+-]?\d+$/.test(raw) ? 0 : null;
+    }
+
+    function formatAveragePriceAmount(row, value) {
+      const markPrecision = rawDecimalPrecision(row && row.markPx);
+      if (markPrecision !== null) return formatFixedPrecision(value, markPrecision, formatNumber);
       return formatFixedPrecision(value, row ? row.price_precision : null, formatNumber);
     }
 

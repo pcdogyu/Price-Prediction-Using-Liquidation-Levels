@@ -56,6 +56,10 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`平仓数量 " + minimum[1] + " 低于最小数量 " + minimum[2]`,
 		`id="position-monitor-gate-enabled"`,
 		`gate_enabled: $("position-monitor-gate-enabled").checked`,
+		`formatAveragePriceAmount(row, row.avgPx)`,
+		`function rawDecimalPrecision(value)`,
+		`const markPrecision = rawDecimalPrecision(row && row.markPx)`,
+		`if (markPrecision !== null) return formatFixedPrecision(value, markPrecision, formatNumber)`,
 		`window.confirm("确认一键平掉当前 "`,
 	} {
 		if !strings.Contains(page, want) {
