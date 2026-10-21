@@ -424,7 +424,7 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("balance-pnl-block")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("analysis-okx-net-pnl")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("analysis-binance-net-pnl")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("analysisBalanceRefreshIntervalMs = 60000")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("analysisBalanceRefreshIntervalMs = 10 * 60 * 1000")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("refreshAnalysisBalanceOverviewAuto")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("visibilitychange")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("formatPriceAmount")) ||
@@ -3210,8 +3210,8 @@ func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T
 
 func TestUSDTBalanceSamplerStoresConfiguredAccounts(t *testing.T) {
 	srv := newTestServer(t)
-	if usdtSampleInterval != 15*time.Minute {
-		t.Fatalf("USDT balance sampler interval = %s, want 15m", usdtSampleInterval)
+	if usdtSampleInterval != 10*time.Minute {
+		t.Fatalf("USDT balance sampler interval = %s, want 10m", usdtSampleInterval)
 	}
 	observedAt := time.Date(2026, 7, 24, 3, 4, 45, 0, time.UTC)
 	srv.Now = func() time.Time { return observedAt }

@@ -232,7 +232,7 @@ func TestRenderTVBotDashboardUsesFundingPeriods(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/dashboard", nil))
 	for _, want := range []string{
 		`<h2>资金</h2>`,
-		`后台每 15 分钟采集一次三家交易所余额并生成数据点`,
+		`后台每 10 分钟采集一次三家交易所余额并生成数据点`,
 		`历史订单统计`,
 		`id="overview-okx-net-pnl"`,
 		`id="overview-binance-net-pnl"`,
@@ -260,7 +260,7 @@ func TestRenderTVBotDashboardUsesFundingPeriods(t *testing.T) {
 		`data-dashboard-balance-minutes="4320">3d</button>`,
 		`data-dashboard-balance-minutes="10080">7d</button>`,
 		`dashboardBalanceWindowMinutes: 1440`,
-		`const dashboardBalanceRefreshIntervalMs = 15 * 60 * 1000`,
+		`const dashboardBalanceRefreshIntervalMs = 10 * 60 * 1000`,
 		`function startDashboardBalanceAutoRefresh()`,
 		`function refreshDashboardBalanceOverviewAuto()`,
 		`function setDashboardBalanceWindow(minutes)`,

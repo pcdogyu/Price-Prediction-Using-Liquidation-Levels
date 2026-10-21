@@ -31,7 +31,7 @@ const (
 	maxAnalysisPNLMinutes      = maxAnalysisPNLDays * 24 * 60
 	minPositionLookbackMinutes = 30 * 24 * 60
 	analysisCacheTTL           = 60 * time.Second
-	usdtSampleInterval         = 15 * time.Minute
+	usdtSampleInterval         = 10 * time.Minute
 	maxBalanceMinutes          = 90 * 24 * 60
 
 	binanceAnalysisTradeWindow = 7 * 24 * time.Hour

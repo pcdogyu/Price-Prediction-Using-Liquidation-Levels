@@ -1520,7 +1520,7 @@ const tvbotHTML = `<!doctype html>
           <button class="btn" type="button" id="refresh-all">刷新</button>
         </div>
       </div>
-      <p class="muted" id="dashboard-balance-sampling-note">后台每 15 分钟采集一次三家交易所余额并生成数据点；未配置 API Key 的交易所自动跳过。</p>
+      <p class="muted" id="dashboard-balance-sampling-note">后台每 10 分钟采集一次三家交易所余额并生成数据点；未配置 API Key 的交易所自动跳过。</p>
       <div class="analysis-period-row dashboard-balance-period-row">
         <div class="analysis-time-status">
           <div class="label">资金回看</div>
@@ -2247,8 +2247,8 @@ const tvbotHTML = `<!doctype html>
     const positionViewPollIntervalMs = 5000;
     const pendingLimitCloseOrderCacheMs = 90000;
     const missingPositionEntrySyncIntervalMs = 180000;
-    const analysisBalanceRefreshIntervalMs = 60000;
-    const dashboardBalanceRefreshIntervalMs = 15 * 60 * 1000;
+    const analysisBalanceRefreshIntervalMs = 10 * 60 * 1000;
+    const dashboardBalanceRefreshIntervalMs = 10 * 60 * 1000;
     const coinpairBlockPollIntervalMs = 20000;
     const defaultMenuItems = [
       { tab: "dashboard", label: "资金" },
