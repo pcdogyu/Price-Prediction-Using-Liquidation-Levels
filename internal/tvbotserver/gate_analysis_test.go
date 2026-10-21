@@ -29,8 +29,8 @@ func TestBuildAnalysisSupportsGateWithoutOKX(t *testing.T) {
 			_, _ = w.Write([]byte(`{"currency":"USDT","total":"1000","available":"900"}`))
 		case "/api/v4/futures/usdt/my_trades_timerange":
 			_, _ = w.Write([]byte(`[
-                {"id":101,"contract":"BTC_USDT","order_id":1001,"size":2,"price":100,"create_time":` + formatGateTestTime(entryTime) + `,"close_size":0,"trade_value":200,"fee":-0.1},
-                {"id":102,"contract":"BTC_USDT","order_id":1002,"size":-2,"price":110,"create_time":` + formatGateTestTime(exitTime) + `,"close_size":-2,"trade_value":220,"fee":-0.1}
+                {"id":101,"contract":"BTC_USDT","order_id":1001,"size":2,"price":100,"create_time":` + formatGateTestTime(entryTime) + `,"close_size":0,"trade_value":20,"fee":-0.1},
+                {"id":102,"contract":"BTC_USDT","order_id":1002,"size":-2,"price":110,"create_time":` + formatGateTestTime(exitTime) + `,"close_size":-2,"trade_value":22,"fee":-0.1}
             ]`))
 		case "/api/v4/futures/usdt/position_close":
 			_, _ = w.Write([]byte(`[{"time":` + formatGateTestTime(exitTime) + `,"contract":"BTC_USDT","side":"long","pnl":19.8,"pnl_pnl":20,"pnl_fund":0,"pnl_fee":-0.2,"max_size":2,"accum_size":2,"first_open_time":` + formatGateTestTime(entryTime) + `,"long_price":100,"short_price":110}]`))
@@ -71,7 +71,7 @@ func TestBuildAnalysisSupportsGateWithoutOKX(t *testing.T) {
 		t.Fatalf("exchange summaries=%#v", got.ExchangeSummaries)
 	}
 	stats := got.ExchangeSummaries[0]
-	if stats.TradeCount != 1 || stats.Wins != 1 || stats.Losses != 0 || stats.NetPnL != 19.8 || stats.Fees != -0.2 || stats.Turnover != 420 {
+	if stats.TradeCount != 1 || stats.Wins != 1 || stats.Losses != 0 || stats.NetPnL != 19.8 || stats.Fees != -0.2 || stats.Turnover != 42 {
 		t.Fatalf("Gate stats=%#v", stats)
 	}
 	if len(got.PositionTrades) != 1 || got.PositionTrades[0].Exchange != tvbottrading.ExchangeGate || !got.PositionTrades[0].EntryTime.Equal(entryTime) || !got.PositionTrades[0].ExitTime.Equal(exitTime) || got.PositionTrades[0].EntryPx != "100" || got.PositionTrades[0].ExitPx != "110" || got.PositionTrades[0].Leverage != cfg.Trading.Leverage || got.PositionTrades[0].Margin != "0.004" || got.PositionTrades[0].PricePrecision == nil || *got.PositionTrades[0].PricePrecision != 2 {

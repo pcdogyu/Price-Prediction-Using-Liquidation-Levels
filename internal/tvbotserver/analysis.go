@@ -184,6 +184,7 @@ type analysisTrade struct {
 	PositionEffect string    `json:"position_effect,omitempty"`
 	FillPx         string    `json:"fill_px,omitempty"`
 	FillSz         string    `json:"fill_sz,omitempty"`
+	Turnover       string    `json:"turnover,omitempty"`
 	FillPnl        string    `json:"fill_pnl,omitempty"`
 	Fee            string    `json:"fee,omitempty"`
 	FeeCcy         string    `json:"fee_ccy,omitempty"`
@@ -1425,13 +1426,15 @@ func normalizedBinanceFee(commission string) string {
 }
 
 type analysisTradeAggregate struct {
-	trade      analysisTrade
-	totalSize  float64
-	totalQuote float64
-	totalPnl   float64
-	totalFee   float64
-	feeParsed  bool
-	pnlParsed  bool
+	trade            analysisTrade
+	totalSize        float64
+	totalQuote       float64
+	totalTurnover    float64
+	turnoverComplete bool
+	totalPnl         float64
+	totalFee         float64
+	feeParsed        bool
+	pnlParsed        bool
 }
 
 func aggregateAnalysisTrades(trades []analysisTrade) []analysisTrade {
@@ -1458,7 +1461,7 @@ func aggregateAnalysisTrades(trades []analysisTrade) []analysisTrade {
 		key := analysisTradeGroupKey(trade)
 		group := groups[key]
 		if group == nil {
-			group = &analysisTradeAggregate{trade: trade}
+			group = &analysisTradeAggregate{trade: trade, turnoverComplete: true}
 			group.trade.FillCount = 0
 			groups[key] = group
 			order = append(order, key)
@@ -1473,6 +1476,11 @@ func aggregateAnalysisTrades(trades []analysisTrade) []analysisTrade {
 			if priceOK {
 				group.totalQuote += price * size
 			}
+		}
+		if turnover, turnoverOK := parsePositiveFloat(trade.Turnover); turnoverOK {
+			group.totalTurnover += turnover
+		} else {
+			group.turnoverComplete = false
 		}
 		if pnl, ok := parseAnyFloat(trade.FillPnl); ok {
 			group.totalPnl += pnl
@@ -1503,6 +1511,9 @@ func aggregateAnalysisTrades(trades []analysisTrade) []analysisTrade {
 			if group.totalQuote > 0 {
 				trade.FillPx = trading.NormalizeFloat(group.totalQuote / group.totalSize)
 			}
+		}
+		if group.turnoverComplete && group.totalTurnover > 0 {
+			trade.Turnover = trading.NormalizeFloat(group.totalTurnover)
 		}
 		if group.pnlParsed {
 			trade.FillPnl = trading.NormalizeFloat(group.totalPnl)
@@ -2356,6 +2367,11 @@ func analysisTradeUSDTFeeValue(trade analysisTrade) float64 {
 }
 
 func analysisTradeTurnoverValue(cfg config.Config, trade analysisTrade) float64 {
+	if trading.NormalizeExchange(trade.Exchange) == trading.ExchangeGate {
+		if turnover, ok := parsePositiveFloat(trade.Turnover); ok {
+			return turnover
+		}
+	}
 	price, priceOK := parsePositiveFloat(trade.FillPx)
 	size, sizeOK := parsePositiveFloat(trade.FillSz)
 	if !priceOK || !sizeOK {

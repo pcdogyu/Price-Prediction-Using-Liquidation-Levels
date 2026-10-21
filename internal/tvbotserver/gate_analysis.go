@@ -146,6 +146,7 @@ func analysisTradeFromGateTrade(apiID string, trade tvbotgate.MyTrade) (analysis
 		PositionEffect: positionEffect,
 		FillPx:         strings.TrimSpace(trade.Price),
 		FillSz:         strconv.FormatFloat(math.Abs(size), 'f', -1, 64),
+		Turnover:       strings.TrimSpace(trade.TradeValue),
 		Fee:            normalizedGateFee(trade.Fee),
 		FeeCcy:         "USDT",
 		FillTime:       fillTime,
