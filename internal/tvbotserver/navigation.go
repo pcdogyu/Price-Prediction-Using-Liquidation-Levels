@@ -73,11 +73,11 @@ func RenderUnifiedNav(items []TopMenuItem, link func(string) string, active func
 	return renderUnifiedNav("", items, link, active, username, logoutPath)
 }
 
-// RenderTVBotNav uses the dedicated single-row layout for the dense trading
-// navigation. The links stay in the requested order and scroll as one group;
-// system controls never split the menu into a second visual row.
+// RenderTVBotNav is kept as a compatibility wrapper for callers that render
+// TVBot pages. Every authenticated page now uses the same navigation markup
+// and responsive behavior as the alerts page.
 func RenderTVBotNav(items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool, username, logoutPath string) string {
-	return renderUnifiedNav(" tvbot-nav", items, link, active, username, logoutPath)
+	return RenderUnifiedNav(items, link, active, username, logoutPath)
 }
 
 func renderUnifiedNav(classSuffix string, items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool, username, logoutPath string) string {

@@ -15,10 +15,10 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	if strings.Contains(page, "{{UNIFIED_NAV}}") || strings.Contains(page, "{{TVBOT_TOP_MENU}}") || strings.Contains(page, "{{LIQUIDATION_LINKS}}") || strings.Contains(page, "merged-liquidation-nav") {
 		t.Fatalf("tvbot page contains an unrendered or legacy second navigation")
 	}
-	nav := strings.Index(page, `<nav class="app-nav tvbot-nav" aria-label="主菜单">`)
-	links := strings.Index(page, `<div class="tvbot-menu-row"><div class="app-links tvbot-top-menu">`)
-	controls := strings.Index(page, `<div class="header-controls">`)
-	if nav < 0 || links < 0 || links < nav || controls < 0 || controls < links {
+	nav := strings.Index(page, `<nav class="app-nav" aria-label="主菜单">`)
+	links := strings.Index(page, `<div class="app-links">`)
+	systemMenu := strings.Index(page, `<div class="nav-system-menu"`)
+	if nav < 0 || links < 0 || links < nav || systemMenu < 0 || systemMenu < links {
 		t.Fatalf("unified navigation is missing or out of order: nav=%d links=%d", nav, links)
 	}
 	if strings.Contains(page, "tvbot-sections") || strings.Contains(page, "liquidation-links") {
@@ -31,8 +31,8 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		t.Fatalf("exchange switch should be inside the page content: main=%d toolbar=%d switch=%d", main, pageToolbar, exchangeSwitch)
 	}
 	for _, want := range []string{
-		`<nav class="app-nav tvbot-nav" aria-label="主菜单">`,
-		`<div class="app-links tvbot-top-menu">`,
+		`<nav class="app-nav" aria-label="主菜单">`,
+		`<div class="app-links">`,
 		`data-system-menu="true"`,
 		`class="nav-system-trigger header-action"`,
 		`交易所信息`,

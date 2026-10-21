@@ -382,49 +382,6 @@ const tvbotHTML = `<!doctype html>
       border-bottom: 1px solid var(--line);
       box-shadow: var(--nav-shadow);
     }
-    .app-nav.tvbot-nav {
-      gap: 10px;
-      padding: 10px 12px;
-      overflow: visible;
-      flex-wrap: nowrap;
-    }
-    .app-nav.tvbot-nav > .tvbot-menu-row,
-    .app-nav.tvbot-nav > .header-controls {
-      min-width: 0;
-    }
-    .app-nav.tvbot-nav > .tvbot-menu-row {
-      display: flex;
-      align-items: center;
-      flex: 1 1 auto;
-      overflow: visible;
-    }
-    .app-nav.tvbot-nav .tvbot-menu-row > .tvbot-top-menu {
-      gap: 6px;
-      flex: 1 1 auto;
-      min-width: 0;
-      overflow-x: auto;
-      overflow-y: hidden;
-      scrollbar-width: thin;
-    }
-    .app-nav.tvbot-nav .tvbot-top-menu a {
-      min-height: 0;
-      padding: 7px 13px;
-      border: 0;
-      border-radius: 9px;
-      background: transparent;
-      color: var(--muted);
-      font-size: 14px;
-    }
-    .app-nav.tvbot-nav .tvbot-top-menu a:hover {
-      color: var(--text);
-      background: var(--hover-bg);
-    }
-    .app-nav.tvbot-nav .tvbot-top-menu a[aria-current="page"] {
-      background: var(--selected-bg);
-      color: var(--buy);
-      border-color: transparent;
-    }
-    .app-nav.tvbot-nav > .header-controls { flex: 0 0 auto; }
     .bar {
       width: 100%;
       margin: 0 auto;
@@ -1543,44 +1500,6 @@ const tvbotHTML = `<!doctype html>
         width: 100%;
       }
       .tvbot-page-toolbar { justify-content: flex-start; }
-      .app-nav.tvbot-nav {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: auto auto;
-        gap: 4px 6px;
-        padding: 6px 8px;
-        overflow: visible;
-      }
-      .app-nav.tvbot-nav > .header-controls {
-        grid-column: 1;
-        grid-row: 1;
-        justify-content: flex-end;
-        min-width: 0;
-        flex: 0 0 auto;
-      }
-      .app-nav.tvbot-nav > .tvbot-menu-row {
-        grid-column: 1 / -1;
-        grid-row: 2;
-        display: flex;
-        width: 100%;
-        min-width: 0;
-        flex: 0 0 auto;
-      }
-      .app-nav.tvbot-nav .tvbot-menu-row > .tvbot-top-menu {
-        width: 100%;
-        min-width: 0;
-        -webkit-overflow-scrolling: touch;
-      }
-      .app-nav.tvbot-nav .tvbot-top-menu a {
-        flex: 0 0 auto;
-        padding: 6px 9px;
-        font-size: 13px;
-      }
-      .app-nav.tvbot-nav .header-controls .theme-toggle {
-        min-height: 30px;
-        padding: 5px 8px;
-        font-size: 12px;
-      }
       .balance-window-toolbar { gap: 5px; }
       .balance-window-toolbar .balance-window-btn { min-height: 32px; padding: 6px 8px; font-size: 13px; }
       .chart-wrap { min-height: 0; padding: 6px; }

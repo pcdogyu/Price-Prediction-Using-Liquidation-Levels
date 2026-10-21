@@ -7,8 +7,11 @@ import (
 
 func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 	page := RenderTVBotNav(defaultTopMenu(), func(path string) string { return path }, func(TopMenuItem) bool { return false }, "wyx", "/auth/logout")
-	if !strings.Contains(page, `<nav class="app-nav tvbot-nav"`) {
-		t.Fatal("TVBot navigation should use the dedicated single-row layout")
+	if !strings.Contains(page, `<nav class="app-nav" aria-label="主菜单">`) {
+		t.Fatal("TVBot navigation should use the alerts page navigation layout")
+	}
+	if strings.Contains(page, "tvbot-nav") || strings.Contains(page, "tvbot-menu-row") {
+		t.Fatal("TVBot navigation should not use a page-specific layout")
 	}
 	want := []string{
 		`href="/alerts"`,
@@ -43,5 +46,15 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 	}
 	if !strings.Contains(page, `>系统信息<span class="nav-system-caret"`) {
 		t.Fatal("system menu trigger is missing")
+	}
+}
+
+func TestTVBotNavigationMatchesAlertsNavigation(t *testing.T) {
+	link := func(path string) string { return path }
+	active := func(item TopMenuItem) bool { return item.Key == "positions" }
+	alertsPage := RenderUnifiedNav(defaultTopMenu(), link, active, "wyx", "/auth/logout")
+	tvbotPage := RenderTVBotNav(defaultTopMenu(), link, active, "wyx", "/auth/logout")
+	if tvbotPage != alertsPage {
+		t.Fatalf("TVBot navigation differs from alerts navigation:\nalerts=%s\ntvbot=%s", alertsPage, tvbotPage)
 	}
 }

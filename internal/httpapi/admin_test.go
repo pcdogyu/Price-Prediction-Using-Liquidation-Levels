@@ -295,9 +295,12 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 			t.Fatalf("tvbot should render the configured single top menu, missing %s: %s", name, tvbotPage[start:minInt(start+500, len(tvbotPage))])
 		}
 	}
-	menuStart := strings.Index(tvbotPage, `<nav class="app-nav tvbot-nav" aria-label="主菜单">`)
+	menuStart := strings.Index(tvbotPage, `<nav class="app-nav" aria-label="主菜单">`)
+	if menuStart < 0 {
+		t.Fatal("tvbot should render the alerts page navigation layout")
+	}
 	personalTopMenu := tvbotPage[menuStart:]
-	if menuStart < 0 || strings.Index(personalTopMenu, `href="/bubbles"`) > strings.Index(personalTopMenu, `href="/alerts"`) {
+	if strings.Index(personalTopMenu, `href="/bubbles"`) > strings.Index(personalTopMenu, `href="/alerts"`) {
 		t.Fatal("tvbot should render the ordinary user's personal menu order")
 	}
 	if strings.Contains(tvbotPage, `/liquidation/tvbot/view/menu-settings`) {
