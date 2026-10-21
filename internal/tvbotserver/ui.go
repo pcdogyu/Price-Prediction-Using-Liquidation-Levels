@@ -2817,8 +2817,10 @@ const tvbotHTML = `<!doctype html>
     }
 
     function formatAveragePriceAmount(row, value) {
-      const markPrecision = rawDecimalPrecision(row && row.markPx);
+      const markPrecision = normalizedPrecision(row && row.price_precision);
       if (markPrecision !== null) return formatFixedPrecision(value, markPrecision, formatNumber);
+      const rawMarkPrecision = rawDecimalPrecision(row && row.markPx);
+      if (rawMarkPrecision !== null) return formatFixedPrecision(value, rawMarkPrecision, formatNumber);
       return formatFixedPrecision(value, row ? row.price_precision : null, formatNumber);
     }
 

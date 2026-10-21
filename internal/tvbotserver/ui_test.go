@@ -58,7 +58,8 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`gate_enabled: $("position-monitor-gate-enabled").checked`,
 		`formatAveragePriceAmount(row, row.avgPx)`,
 		`function rawDecimalPrecision(value)`,
-		`const markPrecision = rawDecimalPrecision(row && row.markPx)`,
+		`const markPrecision = normalizedPrecision(row && row.price_precision)`,
+		`const rawMarkPrecision = rawDecimalPrecision(row && row.markPx)`,
 		`if (markPrecision !== null) return formatFixedPrecision(value, markPrecision, formatNumber)`,
 		`window.confirm("确认一键平掉当前 "`,
 	} {
