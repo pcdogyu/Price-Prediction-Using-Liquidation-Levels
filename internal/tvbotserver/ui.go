@@ -2512,9 +2512,21 @@ const tvbotHTML = `<!doctype html>
       try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
       if (!res.ok) {
         const msg = data && data.message ? data.message : res.status + " " + res.statusText;
-        throw new Error(msg);
+        throw new Error(localizeErrorMessage(msg));
       }
       return data;
+    }
+
+    function localizeErrorMessage(message) {
+      const raw = String(message || "");
+      if (raw === "close size is below minimum step") {
+        return "平仓数量低于最小步长，请提高平仓比例或选择全部平仓";
+      }
+      const minimum = raw.match(/^close size (.+) is below minimum size (.+)$/);
+      if (minimum) {
+        return "平仓数量 " + minimum[1] + " 低于最小数量 " + minimum[2];
+      }
+      return raw;
     }
 
     function toast(message) {
