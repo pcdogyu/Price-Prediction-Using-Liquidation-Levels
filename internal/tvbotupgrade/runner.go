@@ -200,6 +200,15 @@ func (r ShellRunner) Run(ctx context.Context) (Result, error) {
 	if err := r.runStep(ctx, &result, "go_clean", "go", "clean", "-cache", "-testcache"); err != nil {
 		return result, err
 	}
+	// A failed compile can leave Go's per-process work directory behind when
+	// the host runs out of space. The production service uses a private /tmp,
+	// so clear only top-level Go build directories before the next attempt;
+	// application data and the current binary are not touched.
+	if runtime.GOOS != "windows" {
+		if err := r.runShellStep(ctx, &result, "go_tmp_clean", "find /tmp -mindepth 1 -maxdepth 1 -type d -name 'go-build*' -exec rm -rf -- {} +"); err != nil {
+			return result, err
+		}
+	}
 	// Keep the release gate bounded in memory on the small production host.
 	// Package tests still cover the complete module; -p 1 only prevents the Go
 	// tool from compiling/running multiple packages concurrently during an
