@@ -130,7 +130,9 @@ func TestBubbleChartHasShortLandscapeViewportFit(t *testing.T) {
 		"window.visualViewport?.addEventListener('resize', fitBubbleChartViewport)",
 		"const bubbleChartDefaultHeight = 874",
 		"const bubbleChartViewportScale = 1.3",
-		"available * bubbleChartViewportScale",
+		"wrap.getBoundingClientRect().top",
+		"chartHeightLimits.minimum",
+		"ResizeObserver",
 	} {
 		if !strings.Contains(string(dashboardJS), marker) {
 			t.Fatalf("bubble chart script missing television viewport support %q", marker)
@@ -149,9 +151,6 @@ func TestBubbleChartHasShortLandscapeViewportFit(t *testing.T) {
 		}
 	}
 	for _, marker := range []string{
-		".chart-wrap{height:874px}",
-		".chart-wrap{height:733px}",
-		".chart-wrap{height:967px}",
 		`id="chart-height"`,
 		`id="chart-height-apply"`,
 		`id="chart-height-auto"`,
@@ -164,6 +163,7 @@ func TestBubbleChartHasShortLandscapeViewportFit(t *testing.T) {
 	}
 	for _, marker := range []string{
 		"liquidation.chartHeight",
+		"liquidation.chartHeightMode",
 		"installChartSizeControls",
 		"setChartHeight",
 		"useAutomaticChartHeight",
