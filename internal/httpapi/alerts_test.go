@@ -134,6 +134,21 @@ func TestManualAlertNotifyEndpoint(t *testing.T) {
 	if _, err := st.SaveLiquidationAlert(ctx, domain.LiquidationAlert{ID: "manual-alert", Symbol: "BTCUSDT", Side: "long", TradeSide: "long", WindowMinutes: 3, NotionalUSD: 400000, ThresholdUSD: 300000, EventCount: 2, TriggeredAt: at, QuietSeconds: 600, QuietUntil: at.Add(10 * time.Minute), Status: domain.AlertStateWatching}); err != nil {
 		t.Fatal(err)
 	}
+	// The manual notification also renders a current 1m chart. Keep this test
+	// independent of Binance availability by seeding the same local fallback
+	// window that production uses when the public kline endpoint is unavailable.
+	minute := time.Now().UTC().Truncate(time.Minute)
+	candles := make([]domain.Candle, 0, 721)
+	for index := 720; index >= 0; index-- {
+		price := 67000 + float64(720-index)
+		candles = append(candles, domain.Candle{
+			Exchange: "binance", Symbol: "BTCUSDT", Time: minute.Add(-time.Duration(index) * time.Minute),
+			Open: price, High: price + 5, Low: price - 5, Close: price + 2, VolumeUSD: 1000,
+		})
+	}
+	if err := st.UpsertCandles(ctx, candles); err != nil {
+		t.Fatal(err)
+	}
 	w := serveAlert(srv, http.MethodPost, "/api/v1/alerts/notify", strings.NewReader(`{"record_type":"alert","record_id":"manual-alert"}`))
 	if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"status":"accepted"`) {
 		t.Fatalf("notify status=%d body=%s", w.Code, w.Body.String())
