@@ -1337,11 +1337,6 @@ const tvbotHTML = `<!doctype html>
       gap: 6px;
       white-space: nowrap;
     }
-    .analysis-cooldown-btn {
-      flex: 0 0 auto;
-      min-height: 24px !important;
-      padding: 2px 6px !important;
-    }
     .positions-table {
       min-width: 1400px;
     }
@@ -2203,7 +2198,6 @@ const tvbotHTML = `<!doctype html>
       ordersSearch: "",
       ordersStatus: "",
       coinpairBlocks: null,
-      coinpairCooldownSubmitting: {},
       coinpairCooldownRemoving: {},
       retrying: {},
       positionClosing: {},
@@ -2281,12 +2275,12 @@ const tvbotHTML = `<!doctype html>
       { id: "exit_time", title: "平仓时间", colClass: "analysis-exit-time-col", tdClass: "time", render: (row) => shanghaiTime(row.exit_time) },
       { id: "inst_id", title: "币对", colClass: "analysis-inst-id-col", render: (row) => analysisInstIDText(row.inst_id) },
       { id: "side", title: "方向", colClass: "analysis-side-col", toneClass: (row) => analysisPositionSideToneClass(row.side), render: (row) => analysisPositionSideText(row.side) },
-      { id: "entry_px", title: "开仓价", colClass: "analysis-entry-px-col", render: (row) => analysisAmountText(row.entry_px) },
-      { id: "exit_px", title: "平仓价", colClass: "analysis-exit-px-col", render: (row) => analysisAmountText(row.exit_px) },
+      { id: "entry_px", title: "开仓价", colClass: "analysis-entry-px-col", render: (row) => analysisPriceText(row, row.entry_px) },
+      { id: "exit_px", title: "平仓价", colClass: "analysis-exit-px-col", render: (row) => analysisPriceText(row, row.exit_px) },
       { id: "qty", title: "数量", colClass: "analysis-qty-col", render: (row) => analysisAmountText(row.qty) },
       { id: "margin", title: "保证金", colClass: "analysis-margin-col", render: (row) => analysisAmountText(row.margin) },
       { id: "leverage", title: "杠杆", colClass: "analysis-leverage-col", render: (row) => row.leverage ? asText(row.leverage) + "x" : "-" },
-      { id: "realized_pnl", title: "盈亏", colClass: "analysis-realized-pnl-col", signedField: "realized_pnl", renderHTML: (row) => analysisCooldownCellHTML(row) },
+      { id: "realized_pnl", title: "盈亏", colClass: "analysis-realized-pnl-col", signedField: "realized_pnl", render: (row) => analysisAmountText(row.realized_pnl) },
       { id: "pnl_ratio", title: "盈亏比", colClass: "analysis-pnl-ratio-col", toneClass: (row) => signedToneClass(analysisPnLRatioValue(row)), render: (row) => analysisPnLRatioText(row) },
       { id: "fee", title: "手续费", colClass: "analysis-fee-col", render: (row) => tradeFeeText(row) },
       { id: "net_pnl", title: "净盈亏", colClass: "analysis-net-pnl-col", signedField: "net_pnl", render: (row) => analysisAmountText(row.net_pnl) },
@@ -3718,7 +3712,6 @@ const tvbotHTML = `<!doctype html>
       if (!coinpairBlockCountdownTimer) {
         coinpairBlockCountdownTimer = window.setInterval(() => {
           renderCoinpairCooldownList();
-          syncAnalysisCooldownButtons();
         }, 1000);
       }
       if (state.coinpairBlocks === null && !coinpairBlockPollBusy) {
@@ -5636,6 +5629,11 @@ const tvbotHTML = `<!doctype html>
       return formatted;
     }
 
+    function analysisPriceText(row, value) {
+      if (value === null || value === undefined || String(value).trim() === "") return "-";
+      return formatFixedPrecision(value, row && row.price_precision, formatNumber);
+    }
+
     function tradeFeeText(row) {
       const fee = analysisAmountText(row && row.fee);
       const ccy = row && row.fee_ccy ? String(row.fee_ccy).trim() : "";
@@ -5653,9 +5651,9 @@ const tvbotHTML = `<!doctype html>
       if (value.endsWith("-USDT-SWAP") || value.endsWith("-USDC-SWAP")) {
         return value.split("-")[0] || original;
       }
-      if (value.endsWith("USDT") && value.length > 4) return value.slice(0, -4);
-      if (value.endsWith("USDC") && value.length > 4) return value.slice(0, -4);
-      return original;
+      if (value.endsWith("USDT") && value.length > 4) return value.slice(0, -4).replace(/[-_/]+$/, "") || original;
+      if (value.endsWith("USDC") && value.length > 4) return value.slice(0, -4).replace(/[-_/]+$/, "") || original;
+      return value.replace(/[-_/]+$/, "") || original;
     }
 
     function analysisPositionSideText(side) {
@@ -5708,87 +5706,6 @@ const tvbotHTML = `<!doctype html>
       const classAttr = classes.length ? ' class="' + classes.map(escapeHTML).join(" ") + '"' : "";
       const content = col.renderHTML ? col.renderHTML(row || {}) : escapeHTML(col.render(row || {}));
       return "<td" + classAttr + ">" + content + "</td>";
-    }
-
-    function analysisCooldownKey(symbol) {
-      return ignoredCoinpairKey(symbol);
-    }
-
-    function activeCoinpairBlockForSymbol(symbol) {
-      const candidate = ignoredCoinpairKey(symbol);
-      if (!candidate) return null;
-      return activeCoinpairBlocks().find((block) => {
-        const filter = ignoredCoinpairKey(block && block.keyword);
-        return !!filter && candidate.includes(filter);
-      }) || null;
-    }
-
-    function analysisCooldownCellHTML(row) {
-      const symbol = String(row && row.inst_id || "").trim();
-      const key = analysisCooldownKey(symbol);
-      const block = activeCoinpairBlockForSymbol(symbol);
-      const submitting = !!(key && state.coinpairCooldownSubmitting[key]);
-      const disabled = block || submitting || !key;
-      const label = submitting ? "提交中" : (block ? "冷静中" : "冷静期");
-      const title = block
-        ? ("冷静期至 " + shanghaiTime(block.expires_at))
-        : (submitting ? "正在加入冷静期" : "将该币对加入 24 小时冷静期");
-      return '<div class="analysis-realized-pnl-cell"><span>' + escapeHTML(analysisAmountText(row && row.realized_pnl)) + '</span>' +
-        '<button class="btn small analysis-cooldown-btn" type="button" data-analysis-cooldown="true"' +
-        ' data-symbol="' + escapeHTML(symbol) + '" data-trigger-price="' + escapeHTML(row && row.exit_px || "") + '"' +
-        ' data-exchange="' + escapeHTML(row && row.exchange || activeExchange()) + '" data-api-id="' + escapeHTML(row && row.api_id || "") + '"' +
-        ' title="' + escapeHTML(title) + '"' + (disabled ? " disabled" : "") + '>' + escapeHTML(label) + '</button></div>';
-    }
-
-    function syncAnalysisCooldownButtons() {
-      document.querySelectorAll("button[data-analysis-cooldown]").forEach((button) => {
-        const symbol = button.dataset.symbol || "";
-        const key = analysisCooldownKey(symbol);
-        const block = activeCoinpairBlockForSymbol(symbol);
-        const submitting = !!(key && state.coinpairCooldownSubmitting[key]);
-        button.disabled = !!block || submitting || !key;
-        button.textContent = submitting ? "提交中" : (block ? "冷静中" : "冷静期");
-        button.title = block
-          ? ("冷静期至 " + shanghaiTime(block.expires_at))
-          : (submitting ? "正在加入冷静期" : "将该币对加入 24 小时冷静期");
-      });
-    }
-
-    async function addAnalysisCoinpairCooldown(button) {
-      const symbol = String(button && button.dataset.symbol || "").trim();
-      const key = analysisCooldownKey(symbol);
-      if (!symbol || !key || state.coinpairCooldownSubmitting[key]) return;
-      const existing = activeCoinpairBlockForSymbol(symbol);
-      if (existing) {
-        syncAnalysisCooldownButtons();
-        return;
-      }
-      const estimatedExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      const confirmed = window.confirm(
-        "确认将 " + symbol + " 加入冷静期至 " + shanghaiTime(estimatedExpiry) + "？\n\n24 小时内将忽略该币对的新开仓、手动重试和自动补回，且不能提前解除；平仓不受影响。"
-      );
-      if (!confirmed) return;
-      state.coinpairCooldownSubmitting[key] = true;
-      syncAnalysisCooldownButtons();
-      try {
-        const result = await api("/tvbot/coinpair-blocks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            symbol,
-            trigger_price: button.dataset.triggerPrice || "",
-            exchange: normalizeExchange(button.dataset.exchange || activeExchange()),
-            api_id: button.dataset.apiId || ""
-          })
-        });
-        await loadCoinpairBlocks();
-        const block = result && result.block ? result.block : null;
-        const expiryText = block ? ("，至 " + shanghaiTime(block.expires_at)) : "";
-        toast(result && result.status === "active" ? (symbol + " 已在冷静期" + expiryText) : (symbol + " 已加入 24 小时冷静期" + expiryText));
-      } finally {
-        delete state.coinpairCooldownSubmitting[key];
-        syncAnalysisCooldownButtons();
-      }
     }
 
     function renderAnalysisTradeHistory(errorText) {
@@ -7350,11 +7267,6 @@ const tvbotHTML = `<!doctype html>
     $("sync-balance-history").addEventListener("click", () => syncBalanceHistory($("sync-balance-history")).catch((err) => toast(err.message)));
     $("analysis-trade-prev").addEventListener("click", () => changeAnalysisTradePage(-1));
     $("analysis-trade-next").addEventListener("click", () => changeAnalysisTradePage(1));
-    $("analysis-trade-rows").addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-analysis-cooldown]");
-      if (!button) return;
-      addAnalysisCoinpairCooldown(button).catch((err) => toast(err.message));
-    });
     $("refresh-positions").addEventListener("click", () => loadPositionView(true).then(() => toast("持仓和挂单已刷新")).catch((err) => toast(err.message)));
     document.querySelectorAll("[data-pending-order-group]").forEach((button) => {
       button.addEventListener("click", () => {

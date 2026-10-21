@@ -197,27 +197,34 @@ type analysisTrade struct {
 }
 
 type analysisPositionTrade struct {
-	Exchange    string    `json:"exchange"`
-	APIID       string    `json:"api_id,omitempty"`
-	InstID      string    `json:"inst_id"`
-	Side        string    `json:"side"`
-	EntryTime   time.Time `json:"entry_time"`
-	EntryTS     int64     `json:"entry_ts"`
-	ExitTime    time.Time `json:"exit_time"`
-	ExitTS      int64     `json:"exit_ts"`
-	EntryPx     string    `json:"entry_px,omitempty"`
-	ExitPx      string    `json:"exit_px,omitempty"`
-	Qty         string    `json:"qty,omitempty"`
-	Margin      string    `json:"margin,omitempty"`
-	Leverage    int       `json:"leverage,omitempty"`
-	RealizedPnL string    `json:"realized_pnl,omitempty"`
-	Fee         string    `json:"fee,omitempty"`
-	FeeCcy      string    `json:"fee_ccy,omitempty"`
-	NetPnL      string    `json:"net_pnl,omitempty"`
-	Turnover    string    `json:"turnover,omitempty"`
-	EntryOrdID  string    `json:"entry_ord_id,omitempty"`
-	ExitOrdID   string    `json:"exit_ord_id,omitempty"`
-	FillCount   int       `json:"fill_count"`
+	Exchange          string    `json:"exchange"`
+	APIID             string    `json:"api_id,omitempty"`
+	InstID            string    `json:"inst_id"`
+	Side              string    `json:"side"`
+	EntryTime         time.Time `json:"entry_time"`
+	EntryTS           int64     `json:"entry_ts"`
+	ExitTime          time.Time `json:"exit_time"`
+	ExitTS            int64     `json:"exit_ts"`
+	EntryPx           string    `json:"entry_px,omitempty"`
+	ExitPx            string    `json:"exit_px,omitempty"`
+	Qty               string    `json:"qty,omitempty"`
+	Margin            string    `json:"margin,omitempty"`
+	Leverage          int       `json:"leverage,omitempty"`
+	RealizedPnL       string    `json:"realized_pnl,omitempty"`
+	Fee               string    `json:"fee,omitempty"`
+	FeeCcy            string    `json:"fee_ccy,omitempty"`
+	NetPnL            string    `json:"net_pnl,omitempty"`
+	Turnover          string    `json:"turnover,omitempty"`
+	EntryOrdID        string    `json:"entry_ord_id,omitempty"`
+	ExitOrdID         string    `json:"exit_ord_id,omitempty"`
+	FillCount         int       `json:"fill_count"`
+	PricePrecision    *int      `json:"price_precision,omitempty"`
+	QuantityPrecision *int      `json:"quantity_precision,omitempty"`
+}
+
+type analysisGateContractMeta struct {
+	Precision          symbolDisplayPrecision
+	ContractMultiplier float64
 }
 
 func (s *Server) StartUSDTBalanceSampler(ctx context.Context) {
@@ -518,6 +525,9 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 
 	var okxClient okx.Client
 	analysisCfg := cfg
+	okxAnalysisPrecisions := map[string]symbolDisplayPrecision{}
+	binanceAnalysisPrecisions := map[string]symbolDisplayPrecision{}
+	gateAnalysisContracts := map[string]analysisGateContractMeta{}
 	if okxConfigured {
 		okxClient = s.analysisOKXClient(cfg, okxCreds)
 		balanceValue, balanceErr := s.fetchAnalysisBalance(ctx, okxClient, apiID, envName, now)
@@ -558,6 +568,7 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 			}
 		} else {
 			analysisCfg = analysisConfigWithOKXCtVals(cfg, instruments)
+			okxAnalysisPrecisions = analysisDisplayPrecisionsFromOKXInstruments(instruments)
 		}
 	}
 
@@ -565,6 +576,7 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 	binanceDataReady := false
 	if binanceConfigured {
 		binanceClient := s.analysisBinanceClient(cfg, binanceCreds)
+		binanceAnalysisPrecisions = s.binanceDisplayPrecisions(ctx, binanceClient)
 		var binanceErr error
 		binanceTrades, binanceErr = s.fetchBinanceAnalysisTrades(ctx, binanceClient, binanceAPIID, cfg, pnlMinutes, now)
 		binanceDataReady = binanceErr == nil
@@ -599,6 +611,13 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 	gateDataReady := false
 	if gateConfigured {
 		gateClient := s.analysisGateClient(cfg, gateCreds)
+		if contracts, contractsErr := gateClient.Contracts(ctx); contractsErr != nil {
+			if s.Logger != nil {
+				s.Logger.Warn("failed to fetch Gate contracts for analysis display data", "api_id", gateAPIID, "env", envName, "error", contractsErr)
+			}
+		} else {
+			gateAnalysisContracts = analysisGateContractMetaFromContracts(contracts)
+		}
 		if account, accountErr := gateClient.Account(ctx); accountErr == nil {
 			balanceValue := analysisBalanceFromGate(account, now)
 			if !balanceReady {
@@ -673,6 +692,7 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 		}
 		return analysisResponse{}, errors.New("no exchange analysis data is available")
 	}
+	applyAnalysisPositionDisplayData(&resp, analysisCfg, okxAnalysisPrecisions, binanceAnalysisPrecisions, gateAnalysisContracts)
 	resp.Balance = balance
 	resp.Cache.CacheKey = cacheKey
 	if err := s.Orders.CachePayload(cacheKey, resp, now); err != nil && s.Logger != nil {
@@ -815,7 +835,7 @@ func analysisCacheKey(apiID, binanceAPIID, envName string, priceDays, pnlMinutes
 	if len(gateAPIIDs) > 0 {
 		gateAPIID = strings.TrimSpace(gateAPIIDs[0])
 	}
-	return "analysis|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
+	return "analysis|v2|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
 }
 
 func (s *Server) refreshAnalysisData(ctx context.Context, client okx.Client, apiID string, priceDays, pnlMinutes int, now time.Time) error {
@@ -1698,6 +1718,105 @@ func analysisTradeMargin(cfg config.Config, trade analysisTrade) (string, bool) 
 		return "", false
 	}
 	return trading.NormalizeFloat(margin), true
+}
+
+func analysisDisplayPrecisionsFromOKXInstruments(instruments []okx.Instrument) map[string]symbolDisplayPrecision {
+	out := make(map[string]symbolDisplayPrecision, len(instruments))
+	for _, instrument := range instruments {
+		instID := strings.ToUpper(strings.TrimSpace(instrument.InstID))
+		if instID == "" {
+			continue
+		}
+		out[instID] = analysisDisplayPrecision(precisionFromOKXInstrument(instrument))
+	}
+	return out
+}
+
+func analysisGateContractMetaFromContracts(contracts []gate.Contract) map[string]analysisGateContractMeta {
+	out := make(map[string]analysisGateContractMeta, len(contracts))
+	for _, contract := range contracts {
+		name := strings.ToUpper(strings.TrimSpace(contract.Name))
+		if name == "" {
+			continue
+		}
+		multiplier, _ := parsePositiveFloat(contract.QuantoMultiplier)
+		out[name] = analysisGateContractMeta{
+			Precision:          analysisDisplayPrecision(analysisGatePricePrecision(contract.OrderPriceRound)),
+			ContractMultiplier: multiplier,
+		}
+	}
+	return out
+}
+
+func analysisGatePricePrecision(orderPriceRound string) symbolDisplayPrecision {
+	return symbolDisplayPrecision{PricePrecision: boundedPrecision(decimalPlacesForDisplay(orderPriceRound))}
+}
+
+func analysisDisplayPrecision(precision symbolDisplayPrecision) symbolDisplayPrecision {
+	precision.PricePrecision = analysisMinimumPricePrecision(precision.PricePrecision)
+	precision.QuantityPrecision = cloneIntPtr(precision.QuantityPrecision)
+	return precision
+}
+
+func analysisMinimumPricePrecision(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	digits := *value
+	if digits < 2 {
+		digits = 2
+	}
+	return boundedPrecision(digits)
+}
+
+func applyAnalysisPositionDisplayData(resp *analysisResponse, cfg config.Config, okxPrecisions, binancePrecisions map[string]symbolDisplayPrecision, gateContracts map[string]analysisGateContractMeta) {
+	if resp == nil {
+		return
+	}
+	for i := range resp.PositionTrades {
+		position := &resp.PositionTrades[i]
+		exchange := trading.NormalizeExchange(position.Exchange)
+		var precision symbolDisplayPrecision
+		var found bool
+		switch exchange {
+		case trading.ExchangeOKX:
+			precision, found = okxPrecisions[strings.ToUpper(strings.TrimSpace(position.InstID))]
+		case trading.ExchangeBinance:
+			precision, found = binancePrecisions[strings.ToUpper(strings.TrimSpace(position.InstID))]
+		case trading.ExchangeGate:
+			if meta, ok := gateContracts[strings.ToUpper(strings.TrimSpace(position.InstID))]; ok {
+				precision, found = meta.Precision, true
+			}
+		}
+		if found {
+			position.PricePrecision = cloneIntPtr(precision.PricePrecision)
+			position.QuantityPrecision = cloneIntPtr(precision.QuantityPrecision)
+		}
+		if position.Leverage <= 0 && cfg.Trading.Leverage > 0 {
+			position.Leverage = cfg.Trading.Leverage
+		}
+		if strings.TrimSpace(position.Margin) == "" && position.Leverage > 0 {
+			if qty, qtyOK := parsePositiveFloat(position.Qty); qtyOK {
+				if entry, entryOK := parsePositiveFloat(position.EntryPx); entryOK {
+					multiplier := 1.0
+					switch exchange {
+					case trading.ExchangeOKX:
+						if ctVal := analysisOKXCtVal(cfg, position.InstID); ctVal > 0 {
+							multiplier = ctVal
+						}
+					case trading.ExchangeGate:
+						if meta, ok := gateContracts[strings.ToUpper(strings.TrimSpace(position.InstID))]; ok && meta.ContractMultiplier > 0 {
+							multiplier = meta.ContractMultiplier
+						}
+					}
+					margin := qty * entry * multiplier / float64(position.Leverage)
+					if margin > 0 && !math.IsNaN(margin) && !math.IsInf(margin, 0) {
+						position.Margin = trading.NormalizeFloat(margin)
+					}
+				}
+			}
+		}
+	}
 }
 
 func analysisOKXCtVal(cfg config.Config, instID string) float64 {

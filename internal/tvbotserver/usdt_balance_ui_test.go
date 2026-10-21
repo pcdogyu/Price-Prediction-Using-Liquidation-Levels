@@ -121,6 +121,9 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`title: "成交额"`,
 		`title: "净盈亏"`,
 		`function analysisAmountText(value)`,
+		`function analysisPriceText(row, value)`,
+		`render: (row) => analysisPriceText(row, row.entry_px)`,
+		`render: (row) => analysisPriceText(row, row.exit_px)`,
 		`ccy.toUpperCase() !== "USDT"`,
 		`function analysisInstIDText(instID)`,
 		`function analysisPnLRatioText(row)`,
@@ -142,6 +145,10 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		}
 	}
 	for _, old := range []string{
+		`analysisCooldownCellHTML`,
+		`analysis-cooldown-btn`,
+		`data-analysis-cooldown`,
+		`addAnalysisCoinpairCooldown`,
 		`OKX USDT 余额表`,
 		`Binance USDT 余额表`,
 		`OKX USDT估值`,

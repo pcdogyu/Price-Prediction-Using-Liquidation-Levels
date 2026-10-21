@@ -704,7 +704,7 @@ func TestTVBotUIOrderHistorySearchControls(t *testing.T) {
 	}
 }
 
-func TestTVBotUIAnalysisManualCooldownControls(t *testing.T) {
+func TestTVBotUIAnalysisOmitsManualCooldownButton(t *testing.T) {
 	srv := newTestServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/tvbot/", nil)
 	req.SetBasicAuth("admin", "Admin123")
@@ -715,20 +715,24 @@ func TestTVBotUIAnalysisManualCooldownControls(t *testing.T) {
 	}
 	body := resp.Body.Bytes()
 	for _, marker := range [][]byte{
-		[]byte(`renderHTML: (row) => analysisCooldownCellHTML(row)`),
-		[]byte(`class="btn small analysis-cooldown-btn"`),
-		[]byte(`data-analysis-cooldown="true"`),
-		[]byte(`function addAnalysisCoinpairCooldown(button)`),
 		[]byte(`window.confirm(`),
 		[]byte(`"/tvbot/coinpair-blocks"`),
-		[]byte(`trigger_price: button.dataset.triggerPrice`),
-		[]byte(`冷静中`),
 		[]byte(`手动冷静期`),
 		[]byte(`function coinpairCooldownPriceLabel(source)`),
 		[]byte(`activeTab !== "orders" && activeTab !== "analysis"`),
 	} {
 		if !bytes.Contains(body, marker) {
 			t.Fatalf("tvbot ui missing analysis cooldown marker %q", marker)
+		}
+	}
+	for _, marker := range [][]byte{
+		[]byte(`renderHTML: (row) => analysisCooldownCellHTML(row)`),
+		[]byte(`class="btn small analysis-cooldown-btn"`),
+		[]byte(`data-analysis-cooldown="true"`),
+		[]byte(`function addAnalysisCoinpairCooldown(button)`),
+	} {
+		if bytes.Contains(body, marker) {
+			t.Fatalf("tvbot ui should not contain removed analysis cooldown marker %q", marker)
 		}
 	}
 }
@@ -2997,6 +3001,14 @@ func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T
 	defer okxServer.Close()
 	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/fapi/v1/exchangeInfo" {
+			_, _ = w.Write([]byte(`{"symbols":[
+				{"symbol":"BTCUSDT","pricePrecision":2,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01"},{"filterType":"LOT_SIZE","stepSize":"0.001"}]},
+				{"symbol":"ETHUSDT","pricePrecision":2,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01"},{"filterType":"LOT_SIZE","stepSize":"0.001"}]},
+				{"symbol":"BADUSDT","pricePrecision":4,"quantityPrecision":0,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.0001"},{"filterType":"LOT_SIZE","stepSize":"1"}]}
+			]}`))
+			return
+		}
 		if r.URL.Path == "/fapi/v1/income" {
 			sawBinanceFunding = true
 			if r.Header.Get("X-MBX-APIKEY") != expectedBinanceAPIKey {

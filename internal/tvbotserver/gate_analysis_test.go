@@ -23,6 +23,8 @@ func TestBuildAnalysisSupportsGateWithoutOKX(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/api/v4/futures/usdt/contracts":
+			_, _ = w.Write([]byte(`[{"name":"BTC_USDT","order_price_round":"0.1","quanto_multiplier":"0.0001","enable_decimal":false}]`))
 		case "/api/v4/futures/usdt/accounts":
 			_, _ = w.Write([]byte(`{"currency":"USDT","total":"1000","available":"900"}`))
 		case "/api/v4/futures/usdt/my_trades_timerange":
@@ -72,7 +74,7 @@ func TestBuildAnalysisSupportsGateWithoutOKX(t *testing.T) {
 	if stats.TradeCount != 1 || stats.Wins != 1 || stats.Losses != 0 || stats.NetPnL != 19.8 || stats.Fees != -0.2 || stats.Turnover != 420 {
 		t.Fatalf("Gate stats=%#v", stats)
 	}
-	if len(got.PositionTrades) != 1 || got.PositionTrades[0].Exchange != tvbottrading.ExchangeGate || got.PositionTrades[0].EntryPx != "100" || got.PositionTrades[0].ExitPx != "110" {
+	if len(got.PositionTrades) != 1 || got.PositionTrades[0].Exchange != tvbottrading.ExchangeGate || got.PositionTrades[0].EntryPx != "100" || got.PositionTrades[0].ExitPx != "110" || got.PositionTrades[0].Leverage != cfg.Trading.Leverage || got.PositionTrades[0].Margin != "0.004" || got.PositionTrades[0].PricePrecision == nil || *got.PositionTrades[0].PricePrecision != 2 {
 		t.Fatalf("Gate positions=%#v", got.PositionTrades)
 	}
 }
@@ -82,6 +84,8 @@ func TestHandleAnalysisReturnsGateDataWhenOKXIsNotConfigured(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/api/v4/futures/usdt/contracts":
+			_, _ = w.Write([]byte(`[]`))
 		case "/api/v4/futures/usdt/accounts":
 			_, _ = w.Write([]byte(`{"currency":"USDT","total":"1000","available":"900"}`))
 		case "/api/v4/futures/usdt/my_trades_timerange":
