@@ -139,10 +139,44 @@ func gateJSONText(raw json.RawMessage) (string, error) {
 type Ticker struct {
 	Contract         string `json:"contract"`
 	Last             string `json:"last"`
+	HighestBid       string `json:"highest_bid"`
+	LowestAsk        string `json:"lowest_ask"`
 	Volume24hQuote   string `json:"volume_24h_quote"`
 	Volume24hBase    string `json:"volume_24h_base"`
 	ChangePercentage string `json:"change_percentage"`
 }
+
+func (t *Ticker) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Contract         json.RawMessage `json:"contract"`
+		Last             json.RawMessage `json:"last"`
+		HighestBid       json.RawMessage `json:"highest_bid"`
+		LowestAsk        json.RawMessage `json:"lowest_ask"`
+		Volume24hQuote   json.RawMessage `json:"volume_24h_quote"`
+		Volume24hBase    json.RawMessage `json:"volume_24h_base"`
+		ChangePercentage json.RawMessage `json:"change_percentage"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fields := []struct {
+		raw *json.RawMessage
+		out *string
+	}{
+		{&raw.Contract, &t.Contract}, {&raw.Last, &t.Last}, {&raw.HighestBid, &t.HighestBid},
+		{&raw.LowestAsk, &t.LowestAsk}, {&raw.Volume24hQuote, &t.Volume24hQuote},
+		{&raw.Volume24hBase, &t.Volume24hBase}, {&raw.ChangePercentage, &t.ChangePercentage},
+	}
+	for _, field := range fields {
+		value, err := gateJSONText(*field.raw)
+		if err != nil {
+			return err
+		}
+		*field.out = value
+	}
+	return nil
+}
+
 type Position struct {
 	Contract         string `json:"contract"`
 	Size             string `json:"size"`
@@ -357,6 +391,20 @@ func (c Client) Tickers(ctx context.Context) ([]Ticker, error) {
 	var out []Ticker
 	err := c.Do(ctx, http.MethodGet, "/futures/usdt/tickers", nil, nil, false, &out)
 	return out, err
+}
+func (c Client) Ticker(ctx context.Context, contract string) (Ticker, error) {
+	var out []Ticker
+	q := url.Values{}
+	if strings.TrimSpace(contract) != "" {
+		q.Set("contract", contract)
+	}
+	if err := c.Do(ctx, http.MethodGet, "/futures/usdt/tickers", q, nil, false, &out); err != nil {
+		return Ticker{}, err
+	}
+	if len(out) == 0 {
+		return Ticker{}, fmt.Errorf("Gate ticker not found for %s", strings.TrimSpace(contract))
+	}
+	return out[0], nil
 }
 func (c Client) Contract(ctx context.Context, name string) (Contract, error) {
 	var out Contract

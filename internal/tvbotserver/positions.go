@@ -240,6 +240,16 @@ type positionCloseOrder struct {
 	NonReduceOnlyFallback bool
 }
 
+type gatePositionCloseOrder struct {
+	Position       okx.Position
+	Order          gate.Order
+	Px             string
+	CloseSz        string
+	TargetSz       string
+	InitialPosSize string
+	Partial        bool
+}
+
 type positionCloseRegistry struct {
 	mu     sync.Mutex
 	active map[string]struct{}
@@ -1828,7 +1838,7 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request, cfg config.Config, req positionCloseRequest, ratio float64) {
-	if req.Mode != "market" || ratio < 1 {
+	if req.Mode == "market" && ratio < 1 {
 		writeError(w, http.StatusBadRequest, "unsupported_gate_position_close", "Gate currently supports full market close only")
 		return
 	}
@@ -1860,12 +1870,39 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusConflict, "position_not_open", "Gate position is not open")
 		return
 	}
+	converted := gatePositionToOKX(found)
+	if req.Mode == "limit" {
+		closeSz := ""
+		var closeErr error
+		if ratio < 1 {
+			closeSz, closeErr = gatePositionCloseSize(ctx, client, converted, ratio)
+			if closeErr != nil {
+				writeError(w, http.StatusBadGateway, "position_close_failed", closeErr.Error())
+				return
+			}
+		}
+		order, started, startErr := s.startGateLimitPositionClose(ctx, apiID, cfg, client, converted, closeSz)
+		if startErr != nil {
+			writeError(w, http.StatusBadGateway, "position_close_failed", startErr.Error())
+			return
+		}
+		if !started {
+			writeError(w, http.StatusConflict, "position_close_running", "limit close is already running for this position")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, positionCloseResponse{
+			OK: true, Status: "running", Mode: req.Mode, APIID: apiID,
+			InstID: order.Position.InstID, PosSide: normalizePosSide(order.Position.PosSide),
+			Sz: order.CloseSz, OrdID: order.Order.IDString(), ClOrdID: order.Order.Text,
+			Px: order.Px, Message: "Gate limit close order started",
+		})
+		return
+	}
 	ack, err := placeGateMarketPositionClose(ctx, cfg, client, found.Contract)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "position_close_failed", err.Error())
 		return
 	}
-	converted := gatePositionToOKX(found)
 	writeJSON(w, http.StatusOK, positionCloseResponse{
 		OK: true, Status: "submitted", Mode: "market", APIID: apiID, InstID: converted.InstID,
 		PosSide: normalizePosSide(converted.PosSide), Sz: absolutePositionSize(converted.Pos), OrdID: ack.IDString(),
@@ -1878,6 +1915,366 @@ func placeGateMarketPositionClose(ctx context.Context, cfg config.Config, client
 		Contract: contract, Size: "0", Price: "0", TIF: "ioc", Close: true, ReduceOnly: true,
 		PosMarginMode: cfg.MarginMode(), Text: nextPositionCloseClOrdID(),
 	})
+}
+
+func (s *Server) startGateLimitPositionClose(ctx context.Context, apiID string, cfg config.Config, client gate.Client, position okx.Position, closeSz string) (gatePositionCloseOrder, bool, error) {
+	key := positionCloseKey(trading.ExchangeGate, apiID, position.InstID, position.PosSide)
+	if !positionCloseJobs.start(key) {
+		return gatePositionCloseOrder{}, false, nil
+	}
+	order, err := placeGateLimitPositionClose(ctx, cfg, client, position, closeSz)
+	if err != nil {
+		positionCloseJobs.done(key)
+		return gatePositionCloseOrder{}, false, err
+	}
+	go s.watchGateLimitPositionClose(apiID, cfg, client, order)
+	return order, true, nil
+}
+
+func gatePositionCloseSize(ctx context.Context, client gate.Client, position okx.Position, ratio float64) (string, error) {
+	contract, err := client.Contract(ctx, position.InstID)
+	if err != nil {
+		return "", err
+	}
+	step := ""
+	if !contract.EnableDecimal {
+		step = "1"
+	}
+	size, err := positionCloseSize(position.Pos, ratio, step, contract.OrderSizeMin)
+	if err != nil {
+		return "", err
+	}
+	return gateSignedCloseSize(position.Pos, size), nil
+}
+
+func gateSignedCloseSize(positionRaw, absoluteSize string) string {
+	size := absolutePositionSize(absoluteSize)
+	if size == "" || size == "0" {
+		return ""
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(positionRaw), 64)
+	if err == nil && value > 0 {
+		return "-" + size
+	}
+	return size
+}
+
+func gateLimitClosePrice(ctx context.Context, client gate.Client, position okx.Position) (string, error) {
+	contract, err := client.Contract(ctx, position.InstID)
+	if err != nil {
+		return "", err
+	}
+	ticker, err := client.Ticker(ctx, position.InstID)
+	if err != nil {
+		return "", err
+	}
+	bid, bidErr := strconv.ParseFloat(strings.TrimSpace(ticker.HighestBid), 64)
+	ask, askErr := strconv.ParseFloat(strings.TrimSpace(ticker.LowestAsk), 64)
+	if bidErr != nil || askErr != nil || bid <= 0 || ask <= 0 {
+		last, lastErr := strconv.ParseFloat(strings.TrimSpace(ticker.Last), 64)
+		if lastErr != nil || last <= 0 {
+			last, lastErr = strconv.ParseFloat(strings.TrimSpace(contract.MarkPrice), 64)
+			if lastErr != nil || last <= 0 {
+				return "", fmt.Errorf("invalid Gate ticker bid/ask for %s", position.InstID)
+			}
+		}
+		bid, ask = last, last
+	}
+	side, err := closeOrderSide(position)
+	if err != nil {
+		return "", err
+	}
+	return priceOneTickFromMidValue((bid+ask)/2, contract.OrderPriceRound, side)
+}
+
+func placeGateLimitPositionClose(ctx context.Context, cfg config.Config, client gate.Client, position okx.Position, closeSz string) (gatePositionCloseOrder, error) {
+	px, err := gateLimitClosePrice(ctx, client, position)
+	if err != nil {
+		return gatePositionCloseOrder{}, err
+	}
+	marginMode := strings.ToLower(strings.TrimSpace(position.MgnMode))
+	if marginMode != "cross" && marginMode != "isolated" {
+		marginMode = cfg.MarginMode()
+	}
+	req := gate.PlaceOrderRequest{
+		Contract:      strings.ToUpper(strings.TrimSpace(position.InstID)),
+		Size:          "0",
+		Price:         px,
+		TIF:           "gtc",
+		Close:         true,
+		ReduceOnly:    true,
+		PosMarginMode: marginMode,
+		Text:          nextPositionCloseClOrdID(),
+	}
+	if strings.TrimSpace(closeSz) != "" {
+		req.Size = strings.TrimSpace(closeSz)
+		req.Close = false
+	}
+	ack, err := client.PlaceOrder(ctx, req)
+	if err != nil {
+		return gatePositionCloseOrder{}, err
+	}
+	closeSize := absolutePositionSize(req.Size)
+	if closeSize == "" || closeSize == "0" {
+		closeSize = absolutePositionSize(position.Pos)
+	}
+	return gatePositionCloseOrder{
+		Position:       position,
+		Order:          ack,
+		Px:             px,
+		CloseSz:        closeSize,
+		TargetSz:       closeSize,
+		InitialPosSize: absolutePositionSize(position.Pos),
+		Partial:        strings.TrimSpace(closeSz) != "",
+	}, nil
+}
+
+func currentGateOpenPosition(ctx context.Context, client gate.Client, instID, posSide string) (gate.Position, okx.Position, error) {
+	positions, err := client.Positions(ctx, instID)
+	if err != nil {
+		return gate.Position{}, okx.Position{}, err
+	}
+	wantedSide := normalizePosSide(posSide)
+	for _, candidate := range positions {
+		converted := gatePositionToOKX(candidate)
+		if !strings.EqualFold(converted.InstID, strings.TrimSpace(instID)) || !isOpenPosition(converted.Pos) {
+			continue
+		}
+		if wantedSide != "" && normalizePosSide(converted.PosSide) != wantedSide {
+			continue
+		}
+		return candidate, converted, nil
+	}
+	return gate.Position{}, okx.Position{}, fmt.Errorf("%w: %s %s", errPositionNotOpen, instID, posSide)
+}
+
+func currentGatePositionCloseOrder(ctx context.Context, client gate.Client, active gatePositionCloseOrder) (gate.Order, bool, error) {
+	orders, err := client.OpenOrders(ctx, active.Position.InstID)
+	if err != nil {
+		return gate.Order{}, false, err
+	}
+	wantedID := active.Order.IDString()
+	wantedText := strings.TrimSpace(active.Order.Text)
+	for _, order := range orders {
+		if !strings.EqualFold(strings.TrimSpace(order.Contract), strings.TrimSpace(active.Position.InstID)) {
+			continue
+		}
+		if (wantedID != "" && order.IDString() == wantedID) || (wantedText != "" && strings.TrimSpace(order.Text) == wantedText) {
+			return order, true, nil
+		}
+	}
+	return gate.Order{}, false, nil
+}
+
+func cancelGatePositionCloseOrder(ctx context.Context, client gate.Client, order gate.Order) error {
+	orderID := order.IDString()
+	if orderID == "" {
+		return errors.New("Gate close order is missing an order id")
+	}
+	_, err := client.CancelOrder(ctx, order.Contract, orderID)
+	return err
+}
+
+func gateOrderRemainingSize(order gate.Order) (string, error) {
+	raw := strings.TrimSpace(order.Left)
+	if raw == "" {
+		raw = strings.TrimSpace(order.Size)
+	}
+	remaining := absolutePositionSize(raw)
+	if remaining == "" || remaining == "0" {
+		return "", errPendingOrderNoRemaining
+	}
+	return remaining, nil
+}
+
+func gatePartialCloseRemaining(active gatePositionCloseOrder, position okx.Position) string {
+	target, targetErr := positiveRatFromDecimal(active.TargetSz)
+	initial, initialErr := positiveRatFromDecimal(active.InitialPosSize)
+	current, currentErr := positiveRatFromDecimal(absolutePositionSize(position.Pos))
+	if targetErr != nil || initialErr != nil || currentErr != nil || target.Sign() <= 0 || current.Sign() <= 0 {
+		return ""
+	}
+	filled := new(big.Rat).Sub(initial, current)
+	if filled.Sign() < 0 {
+		filled.SetInt64(0)
+	}
+	remaining := new(big.Rat).Sub(target, filled)
+	if remaining.Sign() <= 0 {
+		return ""
+	}
+	if remaining.Cmp(current) > 0 {
+		remaining.Set(current)
+	}
+	decimals := maxInt(decimalPlacesForDisplay(active.TargetSz), decimalPlacesForDisplay(position.Pos))
+	return trimDecimalZeros(remaining.FloatString(decimals))
+}
+
+func (s *Server) watchGateLimitPositionClose(apiID string, cfg config.Config, client gate.Client, active gatePositionCloseOrder) {
+	key := positionCloseKey(trading.ExchangeGate, apiID, active.Position.InstID, active.Position.PosSide)
+	defer positionCloseJobs.done(key)
+
+	pollInterval := positionClosePollInterval
+	if pollInterval <= 0 {
+		pollInterval = 250 * time.Millisecond
+	}
+	timeoutDuration := positionCloseLimitTimeout
+	if timeoutDuration <= 0 {
+		timeoutDuration = 60 * time.Second
+	}
+	poll := time.NewTicker(pollInterval)
+	defer poll.Stop()
+	timeout := time.NewTimer(timeoutDuration)
+	defer timeout.Stop()
+	for {
+		select {
+		case <-poll.C:
+			next, closed, err := refreshGateLimitPositionClose(cfg, client, active)
+			if err != nil {
+				s.logPositionCloseError("Gate limit position close refresh failed", err, active.Position)
+				continue
+			}
+			if closed {
+				return
+			}
+			active = next
+		case <-timeout.C:
+			if err := fallbackGateMarketPositionClose(cfg, client, active); err != nil {
+				s.logPositionCloseError("Gate limit position close fallback failed", err, active.Position)
+			}
+			return
+		}
+	}
+}
+
+func refreshGateLimitPositionClose(cfg config.Config, client gate.Client, active gatePositionCloseOrder) (gatePositionCloseOrder, bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	_, position, err := currentGateOpenPosition(ctx, client, active.Position.InstID, active.Position.PosSide)
+	if err != nil {
+		if errors.Is(err, errPositionNotOpen) {
+			return active, true, nil
+		}
+		return active, false, err
+	}
+	remaining := active.CloseSz
+	if active.Partial {
+		remaining = gatePartialCloseRemaining(active, position)
+		if remaining == "" || remaining == "0" {
+			return active, true, nil
+		}
+	}
+	openOrder, found, err := currentGatePositionCloseOrder(ctx, client, active)
+	if err != nil {
+		return active, false, err
+	}
+	if found && active.Partial {
+		remaining, err = gateOrderRemainingSize(openOrder)
+		if err != nil {
+			if errors.Is(err, errPendingOrderNoRemaining) {
+				return active, true, nil
+			}
+			return active, false, err
+		}
+		remaining = capCloseSizeToPosition(position.Pos, remaining)
+		if remaining == "" || remaining == "0" {
+			return active, true, nil
+		}
+	}
+	nextPx, err := gateLimitClosePrice(ctx, client, position)
+	if err != nil {
+		return active, false, err
+	}
+	if found && nextPx == active.Px {
+		active.Position = position
+		active.CloseSz = remaining
+		return active, false, nil
+	}
+	if found {
+		if err := cancelGatePositionCloseOrder(ctx, client, openOrder); err != nil {
+			if _, _, checkErr := currentGateOpenPosition(ctx, client, active.Position.InstID, active.Position.PosSide); errors.Is(checkErr, errPositionNotOpen) {
+				return active, true, nil
+			}
+			return active, false, err
+		}
+	}
+	closeSz := ""
+	if active.Partial {
+		closeSz = gateSignedCloseSize(position.Pos, remaining)
+	}
+	next, err := placeGateLimitPositionClose(ctx, cfg, client, position, closeSz)
+	if err != nil {
+		return active, false, err
+	}
+	next.TargetSz = active.TargetSz
+	next.InitialPosSize = active.InitialPosSize
+	return next, false, nil
+}
+
+func fallbackGateMarketPositionClose(cfg config.Config, client gate.Client, active gatePositionCloseOrder) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	openOrder, found, err := currentGatePositionCloseOrder(ctx, client, active)
+	if err != nil {
+		return err
+	}
+	remaining := ""
+	if found && active.Partial {
+		remaining, err = gateOrderRemainingSize(openOrder)
+		if err != nil && !errors.Is(err, errPendingOrderNoRemaining) {
+			return err
+		}
+	}
+	if found {
+		if err := cancelGatePositionCloseOrder(ctx, client, openOrder); err != nil {
+			if _, _, checkErr := currentGateOpenPosition(ctx, client, active.Position.InstID, active.Position.PosSide); errors.Is(checkErr, errPositionNotOpen) {
+				return nil
+			}
+			return err
+		}
+	}
+	_, position, err := currentGateOpenPosition(ctx, client, active.Position.InstID, active.Position.PosSide)
+	if err != nil {
+		if errors.Is(err, errPositionNotOpen) {
+			return nil
+		}
+		return err
+	}
+	if active.Partial {
+		if remaining == "" || remaining == "0" {
+			remaining = gatePartialCloseRemaining(active, position)
+		}
+		remaining = capCloseSizeToPosition(position.Pos, remaining)
+		if remaining == "" || remaining == "0" {
+			return nil
+		}
+		_, err = placeGatePositionClose(ctx, cfg, client, position, gateSignedCloseSize(position.Pos, remaining))
+		return err
+	}
+	_, err = placeGatePositionClose(ctx, cfg, client, position, "")
+	return err
+}
+
+func placeGatePositionClose(ctx context.Context, cfg config.Config, client gate.Client, position okx.Position, closeSz string) (gate.Order, error) {
+	marginMode := strings.ToLower(strings.TrimSpace(position.MgnMode))
+	if marginMode != "cross" && marginMode != "isolated" {
+		marginMode = cfg.MarginMode()
+	}
+	req := gate.PlaceOrderRequest{
+		Contract:      strings.ToUpper(strings.TrimSpace(position.InstID)),
+		Size:          "0",
+		Price:         "0",
+		TIF:           "ioc",
+		Close:         true,
+		ReduceOnly:    true,
+		PosMarginMode: marginMode,
+		Text:          nextPositionCloseClOrdID(),
+	}
+	if strings.TrimSpace(closeSz) != "" {
+		req.Size = strings.TrimSpace(closeSz)
+		req.Close = false
+	}
+	return client.PlaceOrder(ctx, req)
 }
 
 func (s *Server) handlePositionProtection(w http.ResponseWriter, r *http.Request) {
