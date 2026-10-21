@@ -34,4 +34,22 @@
   if (closeButton && dialog) closeButton.addEventListener('click', () => dialog.close());
   if (refreshButton) refreshButton.addEventListener('click', load);
   if (levelSelect) levelSelect.addEventListener('change', load);
+
+  const positionLinks = document.querySelectorAll('a[data-position-link]');
+  if (positionLinks.length) {
+    fetch(base + 'tvbot/position-target', { cache: 'no-store', credentials: 'same-origin' })
+      .then((response) => response.ok ? response.json() : null)
+      .then((target) => {
+        const exchange = target && typeof target.exchange === 'string' ? target.exchange.trim().toLowerCase() : '';
+        const env = target && typeof target.env === 'string' ? target.env.trim().toLowerCase() : '';
+        if (!target || target.unique !== true || !['okx', 'binance', 'gate'].includes(exchange) || !['demo', 'live'].includes(env)) return;
+        positionLinks.forEach((link) => {
+          const url = new URL(link.getAttribute('href'), window.location.origin);
+          url.searchParams.set('exchange', exchange);
+          url.searchParams.set('env', env);
+          link.setAttribute('href', url.pathname + url.search + url.hash);
+        });
+      })
+      .catch(() => {});
+  }
 })();

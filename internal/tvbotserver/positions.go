@@ -154,6 +154,7 @@ type symbolDisplayPrecision struct {
 
 type positionCloseRequest struct {
 	Exchange string  `json:"exchange"`
+	Env      string  `json:"env"`
 	APIID    string  `json:"api_id"`
 	InstID   string  `json:"inst_id"`
 	PosSide  string  `json:"pos_side"`
@@ -163,6 +164,7 @@ type positionCloseRequest struct {
 
 type positionProtectionRequest struct {
 	Exchange string `json:"exchange"`
+	Env      string `json:"env"`
 	APIID    string `json:"api_id"`
 	InstID   string `json:"inst_id"`
 	PosSide  string `json:"pos_side"`
@@ -171,6 +173,7 @@ type positionProtectionRequest struct {
 
 type pendingOrderChaseRequest struct {
 	Exchange    string `json:"exchange"`
+	Env         string `json:"env"`
 	APIID       string `json:"api_id"`
 	OrderGroup  string `json:"order_group"`
 	InstID      string `json:"inst_id"`
@@ -333,7 +336,11 @@ func (s *Server) handlePositions(w http.ResponseWriter, r *http.Request) {
 	}
 	apiID := strings.TrimSpace(r.URL.Query().Get("api_id"))
 	refresh := strings.EqualFold(r.URL.Query().Get("refresh"), "true")
-	cfg := s.ConfigStore.Get()
+	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), r.URL.Query().Get("env"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
+		return
+	}
 	okxStore := s.okxCredentialStore(cfg.Trading.Env)
 	binanceStore := s.binanceCredentialStore(cfg.Trading.Env)
 	gateStore := s.gateCredentialStore(cfg.Trading.Env)
@@ -341,7 +348,6 @@ func (s *Server) handlePositions(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var (
 		resp positionsResponse
-		err  error
 	)
 	if exchange == trading.ExchangeBinance {
 		if binanceStore == nil {
@@ -380,7 +386,11 @@ func (s *Server) handlePendingOrders(w http.ResponseWriter, r *http.Request) {
 		instType = "SWAP"
 	}
 	apiID := strings.TrimSpace(r.URL.Query().Get("api_id"))
-	cfg := s.ConfigStore.Get()
+	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), r.URL.Query().Get("env"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
+		return
+	}
 	okxStore := s.okxCredentialStore(cfg.Trading.Env)
 	binanceStore := s.binanceCredentialStore(cfg.Trading.Env)
 	gateStore := s.gateCredentialStore(cfg.Trading.Env)
@@ -388,7 +398,6 @@ func (s *Server) handlePendingOrders(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var (
 		resp pendingOrdersResponse
-		err  error
 	)
 	if exchange == trading.ExchangeBinance {
 		if binanceStore == nil {
@@ -452,7 +461,11 @@ func (s *Server) handlePendingOrderRisk(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_pending_order_risk", "Binance pending order risk rebuild is not supported")
 		return
 	}
-	cfg := s.ConfigStore.Get()
+	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_pending_order_risk", err.Error())
+		return
+	}
 	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 		return
@@ -513,7 +526,11 @@ func (s *Server) handlePendingOrderCancel(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_pending_order_cancel", err.Error())
 		return
 	}
-	cfg := s.ConfigStore.Get()
+	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_pending_order_cancel", err.Error())
+		return
+	}
 	if req.Exchange == trading.ExchangeGate {
 		s.handleGatePendingOrderCancel(w, r, cfg, req)
 		return
@@ -742,7 +759,11 @@ func (s *Server) handlePendingOrderChaseAction(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid_pending_order_chase", err.Error())
 		return
 	}
-	cfg := s.ConfigStore.Get()
+	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_pending_order_chase", err.Error())
+		return
+	}
 	if req.Exchange == trading.ExchangeGate {
 		writeError(w, http.StatusBadRequest, "unsupported_exchange_order", "Gate pending order chase is not supported")
 		return
@@ -1605,6 +1626,12 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Exchange = trading.NormalizeExchange(req.Exchange)
+	var err error
+	req.Env, err = normalizeRequestedTradeEnv(req.Env)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_position_close", err.Error())
+		return
+	}
 	req.APIID = strings.TrimSpace(req.APIID)
 	req.InstID = strings.ToUpper(strings.TrimSpace(req.InstID))
 	req.PosSide = normalizePosSide(req.PosSide)
@@ -1622,7 +1649,11 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_position_close", err.Error())
 		return
 	}
-	cfg := s.ConfigStore.Get()
+	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_position_close", err.Error())
+		return
+	}
 	if req.Exchange == trading.ExchangeGate {
 		s.handleGatePositionClose(w, r, cfg, req, ratio)
 		return
@@ -1770,6 +1801,12 @@ func (s *Server) handlePositionProtection(w http.ResponseWriter, r *http.Request
 		return
 	}
 	req.Exchange = trading.NormalizeExchange(req.Exchange)
+	var err error
+	req.Env, err = normalizeRequestedTradeEnv(req.Env)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_position_protection", err.Error())
+		return
+	}
 	req.APIID = strings.TrimSpace(req.APIID)
 	req.InstID = strings.ToUpper(strings.TrimSpace(req.InstID))
 	req.PosSide = normalizePosSide(req.PosSide)
@@ -1782,7 +1819,11 @@ func (s *Server) handlePositionProtection(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_position_protection", "kind must be tp, sl, or trailing")
 		return
 	}
-	cfg := s.ConfigStore.Get()
+	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_position_protection", err.Error())
+		return
+	}
 	if req.Exchange == trading.ExchangeGate {
 		writeError(w, http.StatusBadRequest, "unsupported_exchange_position_protection", "Gate position protection is not supported")
 		return
@@ -6645,6 +6686,7 @@ func normalizePosSide(raw string) string {
 
 func (r *pendingOrderChaseRequest) normalize() {
 	r.Exchange = trading.NormalizeExchange(r.Exchange)
+	r.Env = strings.ToLower(strings.TrimSpace(r.Env))
 	r.APIID = strings.TrimSpace(r.APIID)
 	r.OrderGroup = strings.ToLower(strings.TrimSpace(r.OrderGroup))
 	if r.OrderGroup == "" {
@@ -6658,6 +6700,9 @@ func (r *pendingOrderChaseRequest) normalize() {
 }
 
 func (r pendingOrderChaseRequest) validate() error {
+	if r.Env != "" && r.Env != config.EnvDemo && r.Env != config.EnvLive {
+		return errors.New("env must be demo or live")
+	}
 	if r.InstID == "" {
 		return errors.New("inst_id is required")
 	}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"strings"
 
 	tvbotbinance "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
@@ -9,6 +10,33 @@ import (
 	tvbotokx "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	tvbottrading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
+
+func normalizeRequestedTradeEnv(raw string) (string, error) {
+	env := strings.ToLower(strings.TrimSpace(raw))
+	if env == "" {
+		return "", nil
+	}
+	switch env {
+	case tvbotconfig.EnvDemo, tvbotconfig.EnvLive:
+		return env, nil
+	default:
+		return "", fmt.Errorf("env must be %q or %q", tvbotconfig.EnvDemo, tvbotconfig.EnvLive)
+	}
+}
+
+// configForRequestedTradeEnv keeps legacy requests compatible: an omitted env
+// uses the current trading configuration, while an explicit env selects the
+// matching credential store for this request only.
+func configForRequestedTradeEnv(cfg tvbotconfig.Config, raw string) (tvbotconfig.Config, error) {
+	env, err := normalizeRequestedTradeEnv(raw)
+	if err != nil {
+		return cfg, err
+	}
+	if env == "" {
+		return cfg, nil
+	}
+	return configForTradeEnv(cfg, env), nil
+}
 
 func normalizeCredentialEnvironment(raw, fallback string) string {
 	if strings.TrimSpace(raw) == "" {

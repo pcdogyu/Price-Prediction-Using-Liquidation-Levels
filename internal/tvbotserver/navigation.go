@@ -136,6 +136,9 @@ func renderTopMenuLink(out *strings.Builder, item TopMenuItem, link func(string)
 		out.WriteString(` data-tab="` + html.EscapeString(tab) + `"`)
 	}
 	out.WriteString(` href="` + html.EscapeString(link(item.Href)) + `"`)
+	if item.Key == "positions" || item.Href == "/tvbot/view/positions" {
+		out.WriteString(` data-position-link="true"`)
+	}
 	if active {
 		out.WriteString(` aria-current="page"`)
 	}
