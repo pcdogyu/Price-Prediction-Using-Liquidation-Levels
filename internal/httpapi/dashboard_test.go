@@ -89,7 +89,7 @@ func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 	}
 	styles := w.Body.String()
 	for _, marker := range []string{
-		`.app-nav{flex-wrap:nowrap;overflow:visible}`,
+		`.app-nav{flex:0 0 auto;flex-wrap:nowrap;overflow:visible}`,
 		`.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}`,
 		`@media(max-width:720px){.app-nav{gap:6px;flex-wrap:wrap}`,
 		`.app-links{order:3;flex:1 0 100%;flex-basis:100%;min-width:0;scrollbar-width:thin}.app-links a{flex:0 0 auto}`,
