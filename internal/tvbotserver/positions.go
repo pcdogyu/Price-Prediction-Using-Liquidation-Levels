@@ -1076,7 +1076,7 @@ func positionMonitorInterval(cfg config.Config) time.Duration {
 func (s *Server) scanPositionMonitor(ctx context.Context) {
 	cfg := s.ConfigStore.Get()
 	monitor := cfg.Trading.PositionMonitor
-	if !monitor.OKXEnabled && !monitor.BinanceEnabled {
+	if !monitor.OKXEnabled && !monitor.BinanceEnabled && !monitor.GateEnabled {
 		return
 	}
 	if monitor.OKXEnabled {
@@ -1084,6 +1084,9 @@ func (s *Server) scanPositionMonitor(ctx context.Context) {
 	}
 	if monitor.BinanceEnabled {
 		s.scanBinancePositionMonitor(ctx, cfg, monitor)
+	}
+	if monitor.GateEnabled {
+		s.scanGatePositionMonitor(ctx, cfg, monitor)
 	}
 }
 
@@ -1232,6 +1235,90 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 		}
 		if started && s.Logger != nil {
 			s.Logger.Info("Binance auto position close started", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "upl_ratio", ratio, "px", order.Px, "ord_id", order.Ack.OrdID)
+		}
+	}
+	return nil
+}
+
+func (s *Server) scanGatePositionMonitor(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig) {
+	if s.gateCredentialStore(cfg.Trading.Env) == nil {
+		if s.Logger != nil {
+			s.Logger.Warn("Gate position monitor skipped: credential store is not configured")
+		}
+		return
+	}
+	if !cfg.GateLiveTradingAllowedByEnvironment() {
+		if s.Logger != nil {
+			s.Logger.Warn("Gate position monitor skipped: live trading is not allowed by environment")
+		}
+		return
+	}
+	store := s.gateCredentialStore(cfg.Trading.Env)
+	for _, requestedAPIID := range configuredGateAPIIDs(store.Status()) {
+		scanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
+		err := s.scanGatePositionMonitorForAPI(scanCtx, cfg, monitor, requestedAPIID)
+		cancel()
+		if err != nil && s.Logger != nil {
+			s.Logger.Warn("failed to scan Gate positions for auto close", "api_id", requestedAPIID, "error", err)
+		}
+	}
+}
+
+func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig, requestedAPIID string) error {
+	client, apiID, err := s.gateClientForCredentials(cfg, requestedAPIID)
+	if err != nil {
+		return err
+	}
+	positions, err := client.Positions(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, raw := range positions {
+		position := gatePositionToOKX(raw)
+		if !isOpenPosition(position.Pos) {
+			continue
+		}
+		ratio, ok := positionMonitorUPLRatio(position)
+		if !ok {
+			continue
+		}
+		trigger, hit := positionMonitorTrigger(ratio, monitor)
+		if !hit {
+			continue
+		}
+		contract := firstNonEmpty(strings.TrimSpace(raw.Contract), position.InstID)
+		if contract == "" {
+			continue
+		}
+		ack, err := placeGateMarketPositionClose(ctx, cfg, client, contract)
+		if err != nil {
+			if s.Logger != nil {
+				s.Logger.Warn("failed to submit Gate auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "upl_ratio", ratio, "error", err)
+			}
+			continue
+		}
+		if trigger == "stop_loss" {
+			detectedAt := s.now()
+			eventOrderID := firstNonEmpty(ack.IDString(), ack.Text)
+			if eventOrderID == "" {
+				eventOrderID = detectedAt.Format(time.RFC3339Nano)
+			}
+			_, _, blockErr := s.recordLossCoinpairCooldown(
+				cfg,
+				strings.Join([]string{"position_monitor", trading.ExchangeGate, apiID, position.InstID, position.PosSide, eventOrderID}, ":"),
+				"position_monitor",
+				trading.ExchangeGate,
+				apiID,
+				firstNonEmpty(position.MarkPx, raw.MarkPrice),
+				detectedAt,
+				position.InstID,
+			)
+			if blockErr != nil && s.Logger != nil {
+				s.Logger.Error("failed to record Gate stop-loss coinpair cooldown", "api_id", apiID, "inst_id", position.InstID, "error", blockErr)
+			}
+		}
+		if s.Logger != nil {
+			s.Logger.Info("Gate auto position close submitted", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "upl_ratio", ratio, "ord_id", ack.IDString())
 		}
 	}
 	return nil
@@ -1773,10 +1860,7 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusConflict, "position_not_open", "Gate position is not open")
 		return
 	}
-	ack, err := client.PlaceOrder(ctx, gate.PlaceOrderRequest{
-		Contract: found.Contract, Size: "0", Price: "0", TIF: "ioc", Close: true, ReduceOnly: true,
-		PosMarginMode: cfg.MarginMode(), Text: nextPositionCloseClOrdID(),
-	})
+	ack, err := placeGateMarketPositionClose(ctx, cfg, client, found.Contract)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "position_close_failed", err.Error())
 		return
@@ -1786,6 +1870,13 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 		OK: true, Status: "submitted", Mode: "market", APIID: apiID, InstID: converted.InstID,
 		PosSide: normalizePosSide(converted.PosSide), Sz: absolutePositionSize(converted.Pos), OrdID: ack.IDString(),
 		ClOrdID: ack.Text, Message: "Gate market close order submitted",
+	})
+}
+
+func placeGateMarketPositionClose(ctx context.Context, cfg config.Config, client gate.Client, contract string) (gate.Order, error) {
+	return client.PlaceOrder(ctx, gate.PlaceOrderRequest{
+		Contract: contract, Size: "0", Price: "0", TIF: "ioc", Close: true, ReduceOnly: true,
+		PosMarginMode: cfg.MarginMode(), Text: nextPositionCloseClOrdID(),
 	})
 }
 

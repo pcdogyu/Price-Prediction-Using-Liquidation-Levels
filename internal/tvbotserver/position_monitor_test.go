@@ -7,13 +7,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
+	tvbotgate "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
+	tvbottrading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
 func TestPositionMonitorOKXStartsLimitCloseAtThresholds(t *testing.T) {
@@ -179,6 +183,141 @@ func TestPositionMonitorBinanceStartsLimitCloseAtThresholds(t *testing.T) {
 	}
 	if len(blocks) != 1 || blocks[0].Keyword != "ETH" || blocks[0].TriggerPrice != "109" || blocks[0].Source != "position_monitor" {
 		t.Fatalf("Binance stop-loss cooldown not recorded correctly: %#v", blocks)
+	}
+}
+
+func TestPositionMonitorGateSubmitsFullMarketCloseAtThresholds(t *testing.T) {
+	restore := isolatePositionCloseJobsForTest()
+	defer restore()
+
+	srv := newTestServer(t)
+	var mu sync.Mutex
+	var orders []map[string]any
+	gateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("KEY") != "gate-key" {
+			t.Fatalf("missing Gate API key for %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v4/futures/usdt/positions":
+			_, _ = w.Write([]byte(`[
+				{"contract":"BTC_USDT","size":"2","entry_price":"100","mark_price":"106","unrealised_pnl":"12","margin":"10"},
+				{"contract":"ETH_USDT","size":"-3","entry_price":"100","mark_price":"109","unrealised_pnl":"-27","margin":"10"},
+				{"contract":"DOGE_USDT","size":"1","entry_price":"0.1","mark_price":"0.101","unrealised_pnl":"0.1","margin":"10"},
+				{"contract":"SOL_USDT","size":"0","entry_price":"100","mark_price":"100","unrealised_pnl":"0","margin":"10"}
+			]`))
+		case "/api/v4/futures/usdt/orders":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			orders = append(orders, body)
+			idx := len(orders)
+			mu.Unlock()
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"id":"gate-auto-%d","contract":%q,"text":%q}`, idx, body["contract"], body["text"])))
+		default:
+			t.Fatalf("unexpected Gate path %s", r.URL.Path)
+		}
+	}))
+	defer gateServer.Close()
+
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.GateDemoBaseURL = gateServer.URL
+	cfg.Trading.PositionMonitor.OKXEnabled = false
+	cfg.Trading.PositionMonitor.BinanceEnabled = false
+	cfg.Trading.PositionMonitor.GateEnabled = true
+	cfg.Trading.PositionMonitor.PollIntervalSeconds = 300
+	cfg.Trading.PositionMonitor.TakeProfitPct = 5
+	cfg.Trading.PositionMonitor.StopLossPct = 8
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.GateHTTPClient = gateServer.Client()
+	gateCredentials, err := tvbotgate.NewCredentialStore(filepath.Join(t.TempDir(), "gate-credentials.json"), tvbotgate.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.GateCredentials = gateCredentials
+	if _, err := gateCredentials.UpdateAccount(tvbotgate.CredentialAccountUpdate{
+		ID: "gate-main", Active: true,
+		Credentials: tvbotgate.Credentials{APIKey: "gate-key", SecretKey: "gate-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.scanPositionMonitor(context.Background())
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(orders) != 2 {
+		t.Fatalf("expected two Gate auto close orders, got %#v", orders)
+	}
+	seenContracts := map[string]bool{}
+	for _, order := range orders {
+		contract, _ := order["contract"].(string)
+		seenContracts[contract] = true
+		if order["size"] != "0" || order["price"] != "0" || order["tif"] != "ioc" || order["close"] != true || order["reduce_only"] != true {
+			t.Fatalf("bad Gate full market close order: %#v", order)
+		}
+		if text, _ := order["text"].(string); strings.TrimSpace(text) == "" {
+			t.Fatalf("Gate close order missing client text: %#v", order)
+		}
+	}
+	if !seenContracts["BTC_USDT"] || !seenContracts["ETH_USDT"] || seenContracts["DOGE_USDT"] || seenContracts["SOL_USDT"] {
+		t.Fatalf("unexpected Gate close contracts: %#v", seenContracts)
+	}
+	blocks, err := srv.Orders.ListActiveCoinpairBlocks(srv.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 || blocks[0].Keyword != "ETH" || blocks[0].TriggerPrice != "109" || blocks[0].Source != "position_monitor" || blocks[0].Exchange != tvbottrading.ExchangeGate {
+		t.Fatalf("Gate stop-loss cooldown not recorded correctly: %#v", blocks)
+	}
+}
+
+func TestPositionMonitorGateLiveGuardSkipsAutoClose(t *testing.T) {
+	restore := isolatePositionCloseJobsForTest()
+	defer restore()
+
+	srv := newTestServer(t)
+	var orders int
+	gateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/futures/usdt/orders" {
+			orders++
+			t.Fatal("Gate live guard should prevent auto close orders")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v4/futures/usdt/positions" {
+			t.Fatalf("unexpected Gate path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"2","entry_price":"100","mark_price":"106","unrealised_pnl":"12","margin":"10"}]`))
+	}))
+	defer gateServer.Close()
+
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.Env = config.EnvLive
+	cfg.Trading.AllowLiveTrading = false
+	cfg.Trading.GateBaseURL = gateServer.URL
+	cfg.Trading.PositionMonitor.GateEnabled = true
+	cfg.Trading.PositionMonitor.PollIntervalSeconds = 300
+	cfg.Trading.PositionMonitor.TakeProfitPct = 5
+	cfg.Trading.PositionMonitor.StopLossPct = 8
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.GateHTTPClient = gateServer.Client()
+	gateCredentials, err := tvbotgate.NewCredentialStore(filepath.Join(t.TempDir(), "gate-live-credentials.json"), tvbotgate.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.GateLiveCredentials = gateCredentials
+	if _, err := gateCredentials.UpdateAccount(tvbotgate.CredentialAccountUpdate{
+		ID: "gate-live", Active: true,
+		Credentials: tvbotgate.Credentials{APIKey: "gate-key", SecretKey: "gate-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.scanPositionMonitor(context.Background())
+	if orders != 0 {
+		t.Fatalf("expected no Gate orders, got %d", orders)
 	}
 }
 

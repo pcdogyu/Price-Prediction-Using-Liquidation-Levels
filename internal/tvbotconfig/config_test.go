@@ -308,7 +308,7 @@ func TestNormalizePositionMonitorDefaultsAndValidation(t *testing.T) {
 	cfg := Default()
 	cfg.Trading.PositionMonitor = PositionMonitorConfig{}
 	cfg.Normalize()
-	if cfg.Trading.PositionMonitor.OKXEnabled || cfg.Trading.PositionMonitor.BinanceEnabled {
+	if cfg.Trading.PositionMonitor.OKXEnabled || cfg.Trading.PositionMonitor.BinanceEnabled || cfg.Trading.PositionMonitor.GateEnabled {
 		t.Fatalf("position monitor should default disabled: %#v", cfg.Trading.PositionMonitor)
 	}
 	if cfg.Trading.PositionMonitor.PollIntervalSeconds != 300 || cfg.Trading.PositionMonitor.TakeProfitPct != 5 || cfg.Trading.PositionMonitor.StopLossPct != 8 {

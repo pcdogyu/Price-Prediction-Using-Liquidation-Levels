@@ -1655,6 +1655,7 @@ const tvbotHTML = `<!doctype html>
         <div class="position-monitor-grid">
           <label class="check"><input id="position-monitor-okx-enabled" type="checkbox">OKX 自动扫描/平仓</label>
           <label class="check"><input id="position-monitor-binance-enabled" type="checkbox">Binance 自动扫描/平仓</label>
+          <label class="check"><input id="position-monitor-gate-enabled" type="checkbox">Gate 自动扫描/平仓</label>
           <label>扫描间隔秒<input id="position-monitor-interval" type="number" min="1" step="1"></label>
           <label>止盈 %<input id="position-monitor-tp" type="number" min="0.01" step="0.01"></label>
           <label>止损 %<input id="position-monitor-sl" type="number" min="0.01" step="0.01"></label>
@@ -3912,6 +3913,7 @@ const tvbotHTML = `<!doctype html>
       return {
         okx_enabled: !!monitor.okx_enabled,
         binance_enabled: !!monitor.binance_enabled,
+        gate_enabled: !!monitor.gate_enabled,
         poll_interval_seconds: Number(monitor.poll_interval_seconds || 300),
         take_profit_pct: Number(monitor.take_profit_pct || 5),
         stop_loss_pct: Number(monitor.stop_loss_pct || 8)
@@ -3923,12 +3925,14 @@ const tvbotHTML = `<!doctype html>
       const monitor = positionMonitorConfig();
       $("position-monitor-okx-enabled").checked = !!monitor.okx_enabled;
       $("position-monitor-binance-enabled").checked = !!monitor.binance_enabled;
+      $("position-monitor-gate-enabled").checked = !!monitor.gate_enabled;
       $("position-monitor-interval").value = monitor.poll_interval_seconds || 300;
       $("position-monitor-tp").value = monitor.take_profit_pct || 5;
       $("position-monitor-sl").value = monitor.stop_loss_pct || 8;
       const active = [
         monitor.okx_enabled ? "OKX" : "",
-        monitor.binance_enabled ? "Binance" : ""
+        monitor.binance_enabled ? "Binance" : "",
+        monitor.gate_enabled ? "Gate" : ""
       ].filter(Boolean).join(" + ");
       $("position-monitor-status").textContent = (active || "已关闭") +
         " / " + asText(monitor.poll_interval_seconds || 300) + "s" +
@@ -3952,7 +3956,8 @@ const tvbotHTML = `<!doctype html>
       const positionMonitor = positionMonitorConfig();
       const positionMonitorExchanges = [
         positionMonitor.okx_enabled ? "OKX" : "",
-        positionMonitor.binance_enabled ? "Binance" : ""
+        positionMonitor.binance_enabled ? "Binance" : "",
+        positionMonitor.gate_enabled ? "Gate" : ""
       ].filter(Boolean).join(", ");
       const rows = [
         ["服务地址", state.config.server ? state.config.server.addr : "-"],
@@ -6538,6 +6543,7 @@ const tvbotHTML = `<!doctype html>
           position_monitor: {
             okx_enabled: $("position-monitor-okx-enabled").checked,
             binance_enabled: $("position-monitor-binance-enabled").checked,
+            gate_enabled: $("position-monitor-gate-enabled").checked,
             poll_interval_seconds: Number($("position-monitor-interval").value),
             take_profit_pct: Number($("position-monitor-tp").value),
             stop_loss_pct: Number($("position-monitor-sl").value)

@@ -108,6 +108,7 @@ type AutoReentryConfig struct {
 type PositionMonitorConfig struct {
 	OKXEnabled          bool    `json:"okx_enabled"`
 	BinanceEnabled      bool    `json:"binance_enabled"`
+	GateEnabled         bool    `json:"gate_enabled"`
 	PollIntervalSeconds int     `json:"poll_interval_seconds"`
 	TakeProfitPct       float64 `json:"take_profit_pct"`
 	StopLossPct         float64 `json:"stop_loss_pct"`
@@ -272,6 +273,7 @@ func Default() Config {
 			PositionMonitor: PositionMonitorConfig{
 				OKXEnabled:          false,
 				BinanceEnabled:      false,
+				GateEnabled:         false,
 				PollIntervalSeconds: 300,
 				TakeProfitPct:       5,
 				StopLossPct:         8,

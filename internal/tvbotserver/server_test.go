@@ -924,7 +924,7 @@ func TestTVBotConfigSavesMarketTurnoverScopeAndRejectsInvalidValue(t *testing.T)
 
 func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 	srv := newTestServer(t)
-	req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"okx_enabled":true,"binance_enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8}}}`)))
+	req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"okx_enabled":true,"binance_enabled":true,"gate_enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8}}}`)))
 	req.SetBasicAuth("admin", "Admin123")
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
@@ -936,7 +936,7 @@ func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	monitor := cfg.Trading.PositionMonitor
-	if !monitor.OKXEnabled || !monitor.BinanceEnabled || monitor.PollIntervalSeconds != 300 || monitor.TakeProfitPct != 5 || monitor.StopLossPct != 8 {
+	if !monitor.OKXEnabled || !monitor.BinanceEnabled || !monitor.GateEnabled || monitor.PollIntervalSeconds != 300 || monitor.TakeProfitPct != 5 || monitor.StopLossPct != 8 {
 		t.Fatalf("position monitor not saved: %#v", monitor)
 	}
 

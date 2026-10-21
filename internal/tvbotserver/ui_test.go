@@ -51,6 +51,8 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`id="close-all-positions"`,
 		`async function closeAllPositions()`,
 		`await submitPositionClose(body);`,
+		`id="position-monitor-gate-enabled"`,
+		`gate_enabled: $("position-monitor-gate-enabled").checked`,
 		`window.confirm("确认一键平掉当前 "`,
 	} {
 		if !strings.Contains(page, want) {
