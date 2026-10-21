@@ -194,6 +194,12 @@ func (r ShellRunner) Run(ctx context.Context) (Result, error) {
 	if err := r.runStep(ctx, &result, "git_pull", "git", "pull", "--ff-only"); err != nil {
 		return result, err
 	}
+	// Failed or repeated upgrades can fill the small host with stale Go build
+	// and test artifacts. Clear only Go's derived caches before rebuilding;
+	// application data, credentials, and the current binary are untouched.
+	if err := r.runStep(ctx, &result, "go_clean", "go", "clean", "-cache", "-testcache"); err != nil {
+		return result, err
+	}
 	// Keep the release gate bounded in memory on the small production host.
 	// Package tests still cover the complete module; -p 1 only prevents the Go
 	// tool from compiling/running multiple packages concurrently during an
