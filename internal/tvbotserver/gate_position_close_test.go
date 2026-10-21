@@ -50,13 +50,17 @@ func TestTVBotGateFullLimitPositionClose(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","last":"100","highest_bid":"99.9","lowest_ask":"100.1"}]`))
 		case "/api/v4/futures/usdt/orders":
-			if r.Method != http.MethodPost {
+			switch r.Method {
+			case http.MethodGet:
+				_, _ = w.Write([]byte(`[]`))
+			case http.MethodPost:
+				if err := json.NewDecoder(r.Body).Decode(&orderBody); err != nil {
+					t.Fatal(err)
+				}
+				_, _ = w.Write([]byte(`{"id":123,"contract":"BTC_USDT","size":0,"left":0,"price":"100.1","status":"open","text":"t-close","is_reduce_only":true,"is_close":true}`))
+			default:
 				t.Fatalf("unexpected order method: %s", r.Method)
 			}
-			if err := json.NewDecoder(r.Body).Decode(&orderBody); err != nil {
-				t.Fatal(err)
-			}
-			_, _ = w.Write([]byte(`{"id":123,"contract":"BTC_USDT","size":0,"left":0,"price":"100.1","status":"open","text":"t-close","is_reduce_only":true,"is_close":true}`))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}
@@ -98,13 +102,17 @@ func TestTVBotGateMarketPositionCloseUsesRequiredTextPrefix(t *testing.T) {
 		case "/api/v4/futures/usdt/positions":
 			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"100","pos_margin_mode":"isolated","mode":"single"}]`))
 		case "/api/v4/futures/usdt/orders":
-			if r.Method != http.MethodPost {
+			switch r.Method {
+			case http.MethodGet:
+				_, _ = w.Write([]byte(`[]`))
+			case http.MethodPost:
+				if err := json.NewDecoder(r.Body).Decode(&orderBody); err != nil {
+					t.Fatal(err)
+				}
+				_, _ = w.Write([]byte(`{"id":789,"contract":"BTC_USDT","size":0,"left":0,"price":"0","status":"finished","text":"t-close","is_reduce_only":true,"is_close":true}`))
+			default:
 				t.Fatalf("unexpected order method: %s", r.Method)
 			}
-			if err := json.NewDecoder(r.Body).Decode(&orderBody); err != nil {
-				t.Fatal(err)
-			}
-			_, _ = w.Write([]byte(`{"id":789,"contract":"BTC_USDT","size":0,"left":0,"price":"0","status":"finished","text":"t-close","is_reduce_only":true,"is_close":true}`))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}
@@ -143,10 +151,17 @@ func TestTVBotGatePartialLimitPositionCloseUsesReduceOnlySize(t *testing.T) {
 		case "/api/v4/futures/usdt/tickers":
 			_, _ = w.Write([]byte(`[{"contract":"ETH_USDT","last":"100","highest_bid":"99.9","lowest_ask":"100.1"}]`))
 		case "/api/v4/futures/usdt/orders":
-			if err := json.NewDecoder(r.Body).Decode(&orderBody); err != nil {
-				t.Fatal(err)
+			switch r.Method {
+			case http.MethodGet:
+				_, _ = w.Write([]byte(`[]`))
+			case http.MethodPost:
+				if err := json.NewDecoder(r.Body).Decode(&orderBody); err != nil {
+					t.Fatal(err)
+				}
+				_, _ = w.Write([]byte(`{"id":456,"contract":"ETH_USDT","size":-1,"left":-1,"price":"99.9","status":"open","text":"t-close","is_reduce_only":true,"is_close":false}`))
+			default:
+				t.Fatalf("unexpected order method: %s", r.Method)
 			}
-			_, _ = w.Write([]byte(`{"id":456,"contract":"ETH_USDT","size":-1,"left":-1,"price":"99.9","status":"open","text":"t-close","is_reduce_only":true,"is_close":false}`))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}

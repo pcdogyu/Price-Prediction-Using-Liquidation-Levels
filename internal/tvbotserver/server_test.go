@@ -5412,6 +5412,8 @@ func TestTVBotPositionMarketCloseUsesDedicatedClosePositionEndpoint(t *testing.T
 				t.Fatalf("net close request should not send posSide: %#v", body)
 			}
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","posSide":"net","clOrdId":"close-1"}]}`))
+		case "/api/v5/trade/orders-pending", "/api/v5/trade/orders-algo-pending":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		default:
 			t.Fatalf("unexpected OKX path %s", r.URL.Path)
 		}
@@ -5466,6 +5468,8 @@ func TestTVBotPositionMarketCloseCancelsExistingCloseOrdersWithDedicatedEndpoint
 				t.Fatal(err)
 			}
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instId":"H-USDT-SWAP","posSide":"net","clOrdId":"close-all-1"}]}`))
+		case "/api/v5/trade/orders-pending", "/api/v5/trade/orders-algo-pending":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		default:
 			t.Fatalf("unexpected OKX path %s", r.URL.Path)
 		}
@@ -5516,6 +5520,8 @@ func TestTVBotPositionMarketPartialCloseUsesReduceOnlyOrder(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"ordId":"market-half-1","clOrdId":"close-half-1","sCode":"0","sMsg":""}]}`))
+		case "/api/v5/trade/orders-pending", "/api/v5/trade/orders-algo-pending":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		default:
 			t.Fatalf("unexpected OKX path %s", r.URL.Path)
 		}
@@ -5589,6 +5595,8 @@ func TestTVBotPositionLimitCloseRetriesAfterOKX51006(t *testing.T) {
 				t.Fatalf("unexpected protected limit retry: %#v", body)
 			}
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"ordId":"h-close-limit-2","clOrdId":"close-2","sCode":"0","sMsg":""}]}`))
+		case "/api/v5/trade/orders-pending", "/api/v5/trade/orders-algo-pending":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		default:
 			t.Fatalf("unexpected OKX path %s", r.URL.Path)
 		}
@@ -5663,6 +5671,8 @@ func TestTVBotPositionLimitCloseRatioRoundsToLotSize(t *testing.T) {
 				t.Fatalf("unexpected ratio close order: %#v", body)
 			}
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"ordId":"ratio-1","clOrdId":"close-ratio","sCode":"0","sMsg":""}]}`))
+		case "/api/v5/trade/orders-pending", "/api/v5/trade/orders-algo-pending":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		default:
 			t.Fatalf("unexpected OKX path %s", r.URL.Path)
 		}
@@ -5784,6 +5794,8 @@ func TestTVBotPositionLimitCloseReplacesAndFallsBackToMarket(t *testing.T) {
 			cancelCount++
 			mu.Unlock()
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"ordId":"` + body["ordId"] + `","clOrdId":"close","sCode":"0","sMsg":""}]}`))
+		case "/api/v5/trade/orders-pending", "/api/v5/trade/orders-algo-pending":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		default:
 			t.Fatalf("unexpected OKX path %s", r.URL.Path)
 		}

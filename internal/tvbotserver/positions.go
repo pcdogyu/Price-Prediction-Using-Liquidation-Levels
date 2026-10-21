@@ -1790,6 +1790,10 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 	}
 	switch req.Mode {
 	case "market":
+		if err := cancelAllOKXInstrumentOrders(ctx, client, position.InstID); err != nil {
+			writeError(w, http.StatusBadGateway, "position_close_cancel_orders_failed", err.Error())
+			return
+		}
 		order, err := placeMarketPositionClose(ctx, cfg, client, position, closeSz)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "position_close_failed", err.Error())
@@ -1813,7 +1817,7 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 			Message: message,
 		})
 	case "limit":
-		order, started, err := s.startLimitPositionClose(ctx, apiID, cfg, client, position, closeSz)
+		order, started, err := s.startManualLimitPositionClose(ctx, apiID, cfg, client, position, closeSz)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "position_close_failed", err.Error())
 			return
@@ -1882,7 +1886,7 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 				return
 			}
 		}
-		order, started, startErr := s.startGateLimitPositionClose(ctx, apiID, cfg, client, converted, closeSz)
+		order, started, startErr := s.startManualGateLimitPositionClose(ctx, apiID, cfg, client, converted, closeSz)
 		if startErr != nil {
 			writeError(w, http.StatusBadGateway, "position_close_failed", startErr.Error())
 			return
@@ -1897,6 +1901,10 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 			Sz: order.CloseSz, OrdID: order.Order.IDString(), ClOrdID: order.Order.Text,
 			Px: order.Px, Message: "Gate limit close order started",
 		})
+		return
+	}
+	if err := cancelAllGateContractOrders(ctx, client, found.Contract); err != nil {
+		writeError(w, http.StatusBadGateway, "position_close_cancel_orders_failed", err.Error())
 		return
 	}
 	ack, err := placeGateMarketPositionClose(ctx, cfg, client, found.Contract)
@@ -1918,10 +1926,69 @@ func placeGateMarketPositionClose(ctx context.Context, cfg config.Config, client
 	})
 }
 
+// cancelAllGateContractOrders removes every currently open Gate order for the
+// contract before a manual close is submitted. The final read is intentional:
+// a close must not be sent while an entry or protection order is still live.
+func cancelAllGateContractOrders(ctx context.Context, client gate.Client, contract string) error {
+	contract = strings.ToUpper(strings.TrimSpace(contract))
+	if contract == "" {
+		return errors.New("Gate close contract is required to cancel open orders")
+	}
+	orders, err := client.OpenOrders(ctx, contract)
+	if err != nil {
+		return fmt.Errorf("inspect Gate open orders for %s failed: %w", contract, err)
+	}
+	for _, order := range orders {
+		if strings.TrimSpace(order.Contract) != "" && !strings.EqualFold(strings.TrimSpace(order.Contract), contract) {
+			continue
+		}
+		orderID := strings.TrimSpace(order.IDString())
+		if orderID == "" {
+			return fmt.Errorf("cannot safely cancel Gate order for %s: missing order id", contract)
+		}
+		if _, err := client.CancelOrder(ctx, contract, orderID); err != nil {
+			return fmt.Errorf("cancel Gate order %s for %s failed: %w", orderID, contract, err)
+		}
+	}
+
+	orders, err = client.OpenOrders(ctx, contract)
+	if err != nil {
+		return fmt.Errorf("verify Gate open orders for %s failed: %w", contract, err)
+	}
+	remaining := 0
+	for _, order := range orders {
+		if strings.TrimSpace(order.Contract) == "" || strings.EqualFold(strings.TrimSpace(order.Contract), contract) {
+			remaining++
+		}
+	}
+	if remaining != 0 {
+		return fmt.Errorf("Gate orders remain for %s after cancellation (%d); close was not submitted", contract, remaining)
+	}
+	return nil
+}
+
 func (s *Server) startGateLimitPositionClose(ctx context.Context, apiID string, cfg config.Config, client gate.Client, position okx.Position, closeSz string) (gatePositionCloseOrder, bool, error) {
 	key := positionCloseKey(trading.ExchangeGate, apiID, position.InstID, position.PosSide)
 	if !positionCloseJobs.start(key) {
 		return gatePositionCloseOrder{}, false, nil
+	}
+	order, err := placeGateLimitPositionClose(ctx, cfg, client, position, closeSz)
+	if err != nil {
+		positionCloseJobs.done(key)
+		return gatePositionCloseOrder{}, false, err
+	}
+	go s.watchGateLimitPositionClose(apiID, cfg, client, order)
+	return order, true, nil
+}
+
+func (s *Server) startManualGateLimitPositionClose(ctx context.Context, apiID string, cfg config.Config, client gate.Client, position okx.Position, closeSz string) (gatePositionCloseOrder, bool, error) {
+	key := positionCloseKey(trading.ExchangeGate, apiID, position.InstID, position.PosSide)
+	if !positionCloseJobs.start(key) {
+		return gatePositionCloseOrder{}, false, nil
+	}
+	if err := cancelAllGateContractOrders(ctx, client, position.InstID); err != nil {
+		positionCloseJobs.done(key)
+		return gatePositionCloseOrder{}, false, err
 	}
 	order, err := placeGateLimitPositionClose(ctx, cfg, client, position, closeSz)
 	if err != nil {
@@ -2551,6 +2618,24 @@ func (s *Server) startLimitPositionClose(ctx context.Context, apiID string, cfg 
 	key := positionCloseKey(trading.ExchangeOKX, apiID, position.InstID, position.PosSide)
 	if !positionCloseJobs.start(key) {
 		return positionCloseOrder{}, false, nil
+	}
+	order, err := placeLimitPositionClose(ctx, cfg, client, position, closeSz)
+	if err != nil {
+		positionCloseJobs.done(key)
+		return positionCloseOrder{}, false, err
+	}
+	go s.watchLimitPositionClose(apiID, cfg, client, order)
+	return order, true, nil
+}
+
+func (s *Server) startManualLimitPositionClose(ctx context.Context, apiID string, cfg config.Config, client okx.Client, position okx.Position, closeSz string) (positionCloseOrder, bool, error) {
+	key := positionCloseKey(trading.ExchangeOKX, apiID, position.InstID, position.PosSide)
+	if !positionCloseJobs.start(key) {
+		return positionCloseOrder{}, false, nil
+	}
+	if err := cancelAllOKXInstrumentOrders(ctx, client, position.InstID); err != nil {
+		positionCloseJobs.done(key)
+		return positionCloseOrder{}, false, err
 	}
 	order, err := placeLimitPositionClose(ctx, cfg, client, position, closeSz)
 	if err != nil {
@@ -6700,6 +6785,81 @@ func cancelOKXPositionPendingOrders(ctx context.Context, client okx.Client, posi
 			}
 			return err
 		}
+	}
+	return nil
+}
+
+// cancelAllOKXInstrumentOrders removes every normal and algorithm order for
+// one instrument before a manual close is submitted. It deliberately does not
+// touch other instruments or accounts and verifies both order groups again.
+func cancelAllOKXInstrumentOrders(ctx context.Context, client okx.Client, instID string) error {
+	instID = strings.ToUpper(strings.TrimSpace(instID))
+	if instID == "" {
+		return errors.New("OKX close instrument is required to cancel open orders")
+	}
+
+	orders, _, err := client.PendingOrders(ctx, "SWAP")
+	if err != nil {
+		return fmt.Errorf("inspect OKX pending orders for %s failed: %w", instID, err)
+	}
+	for _, order := range orders {
+		if !strings.EqualFold(strings.TrimSpace(order.InstID), instID) {
+			continue
+		}
+		if err := cancelPendingOrder(ctx, client, order); err != nil {
+			return fmt.Errorf("cancel OKX pending order for %s failed: %w", instID, err)
+		}
+	}
+
+	algoOrders, _, err := client.PendingAlgoOrders(ctx, "SWAP", instID)
+	if err != nil {
+		return fmt.Errorf("inspect OKX algorithm orders for %s failed: %w", instID, err)
+	}
+	algoReqs := make([]okx.CancelAlgoOrderRequest, 0, len(algoOrders))
+	for _, order := range algoOrders {
+		if !strings.EqualFold(strings.TrimSpace(order.InstID), instID) {
+			continue
+		}
+		req := okx.CancelAlgoOrderRequest{InstID: instID}
+		if strings.TrimSpace(order.AlgoID) != "" {
+			req.AlgoID = strings.TrimSpace(order.AlgoID)
+		} else if strings.TrimSpace(order.AlgoClOrdID) != "" {
+			req.AlgoClOrdID = strings.TrimSpace(order.AlgoClOrdID)
+		} else {
+			return fmt.Errorf("cannot safely cancel OKX algorithm order for %s: missing order id", instID)
+		}
+		algoReqs = append(algoReqs, req)
+	}
+	for len(algoReqs) > 0 {
+		n := min(len(algoReqs), 10)
+		if _, _, err := client.CancelAlgoOrders(ctx, algoReqs[:n]); err != nil {
+			return fmt.Errorf("cancel OKX algorithm orders for %s failed: %w", instID, err)
+		}
+		algoReqs = algoReqs[n:]
+	}
+
+	orders, _, err = client.PendingOrders(ctx, "SWAP")
+	if err != nil {
+		return fmt.Errorf("verify OKX pending orders for %s failed: %w", instID, err)
+	}
+	remainingNormal := 0
+	for _, order := range orders {
+		if strings.EqualFold(strings.TrimSpace(order.InstID), instID) {
+			remainingNormal++
+		}
+	}
+	algoOrders, _, err = client.PendingAlgoOrders(ctx, "SWAP", instID)
+	if err != nil {
+		return fmt.Errorf("verify OKX algorithm orders for %s failed: %w", instID, err)
+	}
+	remainingAlgo := 0
+	for _, order := range algoOrders {
+		if strings.EqualFold(strings.TrimSpace(order.InstID), instID) {
+			remainingAlgo++
+		}
+	}
+	if remainingNormal != 0 || remainingAlgo != 0 {
+		return fmt.Errorf("OKX orders remain for %s after cancellation (normal=%d, algorithm=%d); close was not submitted", instID, remainingNormal, remainingAlgo)
 	}
 	return nil
 }
