@@ -138,8 +138,10 @@ func TestPositionViewADXMetadataMatchesExactEntryOrder(t *testing.T) {
 		Ticker:         "BTCUSDT",
 		PositionEffect: trading.PositionEffectOpen,
 		PositionSide:   trading.PositionSideShort,
+		Condition:      "aggressive_liquidation_signal",
 		ADX:            &adx,
 		MarketStrategy: trading.MarketStrategyScalp,
+		RawJSON:        `{"condition":"aggressive_liquidation_signal","source":"liquidation_alert"}`,
 	}
 	record, duplicate, err := store.RecordAccepted(signal, storage.DedupeKey(signal), now)
 	if err != nil || duplicate {
@@ -171,7 +173,7 @@ func TestPositionViewADXMetadataMatchesExactEntryOrder(t *testing.T) {
 	}}, now, entryTimeSourceOKXFills, nil)}
 	srv := &Server{Orders: store}
 	srv.enrichPositionViewsWithOrderMetadata(views, trading.ExchangeOKX, "default")
-	if views[0].MarketStrategy != trading.MarketStrategyScalp || views[0].EntryADX == nil || *views[0].EntryADX != adx {
+	if views[0].MarketStrategy != trading.MarketStrategyScalp || views[0].EntryADX == nil || *views[0].EntryADX != adx || views[0].SignalKind != "aggressive" {
 		t.Fatalf("position metadata was not matched: %#v", views[0])
 	}
 
@@ -184,16 +186,20 @@ func TestPositionViewADXMetadataMatchesExactEntryOrder(t *testing.T) {
 	}
 }
 
-func TestTVBotUIIncludesPositionADXColumns(t *testing.T) {
+func TestTVBotUIIncludesPositionSignalTriggerAndRemovesADXColumns(t *testing.T) {
 	for _, marker := range []string{
 		`{ id: "strategy", title: "策略"`,
-		`{ id: "entry_adx", title: "入场 ADX"`,
-		`function positionMarketStrategyText(strategy)`,
-		`if (value === "scalp") return "震荡行情"`,
-		`function positionEntryADXCell(row)`,
+		`cell: (row) => textTableCell(positionSignalTriggerText(row))`,
+		`function positionSignalTriggerText(row)`,
+		`return "预警"`,
+		`return "激进"`,
+		`return "稳健"`,
 	} {
 		if !strings.Contains(tvbotHTML, marker) {
 			t.Fatalf("tvbot UI missing %q", marker)
 		}
+	}
+	if strings.Contains(tvbotHTML, `title: "入场 ADX"`) || strings.Contains(tvbotHTML, `class="order-adx"`) || strings.Contains(tvbotHTML, `function positionEntryADXCell`) {
+		t.Fatal("tvbot UI should not expose ADX columns")
 	}
 }

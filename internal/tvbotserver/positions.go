@@ -86,6 +86,7 @@ type positionView struct {
 	QuantityPrecision *int     `json:"quantity_precision,omitempty"`
 	MarketStrategy    string   `json:"market_strategy,omitempty"`
 	EntryADX          *float64 `json:"entry_adx,omitempty"`
+	SignalKind        string   `json:"signal_kind,omitempty"`
 	EntryFillTime     string   `json:"entry_fill_time"`
 	HoldingSeconds    int64    `json:"holding_seconds"`
 	EntryTimeSource   string   `json:"entry_time_source"`
@@ -3161,7 +3162,8 @@ func (s *Server) enrichPositionViewsWithOrderMetadata(views []positionView, exch
 			continue
 		}
 		for _, rec := range records {
-			if rec.Status != storage.StatusSubmitted || rec.MarketStrategy == "" || rec.ADX == nil {
+			signalKind := orderRecordSignalKind(rec)
+			if rec.Status != storage.StatusSubmitted || (rec.MarketStrategy == "" && rec.ADX == nil && signalKind == "") {
 				continue
 			}
 			if rec.PositionEffect != "" && rec.PositionEffect != trading.PositionEffectOpen {
@@ -3179,10 +3181,38 @@ func (s *Server) enrichPositionViewsWithOrderMetadata(views []positionView, exch
 				continue
 			}
 			views[i].MarketStrategy = rec.MarketStrategy
-			entryADX := *rec.ADX
-			views[i].EntryADX = &entryADX
+			if rec.ADX != nil {
+				entryADX := *rec.ADX
+				views[i].EntryADX = &entryADX
+			}
+			views[i].SignalKind = signalKind
 			break
 		}
+	}
+}
+
+func orderRecordSignalKind(rec storage.OrderRecord) string {
+	var payload struct {
+		Condition string `json:"condition"`
+		Source    string `json:"source"`
+	}
+	if strings.TrimSpace(rec.RawJSON) == "" || json.Unmarshal([]byte(rec.RawJSON), &payload) != nil {
+		return ""
+	}
+	return signalKindFromText(payload.Condition, payload.Source)
+}
+
+func signalKindFromText(values ...string) string {
+	text := strings.ToLower(strings.Join(values, " "))
+	switch {
+	case strings.Contains(text, "aggressive") || strings.Contains(text, "激进"):
+		return "aggressive"
+	case strings.Contains(text, "steady") || strings.Contains(text, "稳健"):
+		return "steady"
+	case strings.Contains(text, "alert") || strings.Contains(text, "预警"):
+		return "alert"
+	default:
+		return ""
 	}
 }
 

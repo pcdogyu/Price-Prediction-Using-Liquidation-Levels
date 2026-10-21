@@ -651,10 +651,6 @@ const tvbotHTML = `<!doctype html>
     td.order-signal-route {
       width: 8%;
     }
-    th.order-adx,
-    td.order-adx {
-      width: 5%;
-    }
     th.order-market,
     td.order-market {
       width: 8%;
@@ -1359,7 +1355,6 @@ const tvbotHTML = `<!doctype html>
     .positions-table .pos-symbol-col { width: 7.8%; }
     .positions-table .pos-side-col { width: 6.8%; }
     .positions-table .pos-strategy-col { width: 7.2%; }
-    .positions-table .pos-adx-col { width: 5.2%; }
     .positions-table .pos-size-col { width: 6.1%; }
     .positions-table .pos-price-col { width: 5.6%; }
     .positions-table .pos-margin-col { width: 5.9%; }
@@ -1987,7 +1982,7 @@ const tvbotHTML = `<!doctype html>
       <div class="symbol-table-wrap">
         <table class="orders-table">
           <thead>
-            <tr><th>时间</th><th class="order-status">状态</th><th>信号来源</th><th class="order-target">下单去向</th><th>方向</th><th class="order-signal-route">信号执行</th><th class="order-adx">ADX</th><th class="order-market">市场类型</th><th>币对</th><th>价格</th><th>金额</th><th class="order-okx">交易所 / 返回</th></tr>
+            <tr><th>时间</th><th class="order-status">状态</th><th>信号来源</th><th class="order-target">下单去向</th><th>方向</th><th class="order-signal-route">信号执行</th><th class="order-market">市场类型</th><th>币对</th><th>价格</th><th>金额</th><th class="order-okx">交易所 / 返回</th></tr>
           </thead>
           <tbody id="order-rows"></tbody>
         </table>
@@ -2253,8 +2248,7 @@ const tvbotHTML = `<!doctype html>
       { id: "exchange", title: "交易所", colClass: "pos-exchange-col", cell: (row) => textTableCell(exchangeLabel(normalizeExchange(row._exchange || "okx"))) },
       { id: "symbol", title: "币对", colClass: "pos-symbol-col", cell: (row) => textTableCell(displayInstID(row.instId)) },
       { id: "side", title: "方向", colClass: "pos-side-col", cell: (row) => positionSideCell(row) },
-      { id: "strategy", title: "策略", colClass: "pos-strategy-col", cell: (row) => textTableCell(positionMarketStrategyText(row.market_strategy)) },
-      { id: "entry_adx", title: "入场 ADX", colClass: "pos-adx-col", cell: (row) => positionEntryADXCell(row) },
+      { id: "strategy", title: "策略", colClass: "pos-strategy-col", cell: (row) => textTableCell(positionSignalTriggerText(row)) },
       { id: "size", title: "持仓量", colClass: "pos-size-col", cell: (row) => textTableCell(formatQuantityAmount(row, row.pos)) },
       { id: "avg_price", title: "均价", colClass: "pos-price-col", cell: (row) => textTableCell(formatPriceAmount(row, row.avgPx)) },
       { id: "margin", title: "保证金", colClass: "pos-margin-col", cell: (row) => textTableCell(formatFixed2(row.margin)) },
@@ -4788,18 +4782,12 @@ const tvbotHTML = `<!doctype html>
       return asText(side);
     }
 
-    function positionMarketStrategyText(strategy) {
-      const value = String(strategy || "").toLowerCase();
-      if (value === "trend") return "趋势行情";
-      if (value === "scalp") return "震荡行情";
+    function positionSignalTriggerText(row) {
+      const value = String(row && (row.signal_kind || row.signal_type || row.condition || row.source) || "").toLowerCase();
+      if (value === "alert" || value.includes("liquidation_alert") || value.includes("预警")) return "预警";
+      if (value === "aggressive" || value.includes("aggressive") || value.includes("激进")) return "激进";
+      if (value === "steady" || value.includes("steady") || value.includes("稳健")) return "稳健";
       return "-";
-    }
-
-    function positionEntryADXCell(row) {
-      const raw = row ? row.entry_adx : null;
-      if (raw === null || raw === undefined || raw === "") return textTableCell("-");
-      const value = Number(raw);
-      return textTableCell(Number.isFinite(value) ? value.toFixed(2) : "-");
     }
 
     function positionSideFromAction(action, effect) {
@@ -4838,13 +4826,6 @@ const tvbotHTML = `<!doctype html>
       const executed = normalizedOrderRouteAction(order && order.action);
       if (!source || !executed) return "-";
       return source === executed ? "同步信号" : "反转信号";
-    }
-
-    function orderHistoryADXText(order) {
-      const raw = order ? order.adx : null;
-      if (raw === null || raw === undefined || raw === "") return "-";
-      const value = Number(raw);
-      return Number.isFinite(value) ? value.toFixed(2) : "-";
     }
 
     function orderHistoryMarketText(order) {
@@ -6349,7 +6330,6 @@ const tvbotHTML = `<!doctype html>
           '<td class="order-target">' + escapeHTML(targetText) + "</td>" +
           "<td>" + escapeHTML(orderHistoryDirectionText(order)) + "</td>" +
           '<td class="order-signal-route">' + escapeHTML(orderHistorySignalRouteText(order)) + "</td>" +
-          '<td class="order-adx">' + escapeHTML(orderHistoryADXText(order)) + "</td>" +
           '<td class="order-market">' + escapeHTML(orderHistoryMarketText(order)) + "</td>" +
           "<td>" + escapeHTML(asText(order.coinpair)) + "</td>" +
           "<td>" + escapeHTML(formatCachedSymbolPrice(targetExchange, precisionInstID, order.price)) + "</td>" +
@@ -6357,7 +6337,7 @@ const tvbotHTML = `<!doctype html>
           '<td class="order-okx"><div class="okx-cell"><span class="okx-text">' + escapeHTML(exchangeResult) + "</span>" + retryButton + "</div></td>" +
           "</tr>";
       });
-      $("order-rows").innerHTML = rows.join("") || '<tr><td colspan="12" class="muted">' + (filters.length ? "无匹配订单" : "-") + '</td></tr>';
+      $("order-rows").innerHTML = rows.join("") || '<tr><td colspan="11" class="muted">' + (filters.length ? "无匹配订单" : "-") + '</td></tr>';
       const status = $("order-history-status");
       const pageInfo = $("order-page-info");
       const prev = $("order-prev");
