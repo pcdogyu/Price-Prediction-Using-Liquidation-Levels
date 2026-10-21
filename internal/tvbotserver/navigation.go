@@ -83,7 +83,7 @@ func RenderTVBotNav(items []TopMenuItem, link func(string) string, active func(T
 func renderUnifiedNav(classSuffix string, items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool, username, logoutPath string) string {
 	var out strings.Builder
 	tvbotLayout := classSuffix == " tvbot-nav"
-	out.WriteString(`<nav class="app-nav` + classSuffix + `" aria-label="主菜单">`)
+	out.WriteString(`<nav class="app-nav` + classSuffix + `" aria-label="主菜单" data-unified-menu="true">`)
 	if tvbotLayout {
 		out.WriteString(`<div class="tvbot-menu-row"><div class="app-links tvbot-top-menu">`)
 	} else {

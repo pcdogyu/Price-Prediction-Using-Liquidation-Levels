@@ -7,7 +7,7 @@ import (
 
 func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 	page := RenderTVBotNav(defaultTopMenu(), func(path string) string { return path }, func(TopMenuItem) bool { return false }, "wyx", "/auth/logout")
-	if !strings.Contains(page, `<nav class="app-nav" aria-label="主菜单">`) {
+	if !strings.Contains(page, `<nav class="app-nav" aria-label="主菜单" data-unified-menu="true">`) {
 		t.Fatal("TVBot navigation should use the alerts page navigation layout")
 	}
 	if strings.Contains(page, "tvbot-nav") || strings.Contains(page, "tvbot-menu-row") {
