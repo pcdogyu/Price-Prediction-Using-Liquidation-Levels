@@ -21,6 +21,7 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 		`href="/market-info"`,
 		`href="/options"`,
 		`href="/tvbot/view/dashboard"`,
+		`href="/tvbot/view/orders"`,
 		`href="/tvbot/view/positions"`,
 		`href="/tvbot/view/analysis"`,
 		`href="/tvbot/view/symbols"`,
@@ -28,7 +29,6 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 		`href="/tvbot/view/api-keys"`,
 		`href="/tvbot/view/order-settings"`,
 		`href="/tvbot/view/template"`,
-		`href="/tvbot/view/orders"`,
 		`href="/tvbot/view/trade-monitor"`,
 		`href="/tvbot/view/upgrade"`,
 		`href="/system"`,
@@ -43,6 +43,9 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 	}
 	if !strings.Contains(page, `>升级</a>`) {
 		t.Fatal("upgrade should remain a direct top-navigation link")
+	}
+	if !strings.Contains(page, `href="/tvbot/view/orders">信号</a>`) {
+		t.Fatal("signal should be shown immediately before positions")
 	}
 	if !strings.Contains(page, `>系统信息<span class="nav-system-caret"`) {
 		t.Fatal("system menu trigger is missing")

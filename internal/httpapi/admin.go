@@ -48,6 +48,7 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "market-info", Title: "市场信息", Href: "/market-info", Group: "liquidation"},
 		{Key: "options", Title: "期权", Href: "/options", Group: "liquidation"},
 		{Key: "overview", Title: "资金", Href: "/tvbot/view/dashboard", Group: "trading"},
+		{Key: "orders", Title: "信号", Href: "/tvbot/view/orders", Group: "trading"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions", Group: "trading"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis", Group: "trading"},
 		{Key: "symbols", Title: "币对配置", Href: "/tvbot/view/symbols", Group: "trading"},
@@ -55,7 +56,6 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "api-keys", Title: "API Key", Href: "/tvbot/view/api-keys", Group: "trading"},
 		{Key: "order-settings", Title: "下单设置", Href: "/tvbot/view/order-settings", Group: "trading"},
 		{Key: "template", Title: "告警模板", Href: "/tvbot/view/template", Group: "trading"},
-		{Key: "orders", Title: "订单", Href: "/tvbot/view/orders", Group: "trading"},
 		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot/view/trade-monitor", Group: "trading"},
 		{Key: "upgrade", Title: "升级", Href: "/tvbot/view/upgrade", Group: "admin"},
 		{Key: "system-info", Title: "系统信息", Href: "/system", Group: "admin"},
@@ -71,6 +71,12 @@ var legacyDefaultAdminMenuKeys = []string{
 }
 
 var canonicalDefaultAdminMenuKeys = []string{
+	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+	"overview", "orders", "positions", "analysis", "symbols", "config", "api-keys",
+	"order-settings", "template", "trade-monitor", "upgrade", "system-info", "menu", "system",
+}
+
+var legacyCanonicalDefaultAdminMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
 	"overview", "positions", "analysis", "symbols", "config", "api-keys",
 	"order-settings", "template", "orders", "trade-monitor", "upgrade", "system-info", "menu", "system",
@@ -89,6 +95,12 @@ var legacyOrdersFirstAdminMenuKeys = []string{
 }
 
 var canonicalPersonalMenuKeys = []string{
+	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+	"overview", "orders", "positions", "analysis", "symbols", "config", "api-keys",
+	"order-settings", "template", "trade-monitor", "upgrade", "system-info",
+}
+
+var legacyCanonicalPersonalMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
 	"overview", "positions", "analysis", "symbols", "config", "api-keys",
 	"order-settings", "template", "orders", "trade-monitor", "upgrade", "system-info",
@@ -160,6 +172,28 @@ func reorderLegacyOrdersFirstAdminMenu(menu []adminMenuItem) ([]adminMenuItem, b
 	return ordered, true
 }
 
+func reorderMenuKeys(menu []adminMenuItem, legacyKeys, canonicalKeys []string) ([]adminMenuItem, bool) {
+	if len(menu) != len(legacyKeys) {
+		return menu, false
+	}
+	byKey := make(map[string]adminMenuItem, len(menu))
+	for i, item := range menu {
+		if item.Key != legacyKeys[i] {
+			return menu, false
+		}
+		byKey[item.Key] = item
+	}
+	ordered := make([]adminMenuItem, 0, len(canonicalKeys))
+	for _, key := range canonicalKeys {
+		item, ok := byKey[key]
+		if !ok {
+			return menu, false
+		}
+		ordered = append(ordered, item)
+	}
+	return ordered, true
+}
+
 func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	migrated := append([]adminMenuItem(nil), menu...)
 	changed := false
@@ -193,8 +227,8 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 			continue
 		}
 		if migrated[i].Key == "orders" || migrated[i].Href == "/tvbot/view/orders" {
-			if migrated[i].Title != "订单" {
-				migrated[i].Title = "订单"
+			if migrated[i].Title != "信号" {
+				migrated[i].Title = "信号"
 				changed = true
 			}
 		}
@@ -220,6 +254,12 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 		return reordered, true
 	}
 	if reordered, ok := reorderLegacyOrdersFirstAdminMenu(migrated); ok {
+		return reordered, true
+	}
+	if reordered, ok := reorderMenuKeys(migrated, legacyCanonicalDefaultAdminMenuKeys, canonicalDefaultAdminMenuKeys); ok {
+		return reordered, true
+	}
+	if reordered, ok := reorderMenuKeys(migrated, legacyCanonicalPersonalMenuKeys, canonicalPersonalMenuKeys); ok {
 		return reordered, true
 	}
 	return migrated, changed
