@@ -3163,7 +3163,7 @@ func (s *Server) enrichPositionViewsWithOrderMetadata(views []positionView, exch
 		}
 		for _, rec := range records {
 			signalKind := orderRecordSignalKind(rec)
-			if rec.Status != storage.StatusSubmitted || (rec.MarketStrategy == "" && rec.ADX == nil && signalKind == "") {
+			if (rec.Status != storage.StatusSubmitted && rec.Status != storage.StatusPartial) || (rec.MarketStrategy == "" && rec.ADX == nil && signalKind == "") {
 				continue
 			}
 			if rec.PositionEffect != "" && rec.PositionEffect != trading.PositionEffectOpen {
