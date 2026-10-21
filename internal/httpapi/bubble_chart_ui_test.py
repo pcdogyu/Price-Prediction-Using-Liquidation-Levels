@@ -190,6 +190,7 @@ with sync_playwright() as playwright:
         expect(page.locator("#classic-upper-30")).to_have_text("2,525.00")
         expect(page.locator("#classic-lower-30")).to_have_text("2,465.00")
         expect(page.locator("#classic-distance-30")).to_have_text("30.00 USDT")
+        assert page.evaluate("""() => Array.from(document.querySelectorAll('#classic-pivot-table .classic-pivot-row > *')).every(cell => getComputedStyle(cell).textAlign === 'center')""")
     initial = check_axis()
     if not production:
         assert len(initial["ids"]) == 6002 and "窗口已加载 6003笔" in initial["context"] and "价格视野外 1笔" in initial["context"], initial["context"]
