@@ -124,7 +124,7 @@ try {
     Write-Host "Replacing the server binary atomically..."
     # The repository is commonly checked out with CRLF on Windows. Strip CR
     # remotely before bash parses the streamed deployment script.
-    $remoteCommand = "tr -d '\\r' | bash -s -- $Revision $Branch $remoteUploadPath $sha256"
+    $remoteCommand = "tr -d '\r' | bash -s -- $Revision $Branch $remoteUploadPath $sha256"
     Get-Content -Raw -LiteralPath $sourceScript | & $ssh ($sshCommon + @($remote, $remoteCommand))
     if ($LASTEXITCODE -ne 0) {
         throw "remote replacement failed with exit code $LASTEXITCODE"
