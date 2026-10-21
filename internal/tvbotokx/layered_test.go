@@ -39,7 +39,9 @@ func TestTraderPlacesSixLayeredOKXOrdersFromOneTicker(t *testing.T) {
 	cfg := config.Default()
 	cfg.Trading.BaseURL = ts.URL
 	cfg.Trading.OrderType = string(trading.OrderTypeLayered)
-	cfg.Trading.RiskType = string(trading.RiskNone)
+	cfg.Trading.RiskType = string(trading.RiskTPSL)
+	cfg.Trading.TakeProfitPct = 2
+	cfg.Trading.StopLossPct = 1
 	cfg.Normalize()
 	signal := trading.Signal{Action: trading.ActionLong, Coinpair: "BTC", Price: trading.NewFlexibleFloat(105), Amount: trading.NewFlexibleFloat(10000), Leverage: 5, PositionEffect: trading.PositionEffectOpen}
 	trader := Trader{Credentials: Credentials{APIKey: "key", SecretKey: "secret", Passphrase: "pass"}, HTTPClient: ts.Client()}
@@ -52,5 +54,24 @@ func TestTraderPlacesSixLayeredOKXOrdersFromOneTicker(t *testing.T) {
 	}
 	if orders[0].OrdType != "market" || orders[1].OrdType != "limit" || orders[1].Px != "105" || orders[2].Px != "99.5" || orders[5].Px != "97" {
 		t.Fatalf("unexpected layered OKX requests: %#v", orders)
+	}
+	if len(result.RiskOrders) != 6 {
+		t.Fatalf("expected one combined TP/SL algorithm order for each OKX layer, got %#v", result.RiskOrders)
+	}
+	seenAlgoIDs := map[string]bool{}
+	for i, order := range orders {
+		if len(order.AttachAlgoOrds) != 1 {
+			t.Fatalf("OKX layer %d should carry its own TP/SL algo order: %#v", i, order)
+		}
+		attach := order.AttachAlgoOrds[0]
+		if attach["tpTriggerRatio"] == "" || attach["slTriggerRatio"] == "" || seenAlgoIDs[attach["attachAlgoClOrdId"]] {
+			t.Fatalf("OKX layer %d has invalid or duplicate TP/SL algo metadata: %#v", i, attach)
+		}
+		seenAlgoIDs[attach["attachAlgoClOrdId"]] = true
+	}
+	for i, layer := range result.Layers {
+		if len(layer.RiskOrders) != 1 {
+			t.Fatalf("OKX layer %d should have its own risk result: %#v", i, layer)
+		}
 	}
 }

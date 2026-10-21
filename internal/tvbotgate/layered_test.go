@@ -38,7 +38,9 @@ func TestTraderPlacesSixLayeredGateOrdersFromOneTicker(t *testing.T) {
 	cfg := config.Default()
 	cfg.Trading.GateDemoBaseURL = server.URL
 	cfg.Trading.OrderType = string(trading.OrderTypeLayered)
-	cfg.Trading.RiskType = string(trading.RiskNone)
+	cfg.Trading.RiskType = string(trading.RiskTPSL)
+	cfg.Trading.TakeProfitPct = 2
+	cfg.Trading.StopLossPct = 1
 	cfg.Normalize()
 	signal := trading.Signal{Action: trading.ActionLong, TargetExchange: trading.ExchangeGate, Coinpair: "BTC", Price: trading.NewFlexibleFloat(105), Amount: trading.NewFlexibleFloat(10000), Leverage: 5, PositionEffect: trading.PositionEffectOpen}
 	trader := Trader{Credentials: Credentials{APIKey: "key", SecretKey: "secret"}, HTTPClient: server.Client()}
@@ -51,5 +53,18 @@ func TestTraderPlacesSixLayeredGateOrdersFromOneTicker(t *testing.T) {
 	}
 	if orders[0].Price != "0" || orders[0].TIF != "ioc" || orders[1].Price != "105" || orders[2].Price != "99.5" || orders[5].Price != "97" {
 		t.Fatalf("unexpected layered Gate requests: %#v", orders)
+	}
+	if len(result.RiskOrders) != 12 {
+		t.Fatalf("expected two risk orders for each Gate layer, got %#v", result.RiskOrders)
+	}
+	for i, order := range orders {
+		if order.TPTriggerPrice == "" || order.SLTriggerPrice == "" {
+			t.Fatalf("Gate layer %d is missing its TP/SL trigger prices: %#v", i, order)
+		}
+	}
+	for i, layer := range result.Layers {
+		if len(layer.RiskOrders) != 2 {
+			t.Fatalf("Gate layer %d should have its own TP and SL result: %#v", i, layer)
+		}
 	}
 }

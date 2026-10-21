@@ -610,8 +610,8 @@ func (t Trader) placeRiskOrders(ctx context.Context, client Client, signal tradi
 	} else if t.Logger != nil {
 		t.Logger.Warn("binance mark price unavailable before tp/sl placement", "symbol", order.Symbol, "error", err)
 	}
-	tpID := trimClientID(order.NewClientOrderID, 32-2) + "TP"
-	slID := trimClientID(order.NewClientOrderID, 32-2) + "SL"
+	tpID := binanceClientIDWithSuffix(order.NewClientOrderID, "TP")
+	slID := binanceClientIDWithSuffix(order.NewClientOrderID, "SL")
 	out := []trading.RiskOrderResult{}
 	tpOrders, err := t.placeSplitAlgoOrder(ctx, client, AlgoOrderRequest{
 		Symbol:           order.Symbol,
@@ -674,7 +674,7 @@ func (t Trader) placeTrailingStop(ctx context.Context, client Client, signal tra
 	if signal.Action == trading.ActionShort {
 		closeSide = "BUY"
 	}
-	trailingID := trimClientID(order.NewClientOrderID, 32-2) + "TS"
+	trailingID := binanceClientIDWithSuffix(order.NewClientOrderID, "TS")
 	return t.placeSplitAlgoOrder(ctx, client, AlgoOrderRequest{
 		Symbol:           order.Symbol,
 		Side:             closeSide,
@@ -1033,7 +1033,40 @@ func splitBinanceClientOrderID(base string, part int) string {
 		return ""
 	}
 	suffix := fmt.Sprintf("P%02d", part)
-	return trimClientID(base, 32-len(suffix)) + suffix
+	return binanceClientIDWithSuffix(base, suffix)
+}
+
+// binanceClientIDWithSuffix keeps the risk-order and split-order suffixes
+// distinct even when a layered entry ID is already at Binance's 32-character
+// limit. In particular, a layered entry can end in -L01 and its TP/SL order
+// can then be split with a P01 suffix; blindly truncating the entry ID would
+// otherwise collapse different layers or TP/SL pairs onto the same ID.
+func binanceClientIDWithSuffix(base, suffix string) string {
+	base = strings.TrimSpace(base)
+	suffix = strings.TrimSpace(suffix)
+	if base == "" {
+		return ""
+	}
+	const maxLength = 32
+	if len(suffix) >= maxLength {
+		return suffix[:maxLength]
+	}
+	maxBaseLength := maxLength - len(suffix)
+	if len(base) <= maxBaseLength {
+		return base + suffix
+	}
+
+	// Preserve the distinguishing tail (for example -L01TP) and add a short
+	// digest of the full base so truncation remains deterministic and unique
+	// for different layered entries and split parts.
+	const tailLength = 8
+	const digestLength = 6
+	keepTail := minInt(tailLength, maxBaseLength)
+	keepDigest := minInt(digestLength, maxBaseLength-keepTail)
+	keepPrefix := maxBaseLength - keepTail - keepDigest
+	sum := sha256.Sum256([]byte(base))
+	digest := strings.ToUpper(hex.EncodeToString(sum[:]))[:keepDigest]
+	return base[:keepPrefix] + digest + base[len(base)-keepTail:] + suffix
 }
 
 func joinBinancePlaceOrderClientIDs(reqs []PlaceOrderRequest) string {

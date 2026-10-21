@@ -54,6 +54,9 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 		return trading.OrderResult{}, err
 	}
 	orderSettings := cfg.OrderSettings().Normalize()
+	if signal.Risk.Type == "" {
+		orderSettings.ApplyToSignal(&signal)
+	}
 	if orderSettings.OrderType == trading.OrderTypeLayered && signal.PositionEffect != trading.PositionEffectClose {
 		return t.executeLayeredSignal(ctx, signal, cfg, orderSettings)
 	}
