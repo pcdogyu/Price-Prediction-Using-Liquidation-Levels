@@ -9,8 +9,8 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 	if got := strings.Count(tvbotHTML, `class="analysis-metrics symbol-metrics exchange-balance-metrics"`); got != 3 {
 		t.Fatalf("exchange balance metric blocks=%d, want 3", got)
 	}
-	if got := strings.Count(tvbotHTML, `class="analysis-exchange-block balance-pnl-block"`); got != 2 {
-		t.Fatalf("embedded pnl blocks=%d, want 2", got)
+	if got := strings.Count(tvbotHTML, `class="analysis-exchange-block balance-pnl-block"`); got != 3 {
+		t.Fatalf("embedded pnl blocks=%d, want 3", got)
 	}
 	for _, marker := range []string{
 		`.exchange-balance-metrics`,
@@ -19,6 +19,7 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`.analysis-time-status`,
 		`.analysis-usdt-chart-card`,
 		`.global-exchange-switch`,
+		`.global-exchange-switch button:disabled`,
 		`data-global-exchange="okx"`,
 		`data-global-exchange="binance"`,
 		`data-global-exchange="gate"`,
@@ -32,6 +33,11 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`function activeExchange()`,
 		`function setSelectedExchange(exchange)`,
 		`function renderGlobalExchangeSwitch()`,
+		`exchangeAvailabilityReady`,
+		`button.disabled = disabled`,
+		`button.setAttribute("aria-disabled", disabled ? "true" : "false")`,
+		`apiKeyStatusForEnv(exchange, positionEnvironment())`,
+		`未配置当前交易环境 API`,
 		`订单时间`,
 		`OKX 订单`,
 		`Binance 订单`,
@@ -47,6 +53,7 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`id="analysis-gate-window-start"`,
 		`id="analysis-okx-net-pnl"`,
 		`id="analysis-binance-net-pnl"`,
+		`id="analysis-gate-net-pnl"`,
 		`id="analysis-gate-usdt-eq"`,
 		`id="analysis-okx-turnover"`,
 		`id="analysis-okx-fees"`,
@@ -56,6 +63,10 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`id="analysis-binance-fees"`,
 		`id="analysis-binance-position-count"`,
 		`id="analysis-binance-position-upl"`,
+		`id="analysis-gate-turnover"`,
+		`id="analysis-gate-fees"`,
+		`id="analysis-gate-position-count"`,
+		`id="analysis-gate-position-upl"`,
 		`#analysis .mini-usdt-chart`,
 		`height: 360px`,
 		`height: 346px`,
@@ -200,9 +211,13 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 	binanceValuation := strings.Index(tvbotHTML, `id="analysis-binance-usdt-eq"`)
 	okxChart := strings.Index(tvbotHTML, `id="usdt-chart" class="mini-usdt-chart"`)
 	binanceChart := strings.Index(tvbotHTML, `id="analysis-binance-usdt-chart" class="mini-usdt-chart"`)
+	gateOrder := strings.Index(tvbotHTML, `Gate 订单`)
+	gateValuation := strings.Index(tvbotHTML, `id="analysis-gate-usdt-eq"`)
+	gateChart := strings.Index(tvbotHTML, `id="analysis-gate-usdt-chart" class="mini-usdt-chart"`)
 	okxPNL := strings.Index(tvbotHTML, `id="analysis-okx-net-pnl"`)
 	binancePNL := strings.Index(tvbotHTML, `id="analysis-binance-net-pnl"`)
-	if okxOrder < 0 || binanceOrder < 0 || okxValuation < 0 || binanceValuation < 0 || okxChart < 0 || binanceChart < 0 || okxPNL < 0 || binancePNL < 0 {
+	gatePNL := strings.Index(tvbotHTML, `id="analysis-gate-net-pnl"`)
+	if okxOrder < 0 || binanceOrder < 0 || gateOrder < 0 || okxValuation < 0 || binanceValuation < 0 || gateValuation < 0 || okxChart < 0 || binanceChart < 0 || gateChart < 0 || okxPNL < 0 || binancePNL < 0 || gatePNL < 0 {
 		t.Fatal("analysis layout markers are missing")
 	}
 	if !(okxOrder < binanceOrder) {
@@ -213,6 +228,9 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 	}
 	if !(binanceValuation < binancePNL && binancePNL < binanceChart) {
 		t.Fatal("Binance column should show USDT valuation cards, pnl summary, then equity chart")
+	}
+	if !(gateValuation < gatePNL && gatePNL < gateChart) {
+		t.Fatal("Gate column should show USDT valuation cards, pnl summary, then equity chart")
 	}
 	tradeHistory := strings.Index(tvbotHTML, `id="analysis-trade-history-title"`)
 	tradeRows := strings.Index(tvbotHTML, `id="analysis-trade-rows"`)

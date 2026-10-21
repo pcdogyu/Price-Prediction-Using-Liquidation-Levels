@@ -458,6 +458,16 @@ const tvbotHTML = `<!doctype html>
       border-color: var(--blue);
       color: var(--bg);
     }
+    .global-exchange-switch button:disabled {
+      color: var(--muted);
+      cursor: not-allowed;
+      opacity: .48;
+    }
+    .global-exchange-switch button:disabled[aria-selected="true"] {
+      background: transparent;
+      border-color: transparent;
+      color: var(--muted);
+    }
     nav {
       display: flex;
       gap: 4px;
@@ -1771,6 +1781,19 @@ const tvbotHTML = `<!doctype html>
               <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="analysis-gate-balance-updated">-</div></div>
             </div>
           </div>
+          <div class="analysis-exchange-block balance-pnl-block">
+            <div class="analysis-metrics">
+              <div class="analysis-card"><div class="label">净盈亏</div><div class="value" id="analysis-gate-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">胜率</div><div class="value" id="analysis-gate-win-rate">-</div></div>
+              <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="analysis-gate-profit-factor">-</div></div>
+              <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="analysis-gate-payoff-ratio">-</div></div>
+              <div class="analysis-card"><div class="label">仓位数</div><div class="value" id="analysis-gate-trades">-</div></div>
+              <div class="analysis-card"><div class="label">周期成交额</div><div class="value" id="analysis-gate-turnover">-</div></div>
+              <div class="analysis-card"><div class="label">周期手续费</div><div class="value" id="analysis-gate-fees">-</div></div>
+              <div class="analysis-card"><div class="label">当前持仓</div><div class="value" id="analysis-gate-position-count">-</div></div>
+              <div class="analysis-card"><div class="label">持仓浮盈</div><div class="value" id="analysis-gate-position-upl">-</div></div>
+            </div>
+          </div>
           <div class="analysis-usdt-chart-card">
             <div class="section-head" style="margin:0 0 8px"><h3 id="analysis-gate-usdt-title">USDT 权益图</h3></div>
             <svg id="analysis-gate-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Gate USDT equity chart"></svg>
@@ -2120,6 +2143,7 @@ const tvbotHTML = `<!doctype html>
       apiKeys: null,
       apiKeysByExchange: { okx: null, binance: null, gate: null },
       apiKeysByEnvironment: { demo: { okx: null, binance: null, gate: null }, live: { okx: null, binance: null, gate: null } },
+      exchangeAvailabilityReady: false,
       apiKeyEnv: "demo",
       apiKeyExchange: "okx",
       selectedAPIID: "",
@@ -2590,9 +2614,19 @@ const tvbotHTML = `<!doctype html>
     }
 
     function renderGlobalExchangeSwitch() {
-      const selected = activeExchange();
+      const selected = ensureSelectedExchangeAvailable();
       document.querySelectorAll("[data-global-exchange]").forEach((button) => {
-        button.setAttribute("aria-selected", normalizeExchange(button.dataset.globalExchange) === selected ? "true" : "false");
+        const exchange = normalizeExchange(button.dataset.globalExchange);
+        const configured = exchangeConfiguredForCurrentEnvironment(exchange);
+        const disabled = state.exchangeAvailabilityReady && !configured;
+        button.disabled = disabled;
+        button.setAttribute("aria-disabled", disabled ? "true" : "false");
+        if (disabled) {
+          button.title = exchangeLabel(exchange) + " 未配置当前交易环境 API";
+        } else {
+          button.removeAttribute("title");
+        }
+        button.setAttribute("aria-selected", exchange === selected ? "true" : "false");
       });
       document.querySelectorAll("[data-exchange-view]").forEach((panel) => {
         panel.hidden = normalizeExchange(panel.dataset.exchangeView) !== selected;
@@ -2600,8 +2634,30 @@ const tvbotHTML = `<!doctype html>
       renderPositionAPIs();
     }
 
+    function exchangeConfiguredForCurrentEnvironment(exchange) {
+      if (!state.exchangeAvailabilityReady || !state.config) return true;
+      const status = apiKeyStatusForEnv(exchange, positionEnvironment());
+      return !!(status && status.configured);
+    }
+
+    function ensureSelectedExchangeAvailable() {
+      const selected = activeExchange();
+      if (!state.exchangeAvailabilityReady || exchangeConfiguredForCurrentEnvironment(selected)) return selected;
+      const fallback = ["okx", "binance", "gate"].find((exchange) => exchangeConfiguredForCurrentEnvironment(exchange));
+      if (!fallback) return selected;
+      state.selectedExchange = fallback;
+      try {
+        window.localStorage.setItem(globalExchangeStorageKey, fallback);
+      } catch (_) {}
+      return fallback;
+    }
+
     function setSelectedExchange(exchange) {
       const selected = normalizeExchange(exchange);
+      if (state.exchangeAvailabilityReady && !exchangeConfiguredForCurrentEnvironment(selected)) {
+        renderGlobalExchangeSwitch();
+        return;
+      }
       if (selected === activeExchange()) {
         if ($("symbol-exchange")) {
           $("symbol-exchange").value = selected;
@@ -3479,6 +3535,7 @@ const tvbotHTML = `<!doctype html>
       applyMenuSettings();
       syncActiveTabAfterMenuSettings();
       renderConfig();
+      renderGlobalExchangeSwitch();
       renderSystem();
       initializeSymbolMarket();
       renderOrderSettings();
@@ -3505,6 +3562,8 @@ const tvbotHTML = `<!doctype html>
       });
       state.apiKeysByExchange = state.apiKeysByEnvironment[state.apiKeyEnv];
       state.apiKeys = apiKeyStatus(state.apiKeyExchange);
+      state.exchangeAvailabilityReady = true;
+      renderGlobalExchangeSwitch();
       renderAPIKeys();
       renderTemplateAPIs();
       renderPositionAPIs();
@@ -5310,22 +5369,24 @@ const tvbotHTML = `<!doctype html>
         renderAnalysisExchangeBalances();
         renderAnalysisExchangeStats("okx", state.analysisError || "-");
         renderAnalysisExchangeStats("binance", state.analysisError || "-");
+        renderAnalysisExchangeStats("gate", state.analysisError || "-");
         renderAnalysisTradeHistory(state.analysisError || "-");
         return;
       }
       renderAnalysisExchangeBalances();
       const exchange = activeExchange();
-      const apiID = exchange === "binance" ? state.analysis.binance_api_id : state.analysis.api_id;
+      const apiID = exchange === "binance" ? state.analysis.binance_api_id : (exchange === "gate" ? state.analysis.gate_api_id : state.analysis.api_id);
       const staleLabel = state.analysis.cache && state.analysis.cache.stale ? " / 缓存数据（上游暂不可用）" : "";
       $("analysis-updated").textContent = shanghaiTime(state.analysis.refreshed_at) + " / API " + exchangeLabel(exchange) + " " + asText(apiID) + staleLabel;
       renderAnalysisExchangeStats("okx", "");
       renderAnalysisExchangeStats("binance", "");
+      renderAnalysisExchangeStats("gate", "");
       renderAnalysisTradeHistory("");
     }
 
     function renderAnalysisExchangeStats(exchange, errorText) {
       const normalized = normalizeExchange(exchange);
-      const prefix = normalized === "binance" ? "analysis-binance" : "analysis-okx";
+      const prefix = normalized === "binance" ? "analysis-binance" : (normalized === "gate" ? "analysis-gate" : "analysis-okx");
       if (errorText) {
         $(prefix + "-net-pnl").textContent = "-";
         $(prefix + "-win-rate").textContent = "-";
@@ -6662,6 +6723,8 @@ const tvbotHTML = `<!doctype html>
       state.selectedAPIID = body.id || state.apiKeys.active_id || "default";
       state.selectedAPIIDs[exchange] = state.selectedAPIID;
       state.apiKeyTestError = null;
+      state.exchangeAvailabilityReady = true;
+      renderGlobalExchangeSwitch();
       renderAPIKeys(true);
       renderTemplateAPIs();
       renderPositionAPIs();
@@ -7120,6 +7183,7 @@ const tvbotHTML = `<!doctype html>
         state.apiKeyExchange = normalizeExchange(button.dataset.apiKeyExchange);
         state.apiKeysByExchange = state.apiKeysByEnvironment[state.apiKeyEnv];
         state.apiKeys = apiKeyStatus(state.apiKeyExchange);
+        renderGlobalExchangeSwitch();
         clearAPIKeyTestState(state.apiKeyExchange);
         renderAPIKeys();
         renderTemplateAPIs();
@@ -7133,6 +7197,7 @@ const tvbotHTML = `<!doctype html>
         state.apiKeyEnv = event.target.value === "live" ? "live" : "demo";
         state.apiKeysByExchange = state.apiKeysByEnvironment[state.apiKeyEnv];
         state.apiKeys = apiKeyStatus(state.apiKeyExchange);
+        renderGlobalExchangeSwitch();
         clearAPIKeyTestState(state.apiKeyExchange);
         renderAPIKeys();
         renderTemplateAPIs();

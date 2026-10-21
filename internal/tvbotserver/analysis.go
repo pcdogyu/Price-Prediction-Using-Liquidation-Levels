@@ -42,6 +42,7 @@ type analysisResponse struct {
 	OK                bool                    `json:"ok"`
 	APIID             string                  `json:"api_id"`
 	BinanceAPIID      string                  `json:"binance_api_id,omitempty"`
+	GateAPIID         string                  `json:"gate_api_id,omitempty"`
 	Env               string                  `json:"env"`
 	PriceDays         int                     `json:"price_days"`
 	PNLDays           int                     `json:"pnl_days"`
@@ -73,6 +74,7 @@ type analysisSourceStatus struct {
 	Price   string `json:"price"`
 	Fills   string `json:"fills"`
 	Funding string `json:"funding,omitempty"`
+	Gate    string `json:"gate,omitempty"`
 }
 
 type analysisBalance struct {
@@ -446,17 +448,14 @@ func (s *Server) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := s.ConfigStore.Get()
-	if s.okxCredentialStore(cfg.Trading.Env) == nil {
-		writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
-		return
-	}
 	priceDays := positiveIntQuery(r, "price_days", defaultPriceDays)
 	pnlDays := positiveIntQuery(r, "pnl_days", defaultPNLDays)
 	pnlMinutes := analysisPNLMinutesFromQuery(r, pnlDays)
 	refresh := strings.EqualFold(r.URL.Query().Get("refresh"), "true")
 	apiID := strings.TrimSpace(r.URL.Query().Get("api_id"))
 	binanceAPIID := strings.TrimSpace(r.URL.Query().Get("binance_api_id"))
-	resp, err := s.buildAnalysis(r.Context(), cfg, apiID, binanceAPIID, priceDays, pnlMinutes, refresh)
+	gateAPIID := strings.TrimSpace(r.URL.Query().Get("gate_api_id"))
+	resp, err := s.buildAnalysis(r.Context(), cfg, apiID, binanceAPIID, priceDays, pnlMinutes, refresh, gateAPIID)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "analysis_failed", err.Error())
 		return
@@ -464,20 +463,21 @@ func (s *Server) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requestedAPIID, requestedBinanceAPIID string, priceDays, pnlMinutes int, refresh bool) (analysisResponse, error) {
+func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requestedAPIID, requestedBinanceAPIID string, priceDays, pnlMinutes int, refresh bool, requestedGateAPIIDs ...string) (analysisResponse, error) {
 	pnlMinutes = normalizeAnalysisPNLMinutes(pnlMinutes)
-	okxStore := s.okxCredentialStore(cfg.Trading.Env)
-	if okxStore == nil {
-		return analysisResponse{}, errors.New("OKX credential store is not configured")
-	}
-	creds, apiID, err := okxStore.OKXCredentials(requestedAPIID)
-	if err != nil {
-		return analysisResponse{}, err
+	requestedGateAPIID := ""
+	if len(requestedGateAPIIDs) > 0 {
+		requestedGateAPIID = strings.TrimSpace(requestedGateAPIIDs[0])
 	}
 	now := s.now()
 	envName := analysisEnvName(cfg)
+	okxCreds, apiID, okxConfigured := s.analysisOKXCredentials(cfg, requestedAPIID)
 	binanceCreds, binanceAPIID, binanceConfigured := s.analysisBinanceCredentials(cfg, requestedBinanceAPIID)
-	cacheKey := analysisCacheKey(apiID, binanceAPIID, envName, priceDays, pnlMinutes)
+	gateCreds, gateAPIID, gateConfigured := s.analysisGateCredentials(cfg, requestedGateAPIID)
+	if !okxConfigured && !binanceConfigured && !gateConfigured {
+		return analysisResponse{}, errors.New("no exchange API credentials are configured")
+	}
+	cacheKey := analysisCacheKey(apiID, binanceAPIID, envName, priceDays, pnlMinutes, gateAPIID)
 	if !refresh {
 		if cached, ok, err := s.Orders.CachedPayload(cacheKey); err != nil {
 			return analysisResponse{}, err
@@ -493,63 +493,185 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 			return resp, nil
 		}
 	}
-	client := s.analysisOKXClient(cfg, creds)
-	balance, err := s.fetchAnalysisBalance(ctx, client, apiID, envName, now)
-	if err != nil {
-		if resp, ok := s.staleAnalysisFromCache(cacheKey); ok {
-			if s.Logger != nil {
-				s.Logger.Warn("using stale analysis cache after OKX balance failure", "api_id", apiID, "env", envName, "error", err)
-			}
-			return resp, nil
+	var balance analysisBalance
+	balanceReady := false
+	source := analysisSourceStatus{}
+	setBalance := func(value analysisBalance, sourceName string) {
+		if balanceReady {
+			return
 		}
-		return analysisResponse{}, err
+		balance = value
+		balanceReady = true
+		source.Balance = sourceName
 	}
-	source := analysisSourceStatus{Balance: "okx", Price: "okx", Fills: "okx", Funding: "okx"}
-	if _, err := s.fetchOKXAnalysisFunding(ctx, client, pnlMinutes, now); err != nil {
-		source.Funding = "okx_error"
-		if s.Logger != nil {
-			s.Logger.Warn("failed to fetch OKX analysis funding fees", "api_id", apiID, "env", envName, "error", err)
-		}
+	fillSources := []string{}
+	if okxConfigured {
+		fillSources = append(fillSources, "okx")
 	}
-	binanceTrades := []analysisTrade{}
 	if binanceConfigured {
-		source.Fills = "okx+binance"
-		if source.Funding == "okx" {
-			source.Funding = "okx+binance"
+		fillSources = append(fillSources, "binance")
+	}
+	if gateConfigured {
+		fillSources = append(fillSources, "gate")
+	}
+	source.Fills = strings.Join(fillSources, "+")
+
+	var okxClient okx.Client
+	analysisCfg := cfg
+	if okxConfigured {
+		okxClient = s.analysisOKXClient(cfg, okxCreds)
+		balanceValue, balanceErr := s.fetchAnalysisBalance(ctx, okxClient, apiID, envName, now)
+		if balanceErr != nil {
+			source.Balance = "okx_error"
+			if s.Logger != nil {
+				s.Logger.Warn("failed to fetch OKX analysis balance", "api_id", apiID, "env", envName, "error", balanceErr)
+			}
+			if !binanceConfigured && !gateConfigured {
+				if stale, ok := s.staleAnalysisFromCache(cacheKey); ok {
+					return stale, nil
+				}
+				return analysisResponse{}, balanceErr
+			}
+		} else {
+			setBalance(balanceValue, "okx")
+			source.Balance = "okx"
+		}
+		if _, fundingErr := s.fetchOKXAnalysisFunding(ctx, okxClient, pnlMinutes, now); fundingErr != nil {
+			source.Funding = "okx_error"
+			if s.Logger != nil {
+				s.Logger.Warn("failed to fetch OKX analysis funding fees", "api_id", apiID, "env", envName, "error", fundingErr)
+			}
+		} else {
+			source.Funding = "okx"
+		}
+		if refreshErr := s.refreshAnalysisData(ctx, okxClient, apiID, priceDays, pnlMinutes, now); refreshErr != nil {
+			source.Price = "okx_error"
+			if s.Logger != nil {
+				s.Logger.Warn("failed to refresh OKX analysis data", "api_id", apiID, "env", envName, "error", refreshErr)
+			}
+		} else {
+			source.Price = "okx"
+		}
+		if instruments, _, instrumentErr := okxClient.SwapInstruments(ctx); instrumentErr != nil {
+			if s.Logger != nil {
+				s.Logger.Warn("failed to fetch OKX instruments for analysis contract values", "api_id", apiID, "env", envName, "error", instrumentErr)
+			}
+		} else {
+			analysisCfg = analysisConfigWithOKXCtVals(cfg, instruments)
+		}
+	}
+
+	binanceTrades := []analysisTrade{}
+	binanceDataReady := false
+	if binanceConfigured {
+		binanceClient := s.analysisBinanceClient(cfg, binanceCreds)
+		var binanceErr error
+		binanceTrades, binanceErr = s.fetchBinanceAnalysisTrades(ctx, binanceClient, binanceAPIID, cfg, pnlMinutes, now)
+		binanceDataReady = binanceErr == nil
+		if binanceErr != nil {
+			source.Fills = strings.ReplaceAll(source.Fills, "binance", "binance_error")
+			if s.Logger != nil {
+				s.Logger.Warn("failed to fetch Binance analysis trades", "api_id", binanceAPIID, "env", envName, "error", binanceErr)
+			}
+		}
+		if _, fundingErr := s.fetchBinanceAnalysisFunding(ctx, binanceClient, pnlMinutes, now); fundingErr != nil {
+			if source.Funding == "" {
+				source.Funding = "binance_error"
+			} else {
+				source.Funding += "+binance_error"
+			}
+		} else if source.Funding == "" {
+			source.Funding = "binance"
 		} else {
 			source.Funding += "+binance"
 		}
-		binanceTrades, err = s.fetchBinanceAnalysisTrades(ctx, s.analysisBinanceClient(cfg, binanceCreds), binanceAPIID, cfg, pnlMinutes, now)
-		if err != nil {
-			source.Fills = "okx+binance_error"
-			if s.Logger != nil {
-				s.Logger.Warn("failed to fetch Binance analysis trades", "api_id", binanceAPIID, "env", envName, "error", err)
-			}
-		}
-		if _, err := s.fetchBinanceAnalysisFunding(ctx, s.analysisBinanceClient(cfg, binanceCreds), pnlMinutes, now); err != nil {
-			source.Funding = strings.ReplaceAll(source.Funding, "binance", "binance_error")
-			if s.Logger != nil {
-				s.Logger.Warn("failed to fetch Binance analysis funding fees", "api_id", binanceAPIID, "env", envName, "error", err)
+		if !balanceReady {
+			if balanceValue, balanceErr := s.fetchBinanceAnalysisBalance(ctx, binanceClient, binanceAPIID, envName, now); balanceErr == nil {
+				setBalance(balanceValue, "binance")
+			} else if s.Logger != nil {
+				s.Logger.Warn("failed to fetch Binance analysis balance", "api_id", binanceAPIID, "env", envName, "error", balanceErr)
 			}
 		}
 	}
-	if err := s.refreshAnalysisData(ctx, client, apiID, priceDays, pnlMinutes, now); err != nil {
-		if resp, ok := s.staleAnalysisFromCache(cacheKey); ok {
-			return resp, nil
+
+	gateTrades := []analysisTrade{}
+	gatePositions := []analysisPositionTrade{}
+	gateDataReady := false
+	if gateConfigured {
+		gateClient := s.analysisGateClient(cfg, gateCreds)
+		if account, accountErr := gateClient.Account(ctx); accountErr == nil {
+			balanceValue := analysisBalanceFromGate(account, now)
+			if !balanceReady {
+				setBalance(balanceValue, "gate")
+			}
+			if snapshotErr := s.recordGateUSDTBalanceSnapshot(gateAPIID, envName, balanceValue, now); snapshotErr != nil && s.Logger != nil {
+				s.Logger.Warn("failed to write Gate analysis balance snapshot", "api_id", gateAPIID, "env", envName, "error", snapshotErr)
+			}
+			if source.Balance == "" {
+				source.Balance = "gate"
+			}
+		} else {
+			source.Balance = "gate_error"
+			if s.Logger != nil {
+				s.Logger.Warn("failed to fetch Gate analysis balance", "api_id", gateAPIID, "env", envName, "error", accountErr)
+			}
 		}
-		return analysisResponse{}, err
-	}
-	analysisCfg := cfg
-	if instruments, _, instrumentErr := client.SwapInstruments(ctx); instrumentErr != nil {
-		if s.Logger != nil {
-			s.Logger.Warn("failed to fetch OKX instruments for analysis contract values", "api_id", apiID, "env", envName, "error", instrumentErr)
+		var gateErr error
+		gateTrades, gatePositions, gateErr = s.fetchGateAnalysisData(ctx, gateClient, gateAPIID, pnlMinutes, now)
+		gateDataReady = gateErr == nil || len(gateTrades) > 0 || len(gatePositions) > 0
+		source.Gate = "gate"
+		if gateErr != nil {
+			source.Gate = "gate_error"
+			if s.Logger != nil {
+				s.Logger.Warn("failed to fetch Gate analysis data", "api_id", gateAPIID, "env", envName, "error", gateErr)
+			}
 		}
-	} else {
-		analysisCfg = analysisConfigWithOKXCtVals(cfg, instruments)
+		gateFundingSource := "gate"
+		if gateErr != nil {
+			gateFundingSource = "gate_error"
+		}
+		if source.Funding == "" {
+			source.Funding = gateFundingSource
+		} else {
+			source.Funding += "+" + gateFundingSource
+		}
 	}
-	resp, err := s.analysisFromStore(analysisCfg, apiID, binanceAPIID, envName, priceDays, pnlMinutes, now, source, binanceTrades)
-	if err != nil {
-		return analysisResponse{}, err
+
+	var resp analysisResponse
+	var buildErr error
+	if okxConfigured {
+		resp, buildErr = s.analysisFromStore(analysisCfg, apiID, binanceAPIID, gateAPIID, envName, priceDays, pnlMinutes, now, source, binanceTrades, gateTrades, gatePositions)
+	}
+	if !okxConfigured || buildErr != nil {
+		if buildErr != nil && !binanceDataReady && !gateDataReady {
+			if stale, ok := s.staleAnalysisFromCache(cacheKey); ok {
+				return stale, nil
+			}
+			return analysisResponse{}, buildErr
+		}
+		balancePoints := []analysisBalancePoint{}
+		if balanceReady {
+			primaryExchange := trading.ExchangeOKX
+			primaryAPIID := apiID
+			if !okxConfigured || strings.TrimSpace(apiID) == "" {
+				if binanceDataReady {
+					primaryExchange, primaryAPIID = trading.ExchangeBinance, binanceAPIID
+				} else {
+					primaryExchange, primaryAPIID = trading.ExchangeGate, gateAPIID
+				}
+			}
+			balancePoints = s.balanceOverviewPoints(primaryExchange, primaryAPIID, envName, priceDays*24*60, now)
+		}
+		resp = s.analysisFromExternalData(analysisCfg, apiID, binanceAPIID, gateAPIID, envName, priceDays, pnlMinutes, now, source, balancePoints, binanceTrades, gateTrades, gatePositions)
+	}
+	if !resp.OK {
+		if stale, ok := s.staleAnalysisFromCache(cacheKey); ok {
+			return stale, nil
+		}
+		if buildErr != nil {
+			return analysisResponse{}, buildErr
+		}
+		return analysisResponse{}, errors.New("no exchange analysis data is available")
 	}
 	resp.Balance = balance
 	resp.Cache.CacheKey = cacheKey
@@ -572,8 +694,27 @@ func (s *Server) staleAnalysisFromCache(cacheKey string) (analysisResponse, bool
 	resp.Cache.Stale = true
 	resp.Cache.CachedAt = cached.RefreshedAt
 	resp.Cache.CacheKey = cacheKey
-	resp.Source = analysisSourceStatus{Balance: "cache", Price: "cache", Fills: "cache", Funding: "cache"}
+	resp.Source = analysisSourceStatus{Balance: "cache", Price: "cache", Fills: "cache", Funding: "cache", Gate: "cache"}
 	return resp, true
+}
+
+func (s *Server) analysisOKXCredentials(cfg config.Config, requestedAPIID string) (okx.Credentials, string, bool) {
+	store := s.okxCredentialStore(cfg.Trading.Env)
+	if store == nil {
+		return okx.Credentials{}, "", false
+	}
+	status := store.Status()
+	if !status.Configured {
+		return okx.Credentials{}, strings.TrimSpace(status.ActiveID), false
+	}
+	creds, apiID, err := store.OKXCredentials(requestedAPIID)
+	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Warn("failed to resolve OKX analysis credentials", "error", err)
+		}
+		return okx.Credentials{}, strings.TrimSpace(status.ActiveID), false
+	}
+	return creds, apiID, true
 }
 
 func (s *Server) analysisBinanceCredentials(cfg config.Config, requestedAPIID string) (binance.Credentials, string, bool) {
@@ -669,8 +810,12 @@ func analysisPositionSince(now time.Time, pnlMinutes int) time.Time {
 	return now.UTC().Add(-time.Duration(analysisPositionLookbackMinutes(pnlMinutes)) * time.Minute)
 }
 
-func analysisCacheKey(apiID, binanceAPIID, envName string, priceDays, pnlMinutes int) string {
-	return "analysis|" + apiID + "|binance:" + binanceAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
+func analysisCacheKey(apiID, binanceAPIID, envName string, priceDays, pnlMinutes int, gateAPIIDs ...string) string {
+	gateAPIID := ""
+	if len(gateAPIIDs) > 0 {
+		gateAPIID = strings.TrimSpace(gateAPIIDs[0])
+	}
+	return "analysis|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
 }
 
 func (s *Server) refreshAnalysisData(ctx context.Context, client okx.Client, apiID string, priceDays, pnlMinutes int, now time.Time) error {
@@ -2121,7 +2266,7 @@ func parsePositiveFloat(v string) (float64, bool) {
 	return parsed, ok && parsed > 0
 }
 
-func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, envName string, priceDays, pnlMinutes int, now time.Time, source analysisSourceStatus, binanceTrades []analysisTrade) (analysisResponse, error) {
+func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, gateAPIID, envName string, priceDays, pnlMinutes int, now time.Time, source analysisSourceStatus, binanceTrades, gateTrades []analysisTrade, gatePositions []analysisPositionTrade) (analysisResponse, error) {
 	priceLimit := priceDays * 24
 	balanceLimit := priceDays*24*60 + 1
 	priceSince := now.AddDate(0, 0, -priceDays)
@@ -2154,7 +2299,7 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, envNa
 	if err != nil {
 		return analysisResponse{}, err
 	}
-	trades := make([]analysisTrade, 0, len(fills)+len(binanceTrades))
+	trades := make([]analysisTrade, 0, len(fills)+len(binanceTrades)+len(gateTrades))
 	for _, fill := range fills {
 		trade, ok := analysisTradeFromOKXFill(fill)
 		if ok {
@@ -2162,15 +2307,20 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, envNa
 		}
 	}
 	trades = append(trades, binanceTrades...)
+	positionTradesInput := append([]analysisTrade(nil), trades...)
+	trades = append(trades, gateTrades...)
 	trades = aggregateAnalysisTrades(trades)
 	enrichAnalysisTrades(cfg, trades, s.Orders.List(10000))
 	sortAnalysisTrades(trades)
-	positionTrades := buildAnalysisPositionTrades(cfg, trades, pnlSince)
+	positionTrades := buildAnalysisPositionTrades(cfg, positionTradesInput, pnlSince)
+	positionTrades = append(positionTrades, gatePositions...)
+	sortAnalysisPositionTrades(positionTrades)
 	summary, exchangeSummaries, symbols := computeStats(cfg, positionTrades, trades, pnlSince)
 	return analysisResponse{
 		OK:           true,
 		APIID:        apiID,
 		BinanceAPIID: binanceAPIID,
+		GateAPIID:    gateAPIID,
 		Env:          envName,
 		PriceDays:    priceDays,
 		PNLDays:      pnlDays,
@@ -2181,7 +2331,7 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, envNa
 		Cache: analysisCacheStatus{
 			Hit:      false,
 			Stale:    false,
-			CacheKey: analysisCacheKey(apiID, binanceAPIID, envName, priceDays, pnlMinutes),
+			CacheKey: analysisCacheKey(apiID, binanceAPIID, envName, priceDays, pnlMinutes, gateAPIID),
 		},
 		Source:            source,
 		PricePoints:       points,
@@ -2192,6 +2342,42 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, envNa
 		Trades:            trades,
 		PositionTrades:    positionTrades,
 	}, nil
+}
+
+func (s *Server) analysisFromExternalData(cfg config.Config, apiID, binanceAPIID, gateAPIID, envName string, priceDays, pnlMinutes int, now time.Time, source analysisSourceStatus, balancePoints []analysisBalancePoint, binanceTrades, gateTrades []analysisTrade, gatePositions []analysisPositionTrade) analysisResponse {
+	pnlMinutes = normalizeAnalysisPNLMinutes(pnlMinutes)
+	pnlDays := analysisPNLDaysForMinutes(pnlMinutes)
+	pnlSince := analysisPNLSince(now, pnlMinutes)
+	trades := make([]analysisTrade, 0, len(binanceTrades)+len(gateTrades))
+	trades = append(trades, binanceTrades...)
+	trades = append(trades, gateTrades...)
+	trades = aggregateAnalysisTrades(trades)
+	enrichAnalysisTrades(cfg, trades, s.Orders.List(10000))
+	sortAnalysisTrades(trades)
+	positionTrades := buildAnalysisPositionTrades(cfg, binanceTrades, pnlSince)
+	positionTrades = append(positionTrades, gatePositions...)
+	sortAnalysisPositionTrades(positionTrades)
+	summary, exchangeSummaries, symbols := computeStats(cfg, positionTrades, trades, pnlSince)
+	return analysisResponse{
+		OK:                true,
+		APIID:             apiID,
+		BinanceAPIID:      binanceAPIID,
+		GateAPIID:         gateAPIID,
+		Env:               envName,
+		PriceDays:         priceDays,
+		PNLDays:           pnlDays,
+		PNLMinutes:        pnlMinutes,
+		PriceInstID:       analysisPriceInstID,
+		PriceBar:          analysisPriceBar,
+		RefreshedAt:       now.UTC(),
+		Source:            source,
+		BalancePoints:     balancePoints,
+		Summary:           summary,
+		ExchangeSummaries: exchangeSummaries,
+		Symbols:           symbols,
+		Trades:            trades,
+		PositionTrades:    positionTrades,
+	}
 }
 
 func (s *Server) balanceOverviewForOKX(ctx context.Context, cfg config.Config, envName, requestedAPIID string, minutes int, now time.Time) exchangeBalanceOverview {

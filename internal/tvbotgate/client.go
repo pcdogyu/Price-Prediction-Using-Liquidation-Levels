@@ -253,6 +253,9 @@ type MyTrade struct {
 	Text       string `json:"text"`
 	CloseSize  string `json:"close_size"`
 	TradeValue string `json:"trade_value"`
+	Fee        string `json:"fee"`
+	PointFee   string `json:"point_fee"`
+	Role       string `json:"role"`
 }
 
 func (t *MyTrade) UnmarshalJSON(data []byte) error {
@@ -266,6 +269,9 @@ func (t *MyTrade) UnmarshalJSON(data []byte) error {
 		Text       json.RawMessage `json:"text"`
 		CloseSize  json.RawMessage `json:"close_size"`
 		TradeValue json.RawMessage `json:"trade_value"`
+		Fee        json.RawMessage `json:"fee"`
+		PointFee   json.RawMessage `json:"point_fee"`
+		Role       json.RawMessage `json:"role"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -277,6 +283,66 @@ func (t *MyTrade) UnmarshalJSON(data []byte) error {
 		{&raw.ID, &t.ID}, {&raw.Contract, &t.Contract}, {&raw.OrderID, &t.OrderID},
 		{&raw.Size, &t.Size}, {&raw.Price, &t.Price}, {&raw.CreateTime, &t.CreateTime},
 		{&raw.Text, &t.Text}, {&raw.CloseSize, &t.CloseSize}, {&raw.TradeValue, &t.TradeValue},
+		{&raw.Fee, &t.Fee}, {&raw.PointFee, &t.PointFee}, {&raw.Role, &t.Role},
+	}
+	for _, field := range fields {
+		value, err := gateJSONText(*field.raw)
+		if err != nil {
+			return err
+		}
+		*field.out = value
+	}
+	return nil
+}
+
+// PositionClose is a Gate futures position-close record. Gate returns the
+// decimal and timestamp fields as either JSON numbers or strings depending on
+// the endpoint/version, so all values used by the analysis layer are kept as
+// normalized text.
+type PositionClose struct {
+	Time          string `json:"time"`
+	Contract      string `json:"contract"`
+	Side          string `json:"side"`
+	Pnl           string `json:"pnl"`
+	PnlPnl        string `json:"pnl_pnl"`
+	PnlFund       string `json:"pnl_fund"`
+	PnlFee        string `json:"pnl_fee"`
+	Text          string `json:"text"`
+	MaxSize       string `json:"max_size"`
+	AccumSize     string `json:"accum_size"`
+	FirstOpenTime string `json:"first_open_time"`
+	LongPrice     string `json:"long_price"`
+	ShortPrice    string `json:"short_price"`
+}
+
+func (p *PositionClose) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Time          json.RawMessage `json:"time"`
+		Contract      json.RawMessage `json:"contract"`
+		Side          json.RawMessage `json:"side"`
+		Pnl           json.RawMessage `json:"pnl"`
+		PnlPnl        json.RawMessage `json:"pnl_pnl"`
+		PnlFund       json.RawMessage `json:"pnl_fund"`
+		PnlFee        json.RawMessage `json:"pnl_fee"`
+		Text          json.RawMessage `json:"text"`
+		MaxSize       json.RawMessage `json:"max_size"`
+		AccumSize     json.RawMessage `json:"accum_size"`
+		FirstOpenTime json.RawMessage `json:"first_open_time"`
+		LongPrice     json.RawMessage `json:"long_price"`
+		ShortPrice    json.RawMessage `json:"short_price"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fields := []struct {
+		raw *json.RawMessage
+		out *string
+	}{
+		{&raw.Time, &p.Time}, {&raw.Contract, &p.Contract}, {&raw.Side, &p.Side},
+		{&raw.Pnl, &p.Pnl}, {&raw.PnlPnl, &p.PnlPnl}, {&raw.PnlFund, &p.PnlFund},
+		{&raw.PnlFee, &p.PnlFee}, {&raw.Text, &p.Text}, {&raw.MaxSize, &p.MaxSize},
+		{&raw.AccumSize, &p.AccumSize}, {&raw.FirstOpenTime, &p.FirstOpenTime},
+		{&raw.LongPrice, &p.LongPrice}, {&raw.ShortPrice, &p.ShortPrice},
 	}
 	for _, field := range fields {
 		value, err := gateJSONText(*field.raw)
@@ -427,6 +493,63 @@ func (c Client) MyTrades(ctx context.Context, contract string) ([]MyTrade, error
 	}
 	var out []MyTrade
 	err := c.Do(ctx, http.MethodGet, "/futures/usdt/my_trades", q, nil, true, &out)
+	return out, err
+}
+
+func gateTimeQuery(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return strconv.FormatInt(value.UTC().Unix(), 10)
+}
+
+func (c Client) MyTradesTimerange(ctx context.Context, contract string, from, to time.Time, limit, offset int) ([]MyTrade, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := url.Values{
+		"limit":  []string{strconv.Itoa(limit)},
+		"offset": []string{strconv.Itoa(offset)},
+	}
+	if value := gateTimeQuery(from); value != "" {
+		q.Set("from", value)
+	}
+	if value := gateTimeQuery(to); value != "" {
+		q.Set("to", value)
+	}
+	if strings.TrimSpace(contract) != "" {
+		q.Set("contract", contract)
+	}
+	var out []MyTrade
+	err := c.Do(ctx, http.MethodGet, "/futures/usdt/my_trades_timerange", q, nil, true, &out)
+	return out, err
+}
+
+func (c Client) PositionCloses(ctx context.Context, contract string, from, to time.Time, limit, offset int) ([]PositionClose, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := url.Values{
+		"limit":  []string{strconv.Itoa(limit)},
+		"offset": []string{strconv.Itoa(offset)},
+	}
+	if value := gateTimeQuery(from); value != "" {
+		q.Set("from", value)
+	}
+	if value := gateTimeQuery(to); value != "" {
+		q.Set("to", value)
+	}
+	if strings.TrimSpace(contract) != "" {
+		q.Set("contract", contract)
+	}
+	var out []PositionClose
+	err := c.Do(ctx, http.MethodGet, "/futures/usdt/position_close", q, nil, true, &out)
 	return out, err
 }
 func (c Client) OpenOrders(ctx context.Context, contract string) ([]Order, error) {
