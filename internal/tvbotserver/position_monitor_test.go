@@ -193,29 +193,61 @@ func TestPositionMonitorGateSubmitsFullMarketCloseAtThresholds(t *testing.T) {
 	srv := newTestServer(t)
 	var mu sync.Mutex
 	var orders []map[string]any
+	positionOpen := map[string]bool{"BTC_USDT": true, "ETH_USDT": true}
+	pending := map[string]bool{"BTC_USDT": true, "ETH_USDT": true}
+	var canceledContracts []string
+	cancelDone := make(chan string, 2)
 	gateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("KEY") != "gate-key" {
 			t.Fatalf("missing Gate API key for %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v4/futures/usdt/positions":
-			_, _ = w.Write([]byte(`[
-				{"contract":"BTC_USDT","size":"2","entry_price":"100","mark_price":"106","unrealised_pnl":"12","margin":"10"},
-				{"contract":"ETH_USDT","size":"-3","entry_price":"100","mark_price":"109","unrealised_pnl":"-27","margin":"10"},
-				{"contract":"DOGE_USDT","size":"1","entry_price":"0.1","mark_price":"0.101","unrealised_pnl":"0.1","margin":"10"},
-				{"contract":"SOL_USDT","size":"0","entry_price":"100","mark_price":"100","unrealised_pnl":"0","margin":"10"}
-			]`))
-		case "/api/v4/futures/usdt/orders":
+		switch {
+		case r.URL.Path == "/api/v4/futures/usdt/positions":
+			mu.Lock()
+			btcOpen, ethOpen := positionOpen["BTC_USDT"], positionOpen["ETH_USDT"]
+			mu.Unlock()
+			positions := "["
+			if btcOpen {
+				positions += `{"contract":"BTC_USDT","size":"2","entry_price":"100","mark_price":"106","unrealised_pnl":"12","margin":"10"},`
+			}
+			if ethOpen {
+				positions += `{"contract":"ETH_USDT","size":"-3","entry_price":"100","mark_price":"109","unrealised_pnl":"-27","margin":"10"},`
+			}
+			positions += `{"contract":"DOGE_USDT","size":"1","entry_price":"0.1","mark_price":"0.101","unrealised_pnl":"0.1","margin":"10"},`
+			positions += `{"contract":"SOL_USDT","size":"0","entry_price":"100","mark_price":"100","unrealised_pnl":"0","margin":"10"}]`
+			_, _ = w.Write([]byte(positions))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/futures/usdt/orders":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
 			mu.Lock()
 			orders = append(orders, body)
+			if contract, ok := body["contract"].(string); ok {
+				positionOpen[contract] = false
+			}
 			idx := len(orders)
 			mu.Unlock()
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"id":"gate-auto-%d","contract":%q,"text":%q}`, idx, body["contract"], body["text"])))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/futures/usdt/orders":
+			contract := r.URL.Query().Get("contract")
+			mu.Lock()
+			open := pending[contract]
+			mu.Unlock()
+			if open {
+				_, _ = w.Write([]byte(fmt.Sprintf(`[{"id":"pending-%s","contract":%q,"size":"1","left":"1","status":"open"}]`, strings.ToLower(contract), contract)))
+			} else {
+				_, _ = w.Write([]byte(`[]`))
+			}
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v4/futures/usdt/orders/"):
+			contract := r.URL.Query().Get("contract")
+			mu.Lock()
+			pending[contract] = false
+			canceledContracts = append(canceledContracts, contract)
+			mu.Unlock()
+			cancelDone <- contract
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"id":%q,"contract":%q,"status":"finished"}`, strings.TrimPrefix(r.URL.Path, "/api/v4/futures/usdt/orders/"), contract)))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}
@@ -245,6 +277,13 @@ func TestPositionMonitorGateSubmitsFullMarketCloseAtThresholds(t *testing.T) {
 	}
 
 	srv.scanPositionMonitor(context.Background())
+	for range 2 {
+		select {
+		case <-cancelDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for Gate auto-close order cleanup")
+		}
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -264,6 +303,9 @@ func TestPositionMonitorGateSubmitsFullMarketCloseAtThresholds(t *testing.T) {
 	}
 	if !seenContracts["BTC_USDT"] || !seenContracts["ETH_USDT"] || seenContracts["DOGE_USDT"] || seenContracts["SOL_USDT"] {
 		t.Fatalf("unexpected Gate close contracts: %#v", seenContracts)
+	}
+	if len(canceledContracts) != 2 || pending["BTC_USDT"] || pending["ETH_USDT"] {
+		t.Fatalf("Gate auto-close cleanup did not cancel both contracts: canceled=%#v pending=%#v", canceledContracts, pending)
 	}
 	blocks, err := srv.Orders.ListActiveCoinpairBlocks(srv.now())
 	if err != nil {

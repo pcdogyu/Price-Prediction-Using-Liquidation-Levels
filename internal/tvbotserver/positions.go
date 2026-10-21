@@ -1301,13 +1301,19 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 		if contract == "" {
 			continue
 		}
+		key := positionCloseKey(trading.ExchangeGate, apiID, position.InstID, position.PosSide)
+		if !positionCloseJobs.start(key) {
+			continue
+		}
 		ack, err := placeGateMarketPositionClose(ctx, cfg, client, contract)
 		if err != nil {
+			positionCloseJobs.done(key)
 			if s.Logger != nil {
 				s.Logger.Warn("failed to submit Gate auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "upl_ratio", ratio, "error", err)
 			}
 			continue
 		}
+		go s.watchGateMarketPositionClose(apiID, client, position)
 		if trigger == "stop_loss" {
 			detectedAt := s.now()
 			eventOrderID := firstNonEmpty(ack.IDString(), ack.Text)
@@ -2202,15 +2208,52 @@ func (s *Server) watchGateLimitPositionClose(apiID string, cfg config.Config, cl
 				continue
 			}
 			if closed {
+				if !active.Partial {
+					s.cancelClosedGatePositionOrders(client, active.Position)
+				}
 				return
 			}
 			active = next
 		case <-timeout.C:
 			if err := fallbackGateMarketPositionClose(cfg, client, active); err != nil {
 				s.logPositionCloseError("Gate limit position close fallback failed", err, active.Position)
+			} else if !active.Partial {
+				s.cancelClosedGatePositionOrders(client, active.Position)
 			}
 			return
 		}
+	}
+}
+
+func (s *Server) watchGateMarketPositionClose(apiID string, client gate.Client, position okx.Position) {
+	key := positionCloseKey(trading.ExchangeGate, apiID, position.InstID, position.PosSide)
+	defer positionCloseJobs.done(key)
+	s.cancelClosedGatePositionOrders(client, position)
+}
+
+func (s *Server) cancelClosedGatePositionOrders(client gate.Client, position okx.Position) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for {
+		_, _, err := currentGateOpenPosition(ctx, client, position.InstID, position.PosSide)
+		if err != nil {
+			if errors.Is(err, errPositionNotOpen) {
+				break
+			}
+			s.logPositionCloseError("failed to confirm Gate position close before canceling pending orders", err, position)
+			return
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			s.logPositionCloseError("Gate position close not confirmed before pending-order cancellation", ctx.Err(), position)
+			return
+		case <-timer.C:
+		}
+	}
+	if err := cancelAllGateContractOrders(ctx, client, position.InstID); err != nil {
+		s.logPositionCloseError("failed to cancel closed Gate position pending orders", err, position)
 	}
 }
 
@@ -6677,14 +6720,14 @@ func binanceLimitClosePrice(ctx context.Context, client binance.Client, position
 }
 
 func (s *Server) watchLimitPositionClose(apiID string, cfg config.Config, client okx.Client, active positionCloseOrder) {
-	s.watchLimitPositionCloseWithOptions(apiID, cfg, client, active, positionClosePollInterval, positionCloseLimitTimeout, false)
+	s.watchLimitPositionCloseWithOptions(apiID, cfg, client, active, positionClosePollInterval, positionCloseLimitTimeout)
 }
 
 func (s *Server) watchAutoProfitLimitPositionClose(apiID string, cfg config.Config, client okx.Client, active positionCloseOrder) {
-	s.watchLimitPositionCloseWithOptions(apiID, cfg, client, active, autoProfitClosePollInterval, autoProfitCloseLimitTimeout, true)
+	s.watchLimitPositionCloseWithOptions(apiID, cfg, client, active, autoProfitClosePollInterval, autoProfitCloseLimitTimeout)
 }
 
-func (s *Server) watchLimitPositionCloseWithOptions(apiID string, cfg config.Config, client okx.Client, active positionCloseOrder, pollInterval, timeoutDuration time.Duration, cancelProtectionOrders bool) {
+func (s *Server) watchLimitPositionCloseWithOptions(apiID string, cfg config.Config, client okx.Client, active positionCloseOrder, pollInterval, timeoutDuration time.Duration) {
 	key := positionCloseKey(trading.ExchangeOKX, apiID, active.Position.InstID, active.Position.PosSide)
 	defer positionCloseJobs.done(key)
 
@@ -6717,7 +6760,9 @@ func (s *Server) watchLimitPositionCloseWithOptions(apiID string, cfg config.Con
 				continue
 			}
 			if closed {
-				s.cancelClosedOKXPositionOrders(client, active.Position, cancelProtectionOrders && !active.Partial)
+				if !active.Partial {
+					s.cancelClosedOKXPositionOrders(client, active.Position)
+				}
 				return
 			}
 			active = next
@@ -6730,15 +6775,15 @@ func (s *Server) watchLimitPositionCloseWithOptions(apiID string, cfg config.Con
 			}
 			if err != nil {
 				s.logPositionCloseError("limit position close fallback failed", err, active.Position)
-			} else {
-				s.cancelClosedOKXPositionOrders(client, active.Position, cancelProtectionOrders && !active.Partial)
+			} else if !active.Partial {
+				s.cancelClosedOKXPositionOrders(client, active.Position)
 			}
 			return
 		}
 	}
 }
 
-func (s *Server) cancelClosedOKXPositionOrders(client okx.Client, position okx.Position, cancelProtectionOrders bool) {
+func (s *Server) cancelClosedOKXPositionOrders(client okx.Client, position okx.Position) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	for {
@@ -6759,13 +6804,8 @@ func (s *Server) cancelClosedOKXPositionOrders(client okx.Client, position okx.P
 		case <-timer.C:
 		}
 	}
-	if err := cancelOKXPositionPendingOrders(ctx, client, position); err != nil {
-		s.logPositionCloseError("failed to cancel closed position pending orders", err, position)
-	}
-	if cancelProtectionOrders {
-		if err := cancelOKXPositionProtectionOrders(ctx, client, position); err != nil {
-			s.logPositionCloseError("failed to cancel closed position protection orders", err, position)
-		}
+	if err := cancelAllOKXInstrumentOrders(ctx, client, position.InstID); err != nil {
+		s.logPositionCloseError("failed to cancel closed OKX position pending orders", err, position)
 	}
 }
 
@@ -7073,15 +7113,46 @@ func (s *Server) watchBinanceLimitPositionClose(apiID string, client binance.Cli
 				continue
 			}
 			if closed {
+				if !active.Partial {
+					s.cancelClosedBinancePositionOrders(client, active.Position)
+				}
 				return
 			}
 			active = next
 		case <-timeout.C:
 			if err := fallbackBinanceMarketPositionClose(client, active); err != nil {
 				s.logPositionCloseError("Binance limit position close fallback failed", err, active.Position)
+			} else if !active.Partial {
+				s.cancelClosedBinancePositionOrders(client, active.Position)
 			}
 			return
 		}
+	}
+}
+
+func (s *Server) cancelClosedBinancePositionOrders(client binance.Client, position okx.Position) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for {
+		_, err := currentBinanceOpenPosition(ctx, client, position.InstID, position.PosSide)
+		if err != nil {
+			if errors.Is(err, errPositionNotOpen) {
+				break
+			}
+			s.logPositionCloseError("failed to confirm Binance position close before canceling pending orders", err, position)
+			return
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			s.logPositionCloseError("Binance position close not confirmed before pending-order cancellation", ctx.Err(), position)
+			return
+		case <-timer.C:
+		}
+	}
+	if err := cancelAllBinanceSymbolOrders(ctx, client, position.InstID); err != nil {
+		s.logPositionCloseError("failed to cancel closed Binance position pending orders", err, position)
 	}
 }
 
