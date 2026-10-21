@@ -194,7 +194,11 @@ func (r ShellRunner) Run(ctx context.Context) (Result, error) {
 	if err := r.runStep(ctx, &result, "git_pull", "git", "pull", "--ff-only"); err != nil {
 		return result, err
 	}
-	if err := r.runStep(ctx, &result, "go_test", "go", "test", "./..."); err != nil {
+	// Keep the release gate bounded in memory on the small production host.
+	// Package tests still cover the complete module; -p 1 only prevents the Go
+	// tool from compiling/running multiple packages concurrently during an
+	// upgrade, which previously allowed the host to terminate the test process.
+	if err := r.runStep(ctx, &result, "go_test", "go", "test", "-p", "1", "./..."); err != nil {
 		return result, err
 	}
 	tmpBinary := r.BinaryPath + ".new"
