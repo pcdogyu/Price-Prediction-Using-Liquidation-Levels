@@ -203,6 +203,22 @@ func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotOrderHistoryLocalizesExchangeErrors(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/orders", nil))
+	for _, want := range []string{
+		`function orderHistoryErrorText(order)`,
+		`该币对不在 " + exchangeName + " " + tradeEnv + " 成交额前 100 范围内（outside_market_top100）`,
+		`当前没有 " + positionText + " 持仓，无法执行平仓（position_not_open）`,
+		`Gate 返回数据格式异常：订单创建时间字段类型不匹配`,
+		`有效数字位数超过 12 位（INVALID_PARAM_VALUE）`,
+		`const sourceExchange = order.source_exchange ? exchangeLabel(order.source_exchange) : "-";`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("order history localization marker missing %q", want)
+		}
+	}
+}
+
 func TestRenderTVBotDashboardUsesFundingPeriods(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/dashboard", nil))
 	for _, want := range []string{

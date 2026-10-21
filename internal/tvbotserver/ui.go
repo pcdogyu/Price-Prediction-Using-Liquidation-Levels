@@ -6244,6 +6244,60 @@ const tvbotHTML = `<!doctype html>
       return labels[status] || status;
     }
 
+    function orderHistoryErrorText(order) {
+      if (!order) return "";
+      const result = order.result || {};
+      const code = String(order.error_code || "").trim();
+      const error = String(order.error || "").trim();
+      const details = (code + " " + error).toLowerCase();
+      if (!details) return "";
+      const targetExchange = normalizeExchange(order.target_exchange || result.target_exchange);
+      const exchangeName = exchangeLabel(targetExchange);
+      const tradeEnv = order.trade_env === "live" ? "实盘" : "模拟盘";
+      const symbol = asText(order.coinpair || order.ticker || result.inst_id);
+      const positionSide = positionSideKind(order.position_side || result.position_side, "");
+      const positionSideText = positionSide === "long" ? "多单" : (positionSide === "short" ? "空单" : "");
+      if (code === "outside_market_top100" || details.includes("outside_market_top100") || details.includes("outside gate demo turnover top 100")) {
+        return "该币对不在 " + exchangeName + " " + tradeEnv + " 成交额前 100 范围内（outside_market_top100）";
+      }
+      if (code === "position_not_open" || details.includes("position is not open")) {
+        const positionText = positionSideText ? symbol + " " + positionSideText : symbol + " 对应方向";
+        return "当前没有 " + positionText + " 持仓，无法执行平仓（position_not_open）";
+      }
+      if (details.includes("decode gate response") || details.includes("cannot unmarshal number") || details.includes("create_time")) {
+        return "Gate 返回数据格式异常：订单创建时间字段类型不匹配，无法解析订单结果（Gate response decode）";
+      }
+      if (details.includes("invalid_param_value") && details.includes("price") && details.includes("digit is greater than 12")) {
+        return exchangeName + " 拒绝委托价格：有效数字位数超过 12 位（INVALID_PARAM_VALUE）";
+      }
+      if (details.includes("invalid_signature")) {
+        return exchangeName + " API 签名无效，请检查 API Key、Secret 和系统时间（INVALID_SIGNATURE）";
+      }
+      if (details.includes("credentials are not configured")) {
+        return "未配置 " + exchangeName + " API 凭据（credentials_not_configured）";
+      }
+      if (details.includes("insufficient") && details.includes("balance")) {
+        return exchangeName + " 账户余额不足，无法下单（insufficient balance）";
+      }
+      if (details.includes("permission") && (details.includes("api") || details.includes("trade"))) {
+        return exchangeName + " API 没有交易权限，请检查账户权限设置（permission denied）";
+      }
+      if (details.includes("rate limit") || details.includes("too many requests")) {
+        return exchangeName + " 接口请求过于频繁，请稍后重试（rate limit）";
+      }
+      if (details.includes("timeout") || details.includes("timed out")) {
+        return exchangeName + " 接口请求超时，请稍后重试（timeout）";
+      }
+      if (details.includes("minimum") && (details.includes("size") || details.includes("quantity") || details.includes("amount"))) {
+        return exchangeName + " 拒绝下单数量：低于交易所允许的最小数量（minimum order size）";
+      }
+      if (/^(gate|binance|okx) api error\s*:/i.test(error)) {
+        return exchangeName + " 接口返回错误，请查看原始 JSON（API error）";
+      }
+      if (code) return "下单失败，原因代码：" + code + "（详细内容请查看原始 JSON）";
+      return "交易所返回错误（详细内容请查看原始 JSON）";
+    }
+
     function orderCanRetry(order) {
       return !!(order && order.signal_id && (order.status === "failed" || order.status === "ignored") && !unsupportedOKXInstrumentMessage(order));
     }
@@ -6275,11 +6329,11 @@ const tvbotHTML = `<!doctype html>
         const okxResult = targetExchange === "okx" && order.result && (order.result.ord_id || order.result.okx_code) ? [order.result.ord_id, order.result.okx_code].filter(Boolean).join(" / ") : "";
         const binanceResult = targetExchange === "binance" && order.result && (order.result.ord_id || order.result.binance_code || order.result.binance_msg) ? [order.result.ord_id, order.result.binance_code, order.result.binance_msg].filter(Boolean).join(" / ") : "";
         const gateResult = targetExchange === "gate" && order.result && (order.result.ord_id || order.result.gate_label || order.result.gate_msg) ? [order.result.ord_id, order.result.gate_label, order.result.gate_msg].filter(Boolean).join(" / ") : "";
-        const errorText = [order.error_code, order.error].filter(Boolean).join(": ");
+        const errorText = orderHistoryErrorText(order);
         const unsupportedMessage = unsupportedOKXInstrumentMessage(order);
         const exchangeResult = unsupportedMessage || okxResult || binanceResult || gateResult || errorText || "-";
         const apiID = order.api_id || (order.result && order.result.api_id);
-        const sourceExchange = order.source_exchange || "-";
+        const sourceExchange = order.source_exchange ? exchangeLabel(order.source_exchange) : "-";
         const tradeEnvText = order.trade_env === "live" ? "实盘" : "模拟";
         const targetText = exchangeLabel(targetExchange) + " " + tradeEnvText + " / " + apiDisplayName(apiID, targetExchange, order.trade_env);
         const tone = order.status === "submitted" ? "ok" : (order.status === "partial" ? "warn" : (order.status === "failed" || order.status === "rejected" ? "bad" : "warn"));
