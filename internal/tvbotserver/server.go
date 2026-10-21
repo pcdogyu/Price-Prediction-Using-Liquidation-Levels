@@ -805,8 +805,16 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 				return
 			}
-			status, err := store.UpdateAccount(binance.CredentialAccountUpdate{
-				ID:              req.ID,
+			existing := store.Status()
+			id := strings.TrimSpace(req.ID)
+			if id == "" {
+				id = strings.TrimSpace(existing.ActiveID)
+			}
+			if id == "" && len(existing.Credentials) > 0 {
+				id = existing.Credentials[0].ID
+			}
+			status, err := store.SaveSingleAccount(binance.CredentialAccountUpdate{
+				ID:              id,
 				Name:            req.Name,
 				Active:          active,
 				PreserveMissing: true,
@@ -832,7 +840,15 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
 				return
 			}
-			status, err := store.UpdateAccount(gate.CredentialAccountUpdate{ID: req.ID, Name: req.Name, Active: active, PreserveMissing: true, Credentials: gate.Credentials{APIKey: req.APIKey, SecretKey: req.SecretKey}})
+			existing := store.Status()
+			id := strings.TrimSpace(req.ID)
+			if id == "" {
+				id = strings.TrimSpace(existing.ActiveID)
+			}
+			if id == "" && len(existing.Credentials) > 0 {
+				id = existing.Credentials[0].ID
+			}
+			status, err := store.SaveSingleAccount(gate.CredentialAccountUpdate{ID: id, Name: req.Name, Active: active, PreserveMissing: true, Credentials: gate.Credentials{APIKey: req.APIKey, SecretKey: req.SecretKey}})
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_api_keys", err.Error())
 				return
@@ -850,8 +866,16 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusServiceUnavailable, "not_configured", "OKX credential store is not configured")
 				return
 			}
-			status, err := store.UpdateAccount(okx.CredentialAccountUpdate{
-				ID:              req.ID,
+			existing := store.Status()
+			id := strings.TrimSpace(req.ID)
+			if id == "" {
+				id = strings.TrimSpace(existing.ActiveID)
+			}
+			if id == "" && len(existing.Credentials) > 0 {
+				id = existing.Credentials[0].ID
+			}
+			status, err := store.SaveSingleAccount(okx.CredentialAccountUpdate{
+				ID:              id,
 				Name:            req.Name,
 				Active:          active,
 				PreserveMissing: true,

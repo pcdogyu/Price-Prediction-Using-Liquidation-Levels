@@ -158,6 +158,47 @@ func (s *CredentialStore) UpdateAccount(update CredentialAccountUpdate) (Credent
 	return s.statusLocked(), nil
 }
 
+// SaveSingleAccount replaces all configured accounts for this exchange and
+// environment with the supplied account. It is used by the unified API-key
+// page, which intentionally exposes one account per exchange/environment.
+func (s *CredentialStore) SaveSingleAccount(update CredentialAccountUpdate) (CredentialStatus, error) {
+	id := normalizeCredentialID(update.ID)
+	creds := trimCredentials(update.Credentials)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, found := s.accounts[id]
+	if update.PreserveMissing && found {
+		if creds.APIKey == "" {
+			creds.APIKey = existing.Credentials.APIKey
+		}
+		if creds.SecretKey == "" {
+			creds.SecretKey = existing.Credentials.SecretKey
+		}
+	}
+	if !credentialsConfigured(creds) {
+		return CredentialStatus{}, errors.New("api_key and secret_key are required")
+	}
+	name := strings.TrimSpace(update.Name)
+	if name == "" && found {
+		name = existing.Name
+	}
+	if name == "" {
+		name = id
+	}
+	s.accounts = map[string]credentialAccount{id: {
+		ID: id, Name: name, Credentials: creds, Source: "file", UpdatedAt: time.Now().UTC(),
+	}}
+	s.activeID = id
+	if s.path != "" {
+		if err := s.saveLocked(); err != nil {
+			return CredentialStatus{}, err
+		}
+	}
+	return s.statusLocked(), nil
+}
+
 func (s *CredentialStore) RenameAccount(oldID, newID string) (CredentialStatus, error) {
 	oldID = normalizeCredentialID(oldID)
 	if strings.TrimSpace(newID) == "" {

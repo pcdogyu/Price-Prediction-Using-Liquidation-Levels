@@ -185,10 +185,11 @@ func TestRoutes(t *testing.T) {
 	if !bytes.Contains(ui.Body.Bytes(), []byte("OKX Bot")) || !bytes.Contains(ui.Body.Bytes(), []byte("/tvbot/config")) {
 		t.Fatalf("tvbot ui body does not look like dashboard")
 	}
-	if !bytes.Contains(ui.Body.Bytes(), []byte("data-rename-active-api-id")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("renameActiveAPIID")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte(`method: "PATCH"`)) {
-		t.Fatalf("tvbot ui should include API ID rename controls")
+	if bytes.Contains(ui.Body.Bytes(), []byte("data-rename-active-api-id")) ||
+		bytes.Contains(ui.Body.Bytes(), []byte("renameActiveAPIID")) ||
+		bytes.Contains(ui.Body.Bytes(), []byte(`id="add-api-key"`)) ||
+		bytes.Contains(ui.Body.Bytes(), []byte(`id="api-key-accounts"`)) {
+		t.Fatalf("tvbot ui should not include multi-account API controls")
 	}
 	if !bytes.Contains(ui.Body.Bytes(), []byte(`id="order-info-status" hidden`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(".status[hidden]")) ||
@@ -2612,6 +2613,30 @@ func TestTVBotAPIKeysSaveAndMask(t *testing.T) {
 	srv.ServeHTTP(get, getReq)
 	if get.Code != http.StatusOK || bytes.Contains(get.Body.Bytes(), []byte("super-secret-value")) || bytes.Contains(get.Body.Bytes(), []byte("phrase-value")) {
 		t.Fatalf("get status=%d body=%s", get.Code, get.Body.String())
+	}
+}
+
+func TestTVBotAPIKeysSaveReplacesAccountsForExchangeAndEnvironment(t *testing.T) {
+	srv := newTestServer(t)
+	put := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/tvbot/api-keys?exchange=okx&env=demo", strings.NewReader(body))
+		req.SetBasicAuth("admin", "Admin123")
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := put(`{"exchange":"okx","env":"demo","id":"first","api_key":"first-okx-key-1234","secret_key":"first-secret","passphrase":"first-pass","active":true}`); rr.Code != http.StatusOK {
+		t.Fatalf("first save status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := put(`{"exchange":"okx","env":"demo","id":"second","api_key":"second-okx-key-5678","secret_key":"second-secret","passphrase":"second-pass","active":true}`); rr.Code != http.StatusOK {
+		t.Fatalf("second save status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodGet, "/tvbot/api-keys?exchange=okx&env=demo", nil)
+	req.SetBasicAuth("admin", "Admin123")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !bytes.Contains(rr.Body.Bytes(), []byte(`"active_id":"second"`)) || !bytes.Contains(rr.Body.Bytes(), []byte("seco...5678")) || bytes.Contains(rr.Body.Bytes(), []byte("first")) || bytes.Contains(rr.Body.Bytes(), []byte("first-secret")) {
+		t.Fatalf("single-account response=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

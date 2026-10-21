@@ -59,31 +59,27 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 	saveButton := strings.Index(page, `id="save-api-keys"`)
 	testButton := strings.Index(page, `id="test-api-keys"`)
-	addButton := strings.Index(page, `id="add-api-key"`)
-	apiList := strings.Index(page, `id="api-key-accounts"`)
-	operationHeader := strings.Index(page, `<th>操作</th>`)
-	deleteButton := strings.Index(page, `data-delete-api-id=`)
-	apiIDControl := strings.Index(page, `class="api-id-control"`)
-	if saveButton < 0 || testButton < 0 || addButton < 0 || apiList < 0 || operationHeader < 0 || deleteButton < 0 || apiIDControl >= 0 || !(testButton < saveButton && saveButton < addButton) || !(operationHeader < apiList && apiList < deleteButton) {
-		t.Fatalf("API key controls should put per-row delete in the rightmost list column and test/save before add: list=%d operation=%d delete=%d oldControl=%d save=%d test=%d add=%d", apiList, operationHeader, deleteButton, apiIDControl, saveButton, testButton, addButton)
+	environmentTabs := strings.Index(page, `id="api-key-environment-tabs"`)
+	accountName := strings.Index(page, `<label>账户名称<input id="key-name"`)
+	if saveButton < 0 || testButton < 0 || strings.Contains(page, `id="add-api-key"`) || strings.Contains(page, `id="key-selected"`) || strings.Contains(page, `id="api-key-accounts"`) || strings.Contains(page, `data-delete-api-id=`) || strings.Contains(page, `data-rename-active-api-id=`) || environmentTabs < 0 || accountName < 0 || !(environmentTabs < accountName) || !(testButton < saveButton) || !strings.Contains(page, `id="save-api-keys" disabled`) {
+		t.Fatalf("API key page should expose one account form with environment before account name: env=%d name=%d save=%d test=%d", environmentTabs, accountName, saveButton, testButton)
 	}
 	for _, want := range []string{
 		`function fillAPIForm(id, preserveCredentials)`,
 		`renderAPIKeys(true);`,
 		`const apiKey = preserveCredentials ? $("key-api").value : "";`,
 		`const secretKey = preserveCredentials ? $("key-secret").value : "";`,
-		`function testSavedAPIKey(exchange, env, id)`,
 		`apiKeyTestEnv`,
 		`apiKeyTestStale`,
 		`apiKeyTestError`,
+		`apiKeyTestFingerprint`,
+		`apiKeyTestHasNormalBalance`,
+		`apiKeyTestMatchesCurrentForm`,
+		`updateAPIKeySaveState`,
 		`zeroTime(status.updated_at) ? "-" : status.updated_at`,
-		`data-delete-api-id=`,
-		`async function deleteAPIKey(apiID)`,
-		`button.dataset.deleteApiId`,
-		`colspan="5"`,
 	} {
 		if !strings.Contains(page, want) {
-			t.Fatalf("API key form should preserve entered credentials after saving; missing %q", want)
+			t.Fatalf("API key form is missing single-account test gate marker %q", want)
 		}
 	}
 	saveStart := strings.Index(page, "async function saveAPIKeys()")
@@ -93,17 +89,12 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 	saveFunction := page[saveStart:testStart]
 	for _, want := range []string{
-		`await testSavedAPIKey(exchange, env, state.selectedAPIID);`,
-		`state.apiKeyTestStale = !!state.apiKeyTest;`,
-		`余额已刷新`,
-		`余额刷新失败`,
+		`if (!apiKeyTestMatchesCurrentForm())`,
+		`请先测试 API，并确认返回有效的 USDT 余额`,
 	} {
 		if !strings.Contains(saveFunction, want) {
 			t.Fatalf("API key save flow missing %q", want)
 		}
-	}
-	if strings.Contains(saveFunction, `state.apiKeyTest = null`) {
-		t.Fatal("API key save flow should preserve the previous balance result until saved credentials are retested")
 	}
 	if strings.Contains(page, "清算墙雷达") || strings.Contains(page, `class="brand"`) || strings.Contains(page, `class="liquidation-links"`) || strings.Contains(page, `class="app-logo"`) {
 		t.Fatal("tvbot header still contains the removed product name or legacy navigation classes")

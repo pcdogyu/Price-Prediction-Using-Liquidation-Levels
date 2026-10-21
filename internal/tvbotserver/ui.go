@@ -737,7 +737,15 @@ const tvbotHTML = `<!doctype html>
       gap: 6px;
       align-items: center;
       flex-wrap: wrap;
-      margin-top: 8px;
+    }
+    .api-key-environment-field {
+      display: grid;
+      gap: 6px;
+      align-content: start;
+    }
+    .api-key-environment-field > span {
+      color: var(--muted);
+      font-size: 12px;
     }
     .environment-tabs button {
       border: 1px solid var(--line);
@@ -1817,10 +1825,6 @@ const tvbotHTML = `<!doctype html>
       <div class="section-head">
         <div>
           <h2>API Key</h2>
-          <div class="environment-tabs" id="api-key-environment-tabs" role="group" aria-label="交易环境">
-            <button type="button" data-api-key-env="demo" aria-selected="true">模拟盘</button>
-            <button type="button" data-api-key-env="live">实盘</button>
-          </div>
           <div class="exchange-tabs" id="api-key-exchange-tabs">
             <button type="button" data-api-key-exchange="okx" aria-selected="true">OKX</button>
             <button type="button" data-api-key-exchange="binance">Binance</button>
@@ -1831,9 +1835,15 @@ const tvbotHTML = `<!doctype html>
       <div class="api-key-layout">
         <div class="api-key-form">
           <div class="grid two">
-            <label>交易 API<select id="key-selected"></select></label>
+            <div class="api-key-environment-field">
+              <span>交易环境</span>
+              <div class="environment-tabs" id="api-key-environment-tabs" role="group" aria-label="交易环境">
+                <button type="button" data-api-key-env="demo" aria-selected="true">模拟盘</button>
+                <button type="button" data-api-key-env="live">实盘</button>
+              </div>
+            </div>
             <label>账户名称<input id="key-name" autocomplete="off" spellcheck="false"></label>
-            <label>API ID<input id="key-id" autocomplete="off" spellcheck="false" placeholder="default"></label>
+            <label>API ID<input id="key-id" autocomplete="off" spellcheck="false" placeholder="default" readonly></label>
             <label class="check"><input id="key-active" type="checkbox">设为交易 API</label>
           </div>
           <div class="grid api-key-inputs">
@@ -1843,19 +1853,13 @@ const tvbotHTML = `<!doctype html>
           </div>
           <div class="actions api-key-actions">
             <button class="btn success" type="button" id="test-api-keys">测试 API</button>
-            <button class="btn primary" type="button" id="save-api-keys">保存 API Key</button>
-            <button class="btn" type="button" id="add-api-key">新增 API</button>
+            <button class="btn primary" type="button" id="save-api-keys" disabled>保存 API Key</button>
           </div>
         </div>
         <div>
           <h3>当前状态</h3>
           <table style="margin-top:10px">
             <tbody id="api-key-status"></tbody>
-          </table>
-          <h3 style="margin-top:14px">API 列表</h3>
-          <table style="margin-top:10px">
-            <thead><tr><th>API ID</th><th>名称</th><th>状态</th><th>API Key</th><th>操作</th></tr></thead>
-            <tbody id="api-key-accounts"></tbody>
           </table>
         </div>
       </div>
@@ -2153,6 +2157,7 @@ const tvbotHTML = `<!doctype html>
       apiKeyTestEnv: "demo",
       apiKeyTestStale: false,
       apiKeyTestError: null,
+      apiKeyTestFingerprint: "",
       orders: [],
       ordersTotal: 0,
       ordersPage: 1,
@@ -2575,6 +2580,24 @@ const tvbotHTML = `<!doctype html>
     function initialExchangeSelection() {
       const requested = new URLSearchParams(window.location.search).get("exchange");
       return requested ? normalizeExchange(requested) : storedSelectedExchange();
+    }
+
+    function requestedPositionEnvironment() {
+      const requested = String(new URLSearchParams(window.location.search).get("env") || "").trim().toLowerCase();
+      return requested === "live" || requested === "demo" ? requested : "";
+    }
+
+    function positionEnvironment() {
+      const requested = requestedPositionEnvironment();
+      if (requested) return requested;
+      const configured = state.config && state.config.trading ? String(state.config.trading.env || "").trim().toLowerCase() : "";
+      return configured === "live" ? "live" : "demo";
+    }
+
+    function addRequestedPositionEnvironment(body) {
+      const env = requestedPositionEnvironment();
+      if (env) body.env = env;
+      return body;
     }
 
     function sectionActive(tabID) {
@@ -3708,8 +3731,10 @@ const tvbotHTML = `<!doctype html>
 
     async function loadPositionExchange(exchange, forceRefresh) {
       const qs = new URLSearchParams({ inst_type: "SWAP", exchange });
-      const apiID = activeAPIID(exchange);
+      const requestedEnv = requestedPositionEnvironment();
+      const apiID = activeAPIID(exchange, positionEnvironment());
       if (apiID) qs.set("api_id", apiID);
+      if (requestedEnv) qs.set("env", requestedEnv);
       if (forceRefresh) qs.set("refresh", "true");
       try {
         const result = await api("/tvbot/positions?" + qs.toString());
@@ -3722,8 +3747,10 @@ const tvbotHTML = `<!doctype html>
 
     async function loadPendingOrdersExchange(exchange) {
       const qs = new URLSearchParams({ inst_type: "SWAP", exchange });
-      const apiID = activeAPIID(exchange);
+      const requestedEnv = requestedPositionEnvironment();
+      const apiID = activeAPIID(exchange, positionEnvironment());
       if (apiID) qs.set("api_id", apiID);
+      if (requestedEnv) qs.set("env", requestedEnv);
       try {
         const result = await api("/tvbot/pending-orders?" + qs.toString());
         result.exchange = normalizeExchange(result.exchange || exchange);
@@ -4472,8 +4499,7 @@ const tvbotHTML = `<!doctype html>
       const status = apiKeyStatus(exchange);
       state.apiKeys = status;
       const accounts = apiAccounts(exchange);
-      const select = $("key-selected");
-      const previous = state.selectedAPIIDs[exchange] || select.value || status.active_id || "";
+      const previous = state.selectedAPIIDs[exchange] || status.active_id || "";
       document.querySelectorAll("[data-api-key-exchange]").forEach((button) => {
         button.setAttribute("aria-selected", normalizeExchange(button.dataset.apiKeyExchange) === exchange ? "true" : "false");
         const target = configuredTradeTarget();
@@ -4487,33 +4513,53 @@ const tvbotHTML = `<!doctype html>
       $("key-api-label").childNodes[0].nodeValue = exchangeLabel(exchange) + " API Key";
       $("key-secret-label").childNodes[0].nodeValue = exchangeLabel(exchange) + " Secret Key";
       $("key-passphrase-label").style.display = exchange === "okx" ? "" : "none";
-      select.innerHTML = accounts.map((account) => '<option value="' + escapeHTML(account.id) + '">' + escapeHTML(account.id + (account.name ? " - " + account.name : "") + (account.active ? " (交易)" : "")) + '</option>').join("");
-      if (!accounts.length) {
-        select.innerHTML = '<option value="default">default - 新 API</option>';
-      }
       const selected = accounts.some((account) => account.id === previous) ? previous : (status.active_id || (accounts[0] && accounts[0].id) || "default");
-      select.value = selected;
       state.selectedAPIID = selected;
       state.selectedAPIIDs[exchange] = selected;
       fillAPIForm(selected, preserveCredentials);
       renderAPIKeyStatus(selected);
-      $("api-key-accounts").innerHTML = accounts.map((account) => {
-        const escapedID = escapeHTML(account.id);
-        return "<tr>" +
-          "<td>" + escapedID + "</td>" +
-          "<td>" + escapeHTML(account.name || "-") + "</td>" +
-          "<td>" + pill(account.active ? "交易 API" : (account.configured ? "已配置" : "未配置"), account.active ? "ok" : (account.configured ? "warn" : "bad")) + "</td>" +
-          "<td>" + escapeHTML(account.api_key_masked || "-") + "</td>" +
-          '<td class="api-key-action-cell"><button class="btn danger small" type="button" data-delete-api-id="' + escapedID + '">删除</button></td>' +
-          "</tr>";
-      }).join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
+      updateAPIKeySaveState();
     }
 
     function activeAPIIDStatusHTML(activeID) {
       const apiID = String(activeID || "").trim();
       if (!apiID) return "-";
       const escaped = escapeHTML(apiID);
-      return '<div class="api-key-id-row"><span class="api-key-active-id">' + escaped + '</span><button class="btn small" type="button" data-rename-active-api-id="' + escaped + '" title="修改当前交易 API 的 API ID">改名</button></div>';
+      return '<span class="api-key-active-id">' + escaped + '</span>';
+    }
+
+    function apiKeyFormFingerprint(exchange, env) {
+      return JSON.stringify({
+        exchange: normalizeExchange(exchange),
+        env: env === "live" ? "live" : "demo",
+        id: $("key-id").value.trim(),
+        name: $("key-name").value.trim(),
+        api_key: $("key-api").value.trim(),
+        secret_key: $("key-secret").value.trim(),
+        passphrase: normalizeExchange(exchange) === "okx" ? $("key-passphrase").value.trim() : "",
+        active: $("key-active").checked
+      });
+    }
+
+    function apiKeyTestHasNormalBalance(result) {
+      if (!result || result.ok !== true || result.usdt_balance_found !== true) return false;
+      const balance = result.usdt_balance || {};
+      const equity = Number(balance.eq);
+      return Number.isFinite(equity) && equity >= 0;
+    }
+
+    function apiKeyTestMatchesCurrentForm() {
+      const exchange = normalizeExchange(state.apiKeyExchange);
+      const env = state.apiKeyEnv === "live" ? "live" : "demo";
+      return apiKeyTestHasNormalBalance(state.apiKeyTest) &&
+        state.apiKeyTestExchange === exchange &&
+        state.apiKeyTestEnv === env &&
+        state.apiKeyTestFingerprint === apiKeyFormFingerprint(exchange, env);
+    }
+
+    function updateAPIKeySaveState() {
+      const button = $("save-api-keys");
+      if (button) button.disabled = !apiKeyTestMatchesCurrentForm();
     }
 
     function renderAPIKeyStatus(selected) {
@@ -4535,7 +4581,7 @@ const tvbotHTML = `<!doctype html>
       if (status.error) rows.push(["读取错误", status.error]);
       const test = state.apiKeyTest;
       const testID = state.apiKeyTestID || (test && test.api_id) || "";
-      const testMatches = test && state.apiKeyTestExchange === exchange && state.apiKeyTestEnv === env && (!selected || !testID || selected === testID || test.api_id === "input");
+      const testMatches = test && state.apiKeyTestExchange === exchange && state.apiKeyTestEnv === env && state.apiKeyTestFingerprint === apiKeyFormFingerprint(exchange, env) && (!selected || !testID || selected === testID || test.api_id === "input");
       if (testMatches) {
         const balance = test.usdt_balance || {};
         rows.push(["测试 API", test.api_id || testID || "-"]);
@@ -4554,6 +4600,7 @@ const tvbotHTML = `<!doctype html>
         rows.push(["余额刷新", (state.apiKeyTest ? "失败（沿用上次结果）: " : "失败: ") + testError.message]);
       }
       $("api-key-status").innerHTML = rows.map((row) => "<tr><th>" + escapeHTML(row[0]) + "</th><td>" + (row[2] ? row[1] : escapeHTML(row[1])) + "</td></tr>").join("");
+      updateAPIKeySaveState();
     }
 
     function apiKeyStatus(exchange) {
@@ -4579,14 +4626,17 @@ const tvbotHTML = `<!doctype html>
       return status && status.configured ? (status.active_id || "已配置") : "未配置";
     }
 
-    function activeAPIID(exchange) {
-      const status = apiKeyStatus(exchange);
+    function activeAPIID(exchange, env) {
+      const status = env === undefined ? apiKeyStatus(exchange) : apiKeyStatusForEnv(exchange, env);
       return status && status.configured && status.active_id ? status.active_id : "";
     }
 
     function apiAccounts(exchange, env) {
       const status = apiKeyStatusForEnv(exchange || state.apiKeyExchange, env === undefined ? state.apiKeyEnv : env);
-      return status && Array.isArray(status.credentials) ? status.credentials : [];
+      const accounts = status && Array.isArray(status.credentials) ? status.credentials : [];
+      if (accounts.length <= 1) return accounts;
+      const active = accounts.find((account) => account.id === status.active_id);
+      return active ? [active] : [accounts[0]];
     }
 
     function selectedAPIAccount(id, exchange, env) {
@@ -4611,6 +4661,7 @@ const tvbotHTML = `<!doctype html>
       $("key-api").value = apiKey;
       $("key-secret").value = secretKey;
       $("key-passphrase").value = passphrase;
+      updateAPIKeySaveState();
     }
 
     function renderTemplateAPIs() {
@@ -6528,18 +6579,13 @@ const tvbotHTML = `<!doctype html>
 
     function applyAPIKeyTestResult(result, exchange, env, requestedID) {
       state.apiKeyTest = result;
-      state.apiKeyTestID = result.api_id || requestedID || $("key-selected").value || "";
+      state.apiKeyTestID = result.api_id || requestedID || state.selectedAPIID || "";
       state.apiKeyTestExchange = exchange;
       state.apiKeyTestEnv = env;
       state.apiKeyTestStale = false;
       state.apiKeyTestError = null;
+      state.apiKeyTestFingerprint = apiKeyFormFingerprint(exchange, env);
       renderAPIKeyStatus(requestedID || state.selectedAPIID || result.api_id || "");
-    }
-
-    async function testSavedAPIKey(exchange, env, id) {
-      const result = await requestAPIKeyTest(apiKeyTestBody(exchange, env, id, false));
-      applyAPIKeyTestResult(result, exchange, env, id);
-      return result;
     }
 
     function clearAPIKeyTestState(exchange) {
@@ -6549,9 +6595,16 @@ const tvbotHTML = `<!doctype html>
       state.apiKeyTestEnv = state.apiKeyEnv === "live" ? "live" : "demo";
       state.apiKeyTestStale = false;
       state.apiKeyTestError = null;
+      state.apiKeyTestFingerprint = "";
+      updateAPIKeySaveState();
     }
 
     async function saveAPIKeys() {
+      if (!apiKeyTestMatchesCurrentForm()) {
+        toast("请先测试 API，并确认返回有效的 USDT 余额");
+        updateAPIKeySaveState();
+        return;
+      }
       const exchange = normalizeExchange(state.apiKeyExchange);
       const env = state.apiKeyEnv === "live" ? "live" : "demo";
       const body = {
@@ -6580,87 +6633,31 @@ const tvbotHTML = `<!doctype html>
       }
       state.selectedAPIID = body.id || state.apiKeys.active_id || "default";
       state.selectedAPIIDs[exchange] = state.selectedAPIID;
-      state.apiKeyTestStale = !!state.apiKeyTest;
       state.apiKeyTestError = null;
       renderAPIKeys(true);
       renderTemplateAPIs();
       renderPositionAPIs();
       renderOrders();
       updateMetrics();
-      try {
-        await testSavedAPIKey(exchange, env, state.selectedAPIID);
-        toast(exchangeLabel(exchange) + " API Key 已保存，余额已刷新");
-      } catch (err) {
-        state.apiKeyTestError = { exchange: exchange, env: env, api_id: state.selectedAPIID, message: err.message };
-        state.apiKeyTestStale = !!state.apiKeyTest;
-        renderAPIKeyStatus(state.selectedAPIID);
-        toast(exchangeLabel(exchange) + " API Key 已保存，但余额刷新失败: " + err.message);
-      }
+      toast(exchangeLabel(exchange) + " API Key 已保存");
     }
 
     async function testAPIKeys() {
       const exchange = normalizeExchange(state.apiKeyExchange);
       const env = state.apiKeyEnv === "live" ? "live" : "demo";
       const body = apiKeyTestBody(exchange, env, $("key-id").value.trim(), true);
+      clearAPIKeyTestState(exchange);
       const result = await requestAPIKeyTest(body);
       applyAPIKeyTestResult(result, exchange, env, body.id || state.selectedAPIID || result.api_id || "");
-      toast(exchangeLabel(exchange) + " API 可用");
-    }
-
-    async function deleteAPIKey(apiID) {
-      const exchange = normalizeExchange(state.apiKeyExchange);
-      const env = state.apiKeyEnv === "live" ? "live" : "demo";
-      const id = String(apiID || "").trim();
-      if (!id) return;
-      state.apiKeysByEnvironment[env][exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange) + "&env=" + env + "&id=" + encodeURIComponent(id), { method: "DELETE" });
-      state.apiKeysByExchange = state.apiKeysByEnvironment[env];
-      state.apiKeys = apiKeyStatus(exchange);
-      state.selectedAPIID = state.apiKeys.active_id || "";
-      state.selectedAPIIDs[exchange] = state.selectedAPIID;
-      clearAPIKeyTestState(exchange);
-      renderAPIKeys();
-      renderTemplateAPIs();
-      renderPositionAPIs();
-      renderOrders();
-      updateMetrics();
-      toast("API Key 已删除");
-    }
-
-    async function renameActiveAPIID(button) {
-      const exchange = normalizeExchange(state.apiKeyExchange);
-      const env = state.apiKeyEnv === "live" ? "live" : "demo";
-      const status = apiKeyStatus(exchange);
-      const currentID = (button && button.dataset.renameActiveApiId) || status.active_id || "";
-      if (!currentID) return;
-      const nextID = window.prompt("新的 app id", currentID);
-      if (nextID === null) return;
-      const trimmed = nextID.trim();
-      if (!trimmed) {
-        toast("app id 不能为空");
-        return;
+      if (!apiKeyTestHasNormalBalance(result)) {
+        const message = result && result.ok === true && result.usdt_balance_found !== true
+          ? "API 测试成功，但未返回有效的 USDT 余额"
+          : "API 测试未返回有效的 USDT 余额";
+        state.apiKeyTestError = { exchange: exchange, env: env, api_id: body.id || state.selectedAPIID || "", message: message };
+        renderAPIKeyStatus(state.selectedAPIID);
+        throw new Error(message);
       }
-      if (trimmed === currentID) return;
-      if (button) button.disabled = true;
-      try {
-        state.apiKeysByEnvironment[env][exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange) + "&env=" + env, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ exchange: exchange, env: env, id: currentID, new_id: trimmed })
-        });
-      } finally {
-        if (button) button.disabled = false;
-      }
-      state.apiKeysByExchange = state.apiKeysByEnvironment[env];
-      state.apiKeys = apiKeyStatus(exchange);
-      state.selectedAPIID = state.apiKeys.active_id || trimmed;
-      state.selectedAPIIDs[exchange] = state.selectedAPIID;
-      clearAPIKeyTestState(exchange);
-      renderAPIKeys();
-      renderTemplateAPIs();
-      renderPositionAPIs();
-      renderOrders();
-      updateMetrics();
-      toast("app id 已改名为 " + state.selectedAPIID);
+      toast(exchangeLabel(exchange) + " API 可用，USDT 余额正常");
     }
 
     async function makeTemplate() {
@@ -6746,13 +6743,13 @@ const tvbotHTML = `<!doctype html>
     }
 
     function positionCloseBody(row, mode) {
-      return {
+      return addRequestedPositionEnvironment({
         exchange: normalizeExchange(row && (row._exchange || row.exchange || "okx")),
         api_id: row && (row._api_id || row.api_id) || "",
         inst_id: row && (row.instId || row.inst_id) || "",
         pos_side: row && (row.posSide || row.pos_side) || "",
         mode: mode || "market"
-      };
+      });
     }
 
     async function closeAllPositions() {
@@ -6811,13 +6808,13 @@ const tvbotHTML = `<!doctype html>
       state.positionClosing[key] = true;
       renderPositions();
       try {
-        const body = {
+        const body = addRequestedPositionEnvironment({
           exchange,
           api_id: apiID,
           inst_id: instID,
           pos_side: posSide,
           mode
-        };
+        });
         if (Number.isFinite(ratio) && ratio > 0 && ratio < 1) body.ratio = ratio;
         const result = await submitPositionClose(body);
         const limitCloseText = "限价平仓已启动 ";
@@ -6866,7 +6863,7 @@ const tvbotHTML = `<!doctype html>
       }
       const apiID = button.dataset.apiId || "";
       const orderGroup = button.dataset.orderGroup === "algo" ? "algo" : "normal";
-      const body = {
+      const body = addRequestedPositionEnvironment({
         exchange: exchange,
         api_id: apiID,
         order_group: orderGroup,
@@ -6875,7 +6872,7 @@ const tvbotHTML = `<!doctype html>
         cl_ord_id: button.dataset.clOrdId || "",
         algo_id: button.dataset.algoId || "",
         algo_cl_ord_id: button.dataset.algoClOrdId || ""
-      };
+      });
       const key = pendingOrderActionKeyFromBody(body);
       if (!pendingOrderBodyHasID(body) || state.pendingOrderActions[key]) return;
       state.pendingOrderActions[key] = true;
@@ -6899,7 +6896,7 @@ const tvbotHTML = `<!doctype html>
     async function cancelPendingOrder(button) {
       const exchange = normalizeExchange(button.dataset.exchange || "okx");
       const orderGroup = button.dataset.orderGroup === "algo" ? "algo" : "normal";
-      const body = {
+      const body = addRequestedPositionEnvironment({
         exchange: exchange,
         order_group: orderGroup,
         api_id: button.dataset.apiId || "",
@@ -6908,7 +6905,7 @@ const tvbotHTML = `<!doctype html>
         cl_ord_id: button.dataset.clOrdId || "",
         algo_id: button.dataset.algoId || "",
         algo_cl_ord_id: button.dataset.algoClOrdId || ""
-      };
+      });
       const key = pendingOrderActionKeyFromBody(body);
       if (!pendingOrderBodyHasID(body) || state.pendingOrderActions[key]) return;
       state.pendingOrderActions[key] = true;
@@ -7078,15 +7075,17 @@ const tvbotHTML = `<!doctype html>
       $("okx-output").textContent = err.message;
       toast(err.message);
     }));
-    $("api-key-accounts").addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-delete-api-id]");
-      if (!button) return;
-      deleteAPIKey(button.dataset.deleteApiId).catch((err) => toast(err.message));
-    });
-    $("api-key-status").addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-rename-active-api-id]");
-      if (!button) return;
-      renameActiveAPIID(button).catch((err) => toast(err.message));
+    ["key-name", "key-api", "key-secret", "key-passphrase", "key-active"].forEach((id) => {
+      const node = $(id);
+      if (!node) return;
+      node.addEventListener("input", () => {
+        clearAPIKeyTestState(state.apiKeyExchange);
+        renderAPIKeyStatus(state.selectedAPIID);
+      });
+      node.addEventListener("change", () => {
+        clearAPIKeyTestState(state.apiKeyExchange);
+        renderAPIKeyStatus(state.selectedAPIID);
+      });
     });
     document.querySelectorAll("[data-api-key-exchange]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -7111,28 +7110,6 @@ const tvbotHTML = `<!doctype html>
         renderPositionAPIs();
         updateMetrics();
       });
-    });
-    $("add-api-key").addEventListener("click", () => {
-      const exchange = normalizeExchange(state.apiKeyExchange);
-      state.selectedAPIID = "";
-      state.selectedAPIIDs[exchange] = "";
-      clearAPIKeyTestState(exchange);
-      $("key-selected").value = "";
-      $("key-id").value = "";
-      $("key-name").value = "";
-      const status = apiKeyStatus(exchange);
-      $("key-active").checked = !status || !status.configured;
-      $("key-api").value = "";
-      $("key-secret").value = "";
-      $("key-passphrase").value = "";
-      renderAPIKeyStatus("");
-      $("key-id").focus();
-    });
-    $("key-selected").addEventListener("change", () => {
-      state.selectedAPIID = $("key-selected").value;
-      state.selectedAPIIDs[normalizeExchange(state.apiKeyExchange)] = state.selectedAPIID;
-      fillAPIForm(state.selectedAPIID);
-      renderAPIKeyStatus(state.selectedAPIID);
     });
     document.querySelectorAll("[data-balance-minutes]").forEach((button) => {
       button.addEventListener("click", () => setBalanceWindow(button.dataset.balanceMinutes).catch((err) => toast(err.message)));
