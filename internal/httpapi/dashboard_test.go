@@ -108,7 +108,7 @@ func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 	}
 }
 
-func TestBubbleChartHasShortLandscapeViewportFit(t *testing.T) {
+func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 	srv, st := testService(t, config.Config{BasePath: "/liquidation/"}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	defer st.Close()
 	w := httptest.NewRecorder()
@@ -126,16 +126,24 @@ func TestBubbleChartHasShortLandscapeViewportFit(t *testing.T) {
 		}
 	}
 	for _, marker := range []string{
-		"fitBubbleChartViewport",
-		"window.visualViewport?.addEventListener('resize', fitBubbleChartViewport)",
+		"calculateBubbleChartViewportHeight",
 		"const bubbleChartDefaultHeight = 874",
 		"const bubbleChartViewportScale = 1.3",
 		"wrap.getBoundingClientRect().top",
 		"chartHeightLimits.minimum",
-		"ResizeObserver",
+		"setChartHeight(height, true, render)",
 	} {
 		if !strings.Contains(string(dashboardJS), marker) {
 			t.Fatalf("bubble chart script missing television viewport support %q", marker)
+		}
+	}
+	for _, marker := range []string{
+		"window.visualViewport?.addEventListener",
+		"new ResizeObserver",
+		"requestAnimationFrame(fitBubbleChartViewport)",
+	} {
+		if strings.Contains(string(dashboardJS), marker) {
+			t.Fatalf("bubble chart should not auto-adjust height %q", marker)
 		}
 	}
 	for _, marker := range []string{
@@ -163,7 +171,6 @@ func TestBubbleChartHasShortLandscapeViewportFit(t *testing.T) {
 	}
 	for _, marker := range []string{
 		"liquidation.chartHeight",
-		"liquidation.chartHeightMode",
 		"installChartSizeControls",
 		"setChartHeight",
 		"useAutomaticChartHeight",

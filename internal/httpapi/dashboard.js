@@ -9,11 +9,7 @@ try { savedInterval = localStorage.getItem('liquidation.interval') || savedInter
 const defaultLiquidationMinimumUSD = 0;
 const defaultVisibleCandles = 120;
 const chartHeightLimits = { minimum: 320, maximum: 1600 };
-const chartHeightMode = (() => {
-  try { return localStorage.getItem('liquidation.chartHeightMode') || 'auto'; } catch (_) { return 'auto'; }
-})();
 const storedChartHeight = (() => {
-  if (chartHeightMode !== 'manual') return null;
   try {
     const value = Number(localStorage.getItem('liquidation.chartHeight'));
     return Number.isFinite(value) ? Math.max(chartHeightLimits.minimum, Math.min(chartHeightLimits.maximum, Math.round(value))) : null;
@@ -192,35 +188,18 @@ function updateTicker(view) {
   $('ticker-coverage').textContent = 'Binance USDⓈ-M · ' + (view.realtime_price ? 'aggTrade 实时' : 'REST 校准');
 }
 
-// TVs commonly expose a large but short viewport (for example 1366x768). The
-// chart should use the space that is actually visible below the controls. The
-// chart keeps a little extra vertical room for the price axis, but never lets
-// a stale document offset or an old saved height decide the automatic size.
-function fitBubbleChartViewport() {
+// Calculate a one-time height for the explicit "自动" button. The page does
+// not call this during drawing or viewport changes, so the resulting height is
+// treated like any other manually applied height until the user adapts again.
+function calculateBubbleChartViewportHeight() {
   const bubbleChartDefaultHeight = 874;
   const bubbleChartViewportScale = 1.3;
   const wrap = document.querySelector('.chart-wrap');
-  if (!wrap) return;
-  const input = $('chart-height');
-  const updateHeightInput = () => {
-    if (input && document.activeElement !== input) input.value = String(Math.round(wrap.getBoundingClientRect().height));
-  };
-  if (Number.isFinite(chart.manualHeight)) {
-    wrap.style.height = chart.manualHeight + 'px';
-    updateHeightInput();
-    return;
-  }
-  const largeViewport = window.innerWidth >= 700;
-  if (!largeViewport) {
-    wrap.style.removeProperty('height');
-    updateHeightInput();
-    return;
-  }
+  if (!wrap) return null;
+  if (window.innerWidth < 700) return Math.round(wrap.getBoundingClientRect().height);
   const viewportHeight = window.visualViewport?.height || window.innerHeight;
   const available = Math.floor(viewportHeight - wrap.getBoundingClientRect().top - 12);
-  const height = Math.max(chartHeightLimits.minimum, Math.min(bubbleChartDefaultHeight, Math.round(available * bubbleChartViewportScale)));
-  wrap.style.height = height + 'px';
-  updateHeightInput();
+  return Math.max(chartHeightLimits.minimum, Math.min(bubbleChartDefaultHeight, Math.round(available * bubbleChartViewportScale)));
 }
 
 function updateTrigger(prefix, trigger) {
@@ -527,7 +506,6 @@ function drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high) {
 }
 
 function draw(view, map, signal, volume) {
-  fitBubbleChartViewport();
   const svg = $('market-chart');
   svg.replaceChildren();
   const candles = visibleCandles();
@@ -884,7 +862,6 @@ function setChartHeight(value, persist = true, render = true) {
   if (persist) {
     try {
       localStorage.setItem('liquidation.chartHeight', String(height));
-      localStorage.setItem('liquidation.chartHeightMode', 'manual');
     } catch (_) { /* browser storage is optional */ }
   }
   if (render) draw(cache.market, cache.map, cache.signal, cache.volume);
@@ -892,17 +869,17 @@ function setChartHeight(value, persist = true, render = true) {
 }
 
 function useAutomaticChartHeight(render = true) {
-  chart.manualHeight = null;
-  try {
-    localStorage.removeItem('liquidation.chartHeight');
-    localStorage.removeItem('liquidation.chartHeightMode');
-  } catch (_) { /* browser storage is optional */ }
   const wrap = document.querySelector('.chart-wrap');
-  if (wrap) wrap.style.removeProperty('height');
-  fitBubbleChartViewport();
-  const input = $('chart-height');
-  if (input) input.value = String(Math.round((wrap?.getBoundingClientRect().height || 874)));
-  if (render) draw(cache.market, cache.map, cache.signal, cache.volume);
+  if (!wrap) return;
+  const previousHeight = chart.manualHeight;
+  chart.manualHeight = null;
+  wrap.style.removeProperty('height');
+  const height = calculateBubbleChartViewportHeight();
+  if (height === null) {
+    chart.manualHeight = previousHeight;
+    return;
+  }
+  setChartHeight(height, true, render);
 }
 
 function installChartSizeControls() {
@@ -912,6 +889,7 @@ function installChartSizeControls() {
   if (!wrap || !handle || !input) return;
   input.min = String(chartHeightLimits.minimum);
   input.max = String(chartHeightLimits.maximum);
+  if (Number.isFinite(chart.manualHeight)) wrap.style.height = chart.manualHeight + 'px';
   input.value = String(chart.manualHeight || Math.round(wrap.getBoundingClientRect().height || 874));
   const applyInput = () => {
     if (!setChartHeight(input.value)) input.value = String(chart.manualHeight || Math.round(wrap.getBoundingClientRect().height || 874));
@@ -1241,12 +1219,3 @@ events.addEventListener('liquidation', event => {
 events.onerror = () => { streamNeedsCalibration = true; streamError = '连接中断，正在重试'; showFailures(lastFailures); };
 window.addEventListener('themechange', () => draw(cache.market, cache.map, cache.signal, cache.volume));
 window.addEventListener('resize', () => draw(cache.market, cache.map, cache.signal, cache.volume));
-window.visualViewport?.addEventListener('resize', fitBubbleChartViewport);
-if (typeof ResizeObserver === 'function') {
-  const chartLayoutObserver = new ResizeObserver(() => {
-    if (!Number.isFinite(chart.manualHeight)) requestAnimationFrame(fitBubbleChartViewport);
-  });
-  chartLayoutObserver.observe($('chart-head') || $('market-chart').parentElement);
-  chartLayoutObserver.observe($('chart-toolbar') || $('market-chart').parentElement);
-}
-requestAnimationFrame(fitBubbleChartViewport);
