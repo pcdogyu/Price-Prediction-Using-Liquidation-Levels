@@ -118,7 +118,11 @@ with sync_playwright() as playwright:
         elif parsed.path.endswith("/volume-profile"):
             route.fulfill(json={"state": "ok", "val": 100, "vah": 9000, "bins": [{"price_low": 100, "price_high": 200, "volume_usd": 10000}, {"price_low": 9000, "price_high": 9001, "volume_usd": 10000}]})
         elif parsed.path.endswith("/signals/latest"):
-            route.fulfill(json={"state": "unavailable", "mark_price": 9000, "reason": "fixture"})
+            route.fulfill(json={
+                "state": "data_insufficient", "mark_price": 2495, "reason": "模型尚未完成首次训练",
+                "upper_trigger": {"status": "reference", "target_price": 2510, "current_price": 2495, "distance_price": 15, "distance_percent": 0.6, "distance_atr": 1.5, "probability": 0, "probability_available": False},
+                "lower_trigger": {"status": "reference", "target_price": 2480, "current_price": 2495, "distance_price": 15, "distance_percent": 0.6, "distance_atr": 1.5, "probability": 0, "probability_available": False}
+            })
         else:
             route.continue_()
 
@@ -161,6 +165,13 @@ with sync_playwright() as playwright:
 
     page.goto(base + "/bubbles", wait_until="domcontentloaded")
     idle()
+    if not production:
+        expect(page.locator("#upper-status")).to_have_text("参考")
+        expect(page.locator("#lower-status")).to_have_text("参考")
+        expect(page.locator("#upper-target")).to_have_text("2,510.00")
+        expect(page.locator("#lower-target")).to_have_text("2,480.00")
+        expect(page.locator("#upper-prob")).to_have_text("—")
+        expect(page.locator("#lower-prob")).to_have_text("—")
     initial = check_axis()
     if not production:
         assert len(initial["ids"]) == 6002 and "窗口已加载 6003笔" in initial["context"] and "价格视野外 1笔" in initial["context"], initial["context"]

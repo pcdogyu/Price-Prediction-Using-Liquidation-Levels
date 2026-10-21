@@ -54,7 +54,7 @@ const zoomLabel = value => '×' + (Math.round(value * 100) / 100);
 const zoomSuffix = value => value === 1 ? '' : ' ' + zoomLabel(value);
 const when = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
 const patternName = { doji: '十字星', hammer: '锤头', shooting_star: '流星', bullish_engulfing: '看涨吞没', bearish_engulfing: '看跌吞没' };
-const statusName = { unavailable: '不可用', armed: '等待触发', approaching: '接近触发', triggered: '已触发', expired: '已过期' };
+const statusName = { unavailable: '不可用', reference: '参考', armed: '等待触发', approaching: '接近触发', triggered: '已触发', expired: '已过期' };
 const intervalName = { '1m': '1分钟', '2m': '2分钟', '3m': '3分钟', '5m': '5分钟', '10m': '10分钟', '15m': '15分钟', '30m': '30分钟', '1h': '1小时', '4h': '4小时', '8h': '8小时', '12h': '12小时', '24h': '24小时' };
 const intervalMilliseconds = { '1m': 60000, '2m': 120000, '3m': 180000, '5m': 300000, '10m': 600000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000, '8h': 28800000, '12h': 43200000, '24h': 86400000 };
 const liquidationPixelOffset = 6;
@@ -209,7 +209,7 @@ function updateTrigger(prefix, trigger) {
   $(prefix + '-target').textContent = finite(trigger?.target_price) && trigger.target_price !== 0 ? money(trigger.target_price) : '—';
   $(prefix + '-distance').textContent = finite(trigger?.distance_price) && finite(trigger?.distance_percent) ? money(trigger.distance_price) + ' · ' + trigger.distance_percent.toFixed(2) + '%' : '—';
   $(prefix + '-atr').textContent = finite(trigger?.distance_atr) ? trigger.distance_atr.toFixed(2) + ' ATR' : '—';
-  $(prefix + '-prob').textContent = pct(trigger?.probability);
+  $(prefix + '-prob').textContent = trigger?.probability_available === false ? '—' : pct(trigger?.probability);
   $(prefix + '-time').textContent = trigger?.triggered_at ? when(trigger.triggered_at) : trigger?.expires_at ? '截止 ' + when(trigger.expires_at) : '—';
 }
 

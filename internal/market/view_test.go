@@ -164,3 +164,26 @@ func TestEnrichPredictionApproachingAndExpired(t *testing.T) {
 		t.Fatalf("expired=%#v", expired)
 	}
 }
+
+func TestEnrichPredictionReferenceWallDoesNotClaimProbability(t *testing.T) {
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	p := domain.Prediction{
+		Time: at, HorizonMinutes: 60, State: "data_insufficient", MarkPrice: 100, ATR: 10,
+		UpperWall: &domain.Wall{Side: "upper", Price: 105, Quality: "reference"},
+		LowerWall: &domain.Wall{Side: "lower", Price: 95, Quality: "reference"},
+	}
+	got := EnrichPrediction(p, nil, at.Add(3*time.Minute))
+	if got.UpperTrigger.Status != "reference" || got.LowerTrigger.Status != "reference" {
+		t.Fatalf("reference triggers=%#v %#v", got.UpperTrigger, got.LowerTrigger)
+	}
+	if !almostEqual(got.UpperTrigger.TargetPrice, 105) || !almostEqual(got.LowerTrigger.TargetPrice, 95) {
+		t.Fatalf("reference targets=%#v %#v", got.UpperTrigger, got.LowerTrigger)
+	}
+	if got.UpperTrigger.ProbabilityAvailable || got.LowerTrigger.ProbabilityAvailable {
+		t.Fatalf("reference wall claimed probability: %#v %#v", got.UpperTrigger, got.LowerTrigger)
+	}
+}
+
+func almostEqual(a, b float64) bool {
+	return math.Abs(a-b) < 1e-9
+}

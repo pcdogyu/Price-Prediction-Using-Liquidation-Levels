@@ -117,6 +117,7 @@ type Wall struct {
 	IntensityUSD float64 `json:"intensity_usd"`
 	DistanceATR  float64 `json:"distance_atr"`
 	Score        float64 `json:"score"`
+	Quality      string  `json:"quality"`
 }
 
 type CandlePattern struct {
@@ -174,18 +175,19 @@ type MarketView struct {
 }
 
 type TriggerInfo struct {
-	Side            string     `json:"side"`
-	Status          string     `json:"status"`
-	TargetPrice     float64    `json:"target_price"`
-	CurrentPrice    float64    `json:"current_price"`
-	DistancePrice   float64    `json:"distance_price"`
-	DistancePercent float64    `json:"distance_percent"`
-	DistanceATR     float64    `json:"distance_atr"`
-	Probability     float64    `json:"probability"`
-	PredictedAt     time.Time  `json:"predicted_at"`
-	ExpiresAt       time.Time  `json:"expires_at"`
-	TriggeredAt     *time.Time `json:"triggered_at,omitempty"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	Side                 string     `json:"side"`
+	Status               string     `json:"status"`
+	TargetPrice          float64    `json:"target_price"`
+	CurrentPrice         float64    `json:"current_price"`
+	DistancePrice        float64    `json:"distance_price"`
+	DistancePercent      float64    `json:"distance_percent"`
+	DistanceATR          float64    `json:"distance_atr"`
+	Probability          float64    `json:"probability"`
+	ProbabilityAvailable bool       `json:"probability_available"`
+	PredictedAt          time.Time  `json:"predicted_at"`
+	ExpiresAt            time.Time  `json:"expires_at"`
+	TriggeredAt          *time.Time `json:"triggered_at,omitempty"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 type FeatureVector struct {

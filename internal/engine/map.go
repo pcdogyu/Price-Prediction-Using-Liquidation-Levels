@@ -150,6 +150,13 @@ func mapFromLevels(levels []level, now time.Time, mark, atr float64, cfg MapConf
 }
 
 func selectWall(b []domain.MapBin, mark, atr float64, side string) *domain.Wall {
+	if wall := selectWallCandidate(b, mark, atr, side, .25, 2.5, true, "strict"); wall != nil {
+		return wall
+	}
+	return selectWallCandidate(b, mark, atr, side, .25, 5, false, "reference")
+}
+
+func selectWallCandidate(b []domain.MapBin, mark, atr float64, side string, minDistance, maxDistance float64, requirePeak bool, quality string) *domain.Wall {
 	var best *domain.Wall
 	for i := 1; i < len(b)-1; i++ {
 		d := (b[i].Price - mark) / atr
@@ -158,19 +165,20 @@ func selectWall(b []domain.MapBin, mark, atr float64, side string) *domain.Wall 
 			d = (mark - b[i].Price) / atr
 			intensity = b[i].LongUSD
 		}
-		if d < .25 || d > 2.5 || intensity <= 0 {
+		if d < minDistance || d > maxDistance || intensity <= 0 {
 			continue
 		}
 		prev, next := b[i-1].ShortUSD, b[i+1].ShortUSD
 		if side == "lower" {
 			prev, next = b[i-1].LongUSD, b[i+1].LongUSD
 		}
-		if intensity < prev || intensity < next {
+		if requirePeak && (intensity < prev || intensity < next) {
 			continue
 		}
 		score := intensity / (d + .25)
-		if best == nil || score > best.Score {
-			best = &domain.Wall{Side: side, Price: b[i].Price, IntensityUSD: intensity, DistanceATR: d, Score: score}
+		candidate := &domain.Wall{Side: side, Price: b[i].Price, IntensityUSD: intensity, DistanceATR: d, Score: score, Quality: quality}
+		if best == nil || (requirePeak && score > best.Score) || (!requirePeak && (intensity > best.IntensityUSD || (intensity == best.IntensityUSD && d < best.DistanceATR))) {
+			best = candidate
 		}
 	}
 	return best

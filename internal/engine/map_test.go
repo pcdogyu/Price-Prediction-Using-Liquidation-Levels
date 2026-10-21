@@ -40,6 +40,9 @@ func TestBuildMapFindsBothWalls(t *testing.T) {
 	if m.Upper == nil || m.Lower == nil {
 		t.Fatalf("expected both walls: %#v", m)
 	}
+	if m.Upper.Quality != "strict" || m.Lower.Quality != "strict" {
+		t.Fatalf("expected strict walls: %#v %#v", m.Upper, m.Lower)
+	}
 	if m.Upper.Price <= m.MarkPrice || m.Lower.Price >= m.MarkPrice {
 		t.Fatalf("walls on wrong sides: %#v %#v", m.Upper, m.Lower)
 	}
@@ -48,6 +51,45 @@ func TestBuildMapFindsBothWalls(t *testing.T) {
 	}
 	if !reflect.DeepEqual(m.Leverages, []float64{10, 25, 50, 100}) {
 		t.Fatalf("map leverages=%v", m.Leverages)
+	}
+}
+
+func TestSelectWallFallsBackToStrongestReference(t *testing.T) {
+	bins := []domain.MapBin{
+		{Price: 94},
+		{Price: 95, LongUSD: 10},
+		{Price: 96, LongUSD: 20},
+		{Price: 97, LongUSD: 30},
+		{Price: 98, LongUSD: 40},
+		{Price: 99, LongUSD: 50},
+		{Price: 100, LongUSD: 60},
+		{Price: 101},
+	}
+
+	wall := selectWall(bins, 100, 2, "lower")
+	if wall == nil {
+		t.Fatal("expected a reference wall")
+	}
+	if wall.Quality != "reference" || wall.Price != 99 || wall.IntensityUSD != 50 {
+		t.Fatalf("unexpected reference wall: %#v", wall)
+	}
+}
+
+func TestSelectWallDoesNotInventOutOfRangeReference(t *testing.T) {
+	bins := []domain.MapBin{
+		{Price: 88},
+		{Price: 89, LongUSD: 10},
+		{Price: 89.5, LongUSD: 20},
+		{Price: 100},
+		{Price: 110.5, ShortUSD: 20},
+		{Price: 111, ShortUSD: 10},
+		{Price: 112},
+	}
+	if wall := selectWall(bins, 100, 2, "lower"); wall != nil {
+		t.Fatalf("expected no lower wall outside fallback range: %#v", wall)
+	}
+	if wall := selectWall(bins, 100, 2, "upper"); wall != nil {
+		t.Fatalf("expected no upper wall outside fallback range: %#v", wall)
 	}
 }
 

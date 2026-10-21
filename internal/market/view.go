@@ -296,7 +296,7 @@ func firstTouches(minutes []domain.MarketCandle, start, end time.Time, upper, lo
 }
 func trigger(side string, wall *domain.Wall, current, atr, prob float64, start, expires time.Time, touched *time.Time, now time.Time, predictionState string) *domain.TriggerInfo {
 	v := &domain.TriggerInfo{Side: side, Status: "unavailable", CurrentPrice: current, Probability: prob, PredictedAt: start, ExpiresAt: expires, TriggeredAt: touched, UpdatedAt: now}
-	if wall == nil || current <= 0 || predictionState == "data_insufficient" {
+	if wall == nil || current <= 0 {
 		return v
 	}
 	v.TargetPrice = wall.Price
@@ -305,6 +305,14 @@ func trigger(side string, wall *domain.Wall, current, atr, prob float64, start, 
 	if atr > 0 {
 		v.DistanceATR = v.DistancePrice / atr
 	}
+	if wall.Quality == "reference" {
+		v.Status = "reference"
+		return v
+	}
+	if predictionState == "data_insufficient" {
+		return v
+	}
+	v.ProbabilityAvailable = true
 	switch {
 	case touched != nil:
 		v.Status = "triggered"
