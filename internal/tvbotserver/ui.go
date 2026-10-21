@@ -138,7 +138,6 @@ func defaultTopMenu() []TopMenuItem {
 		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall"},
 		{Key: "market-info", Title: "市场信息", Href: "/market-info"},
 		{Key: "options", Title: "期权", Href: "/options"},
-		{Key: "overview", Title: "资金", Href: "/tvbot/view/dashboard"},
 		{Key: "orders", Title: "信号", Href: "/tvbot/view/orders"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis"},

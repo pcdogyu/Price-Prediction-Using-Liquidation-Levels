@@ -26,17 +26,22 @@ func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
 		{Key: "custom", Title: "自定义", Href: "/custom", Group: "custom"},
 	}
 	migrated, changed := migrateAdminMenu(legacy)
-	if !changed || len(migrated) != len(legacy) {
+	if !changed || len(migrated) != len(legacy)-1 {
 		t.Fatalf("migration changed=%v menu=%#v", changed, migrated)
 	}
 	if migrated[0].Key != "menu" || migrated[0].Title != "菜单管理" || migrated[0].Href != "/menu" || migrated[0].Group != "admin" {
 		t.Fatalf("migrated menu item=%#v", migrated[0])
 	}
-	if migrated[1].Href != "/tvbot/view/positions" || migrated[2].Title != "信号" || migrated[2].Href != "/tvbot/view/orders" || migrated[3].Href != "/tvbot/view/analysis" || migrated[4].Title != "资金" {
+	if migrated[1].Href != "/tvbot/view/positions" || migrated[2].Title != "信号" || migrated[2].Href != "/tvbot/view/orders" || migrated[3].Href != "/tvbot/view/analysis" {
 		t.Fatalf("migrated trading menu=%#v", migrated[1:4])
 	}
-	if migrated[5] != legacy[5] {
-		t.Fatalf("custom menu item should remain unchanged: %#v", migrated[5])
+	if migrated[4] != legacy[5] {
+		t.Fatalf("custom menu item should remain unchanged: %#v", migrated[4])
+	}
+	for _, item := range migrated {
+		if item.Key == "overview" || item.Href == "/tvbot/view/dashboard" {
+			t.Fatalf("funding dashboard should be removed from migrated menu: %#v", migrated)
+		}
 	}
 }
 
@@ -44,7 +49,7 @@ func TestDefaultAdminMenuUsesRequestedTopOrder(t *testing.T) {
 	menu := defaultAdminMenu()
 	want := []string{
 		"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-		"overview", "orders", "positions", "analysis", "symbols", "config", "api-keys",
+		"orders", "positions", "analysis", "symbols", "config", "api-keys",
 		"order-settings", "template", "trade-monitor", "upgrade", "system-info",
 		"menu", "system",
 	}
@@ -56,16 +61,15 @@ func TestDefaultAdminMenuUsesRequestedTopOrder(t *testing.T) {
 			t.Fatalf("default menu[%d]=%q, want=%q", i, menu[i].Key, key)
 		}
 	}
-	if menu[7].Title != "信号" {
-		t.Fatalf("orders menu title=%q, want=信号", menu[7].Title)
+	if menu[6].Title != "信号" {
+		t.Fatalf("orders menu title=%q, want=信号", menu[6].Title)
 	}
 }
 
 func TestMigrateAdminMenuReordersLegacyDefaultOnly(t *testing.T) {
-	legacy := defaultAdminMenu()
-	legacy = append([]adminMenuItem(nil), legacy...)
-	for i, key := range legacyDefaultAdminMenuKeys {
-		legacy[i] = adminMenuItem{Key: key, Title: key, Href: "/" + key, Group: "trading"}
+	legacy := make([]adminMenuItem, 0, len(legacyDefaultAdminMenuKeys))
+	for _, key := range legacyDefaultAdminMenuKeys {
+		legacy = append(legacy, adminMenuItem{Key: key, Title: key, Href: "/" + key, Group: "trading"})
 	}
 	migrated, changed := migrateAdminMenu(legacy)
 	if !changed {

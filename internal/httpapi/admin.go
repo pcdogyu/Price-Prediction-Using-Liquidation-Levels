@@ -47,7 +47,6 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall", Group: "liquidation"},
 		{Key: "market-info", Title: "市场信息", Href: "/market-info", Group: "liquidation"},
 		{Key: "options", Title: "期权", Href: "/options", Group: "liquidation"},
-		{Key: "overview", Title: "资金", Href: "/tvbot/view/dashboard", Group: "trading"},
 		{Key: "orders", Title: "信号", Href: "/tvbot/view/orders", Group: "trading"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions", Group: "trading"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis", Group: "trading"},
@@ -72,7 +71,7 @@ var legacyDefaultAdminMenuKeys = []string{
 
 var canonicalDefaultAdminMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-	"overview", "orders", "positions", "analysis", "symbols", "config", "api-keys",
+	"orders", "positions", "analysis", "symbols", "config", "api-keys",
 	"order-settings", "template", "trade-monitor", "upgrade", "system-info", "menu", "system",
 }
 
@@ -96,7 +95,7 @@ var legacyOrdersFirstAdminMenuKeys = []string{
 
 var canonicalPersonalMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-	"overview", "orders", "positions", "analysis", "symbols", "config", "api-keys",
+	"orders", "positions", "analysis", "symbols", "config", "api-keys",
 	"order-settings", "template", "trade-monitor", "upgrade", "system-info",
 }
 
@@ -194,6 +193,19 @@ func reorderMenuKeys(menu []adminMenuItem, legacyKeys, canonicalKeys []string) (
 	return ordered, true
 }
 
+func removeFundingMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
+	filtered := make([]adminMenuItem, 0, len(menu))
+	changed := false
+	for _, item := range menu {
+		if item.Key == "overview" || item.Href == "/tvbot/view/dashboard" {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered, changed
+}
+
 func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	migrated := append([]adminMenuItem(nil), menu...)
 	changed := false
@@ -232,12 +244,6 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 				changed = true
 			}
 		}
-		if migrated[i].Key == "overview" || migrated[i].Href == "/tvbot/view/dashboard" {
-			if migrated[i].Title != "资金" {
-				migrated[i].Title = "资金"
-				changed = true
-			}
-		}
 		if migrated[i].Key == "upgrade" && migrated[i].Href == "/upgrade" {
 			migrated[i].Href = "/tvbot/view/upgrade"
 			changed = true
@@ -247,22 +253,26 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 			changed = true
 		}
 	}
+	finish := func(menu []adminMenuItem, reordered bool) ([]adminMenuItem, bool) {
+		filtered, removed := removeFundingMenuItems(menu)
+		return filtered, reordered || removed
+	}
 	if reordered, ok := reorderLegacyDefaultAdminMenu(migrated); ok {
-		return reordered, true
+		return finish(reordered, true)
 	}
 	if reordered, ok := reorderLegacyPersonalMenu(migrated); ok {
-		return reordered, true
+		return finish(reordered, true)
 	}
 	if reordered, ok := reorderLegacyOrdersFirstAdminMenu(migrated); ok {
-		return reordered, true
+		return finish(reordered, true)
 	}
 	if reordered, ok := reorderMenuKeys(migrated, legacyCanonicalDefaultAdminMenuKeys, canonicalDefaultAdminMenuKeys); ok {
-		return reordered, true
+		return finish(reordered, true)
 	}
 	if reordered, ok := reorderMenuKeys(migrated, legacyCanonicalPersonalMenuKeys, canonicalPersonalMenuKeys); ok {
-		return reordered, true
+		return finish(reordered, true)
 	}
-	return migrated, changed
+	return finish(migrated, changed)
 }
 
 func ensureAdminMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {

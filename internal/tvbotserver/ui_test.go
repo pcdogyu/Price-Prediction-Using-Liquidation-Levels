@@ -37,7 +37,6 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`class="nav-system-trigger header-action"`,
 		`交易所信息`,
 		`href="/liquidation/alerts"`,
-		`data-tab="dashboard" href="/liquidation/tvbot/view/dashboard"`,
 		`data-tab="positions" href="/liquidation/tvbot/view/positions"`,
 		`href="/liquidation/admin">用户管理`,
 		`data-tab="apiKeys" href="/liquidation/tvbot/view/api-keys"`,
@@ -66,6 +65,9 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Fatalf("unified header missing %q", want)
 		}
+	}
+	if strings.Contains(page, `href="/liquidation/tvbot/view/dashboard"`) {
+		t.Fatal("funding dashboard should not be exposed in the top navigation")
 	}
 	saveButton := strings.Index(page, `id="save-api-keys"`)
 	testButton := strings.Index(page, `id="test-api-keys"`)
@@ -195,13 +197,15 @@ func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
 		t.Fatalf("configured tvbot page should have one top menu: %s", page)
 	}
 	for _, want := range []string{
-		`data-tab="dashboard" href="/liquidation/tvbot/view/dashboard" aria-current="page">资金`,
 		`data-tab="system" href="/liquidation/system">交易所信息`,
 		`href="/liquidation/menu">菜单管理`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("configured top menu missing %q", want)
 		}
+	}
+	if strings.Contains(page, `href="/liquidation/tvbot/view/dashboard"`) {
+		t.Fatal("funding dashboard should not be exposed in the configured top navigation")
 	}
 	if strings.Contains(page, `data-tab="menuSettings"`) || strings.Contains(page, `href="/liquidation/tvbot/view/menu-settings"`) {
 		t.Fatal("configured top menu should not expose the legacy tvbot menu settings entry")

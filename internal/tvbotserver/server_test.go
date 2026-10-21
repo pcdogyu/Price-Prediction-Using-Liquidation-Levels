@@ -113,7 +113,9 @@ func TestRoutes(t *testing.T) {
 		viewReq.SetBasicAuth("admin", "Admin123")
 		view := httptest.NewRecorder()
 		srv.ServeHTTP(view, viewReq)
-		if view.Code != http.StatusOK || !strings.Contains(view.Body.String(), `data-tab="`+route.Tab+`" href="/tvbot/view/`+route.Slug+`"`) {
+		link := `data-tab="` + route.Tab + `" href="/tvbot/view/` + route.Slug + `"`
+		containsLink := strings.Contains(view.Body.String(), link)
+		if view.Code != http.StatusOK || route.Tab == "dashboard" && containsLink || route.Tab != "dashboard" && !containsLink {
 			t.Fatalf("tvbot view route %s code=%d body contains expected link=%v", route.Slug, view.Code, strings.Contains(view.Body.String(), `data-tab="`+route.Tab+`" href="/tvbot/view/`+route.Slug+`"`))
 		}
 	}

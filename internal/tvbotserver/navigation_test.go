@@ -20,7 +20,6 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 		`href="/hedge-wall"`,
 		`href="/market-info"`,
 		`href="/options"`,
-		`href="/tvbot/view/dashboard"`,
 		`href="/tvbot/view/orders"`,
 		`href="/tvbot/view/positions"`,
 		`href="/tvbot/view/analysis"`,
@@ -40,6 +39,9 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 			t.Fatalf("navigation marker %q is out of order: index=%d last=%d page=%s", marker, at, last, page)
 		}
 		last = at
+	}
+	if strings.Contains(page, `href="/tvbot/view/dashboard"`) {
+		t.Fatal("funding dashboard should not be exposed in the top navigation")
 	}
 	if !strings.Contains(page, `>升级</a>`) {
 		t.Fatal("upgrade should remain a direct top-navigation link")

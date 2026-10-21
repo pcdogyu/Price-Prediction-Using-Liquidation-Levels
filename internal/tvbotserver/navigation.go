@@ -11,7 +11,7 @@ import (
 func RenderTopMenuLinks(items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool) string {
 	var out strings.Builder
 	for _, item := range items {
-		if isSystemMenuItem(item) || !validTopMenuItem(item) {
+		if isSystemMenuItem(item) || isFundingMenuItem(item) || !validTopMenuItem(item) {
 			continue
 		}
 		renderTopMenuLink(&out, item, link, active(item))
@@ -128,6 +128,10 @@ func isSystemMenuItem(item TopMenuItem) bool {
 
 func validTopMenuItem(item TopMenuItem) bool {
 	return strings.TrimSpace(item.Href) != "" && strings.HasPrefix(item.Href, "/")
+}
+
+func isFundingMenuItem(item TopMenuItem) bool {
+	return item.Key == "overview" || item.Href == "/tvbot/view/dashboard"
 }
 
 func renderTopMenuLink(out *strings.Builder, item TopMenuItem, link func(string) string, active bool) {
