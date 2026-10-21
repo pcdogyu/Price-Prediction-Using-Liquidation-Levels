@@ -119,12 +119,12 @@ GET /metrics
 BUILD_TIME="$(TZ=Asia/Shanghai date --iso-8601=seconds)"
 BUILD_REVISION="$(git rev-parse --short HEAD)"
 BUILD_BRANCH="$(git branch --show-current)"
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=${BUILD_TIME} -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=${BUILD_REVISION} -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=${BUILD_BRANCH}" -o liquidation-predictor ./cmd/server
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=${BUILD_TIME} -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=${BUILD_REVISION} -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=${BUILD_BRANCH}" -o liquidation-predictor-linux ./cmd/server
 ```
 
 代码和二进制部署到 `/opt/Price-Prediction-Using-Liquidation-Levels`，数据和模型目录配置到 `/var/lib/liquidation-predictor`，然后参考 [systemd 单元](deploy/liquidation-predictor.service) 和 [nginx 子路径配置](deploy/nginx-liquidation-location.conf)。生产部署目标仅为 `tvbot.lmitis.com`，服务只监听 `127.0.0.1:9090`，通过 `/liquidation/` 反向代理对外访问；`mm.lmitis.com` 不部署本项目，也不应安装本项目的 systemd、CoinGlass 浏览器或 Nginx 路由。
 
-统一发布脚本 `deploy/unified-upgrade.sh` 每次发布只保留程序、配置和凭据等回滚文件，不再复制主 SQLite 数据库或旧 TVBot SQLite 数据库，避免发布过程产生重复数据库副本和额外磁盘占用。只有在旧 TVBot 数据库迁移快照尚不存在的首次迁移场景，脚本才创建一次 `tvbot-legacy-migration.db`；后续发布保留该快照，不重复生成。
+生产发布使用 `deploy/publish-linux.ps1`：发布机按服务器架构执行测试、`go vet` 和 Linux 交叉编译，再使用 `pem/server.pem` 上传预构建二进制；服务器端 `deploy/unified-upgrade.sh` 只同步目标提交、校验二进制、备份上一版程序/配置并原子替换重启，不在部署前备份或复制 SQLite 数据库。已存在的一次性迁移快照只保留并使用，不由发布流程重新生成。
 
 可选的 CoinGlass 人工登录窗口由服务器上的持久化 Chrome、Xvfb、x11vnc 和 noVNC 组成。相关 systemd 单元位于 `deploy/coinglass-*.service`；VNC、noVNC 和 Chrome CDP 分别只监听 `127.0.0.1:5900`、`127.0.0.1:6080` 和 `127.0.0.1:9222`。Nginx 的 `/liquidation/coinglass-login/` 必须通过应用的 `/api/v1/auth/check` 子请求鉴权，不能将这些端口直接暴露到公网。Chrome 登录状态保存在 `/var/lib/liquidation-predictor/coinglass-profile`，其权限应限制为服务用户可读写。登录后可由仪表盘的“抓取 CoinGlass”按钮调用 `POST /api/v1/coinglass/capture`；服务也会按照 `APP_COINGLASS_CAPTURE_INTERVAL`（默认 10 分钟）自动抓取 BTC/ETH。选择其它 Binance USDT 永续时，`/api/v1/map` 会按需请求对应的 CoinGlass Binance 图并合并到缓存；每个币对独立计算两小时有效期。每次结果保存由 CoinGlass 页面自身运行时解码得到 Binance/全交易所结构化 JSON；浏览器 Cookie 不会写入结果。清算墙按 10x/25x/50x/100x 分色显示，同时列出多头与空头清算强度 Top 3 价格。每次抓取还会以该快照现价分别汇总上下方清算金额：下方更大时显示绿色向上箭头，上方更大时显示红色向下箭头；金额相等时不显示方向箭头，方向仅随下一次 CoinGlass 抓取重新计算。该接口只提供两小时内的 CoinGlass 数据，过期或解析不可用时返回 503，不回退本地估算地图。原始抓取文件只保留最近 3 天，由每日维护窗口删除，`latest.json` 作为实时指针不参与清理，避免抓取目录无限增长。
 

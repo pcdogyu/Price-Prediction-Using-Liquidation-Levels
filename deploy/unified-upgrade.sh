@@ -3,20 +3,36 @@ set -euo pipefail
 
 # Root-only release procedure for the binance unified runtime. Secrets are read
 # from existing systemd environment files and are never echoed or committed.
+# The Linux binary is built on the publishing machine and uploaded before this
+# script runs; the server never compiles it.
 app_root=/opt/Price-Prediction-Using-Liquidation-Levels
 source_root="$app_root/source"
 data_root=/var/lib/liquidation-predictor
 legacy_root=/opt/tv_okx_bot
 legacy_state=/var/lib/tv-okx-bot
-legacy_database=/etc/tv-okx-bot/data/tvbot.db
-legacy_migration="$data_root/tvbot-legacy-migration.db"
-revision="${1:?usage: unified-upgrade.sh <binance-revision> [build-branch]}"
+revision="${1:?usage: unified-upgrade.sh <binance-revision> <build-branch> <uploaded-binary> [sha256]}"
 build_branch="${2:-binance}"
+artifact="${3:?usage: unified-upgrade.sh <binance-revision> <build-branch> <uploaded-binary> [sha256]}"
+expected_sha256="${4:-}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 short_revision="${revision:0:12}"
 backup="$data_root/backups/$stamp-$short_revision"
 binary="$app_root/liquidation-predictor"
 new_binary="$app_root/liquidation-predictor.new"
+
+case "$revision" in
+  (*[!0-9a-fA-F]*) echo "invalid revision" >&2; exit 1 ;;
+esac
+case "$artifact" in
+  "$app_root"/liquidation-predictor.upload.*) ;;
+  (*) echo "uploaded binary must be staged under $app_root" >&2; exit 1 ;;
+esac
+test -f "$artifact"
+if [[ -n "$expected_sha256" ]]; then
+  actual_sha256="$(sha256sum "$artifact" | awk '{print $1}')"
+  test "$actual_sha256" = "$expected_sha256"
+fi
+trap 'rm -f -- "$artifact" "$new_binary"' EXIT
 
 test -d "$source_root/.git"
 test -f "$data_root/liquidation.db"
@@ -58,21 +74,6 @@ backup_tree() {
   fi
 }
 
-snapshot_sqlite() {
-  local source="$1" destination="$2"
-  if [[ -f "$source" ]]; then
-    python3 - "$source" "$destination" <<'PY'
-import sqlite3, sys
-source = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
-destination = sqlite3.connect(sys.argv[2])
-with destination:
-    source.backup(destination)
-destination.close(); source.close()
-PY
-    chmod 0600 "$destination"
-  fi
-}
-
 backup_file /etc/tv-okx-bot/data/orders.json tvbot-orders.json
 backup_file "$legacy_root/data/binance-credentials.json" tvbot-binance-credentials.json
 backup_file "$legacy_state/okx-credentials.json" tvbot-okx-credentials.json
@@ -83,17 +84,10 @@ backup_file "$binary" liquidation-predictor
 sha256sum "$backup"/* > "$backup/sha256.txt"
 backup_tree "$data_root/users" "$backup/tvbot-user-credentials"
 
-# Do not copy SQLite databases into every release backup. The unified database
-# is live application state, and the legacy database only needs a consistent
-# snapshot for the one-time migration. Once that snapshot exists, preserve it
-# and leave both SQLite databases out of subsequent release backups.
-if [[ ! -f "$legacy_migration" && -f "$legacy_database" ]]; then
-  snapshot_sqlite "$legacy_database" "$legacy_migration"
-  chown liquidation:liquidation "$legacy_migration"
-  echo "legacy_migration_snapshot=created"
-else
-  echo "legacy_migration_snapshot=preserved_or_unavailable"
-fi
+# Database files are live application state and are intentionally not copied
+# or snapshotted during deployment. An existing migration file, when present,
+# is left untouched and is not recreated by later releases.
+echo "database_backup=skipped"
 
 chown -R liquidation:liquidation "$app_root"
 
@@ -108,11 +102,9 @@ if [[ -f "$legacy_state/okx-credentials.json" && ! -f "$data_root/okx-credential
 fi
 
 cd "$source_root"
-go test ./...
-go vet ./...
-CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=$revision -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=$build_branch" -o "$new_binary" ./cmd/server
-install -o liquidation -g liquidation -m 0755 "$new_binary" "$binary"
-rm -f "$new_binary"
+install -o liquidation -g liquidation -m 0755 "$artifact" "$new_binary"
+mv -f -- "$new_binary" "$binary"
+echo "uploaded_binary_sha256=$(sha256sum "$binary" | awk '{print $1}')"
 
 install -o root -g root -m 0644 deploy/liquidation-predictor.service /etc/systemd/system/liquidation-predictor.service
 install -o root -g root -m 0644 deploy/liquidation-predictor.env /etc/liquidation-predictor.env
