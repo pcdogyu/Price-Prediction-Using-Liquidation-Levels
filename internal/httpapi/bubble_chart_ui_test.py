@@ -36,6 +36,8 @@ with sync_playwright() as playwright:
       window.__testActiveRequests = 0;
       const originalFetch = window.fetch;
       window.fetch = async (...args) => {
+        const requestLabel = String(args[0]);
+        if (requestLabel.includes('/api/v1/user/theme') || requestLabel.includes('/tvbot/position-target')) return originalFetch(...args);
         window.__testActiveRequests++;
         try {
           const response = await originalFetch(...args);
@@ -119,7 +121,7 @@ with sync_playwright() as playwright:
             route.fulfill(json={"state": "ok", "val": 100, "vah": 9000, "bins": [{"price_low": 100, "price_high": 200, "volume_usd": 10000}, {"price_low": 9000, "price_high": 9001, "volume_usd": 10000}]})
         elif parsed.path.endswith("/signals/latest"):
             route.fulfill(json={
-                "state": "data_insufficient", "mark_price": 2495, "reason": "模型尚未完成首次训练",
+                "state": "data_insufficient", "mark_price": 2495, "atr": 10, "reason": "模型尚未完成首次训练",
                 "upper_trigger": {"status": "reference", "target_price": 2510, "current_price": 2495, "distance_price": 15, "distance_percent": 0.6, "distance_atr": 1.5, "probability": 0, "probability_available": False},
                 "lower_trigger": {"status": "reference", "target_price": 2480, "current_price": 2495, "distance_price": 15, "distance_percent": 0.6, "distance_atr": 1.5, "probability": 0, "probability_available": False}
             })
@@ -172,6 +174,14 @@ with sync_playwright() as playwright:
         expect(page.locator("#lower-target")).to_have_text("2,480.00")
         expect(page.locator("#upper-prob")).to_have_text("—")
         expect(page.locator("#lower-prob")).to_have_text("—")
+        expect(page.locator("#classic-pivot-meta")).to_contain_text("ATR(14)")
+        expect(page.locator("#classic-r3")).to_have_text("2,510.00")
+        expect(page.locator("#classic-r2")).to_have_text("2,505.00")
+        expect(page.locator("#classic-r1")).to_have_text("2,500.00")
+        expect(page.locator("#classic-p")).to_have_text("2,495.00")
+        expect(page.locator("#classic-s1")).to_have_text("2,490.00")
+        expect(page.locator("#classic-s2")).to_have_text("2,485.00")
+        expect(page.locator("#classic-s3")).to_have_text("2,480.00")
     initial = check_axis()
     if not production:
         assert len(initial["ids"]) == 6002 and "窗口已加载 6003笔" in initial["context"] and "价格视野外 1笔" in initial["context"], initial["context"]

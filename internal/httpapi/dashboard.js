@@ -213,6 +213,21 @@ function updateTrigger(prefix, trigger) {
   $(prefix + '-time').textContent = trigger?.triggered_at ? when(trigger.triggered_at) : trigger?.expires_at ? '截止 ' + when(trigger.expires_at) : '—';
 }
 
+function renderClassicPivots(view, signal) {
+  const price = Number(view?.summary?.last_price || signal?.mark_price);
+  const atr = Number(signal?.atr);
+  const pivots = window.ClassicPivots?.calculate(price, atr);
+  const names = ['r3', 'r2', 'r1', 'p', 's1', 's2', 's3'];
+  names.forEach(name => { $('classic-' + name).textContent = pivots ? money(pivots[name]) : '—'; });
+  if (!pivots) {
+    $('classic-pivot-meta').textContent = '等待 ATR(14) 数据';
+    $('classic-pivot-note').textContent = '使用现价作为 P，并以 ATR(14) 估算经典枢轴的前一时段高低点。';
+    return;
+  }
+  $('classic-pivot-meta').textContent = '现价 ' + money(price) + ' · ATR(14) ' + money(atr);
+  $('classic-pivot-note').textContent = '经典公式以现价为 P，按 H=P+ATR/2、L=P−ATR/2 估算前一时段波幅；上方 R3/R2/R1 对应空头墙方向，下方 S1/S2/S3 对应多头墙方向。';
+}
+
 function mergeCandles(current, incoming) {
   const values = new Map(current.map(item => [new Date(item.time).getTime(), item]));
   incoming.forEach(item => values.set(new Date(item.time).getTime(), item));
@@ -511,6 +526,7 @@ function draw(view, map, signal, volume) {
   const candles = visibleCandles();
   const bins = map?.bins || [];
   $('chart-title').textContent = (intervalName[chart.interval] || chart.interval) + ' K线 · 成交量分布 · 清算墙';
+  renderClassicPivots(view, signal);
   const sessionRange = volume?.session_start ? ' (' + when(volume.session_start) + ' → ' + when(volume.session_end) + ')' : '';
   const profileState = volume?.state === 'ok' ? '当前时段成交量' + sessionRange : volume?.state === 'backfilling' ? '成交量回填 ' + ((volume.backfill_progress || 0) * 100).toFixed(0) + '%' + sessionRange : volume?.state === 'stale' ? '成交量已过期' + sessionRange : '成交量不可用';
   const leverageText = (map?.leverages || []).map(value => value + '×').join('/');
