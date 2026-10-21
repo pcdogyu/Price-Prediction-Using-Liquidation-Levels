@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,45 @@ func TestTVBotGateFullLimitPositionClose(t *testing.T) {
 	}
 	if !response.OK || response.Status != "running" || response.Mode != "limit" || response.Px != "100.1" || response.Sz != "20" {
 		t.Fatalf("bad Gate full limit close response: %#v", response)
+	}
+}
+
+func TestTVBotGateMarketPositionCloseUsesRequiredTextPrefix(t *testing.T) {
+	var orderBody map[string]any
+	gateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v4/futures/usdt/positions":
+			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"100","pos_margin_mode":"isolated","mode":"single"}]`))
+		case "/api/v4/futures/usdt/orders":
+			if r.Method != http.MethodPost {
+				t.Fatalf("unexpected order method: %s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&orderBody); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = w.Write([]byte(`{"id":789,"contract":"BTC_USDT","size":0,"left":0,"price":"0","status":"finished","text":"t-close","is_reduce_only":true,"is_close":true}`))
+		default:
+			t.Fatalf("unexpected Gate path %s", r.URL.Path)
+		}
+	}))
+	defer gateServer.Close()
+
+	srv := newTestServer(t)
+	configureGatePositionCloseTest(t, srv, gateServer.URL)
+	req := httptest.NewRequest(http.MethodPost, "/tvbot/positions/close", bytes.NewReader([]byte(`{"exchange":"gate","api_id":"gate-main","inst_id":"BTC_USDT","pos_side":"short","mode":"market"}`)))
+	req.SetBasicAuth("admin", "Admin123")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Gate market close status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	text, ok := orderBody["text"].(string)
+	if !ok || !strings.HasPrefix(text, "t-") {
+		t.Fatalf("Gate market close text must start with t-: %#v", orderBody)
+	}
+	if orderBody["size"] != "0" || orderBody["price"] != "0" || orderBody["tif"] != "ioc" || orderBody["close"] != true || orderBody["reduce_only"] != true {
+		t.Fatalf("bad Gate market close order: %#v", orderBody)
 	}
 }
 

@@ -1913,7 +1913,7 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 func placeGateMarketPositionClose(ctx context.Context, cfg config.Config, client gate.Client, contract string) (gate.Order, error) {
 	return client.PlaceOrder(ctx, gate.PlaceOrderRequest{
 		Contract: contract, Size: "0", Price: "0", TIF: "ioc", Close: true, ReduceOnly: true,
-		PosMarginMode: cfg.MarginMode(), Text: nextPositionCloseClOrdID(),
+		PosMarginMode: cfg.MarginMode(), Text: nextGatePositionCloseText(),
 	})
 }
 
@@ -2004,7 +2004,7 @@ func placeGateLimitPositionClose(ctx context.Context, cfg config.Config, client 
 		Close:         true,
 		ReduceOnly:    true,
 		PosMarginMode: marginMode,
-		Text:          nextPositionCloseClOrdID(),
+		Text:          nextGatePositionCloseText(),
 	}
 	if strings.TrimSpace(closeSz) != "" {
 		req.Size = strings.TrimSpace(closeSz)
@@ -2268,7 +2268,7 @@ func placeGatePositionClose(ctx context.Context, cfg config.Config, client gate.
 		Close:         true,
 		ReduceOnly:    true,
 		PosMarginMode: marginMode,
-		Text:          nextPositionCloseClOrdID(),
+		Text:          nextGatePositionCloseText(),
 	}
 	if strings.TrimSpace(closeSz) != "" {
 		req.Size = strings.TrimSpace(closeSz)
@@ -7322,6 +7322,10 @@ func binancePositionProtectionCallbackRate(trailingPct float64) (string, error) 
 func nextPositionCloseClOrdID() string {
 	seq := atomic.AddUint64(&positionCloseSeq, 1) % 1000000
 	return fmt.Sprintf("PC%d%06d", time.Now().UTC().UnixMilli(), seq)
+}
+
+func nextGatePositionCloseText() string {
+	return "t-" + nextPositionCloseClOrdID()
 }
 
 func nextPositionProtectionClOrdID(kind string) string {
