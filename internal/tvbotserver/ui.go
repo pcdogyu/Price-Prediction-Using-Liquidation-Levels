@@ -1973,7 +1973,7 @@ const tvbotHTML = `<!doctype html>
         <label>24h 交易额排名限制<select id="order-turnover-scope"><option value="top50">前 50</option><option value="top100">前 100</option><option value="top200">前 200</option><option value="top500">前 500</option><option value="all">不限排名</option></select></label>
       </div>
       <div id="layered-order-fields" style="display:none;margin-top:14px">
-        <div class="muted">多层订单按一次实时价快照计算：市价层立即成交，信号价层按 TradingView 价格挂单，其余层按当前价格的方向性价差挂单。比例合计必须为 100%。</div>
+        <div class="muted">多层订单按一次实时价快照计算：市价层立即成交，信号价层按 TradingView 价格挂单，其余层按当前价格的方向性价差挂单。每层成交价都会单独计算并提交对应的止盈、止损触发价；比例合计必须为 100%。</div>
         <div class="grid two" style="margin-top:10px">
           <label>市价层金额 %<input id="order-layered-market-pct" type="number" min="0" step="0.01"></label>
           <label>信号价限价层金额 %<input id="order-layered-signal-pct" type="number" min="0" step="0.01"></label>
@@ -4587,7 +4587,7 @@ const tvbotHTML = `<!doctype html>
       const layered = layeredOrderConfig(trading);
       $("order-amount").value = trading.order_amount_usdt || 100;
       $("order-leverage").value = trading.leverage || 5;
-      $("order-type").value = trading.order_type || "market";
+      $("order-type").value = trading.order_type || "layered";
       $("order-turnover-scope").value = marketTurnoverScope();
       $("order-risk-type").value = trading.risk_type || "tp_sl";
       $("order-tp").value = trading.take_profit_pct || 2;
@@ -4641,7 +4641,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function renderOrderSettingsPreview() {
-      const orderType = $("order-type").value || "market";
+      const orderType = $("order-type").value || "layered";
       const layered = readLayeredOrderConfig();
       const layeredTotal = layered.market_amount_pct + layered.signal_limit_amount_pct + layered.price_layers.reduce((total, layer) => total + layer.amount_pct, 0);
       const rows = [

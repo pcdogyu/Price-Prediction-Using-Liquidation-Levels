@@ -261,7 +261,7 @@ func gateRealtimePrice(ctx context.Context, client Client, contract string) (flo
 func formatGateLayerPrice(value float64, step string, action trading.Side) string {
 	n := parsePositive(step, 0)
 	if n <= 0 {
-		return strconv.FormatFloat(value, 'f', -1, 64)
+		return formatGatePrice(value, step)
 	}
 	units := value / n
 	if action == trading.ActionShort {
@@ -269,7 +269,7 @@ func formatGateLayerPrice(value float64, step string, action trading.Side) strin
 	} else {
 		value = math.Floor(units+1e-10) * n
 	}
-	return strconv.FormatFloat(value, 'f', -1, 64)
+	return formatGatePrice(value, step)
 }
 
 func gateLayeredClientOrderID(base string, index int) string {
@@ -409,7 +409,29 @@ func formatStep(v float64, step string, floor bool) string {
 			v = math.Round(v/n) * n
 		}
 	}
-	return strconv.FormatFloat(v, 'f', -1, 64)
+	return formatGatePrice(v, step)
+}
+
+func formatGatePrice(value float64, step string) string {
+	precision := gateStepDecimalPlaces(step)
+	if precision < 0 {
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	}
+	raw := strconv.FormatFloat(value, 'f', precision, 64)
+	return strings.TrimRight(strings.TrimRight(raw, "0"), ".")
+}
+
+func gateStepDecimalPlaces(step string) int {
+	n := parsePositive(step, 0)
+	if n <= 0 {
+		return -1
+	}
+	raw := strconv.FormatFloat(n, 'f', -1, 64)
+	dot := strings.IndexByte(raw, '.')
+	if dot < 0 {
+		return 0
+	}
+	return len(raw) - dot - 1
 }
 func riskTriggerPrices(action trading.Side, entry, tpPct, slPct float64) (float64, float64) {
 	if action == trading.ActionShort {

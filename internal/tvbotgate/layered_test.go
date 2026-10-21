@@ -3,8 +3,10 @@ package gate
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
@@ -62,9 +64,30 @@ func TestTraderPlacesSixLayeredGateOrdersFromOneTicker(t *testing.T) {
 			t.Fatalf("Gate layer %d is missing its TP/SL trigger prices: %#v", i, order)
 		}
 	}
+	if !almostEqualGatePrice(orders[0].TPTriggerPrice, 102) || !almostEqualGatePrice(orders[0].SLTriggerPrice, 99) ||
+		!almostEqualGatePrice(orders[1].TPTriggerPrice, 107.1) || !almostEqualGatePrice(orders[1].SLTriggerPrice, 104) ||
+		!almostEqualGatePrice(orders[2].TPTriggerPrice, 101.5) || !almostEqualGatePrice(orders[2].SLTriggerPrice, 98.5) ||
+		!almostEqualGatePrice(orders[5].TPTriggerPrice, 98.9) || !almostEqualGatePrice(orders[5].SLTriggerPrice, 96) {
+		t.Fatalf("each Gate layer should calculate TP/SL from its own entry price: %#v", orders)
+	}
 	for i, layer := range result.Layers {
 		if len(layer.RiskOrders) != 2 {
 			t.Fatalf("Gate layer %d should have its own TP and SL result: %#v", i, layer)
 		}
+	}
+}
+
+func almostEqualGatePrice(raw string, want float64) bool {
+	got, err := strconv.ParseFloat(raw, 64)
+	return err == nil && math.Abs(got-want) < 1e-9
+}
+
+func TestGateLayerPriceFormattingRemovesBinaryFloatTail(t *testing.T) {
+	got := formatGateLayerPrice(2465*(1-1.1/100), "0.01", trading.ActionLong)
+	if got != "2437.88" {
+		t.Fatalf("layer price should be formatted to the contract tick precision, got %q", got)
+	}
+	if got := formatStep(2465*(1+1.5/100), "0.01", false); got != "2501.98" {
+		t.Fatalf("risk trigger should be formatted to the contract tick precision, got %q", got)
 	}
 }
