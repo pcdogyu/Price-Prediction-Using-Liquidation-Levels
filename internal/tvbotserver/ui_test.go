@@ -118,6 +118,28 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/analysis", nil))
+	entryColumn := strings.Index(page, `{ id: "entry_time", title: "开仓时间"`)
+	exitColumn := strings.Index(page, `{ id: "exit_time", title: "平仓时间"`)
+	if entryColumn < 0 || exitColumn < 0 || entryColumn >= exitColumn {
+		t.Fatalf("analysis columns should put entry time before exit time: entry=%d exit=%d", entryColumn, exitColumn)
+	}
+	for _, want := range []string{
+		`function analysisGateChartSymbol(instID)`,
+		`function analysisTradeSymbolHTML(row)`,
+		`data-analysis-chart-key=`,
+		`tvbot.analysisChart.`,
+		`url.searchParams.set("trade_ref", token)`,
+		`window.open(url.toString(), "_blank", "noopener,noreferrer")`,
+		`function analysisTimeText(v)`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("Gate trade chart integration marker missing %q", want)
+		}
+	}
+}
+
 func TestRenderTVBotHTMLShowsCurrentUserBeforeLogout(t *testing.T) {
 	req := httptest.NewRequest("GET", "/tvbot/view/dashboard", nil)
 	req.Header.Set("X-Forwarded-Prefix", "/liquidation")

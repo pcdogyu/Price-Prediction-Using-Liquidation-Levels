@@ -19,6 +19,65 @@
     return [low - padding, high + padding];
   }
 
+  function normalizeMarketSymbol(value) {
+    let raw = String(value || '').trim().toUpperCase();
+    if (!raw) return '';
+    const colon = raw.lastIndexOf(':');
+    if (colon >= 0) raw = raw.slice(colon + 1);
+    raw = raw.replace(/\.(P|PERP)$/, '').replace(/[-_]?(PERP|SWAP)$/, '').replace(/[-_/]+/g, '');
+    return /^[A-Z0-9]+USDT$/.test(raw) && raw.length > 4 ? raw : '';
+  }
+
+  function tradeTime(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value > 1e11 ? value : value * 1000;
+    }
+    const raw = String(value || '').trim();
+    if (!raw) return NaN;
+    if (raw.startsWith('0001-01-01')) return NaN;
+    if (/^-?\d+(?:\.\d+)?$/.test(raw)) {
+      const numeric = Number(raw);
+      if (Number.isFinite(numeric)) return numeric > 1e11 ? numeric : numeric * 1000;
+    }
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+
+  function normalizeTradeMarkers(rows, symbol, selectedKey = '') {
+    const target = normalizeMarketSymbol(symbol);
+    if (!target || !Array.isArray(rows)) return [];
+    const markers = [];
+    rows.forEach((row, index) => {
+      if (!row || normalizeMarketSymbol(row.inst_id || row.symbol) !== target) return;
+      const side = String(row.side || '').trim().toLowerCase();
+      if (side !== 'long' && side !== 'short') return;
+      const rowKey = String(row.row_key || row.key || index);
+      const selected = rowKey === String(selectedKey || '') || row.selected === true;
+      const add = (phase, timeValue, priceValue) => {
+        const time = tradeTime(timeValue);
+        const price = Number(priceValue);
+        if (!Number.isFinite(time) || !Number.isFinite(price) || price <= 0) return;
+        const isEntry = phase === 'entry';
+        const action = side === 'long' ? (isEntry ? 'buy' : 'sell') : (isEntry ? 'sell' : 'buy');
+        markers.push({
+          id: rowKey + ':' + phase,
+          row_key: rowKey,
+          symbol: target,
+          side,
+          phase,
+          action,
+          time,
+          time_iso: new Date(time).toISOString(),
+          price,
+          selected
+        });
+      };
+      add('entry', row.entry_time, row.entry_px);
+      add('exit', row.exit_time, row.exit_px);
+    });
+    return markers.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+  }
+
   function mergeEvents(current, incoming, symbol) {
     const values = new Map();
     for (const event of [...current, ...incoming]) {
@@ -164,7 +223,7 @@
     }
   }
 
-  const exported = { candleRange, mergeEvents, windowEvents, radius, placements, hitIndex, WindowLoader };
+  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, mergeEvents, windowEvents, radius, placements, hitIndex, WindowLoader };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.BubbleChart = exported;
 })(typeof window === 'object' ? window : globalThis);

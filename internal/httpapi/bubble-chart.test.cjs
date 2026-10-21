@@ -18,6 +18,41 @@ test('tiny events survive, IDs dedupe, symbols and invalid events cannot leak', 
   assert.equal(B.windowEvents(values, 0, 1000).length, 0);
 });
 
+test('Gate contract symbols normalize to Binance USDT symbols', () => {
+  assert.equal(B.normalizeMarketSymbol('BTC_USDT'), 'BTCUSDT');
+  assert.equal(B.normalizeMarketSymbol('BTC-USDT-SWAP'), 'BTCUSDT');
+  assert.equal(B.normalizeMarketSymbol('gate:ETH_USDT'), 'ETHUSDT');
+  assert.equal(B.normalizeMarketSymbol('BTCUSDC'), '');
+  assert.equal(B.normalizeMarketSymbol('not-a-symbol'), '');
+});
+
+test('trade markers map long and short entry/exit actions and keep the selected row', () => {
+  const markers = B.normalizeTradeMarkers([
+    { row_key: 'long-row', inst_id: 'BTC_USDT', side: 'long', entry_time: '2026-01-01T00:00:00Z', entry_px: '100', exit_time: '2026-01-01T01:00:00Z', exit_px: '110' },
+    { row_key: 'short-row', inst_id: 'BTCUSDT', side: 'short', entry_time: '2026-01-01T02:00:00Z', entry_px: 120, exit_time: '2026-01-01T03:00:00Z', exit_px: 105 }
+  ], 'BTCUSDT', 'short-row');
+  assert.deepEqual(markers.map(item => [item.row_key, item.phase, item.action, item.selected]), [
+    ['long-row', 'entry', 'buy', false],
+    ['long-row', 'exit', 'sell', false],
+    ['short-row', 'entry', 'sell', true],
+    ['short-row', 'exit', 'buy', true]
+  ]);
+  assert.equal(markers[0].price, 100);
+  assert.equal(markers[0].time, Date.parse('2026-01-01T00:00:00Z'));
+});
+
+test('trade marker normalization omits incomplete or invalid values without dropping valid points', () => {
+  const markers = B.normalizeTradeMarkers([
+    { row_key: 'valid', inst_id: 'ETH_USDT', side: 'long', entry_time: '1704067200000', entry_px: '2000', exit_time: '', exit_px: 2100 },
+    { row_key: 'bad-time', inst_id: 'ETH_USDT', side: 'long', entry_time: 'later', entry_px: 2000, exit_time: '2026-01-01T00:00:00Z', exit_px: 2100 },
+    { row_key: 'zero-time', inst_id: 'ETH_USDT', side: 'long', entry_time: '0001-01-01T00:00:00Z', entry_px: 2000, exit_time: '', exit_px: 2100 },
+    { row_key: 'bad-price', inst_id: 'ETH_USDT', side: 'short', entry_time: '2026-01-01T00:00:00Z', entry_px: 0, exit_time: '2026-01-01T01:00:00Z', exit_px: 'bad' },
+    { row_key: 'wrong-symbol', inst_id: 'BTC_USDT', side: 'long', entry_time: '2026-01-01T00:00:00Z', entry_px: 1, exit_time: '2026-01-01T01:00:00Z', exit_px: 2 },
+    { row_key: 'wrong-side', inst_id: 'ETH_USDT', side: 'buy', entry_time: '2026-01-01T00:00:00Z', entry_px: 1, exit_time: '2026-01-01T01:00:00Z', exit_px: 2 }
+  ], 'ETHUSDT');
+  assert.deepEqual(markers.map(item => [item.row_key, item.phase]), [['valid', 'entry'], ['bad-time', 'exit']]);
+});
+
 test('timestamp placements need no candle bucket, offset in pixels, border circles and overlaps survive', () => {
   const events = [event('long', 2000), event('short', 2000, 100, 'short'), event('edge', 0, 90), event('outside', 1000, 120), event('same', 2000)];
   const result = B.placements(events, [90, 110], { left: 0, right: 100, top: 0, bottom: 100 }, at => at / 40, price => (110 - price) * 5);

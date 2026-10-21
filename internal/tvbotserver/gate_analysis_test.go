@@ -74,7 +74,7 @@ func TestBuildAnalysisSupportsGateWithoutOKX(t *testing.T) {
 	if stats.TradeCount != 1 || stats.Wins != 1 || stats.Losses != 0 || stats.NetPnL != 19.8 || stats.Fees != -0.2 || stats.Turnover != 420 {
 		t.Fatalf("Gate stats=%#v", stats)
 	}
-	if len(got.PositionTrades) != 1 || got.PositionTrades[0].Exchange != tvbottrading.ExchangeGate || got.PositionTrades[0].EntryPx != "100" || got.PositionTrades[0].ExitPx != "110" || got.PositionTrades[0].Leverage != cfg.Trading.Leverage || got.PositionTrades[0].Margin != "0.004" || got.PositionTrades[0].PricePrecision == nil || *got.PositionTrades[0].PricePrecision != 2 {
+	if len(got.PositionTrades) != 1 || got.PositionTrades[0].Exchange != tvbottrading.ExchangeGate || !got.PositionTrades[0].EntryTime.Equal(entryTime) || !got.PositionTrades[0].ExitTime.Equal(exitTime) || got.PositionTrades[0].EntryPx != "100" || got.PositionTrades[0].ExitPx != "110" || got.PositionTrades[0].Leverage != cfg.Trading.Leverage || got.PositionTrades[0].Margin != "0.004" || got.PositionTrades[0].PricePrecision == nil || *got.PositionTrades[0].PricePrecision != 2 {
 		t.Fatalf("Gate positions=%#v", got.PositionTrades)
 	}
 }

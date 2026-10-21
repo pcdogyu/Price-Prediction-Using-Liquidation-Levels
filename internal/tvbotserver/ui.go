@@ -1315,6 +1315,7 @@ const tvbotHTML = `<!doctype html>
       overflow: hidden;
       text-overflow: clip;
     }
+    .analysis-trade-table .analysis-entry-time-col { width: 11.4%; }
     .analysis-trade-table .analysis-exit-time-col { width: 11.4%; }
     .analysis-trade-table .analysis-inst-id-col { width: 6.4%; }
     .analysis-trade-table .analysis-side-col { width: 5.4%; }
@@ -1329,6 +1330,21 @@ const tvbotHTML = `<!doctype html>
     .analysis-trade-table .analysis-net-pnl-col { width: 7.6%; }
     .analysis-trade-table .analysis-turnover-col { width: 8.6%; }
     .analysis-trade-table .analysis-fill-count-col { width: 6%; }
+    .analysis-symbol-link {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--link);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      padding: 0;
+      text-decoration: underline;
+      text-decoration-color: color-mix(in srgb, var(--link) 45%, transparent);
+      text-underline-offset: 3px;
+    }
+    .analysis-symbol-link:hover { color: var(--text); }
+    .analysis-symbol-link:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; border-radius: 3px; }
     .analysis-realized-pnl-cell {
       display: flex;
       align-items: center;
@@ -2271,8 +2287,9 @@ const tvbotHTML = `<!doctype html>
     const analysisTradePageSize = 20;
     const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3";
     const analysisTradeColumnDefs = [
-      { id: "exit_time", title: "平仓时间", colClass: "analysis-exit-time-col", tdClass: "time", render: (row) => shanghaiTime(row.exit_time) },
-      { id: "inst_id", title: "币对", colClass: "analysis-inst-id-col", render: (row) => analysisInstIDText(row.inst_id) },
+      { id: "entry_time", title: "开仓时间", colClass: "analysis-entry-time-col", tdClass: "time", render: (row) => analysisTimeText(row.entry_time) },
+      { id: "exit_time", title: "平仓时间", colClass: "analysis-exit-time-col", tdClass: "time", render: (row) => analysisTimeText(row.exit_time) },
+      { id: "inst_id", title: "币对", colClass: "analysis-inst-id-col", renderHTML: (row) => analysisTradeSymbolHTML(row) },
       { id: "side", title: "方向", colClass: "analysis-side-col", toneClass: (row) => analysisPositionSideToneClass(row.side), render: (row) => analysisPositionSideText(row.side) },
       { id: "entry_px", title: "开仓价", colClass: "analysis-entry-px-col", render: (row) => analysisPriceText(row, row.entry_px) },
       { id: "exit_px", title: "平仓价", colClass: "analysis-exit-px-col", render: (row) => analysisPriceText(row, row.exit_px) },
@@ -2920,6 +2937,10 @@ const tvbotHTML = `<!doctype html>
         return acc;
       }, {});
       return parts.year + "-" + parts.month + "-" + parts.day + " " + parts.hour + ":" + parts.minute + ":" + parts.second;
+    }
+
+    function analysisTimeText(v) {
+      return zeroTime(v) ? "-" : shanghaiTime(v);
     }
 
     function shanghaiTimeFromOKX(v) {
@@ -5574,7 +5595,9 @@ const tvbotHTML = `<!doctype html>
     function normalizeAnalysisTradeColumnOrder(order) {
       const valid = new Set(analysisTradeColumnIDs());
       const next = [];
-      (Array.isArray(order) ? order : []).forEach((id) => {
+      const source = Array.isArray(order) ? order : [];
+      const hadEntryTime = source.some((id) => String(id || "").trim() === "entry_time");
+      source.forEach((id) => {
         id = String(id || "").trim();
         if (!id || id === "order_id" || !valid.has(id) || next.includes(id)) return;
         next.push(id);
@@ -5582,6 +5605,12 @@ const tvbotHTML = `<!doctype html>
       analysisTradeColumnIDs().forEach((id) => {
         if (!next.includes(id)) next.push(id);
       });
+      if (!hadEntryTime) {
+        const entryIndex = next.indexOf("entry_time");
+        if (entryIndex >= 0) next.splice(entryIndex, 1);
+        const exitIndex = next.indexOf("exit_time");
+        next.splice(exitIndex >= 0 ? exitIndex : 0, 0, "entry_time");
+      }
       return next;
     }
 
@@ -5653,6 +5682,82 @@ const tvbotHTML = `<!doctype html>
       if (value.endsWith("USDT") && value.length > 4) return value.slice(0, -4).replace(/[-_/]+$/, "") || original;
       if (value.endsWith("USDC") && value.length > 4) return value.slice(0, -4).replace(/[-_/]+$/, "") || original;
       return value.replace(/[-_/]+$/, "") || original;
+    }
+
+    function analysisGateChartSymbol(instID) {
+      let value = String(instID || "").trim().toUpperCase();
+      const colon = value.lastIndexOf(":");
+      if (colon >= 0) value = value.slice(colon + 1);
+      value = value.replace(/\.(P|PERP)$/, "").replace(/[-_]?(PERP|SWAP)$/, "");
+      value = value.replace(/[-_/]+/g, "");
+      return /^[A-Z0-9]+USDT$/.test(value) && value.length > 4 ? value : "";
+    }
+
+    function analysisTradeRowKey(row) {
+      return [row && row.inst_id, row && row.side, row && row.entry_time, row && row.exit_time, row && row.entry_px, row && row.exit_px, row && row.net_pnl].map((value) => String(value == null ? "" : value)).join("|");
+    }
+
+    function analysisTradeSymbolHTML(row) {
+      const text = analysisInstIDText(row && row.inst_id);
+      if (activeExchange() !== "gate") return escapeHTML(text);
+      const symbol = analysisGateChartSymbol(row && row.inst_id);
+      const key = analysisTradeRowKey(row);
+      return '<button type="button" class="analysis-symbol-link" data-analysis-chart-symbol="' + escapeHTML(symbol) + '" data-analysis-chart-key="' + escapeHTML(key) + '" title="在新标签页查看 Gate 买卖点 K 线">' + escapeHTML(text) + '</button>';
+    }
+
+    function analysisBubblesURL() {
+      const marker = "/tvbot/";
+      const start = location.pathname.indexOf(marker);
+      const base = start >= 0 ? location.pathname.slice(0, start) : "";
+      return new URL(base + "/bubbles", window.location.origin);
+    }
+
+    function openAnalysisTradeChart(row) {
+      if (activeExchange() !== "gate") return;
+      const symbol = analysisGateChartSymbol(row && row.inst_id);
+      if (!symbol) {
+        toast("该 Gate 币对无法转换为 Binance USDT K 线币对");
+        return;
+      }
+      const trades = analysisTradesForActiveExchange().filter((item) => analysisGateChartSymbol(item && item.inst_id) === symbol);
+      if (!trades.length) {
+        toast("当前分析窗口没有该 Gate 币对的交易记录");
+        return;
+      }
+      const tokenSource = window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2));
+      const token = tokenSource.replace(/[^A-Za-z0-9_-]/g, "");
+      const payload = {
+        version: 1,
+        created_at: Date.now(),
+        symbol,
+        focus_at: row && row.exit_time ? row.exit_time : "",
+        selected_key: analysisTradeRowKey(row),
+        rows: trades.map((item) => ({
+          inst_id: String(item.inst_id || ""),
+          side: String(item.side || "").toLowerCase(),
+          entry_time: item.entry_time || "",
+          exit_time: item.exit_time || "",
+          entry_px: item.entry_px,
+          exit_px: item.exit_px,
+          row_key: analysisTradeRowKey(item)
+        }))
+      };
+      try {
+        window.localStorage.setItem("tvbot.analysisChart." + token, JSON.stringify(payload));
+      } catch (_) {
+        toast("无法暂存交易图表数据，请检查浏览器本地存储权限");
+        return;
+      }
+      const url = analysisBubblesURL();
+      url.searchParams.set("symbol", symbol);
+      url.searchParams.set("trade_ref", token);
+      if (payload.focus_at) url.searchParams.set("focus_at", payload.focus_at);
+      const opened = window.open(url.toString(), "_blank", "noopener,noreferrer");
+      if (opened) {
+        try { opened.opener = null; opened.focus(); } catch (_) {}
+      } else {
+        toast("新标签页被浏览器拦截，请允许此站点打开新标签页");
+      }
     }
 
     function analysisPositionSideText(side) {
@@ -7266,6 +7371,13 @@ const tvbotHTML = `<!doctype html>
     $("sync-balance-history").addEventListener("click", () => syncBalanceHistory($("sync-balance-history")).catch((err) => toast(err.message)));
     $("analysis-trade-prev").addEventListener("click", () => changeAnalysisTradePage(-1));
     $("analysis-trade-next").addEventListener("click", () => changeAnalysisTradePage(1));
+    $("analysis-trade-rows").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-analysis-chart-key]");
+      if (!button) return;
+      const rowKey = button.dataset.analysisChartKey || "";
+      const row = analysisTradesForActiveExchange().find((item) => analysisTradeRowKey(item) === rowKey);
+      if (row) openAnalysisTradeChart(row);
+    });
     $("refresh-positions").addEventListener("click", () => loadPositionView(true).then(() => toast("持仓和挂单已刷新")).catch((err) => toast(err.message)));
     document.querySelectorAll("[data-pending-order-group]").forEach((button) => {
       button.addEventListener("click", () => {

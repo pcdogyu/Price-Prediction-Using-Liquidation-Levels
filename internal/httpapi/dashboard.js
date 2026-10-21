@@ -28,10 +28,22 @@ const chart = {
   manualHeight: storedChartHeight,
   atLatest: true, newData: false, drag: null
 };
+const tradeQuery = new URLSearchParams(window.location.search);
+const requestedTradeSymbolRaw = String(tradeQuery.get('symbol') || '').trim();
+const requestedTradeSymbol = window.BubbleChart.normalizeMarketSymbol(requestedTradeSymbolRaw);
 let symbol = 'ETHUSDT';
 const initialSymbolButton = document.querySelector('button[data-symbol].active');
 if (initialSymbolButton) symbol = initialSymbolButton.dataset.symbol;
+if (requestedTradeSymbol) symbol = requestedTradeSymbol;
 let symbolCatalog = [];
+const tradeView = {
+  ref: String(tradeQuery.get('trade_ref') || '').trim(),
+  requestedSymbol: requestedTradeSymbol,
+  focusAt: window.BubbleChart.tradeTime(tradeQuery.get('focus_at')),
+  markers: [],
+  enabled: false,
+  error: requestedTradeSymbolRaw && !requestedTradeSymbol ? 'URL 中的交易币对格式不受支持' : ''
+};
 let refreshing = false;
 let refreshSequence = 0;
 let refreshController;
@@ -93,11 +105,64 @@ async function json(path, options = {}) {
   return body;
 }
 
+function loadTradeView() {
+  if (!tradeView.ref) return;
+  const storageKey = 'tvbot.analysisChart.' + tradeView.ref;
+  let payload = null;
+  try {
+    const now = Date.now();
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index) || '';
+      if (!key.startsWith('tvbot.analysisChart.')) continue;
+      try {
+        const createdAt = Number(JSON.parse(localStorage.getItem(key) || '{}').created_at);
+        if (Number.isFinite(createdAt) && (now - createdAt > 10 * 60 * 1000 || createdAt - now > 60 * 1000)) localStorage.removeItem(key);
+      } catch (_) { /* an unreadable transfer is harmless and can be replaced */ }
+    }
+    const raw = localStorage.getItem(storageKey);
+    payload = raw ? JSON.parse(raw) : null;
+    const createdAt = Number(payload?.created_at);
+    if (Number.isFinite(createdAt) && (now - createdAt > 10 * 60 * 1000 || createdAt - now > 60 * 1000)) {
+      localStorage.removeItem(storageKey);
+      payload = null;
+    }
+  } catch (_) {
+    payload = null;
+  }
+  if (!payload || !Array.isArray(payload.rows)) {
+    tradeView.error = '交易点引用不存在或已过期，请从 Gate 分析表重新打开';
+    return;
+  }
+  const payloadSymbol = window.BubbleChart.normalizeMarketSymbol(payload.symbol);
+  if (!payloadSymbol) {
+    tradeView.error = '交易引用中的 Gate 币对无法转换为 Binance USDT K 线币对';
+    return;
+  }
+  if (!tradeView.requestedSymbol && payloadSymbol) {
+    symbol = payloadSymbol;
+  }
+  if (tradeView.requestedSymbol && payloadSymbol && tradeView.requestedSymbol !== payloadSymbol) {
+    tradeView.error = '交易点引用与 URL 币对不一致';
+    return;
+  }
+  const focus = window.BubbleChart.tradeTime(payload.focus_at || tradeQuery.get('focus_at'));
+  if (Number.isFinite(focus)) tradeView.focusAt = focus;
+  const selectedKey = String(payload.selected_key || '');
+  tradeView.markers = window.BubbleChart.normalizeTradeMarkers(payload.rows, symbol, selectedKey);
+  tradeView.enabled = true;
+  if (!tradeView.markers.length) tradeView.error = '该交易引用没有可定位的有效开平仓价格或时间';
+}
+
+loadTradeView();
+
 function catalogSymbol(value) {
   const raw = String(value || '').trim().toUpperCase();
   if (!raw) return '';
   const exact = symbolCatalog.find(item => item.symbol === raw);
   if (exact) return exact.symbol;
+  const normalized = window.BubbleChart.normalizeMarketSymbol(raw);
+  const normalizedItem = symbolCatalog.find(item => window.BubbleChart.normalizeMarketSymbol(item.symbol) === normalized);
+  if (normalizedItem) return normalizedItem.symbol;
   const base = symbolCatalog.find(item => item.base_asset === raw);
   return base ? base.symbol : '';
 }
@@ -114,6 +179,10 @@ function activateSymbol(next) {
   const input = $('symbol-search');
   if (input) input.value = symbol;
   cache.signal = cache.map = cache.market = cache.volume = null;
+  tradeView.enabled = false;
+  tradeView.markers = [];
+  tradeView.focusAt = NaN;
+  tradeView.error = '';
   resetChartState();
   refresh(true);
 }
@@ -133,6 +202,9 @@ async function loadSymbolCatalog() {
       }));
     }
     if (state) state.textContent = symbolCatalog.length + ' 个可交易 USDT 永续';
+    if (tradeView.requestedSymbol && !symbolCatalog.some(item => window.BubbleChart.normalizeMarketSymbol(item.symbol) === symbol)) {
+      tradeView.error = 'Binance 不支持 ' + symbol + ' 永续 K 线，Gate 分析表不受影响';
+    }
   } catch (error) {
     if (state) state.textContent = '币对目录暂不可用，仍可使用已配置币对';
   }
@@ -141,6 +213,10 @@ async function loadSymbolCatalog() {
 function marketPath(before = '') {
   const params = new URLSearchParams({ symbol, interval: chart.interval, limit: String(chart.visibleCount) });
   if (before) params.set('before', before);
+  else if (tradeView.enabled && Number.isFinite(tradeView.focusAt) && !chart.candles.length) {
+    const duration = intervalMilliseconds[chart.interval] || 900000;
+    params.set('before', new Date(tradeView.focusAt + duration).toISOString());
+  }
   return 'market?' + params.toString();
 }
 
@@ -282,6 +358,7 @@ function mergeMarket(view, older, reset) {
     chart.newData = false;
     chart.yManual = false;
     chart.yLow = chart.yHigh = chart.autoSpan = null;
+    if (tradeView.enabled && Number.isFinite(tradeView.focusAt)) chart.atLatest = false;
   } else if (older) {
     const oldFirst = chart.candles[0]?.time;
     const oldEnd = chart.windowEnd;
@@ -505,6 +582,38 @@ function drawLiquidationBubbles(plot, events, range, scale, y, left, candleRight
   return result;
 }
 
+function tradeMarkerTip(marker) {
+  const phase = marker.phase === 'entry' ? '开仓' : '平仓';
+  const action = marker.action === 'buy' ? '买入' : '卖出';
+  const side = marker.side === 'long' ? '多单' : '空单';
+  return 'Gate 交易点 · ' + phase + ' ' + action + '\n时间 ' + when(marker.time_iso) + '\n价格 ' + money(marker.price) + '\n方向 ' + side + (marker.selected ? '\n当前点击记录' : '');
+}
+
+function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top, plotBottom) {
+  let outside = 0;
+  let visible = 0;
+  const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+  markers.forEach(marker => {
+    if (marker.time < scale.start || marker.time >= scale.end || marker.price < range[0] || marker.price > range[1]) {
+      outside++;
+      return;
+    }
+    const x = clamp(scale.x(marker.time), left + 9, candleRight - 9);
+    const priceY = clamp(y(marker.price), top + 9, plotBottom - 9);
+    const color = marker.action === 'buy' ? '#2dd4bf' : '#fb7185';
+    const group = svgNode('g', { 'data-trade-marker': marker.id, 'data-tip': tradeMarkerTip(marker) });
+    if (marker.selected) group.appendChild(svgNode('circle', { cx: x, cy: priceY, r: 11, fill: 'none', stroke: '#f8fafc', 'stroke-width': 2, opacity: .95 }));
+    const upward = marker.action === 'buy';
+    const d = upward
+      ? 'M ' + x + ' ' + (priceY - 9) + ' L ' + (x - 8) + ' ' + (priceY + 6) + ' L ' + (x + 8) + ' ' + (priceY + 6) + ' Z'
+      : 'M ' + x + ' ' + (priceY + 9) + ' L ' + (x - 8) + ' ' + (priceY - 6) + ' L ' + (x + 8) + ' ' + (priceY - 6) + ' Z';
+    group.appendChild(svgNode('path', { d, fill: color, stroke: '#07141d', 'stroke-width': 1.4 }));
+    plot.appendChild(group);
+    visible++;
+  });
+  return { visible, outside };
+}
+
 function drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high) {
   if (map?.data_source !== 'coinglass_binance_liqmap' || !finite(currentPrice) || currentPrice < low || currentPrice > high) return;
   const aboveUSD = Number(map.liquidation_above_usd);
@@ -539,13 +648,14 @@ function draw(view, map, signal, volume) {
   const liquidationName = coinGlassMap ? 'CoinGlass Binance 清算墙' : 'CoinGlass 清算墙不可用';
   const range = currentRange(candles);
   renderLiquidationTop3(map, range);
+  $('trade-marker-legend').classList.toggle('hidden', !tradeView.enabled);
   bubbleHits = () => [];
   const state = bubbleLoader.state;
   $('bubble-retry').classList.toggle('hidden', state.status !== 'error');
   const loadState = state.status === 'loading' ? '补齐中 · ' + state.pages + '页 / ' + state.loaded + '笔' : state.status === 'error' ? '补齐失败：' + state.error + '（可重试）' : state.status === 'complete' ? '窗口已补齐' : '等待数据';
   const context = (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · K线 ' + chart.visibleCount + '根 · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom);
   if (!range || !chartTimeScale(candles, dims.left, dims.candleRight)) {
-    ['price-low', 'price-high', 'window-start', 'window-end', 'bubble-count'].forEach(key => svg.removeAttribute('data-' + key));
+    ['price-low', 'price-high', 'window-start', 'window-end', 'bubble-count', 'trade-marker-count'].forEach(key => svg.removeAttribute('data-' + key));
     $('chart-context').textContent = context + ' · 等待有效K线';
     svg.appendChild(svgNode('text', { x: 800, y: 280, 'text-anchor': 'middle', fill: '#83a0b2' }, '等待有效 K 线数据'));
     return;
@@ -627,8 +737,11 @@ function draw(view, map, signal, volume) {
   }
   const windowLiquidations = window.BubbleChart.windowEvents(chart.liquidations, timeScale.start, timeScale.end);
   const bubbles = drawLiquidationBubbles(plot, windowLiquidations, range, timeScale, y, left, candleRight, top, plotBottom);
+  const tradeMarkers = tradeView.enabled ? drawTradeMarkers(plot, tradeView.markers, range, timeScale, y, left, candleRight, top, plotBottom) : { visible: 0, outside: 0 };
   svg.setAttribute('data-bubble-count', bubbles.points.length);
-  $('chart-context').textContent = context + ' · 窗口已加载 ' + windowLiquidations.length + '笔 · 屏内气泡 ' + bubbles.points.length + '笔' + (bubbles.outside ? ' · 价格视野外 ' + bubbles.outside + '笔' : '') + ' · ' + loadState;
+  svg.setAttribute('data-trade-marker-count', tradeMarkers.visible);
+  const tradeText = tradeView.enabled ? ' · Gate交易点 屏内 ' + tradeMarkers.visible + '个' + (tradeMarkers.outside ? ' · 视野外 ' + tradeMarkers.outside + '个' : '') : '';
+  $('chart-context').textContent = context + ' · 窗口已加载 ' + windowLiquidations.length + '笔 · 屏内气泡 ' + bubbles.points.length + '笔' + (bubbles.outside ? ' · 价格视野外 ' + bubbles.outside + '笔' : '') + tradeText + ' · ' + loadState;
   if (bins.length) {
     const maximum = Math.max(...bins.map(item => item.total_usd), 1);
     const binWidth = map?.bin_width || (high - low) / Math.max(1, bins.length);
@@ -717,9 +830,10 @@ function bindTips(svg) {
   const hideSoon = () => { clearTimeout(tooltipHideTimer); tooltipHideTimer = setTimeout(() => { tooltip.style.display = 'none'; }, 200); };
   svg.addEventListener('pointermove', event => {
     if (chart.drag) { tooltip.style.display = 'none'; return; }
-    const element = event.target.closest('[data-tip]');
+    const tradeElement = event.target.closest('[data-trade-marker]');
+    const element = tradeElement || event.target.closest('[data-tip]');
     const point = svgPoint(event);
-    const overlapping = point.x >= dims.left && point.x <= dims.candleRight ? bubbleHits(point.x, point.y) : [];
+    const overlapping = tradeElement ? [] : (point.x >= dims.left && point.x <= dims.candleRight ? bubbleHits(point.x, point.y) : []);
     if (!element && !overlapping.length) { hideSoon(); return; }
     clearTimeout(tooltipHideTimer);
     tooltip.textContent = overlapping.length ? (overlapping.length > 1 ? '此处重叠 ' + overlapping.length + '笔（滚动查看）\n\n' : '') + overlapping.map(bubbleTip).join('\n\n') + '\n\n覆盖：本服务采集的 Binance 强平采样流，每交易对每秒最近一笔' : element.getAttribute('data-tip');
@@ -733,6 +847,7 @@ function bindTips(svg) {
 function showFailures(failures) {
   const all = [...failures];
   if (streamError) all.push('实时推送 · ' + streamError);
+  if (tradeView.error) all.push('Gate 交易点 · ' + tradeView.error);
   $('api-errors').textContent = all.length ? '数据接口异常：\n' + all.join('\n') : '';
   $('api-errors').classList.toggle('hidden', all.length === 0);
 }
@@ -1168,6 +1283,7 @@ document.querySelectorAll('button[data-interval]').forEach(button => {
 $('chart-latest').addEventListener('click', () => {
   chart.atLatest = true;
   chart.newData = false;
+  tradeView.focusAt = NaN;
   $('new-data').classList.add('hidden');
   refresh(true);
 });

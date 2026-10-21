@@ -311,6 +311,40 @@ with sync_playwright() as playwright:
             assert set(view["ids"]) == drawn, {"symbol": symbol, "missing": list(drawn - set(view["ids"])), "extra": list(set(view["ids"]) - drawn)}
             assert f"窗口已加载 {len(rows)}笔" in view["context"]
             evidence.append({"symbol": symbol, "start": view["start"], "end": view["end"], "history": len(rows), "bubbles": len(view["ids"]), "range": [view["low"], view["high"]]})
+    if not production:
+        trade_focus = state["anchor"] - 40 * intervals["1m"]
+        trade_payload = {
+            "version": 1,
+            "created_at": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000),
+            "symbol": "BTCUSDT",
+            "focus_at": iso(trade_focus),
+            "selected_key": "gate-selected",
+            "rows": [
+                {"inst_id": "BTC_USDT", "side": "long", "entry_time": iso(state["anchor"] - 80 * intervals["1m"]), "entry_px": 2490, "exit_time": iso(trade_focus), "exit_px": 2500, "row_key": "gate-selected"},
+                {"inst_id": "BTC_USDT", "side": "short", "entry_time": iso(trade_focus - 30 * intervals["1m"]), "entry_px": 2500, "exit_time": iso(trade_focus - 10 * intervals["1m"]), "exit_px": 2490, "row_key": "gate-other"},
+            ],
+        }
+        page.evaluate("([key, payload]) => localStorage.setItem('tvbot.analysisChart.' + key, JSON.stringify(payload))", ["gate-ui-test", trade_payload])
+        page.goto(base + "/bubbles?symbol=BTC_USDT&trade_ref=gate-ui-test&focus_at=" + iso(trade_focus), wait_until="domcontentloaded")
+        idle()
+        assert parse_qs(urlsplit(page.url).query)["symbol"] == ["BTC_USDT"], page.url
+        trade_view = page.evaluate("""() => ({
+          count: Number(document.getElementById('market-chart').dataset.tradeMarkerCount),
+          context: document.getElementById('chart-context').textContent,
+          markers: Array.from(document.querySelectorAll('[data-trade-marker]'), e => ({id: e.dataset.tradeMarker, tip: e.dataset.tip})),
+          legendHidden: document.getElementById('trade-marker-legend').classList.contains('hidden'),
+          windowStart: document.getElementById('market-chart').dataset.windowStart,
+          windowEnd: document.getElementById('market-chart').dataset.windowEnd
+        })""")
+        assert trade_view["count"] == 4 and "Gate交易点 屏内 4个" in trade_view["context"], trade_view
+        assert len(trade_view["markers"]) == 4 and not trade_view["legendHidden"], trade_view
+        tips = "\n".join(item["tip"] for item in trade_view["markers"])
+        assert "买入" in tips and "卖出" in tips and "当前点击记录" in tips, tips
+        assert ms(trade_view["windowStart"]) <= trade_focus <= ms(trade_view["windowEnd"]), trade_view
+        marker_box = page.locator('[data-trade-marker]').first.bounding_box()
+        page.mouse.move(marker_box["x"] + marker_box["width"] / 2, marker_box["y"] + marker_box["height"] / 2)
+        expect(page.locator("#tooltip")).to_contain_text("Gate 交易点")
+        expect(page.locator("#tooltip")).to_contain_text("买入")
     page.locator("#chart-latest").click()
     idle()
     check_axis()
