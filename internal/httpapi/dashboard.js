@@ -217,15 +217,20 @@ function renderClassicPivots(view, signal) {
   const price = Number(view?.summary?.last_price || signal?.mark_price);
   const atr = Number(signal?.atr);
   const pivots = window.ClassicPivots?.calculate(price, atr);
-  const names = ['r3', 'r2', 'r1', 'p', 's1', 's2', 's3'];
-  names.forEach(name => { $('classic-' + name).textContent = pivots ? money(pivots[name]) : '—'; });
+  const levelKeys = ['05', '10', '15', '20', '30'];
+  levelKeys.forEach((key, index) => {
+    const level = pivots?.levels?.[index];
+    $('classic-upper-' + key).textContent = level ? money(level.upper) : '—';
+    $('classic-lower-' + key).textContent = level ? money(level.lower) : '—';
+    $('classic-distance-' + key).textContent = level ? money(level.distance) + ' USDT' : '—';
+  });
   if (!pivots) {
     $('classic-pivot-meta').textContent = '等待 ATR(14) 数据';
-    $('classic-pivot-note').textContent = '使用现价作为 P，并以 ATR(14) 估算经典枢轴的前一时段高低点。';
+    $('classic-pivot-note').textContent = '等待现价和 ATR(14) 数据后生成上下方距离层级。';
     return;
   }
   $('classic-pivot-meta').textContent = '现价 ' + money(price) + ' · ATR(14) ' + money(atr);
-  $('classic-pivot-note').textContent = '经典公式以现价为 P，按 H=P+ATR/2、L=P−ATR/2 估算前一时段波幅；上方 R3/R2/R1 对应空头墙方向，下方 S1/S2/S3 对应多头墙方向。';
+  $('classic-pivot-note').textContent = '以现价为中心，按 ATR(14) 的 0.5×、1×、1.5×、2×、3×分别向上和向下生成价格；对应距离为 ATR(14) × 倍数。';
 }
 
 function mergeCandles(current, incoming) {

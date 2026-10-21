@@ -15,8 +15,8 @@
 </style>
 <style>.intervals{max-width:100%;min-width:0}.chart-head>div{min-width:0}.liquidation-top3{overflow-wrap:anywhere}.chart-actions{flex-wrap:wrap}.tooltip{pointer-events:auto;max-width:min(420px,calc(100vw - 16px));max-height:min(320px,calc(100dvh - 16px));overflow:auto}@media (orientation:landscape) and (max-height:900px) and (min-width:700px){.wrap{padding-top:12px;padding-bottom:24px}.top{gap:10px}.top h1{font-size:clamp(26px,3vw,36px);margin:4px 0 6px}.controls{padding-top:6px;gap:6px}.ticker{margin:12px 0 8px;gap:6px}.tile{padding:9px 10px;min-height:72px}.tile.primary .value{font-size:23px}.chart-panel{padding:10px;margin-top:6px}.chart-head{padding:2px 4px 5px}.legend{gap:7px;font-size:10px}.chart-toolbar{padding:0 4px 6px}}</style>
 <style>
-.classic-pivot-panel{margin-top:12px}.classic-pivot-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}.classic-pivot-head h2{margin:2px 0 0;font-size:18px}.classic-pivot-meta{font-variant-numeric:tabular-nums;text-align:right}.classic-pivot-table{border:1px solid var(--line);border-radius:10px;overflow:hidden;font-variant-numeric:tabular-nums}.classic-pivot-row{display:grid;grid-template-columns:minmax(80px,1fr) minmax(160px,1fr);align-items:center;min-height:35px;border-bottom:1px solid var(--line)}.classic-pivot-row:last-child{border-bottom:0}.classic-pivot-row>span,.classic-pivot-row>b{padding:7px 12px}.classic-pivot-row>span{color:var(--muted)}.classic-pivot-row>b{text-align:right;font-weight:720}.classic-pivot-header{background:var(--control-bg);min-height:32px}.classic-pivot-header>span{font-size:12px;color:var(--muted);font-weight:650}.classic-pivot-row.resistance>b{color:var(--sell)}.classic-pivot-row.support>b{color:var(--buy)}.classic-pivot-row.pivot{background:color-mix(in srgb,var(--selected-bg) 55%,transparent)}.classic-pivot-row.pivot>b{color:var(--text)}
-@media(max-width:620px){.classic-pivot-head{flex-direction:column;gap:3px}.classic-pivot-meta{text-align:left}.classic-pivot-row{grid-template-columns:1fr 1fr}}
+.classic-pivot-panel{margin-top:12px}.classic-pivot-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}.classic-pivot-head h2{margin:2px 0 0;font-size:18px}.classic-pivot-meta{font-variant-numeric:tabular-nums;text-align:right}.classic-pivot-table{border:1px solid var(--line);border-radius:10px;overflow-x:auto;font-variant-numeric:tabular-nums}.classic-pivot-row{display:grid;grid-template-columns:minmax(100px,.8fr) repeat(3,minmax(108px,1fr));align-items:center;min-width:520px;min-height:35px;border-bottom:1px solid var(--line)}.classic-pivot-row:last-child{border-bottom:0}.classic-pivot-row>span,.classic-pivot-row>b{padding:7px 12px}.classic-pivot-row>span{color:var(--muted)}.classic-pivot-row>b{text-align:right;font-weight:720}.classic-pivot-header{background:var(--control-bg);min-height:32px}.classic-pivot-header>span{font-size:12px;color:var(--muted);font-weight:650}.classic-pivot-row .classic-upper{color:var(--sell)}.classic-pivot-row .classic-lower{color:var(--buy)}.classic-pivot-row .classic-distance{color:var(--text)}
+@media(max-width:620px){.classic-pivot-head{flex-direction:column;gap:3px}.classic-pivot-meta{text-align:left}.classic-pivot-row{grid-template-columns:minmax(88px,.8fr) repeat(3,minmax(100px,1fr))}}
 </style>
 <link rel="stylesheet" href="{{BASE}}assets/theme.css">
 </head>
@@ -47,16 +47,14 @@
   <section class="panel classic-pivot-panel" aria-labelledby="classic-pivot-title">
     <div class="classic-pivot-head"><div><div class="label">多头与空头流动性墙下方</div><h2 id="classic-pivot-title">经典枢轴 · ATR(14)</h2></div><div id="classic-pivot-meta" class="subtle">等待 ATR 数据</div></div>
     <div class="classic-pivot-table" id="classic-pivot-table" role="table" aria-label="ATR 经典枢轴价格">
-      <div class="classic-pivot-row classic-pivot-header" role="row"><span>名称</span><span>经典</span></div>
-      <div class="classic-pivot-row resistance" role="row"><span>R3</span><b id="classic-r3">—</b></div>
-      <div class="classic-pivot-row resistance" role="row"><span>R2</span><b id="classic-r2">—</b></div>
-      <div class="classic-pivot-row resistance" role="row"><span>R1</span><b id="classic-r1">—</b></div>
-      <div class="classic-pivot-row pivot" role="row"><span>P</span><b id="classic-p">—</b></div>
-      <div class="classic-pivot-row support" role="row"><span>S1</span><b id="classic-s1">—</b></div>
-      <div class="classic-pivot-row support" role="row"><span>S2</span><b id="classic-s2">—</b></div>
-      <div class="classic-pivot-row support" role="row"><span>S3</span><b id="classic-s3">—</b></div>
+      <div class="classic-pivot-row classic-pivot-header" role="row"><span>假设 ATR 倍数</span><span>上方价格</span><span>下方价格</span><span>对应距离</span></div>
+      <div class="classic-pivot-row" role="row"><span>0.5×</span><b id="classic-upper-05" class="classic-upper">—</b><b id="classic-lower-05" class="classic-lower">—</b><b id="classic-distance-05" class="classic-distance">—</b></div>
+      <div class="classic-pivot-row" role="row"><span>1.0×</span><b id="classic-upper-10" class="classic-upper">—</b><b id="classic-lower-10" class="classic-lower">—</b><b id="classic-distance-10" class="classic-distance">—</b></div>
+      <div class="classic-pivot-row" role="row"><span>1.5×</span><b id="classic-upper-15" class="classic-upper">—</b><b id="classic-lower-15" class="classic-lower">—</b><b id="classic-distance-15" class="classic-distance">—</b></div>
+      <div class="classic-pivot-row" role="row"><span>2.0×</span><b id="classic-upper-20" class="classic-upper">—</b><b id="classic-lower-20" class="classic-lower">—</b><b id="classic-distance-20" class="classic-distance">—</b></div>
+      <div class="classic-pivot-row" role="row"><span>3.0×</span><b id="classic-upper-30" class="classic-upper">—</b><b id="classic-lower-30" class="classic-lower">—</b><b id="classic-distance-30" class="classic-distance">—</b></div>
     </div>
-    <div id="classic-pivot-note" class="footer-note">使用现价作为 P，并以 ATR(14) 估算经典枢轴的前一时段高低点。</div>
+    <div id="classic-pivot-note" class="footer-note">以现价为中心，按 ATR(14) 倍数生成上下方价格和对应距离。</div>
   </section>
   <section class="status-row"><div class="panel"><h3>实时状态</h3><div id="reason" class="warning">正在等待市场数据。</div><div id="model-info" class="footer-note">模型：尚未训练</div></div><div class="panel"><h3>价格口径</h3><div>Binance USDⓈ-M 永续合约单一数据源</div><div class="footer-note">纵轴按可见K线留10%余量，清算墙与成交量分布共用价格轴并裁剪。气泡展示本服务实际采集的Binance采样事件（每交易对每秒最近一笔），无金额门槛；成交价锚点多单向下、空单向上偏移6像素，图边保留绘制余量，重叠可悬停滚动查看。VAL/VAH 来自当前时段逐笔聚合成交的70%价值区域；空心箭头为K线形态，实心箭头为历史模型信号，均不是投资建议。</div></div></section>
   <footer class="page-footer"><span class="page-footer-note">用于市场观察与研究</span><span class="page-version">{{VERSION}}</span></footer>

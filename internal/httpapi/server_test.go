@@ -184,7 +184,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	r = httptest.NewRequest(http.MethodGet, "/assets/classic-pivots.js", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "function calculate(price, atr)") || !strings.Contains(w.Body.String(), "floor-trader Classic") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "function calculate(price, atr)") || !strings.Contains(w.Body.String(), "const atrMultiples") {
 		t.Fatalf("classic pivots asset status=%d body=%s", w.Code, w.Body.String())
 	}
 	r = httptest.NewRequest(http.MethodGet, "/assets/dashboard.js", nil)

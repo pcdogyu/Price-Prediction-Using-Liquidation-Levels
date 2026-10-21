@@ -2,12 +2,18 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { calculate } = require('./classic-pivots.js');
 
-test('classic levels use the current price as P and ATR as the estimated range', () => {
+test('ATR levels use the current price as the center of both directions', () => {
   const levels = calculate(2495, 10);
   assert.deepEqual(levels, {
-    r3: 2510, r2: 2505, r1: 2500, p: 2495,
-    s1: 2490, s2: 2485, s3: 2480,
-    atr: 10, high: 2500, low: 2490,
+    price: 2495,
+    atr: 10,
+    levels: [
+      { multiplier: 0.5, distance: 5, upper: 2500, lower: 2490 },
+      { multiplier: 1, distance: 10, upper: 2505, lower: 2485 },
+      { multiplier: 1.5, distance: 15, upper: 2510, lower: 2480 },
+      { multiplier: 2, distance: 20, upper: 2515, lower: 2475 },
+      { multiplier: 3, distance: 30, upper: 2525, lower: 2465 },
+    ],
   });
 });
 
