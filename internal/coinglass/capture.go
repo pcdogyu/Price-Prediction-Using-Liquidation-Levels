@@ -395,11 +395,26 @@ func decodeMapResponses(conn *websocket.Conn, id int, symbols []string) ([]Parse
 		let requireModule;
 		window.webpackChunk_N_E.push([[Date.now()],{},value=>{requireModule=value}]);
 		if(!requireModule) throw new Error('CoinGlass webpack runtime is unavailable');
-		const api=requireModule(89390), common={merge:true,interval:1,limit:1500};
+		let binanceMap, aggregateMap;
+		for(const id of Object.keys(requireModule.m||{})){
+			const source=String(requireModule.m[id]);
+			if(!source.includes('/api/index/5/liqMap')&&!source.includes('/api/index/2/exLiqMap')) continue;
+			let candidate;
+			try { candidate=requireModule(id); } catch (_) { continue; }
+			for(const key of Object.keys(candidate||{})){
+				const value=candidate[key];
+				if(typeof value!=='function') continue;
+				const text=String(value);
+				if(text.includes('/api/index/5/liqMap')) binanceMap=value;
+				if(text.includes('/api/index/2/exLiqMap')) aggregateMap=value;
+			}
+		}
+		if(typeof binanceMap!=='function'||typeof aggregateMap!=='function') throw new Error('CoinGlass liquidation map API module unavailable');
+		const common={merge:true,interval:1,limit:1500};
 		const symbols=%s;
 		const jobs=symbols.flatMap(symbol=>[
-			[symbol,'binance',api.QSv({...common,symbol:'Binance_'+symbol+'USDT'})],
-			[symbol,'aggregate',api.bvP({...common,symbol})]
+			[symbol,'binance',binanceMap({...common,symbol:'Binance_'+symbol+'USDT'})],
+			[symbol,'aggregate',aggregateMap({...common,symbol})]
 		]);
 		const values=await Promise.all(jobs.map(async([symbol,scope,promise])=>{
 			const value=await promise;
@@ -423,7 +438,7 @@ func decodeMapResponses(conn *websocket.Conn, id int, symbols []string) ([]Parse
 		}
 		var evaluation struct {
 			Result struct {
-				Value string `json:"value"`
+				Value json.RawMessage `json:"value"`
 			} `json:"result"`
 			Exception *struct {
 				Text string `json:"text"`
@@ -435,8 +450,12 @@ func decodeMapResponses(conn *websocket.Conn, id int, symbols []string) ([]Parse
 		if evaluation.Exception != nil {
 			return nil, fmt.Errorf("CoinGlass parser failed: %s", evaluation.Exception.Text)
 		}
+		var encoded string
+		if err := json.Unmarshal(evaluation.Result.Value, &encoded); err != nil {
+			return nil, fmt.Errorf("decode CoinGlass evaluation value: %w", err)
+		}
 		var parsed []ParsedResponse
-		if err := json.Unmarshal([]byte(evaluation.Result.Value), &parsed); err != nil {
+		if err := json.Unmarshal([]byte(encoded), &parsed); err != nil {
 			return nil, fmt.Errorf("decode structured CoinGlass JSON: %w", err)
 		}
 		expected := len(symbols) * 2
