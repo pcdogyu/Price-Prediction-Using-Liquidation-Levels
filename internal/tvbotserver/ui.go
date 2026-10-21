@@ -1555,6 +1555,20 @@ const tvbotHTML = `<!doctype html>
             <div class="analysis-card"><div class="label">交易 API</div><div class="value" id="overview-okx-api">-</div></div>
             <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="overview-okx-updated">-</div></div>
           </div>
+          <div class="dashboard-order-stats">
+            <div class="section-head" style="margin:12px 0 8px"><h3>历史订单统计</h3><span class="muted" id="overview-okx-order-stats-status">-</span></div>
+            <div class="analysis-metrics">
+              <div class="analysis-card"><div class="label">净盈亏</div><div class="value" id="overview-okx-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">胜率</div><div class="value" id="overview-okx-win-rate">-</div></div>
+              <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="overview-okx-profit-factor">-</div></div>
+              <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="overview-okx-payoff-ratio">-</div></div>
+              <div class="analysis-card"><div class="label">仓位数</div><div class="value" id="overview-okx-trades">-</div></div>
+              <div class="analysis-card"><div class="label">周期成交额</div><div class="value" id="overview-okx-turnover">-</div></div>
+              <div class="analysis-card"><div class="label">周期手续费</div><div class="value" id="overview-okx-fees">-</div></div>
+              <div class="analysis-card"><div class="label">当前持仓</div><div class="value" id="overview-okx-position-count">-</div></div>
+              <div class="analysis-card"><div class="label">持仓浮盈</div><div class="value" id="overview-okx-position-upl">-</div></div>
+            </div>
+          </div>
           <svg id="overview-okx-usdt-chart" class="mini-usdt-chart" role="img" aria-label="OKX USDT balance chart"></svg>
         </div>
         <div class="balance-chart-card" data-exchange-view="binance">
@@ -1568,6 +1582,20 @@ const tvbotHTML = `<!doctype html>
             <div class="analysis-card"><div class="label">交易 API</div><div class="value" id="overview-binance-api">-</div></div>
             <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="overview-binance-updated">-</div></div>
           </div>
+          <div class="dashboard-order-stats">
+            <div class="section-head" style="margin:12px 0 8px"><h3>历史订单统计</h3><span class="muted" id="overview-binance-order-stats-status">-</span></div>
+            <div class="analysis-metrics">
+              <div class="analysis-card"><div class="label">净盈亏</div><div class="value" id="overview-binance-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">胜率</div><div class="value" id="overview-binance-win-rate">-</div></div>
+              <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="overview-binance-profit-factor">-</div></div>
+              <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="overview-binance-payoff-ratio">-</div></div>
+              <div class="analysis-card"><div class="label">仓位数</div><div class="value" id="overview-binance-trades">-</div></div>
+              <div class="analysis-card"><div class="label">周期成交额</div><div class="value" id="overview-binance-turnover">-</div></div>
+              <div class="analysis-card"><div class="label">周期手续费</div><div class="value" id="overview-binance-fees">-</div></div>
+              <div class="analysis-card"><div class="label">当前持仓</div><div class="value" id="overview-binance-position-count">-</div></div>
+              <div class="analysis-card"><div class="label">持仓浮盈</div><div class="value" id="overview-binance-position-upl">-</div></div>
+            </div>
+          </div>
           <svg id="overview-binance-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Binance USDT balance chart"></svg>
         </div>
         <div class="balance-chart-card" data-exchange-view="gate">
@@ -1580,6 +1608,20 @@ const tvbotHTML = `<!doctype html>
             <div class="analysis-card"><div class="label">可用</div><div class="value" id="overview-gate-avail">-</div></div>
             <div class="analysis-card"><div class="label">交易 API</div><div class="value" id="overview-gate-api">-</div></div>
             <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="overview-gate-updated">-</div></div>
+          </div>
+          <div class="dashboard-order-stats">
+            <div class="section-head" style="margin:12px 0 8px"><h3>历史订单统计</h3><span class="muted" id="overview-gate-order-stats-status">-</span></div>
+            <div class="analysis-metrics">
+              <div class="analysis-card"><div class="label">净盈亏</div><div class="value" id="overview-gate-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">胜率</div><div class="value" id="overview-gate-win-rate">-</div></div>
+              <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="overview-gate-profit-factor">-</div></div>
+              <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="overview-gate-payoff-ratio">-</div></div>
+              <div class="analysis-card"><div class="label">仓位数</div><div class="value" id="overview-gate-trades">-</div></div>
+              <div class="analysis-card"><div class="label">周期成交额</div><div class="value" id="overview-gate-turnover">-</div></div>
+              <div class="analysis-card"><div class="label">周期手续费</div><div class="value" id="overview-gate-fees">-</div></div>
+              <div class="analysis-card"><div class="label">当前持仓</div><div class="value" id="overview-gate-position-count">-</div></div>
+              <div class="analysis-card"><div class="label">持仓浮盈</div><div class="value" id="overview-gate-position-upl">-</div></div>
+            </div>
           </div>
           <svg id="overview-gate-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Gate USDT balance chart"></svg>
         </div>
@@ -2175,6 +2217,8 @@ const tvbotHTML = `<!doctype html>
       balanceOverview: null,
       balanceOverviewError: "",
       dashboardBalanceWindowMinutes: 1440,
+      dashboardAnalysis: null,
+      dashboardAnalysisError: "",
       balanceWindowMinutes: 720,
       analysisPositions: null,
       analysisPositionsError: "",
@@ -2690,7 +2734,7 @@ const tvbotHTML = `<!doctype html>
       updateMetrics();
       loadOrders(true).catch((err) => toast(err.message));
       if (sectionActive("dashboard")) {
-        loadBalanceOverview(true).then(() => renderDashboard()).catch((err) => toast(err.message));
+        Promise.all([loadBalanceOverview(true), loadDashboardOrderAnalysis(true)]).then(() => renderDashboard()).catch((err) => toast(err.message));
       }
       if (sectionActive("analysis")) {
         loadAnalysis(false).catch((err) => toast(err.message));
@@ -3389,7 +3433,10 @@ const tvbotHTML = `<!doctype html>
       if (dashboardBalanceRefreshBusy || !dashboardBalanceAutoRefreshAllowed()) return;
       dashboardBalanceRefreshBusy = true;
       try {
-        await loadBalanceOverview(false, state.dashboardBalanceWindowMinutes);
+        await Promise.all([
+          loadBalanceOverview(false, state.dashboardBalanceWindowMinutes),
+          loadDashboardOrderAnalysis(false)
+        ]);
         renderDashboard();
       } finally {
         dashboardBalanceRefreshBusy = false;
@@ -3486,6 +3533,9 @@ const tvbotHTML = `<!doctype html>
       if (target === "analysis" && !state.analysis) {
         loadAnalysis(false).catch((err) => toast(err.message));
       }
+      if (target === "dashboard" && !state.dashboardAnalysis) {
+        loadDashboardOrderAnalysis(false).catch((err) => toast(err.message));
+      }
       if (target === "positions" && (!state.positions || !state.pendingOrders)) {
         loadPositionView().catch((err) => toast(err.message));
       }
@@ -3518,6 +3568,7 @@ const tvbotHTML = `<!doctype html>
       const tabLoads = [];
       if (target === "dashboard") {
         tabLoads.push(loadBalanceOverview(false));
+        tabLoads.push(loadDashboardOrderAnalysis(false));
       } else if (target === "analysis") {
         tabLoads.push(loadAnalysis(false));
       } else if (target === "positions") {
@@ -3580,6 +3631,25 @@ const tvbotHTML = `<!doctype html>
         state.balanceOverviewError = err.message;
       }
       renderBalanceOverview();
+    }
+
+    async function loadDashboardOrderAnalysis(refresh) {
+      const minutes = Math.max(0, Number(state.dashboardBalanceWindowMinutes || 0));
+      const pnlMinutes = Number.isFinite(minutes) && minutes > 0 ? Math.min(minutes, 90 * 24 * 60) : 5;
+      const qs = new URLSearchParams({ price_days: "3", pnl_minutes: String(pnlMinutes) });
+      if (refresh) qs.set("refresh", "true");
+      const result = await Promise.allSettled([
+        api("/tvbot/analysis?" + qs.toString()),
+        loadAnalysisPositions(!!refresh)
+      ]);
+      if (result[0].status === "fulfilled") {
+        state.dashboardAnalysis = result[0].value;
+        state.dashboardAnalysisError = "";
+      } else {
+        state.dashboardAnalysis = null;
+        state.dashboardAnalysisError = result[0].reason ? result[0].reason.message : "历史订单统计加载失败";
+      }
+      renderDashboardOrderStats();
     }
 
     function ordersTotalPages() {
@@ -3987,6 +4057,55 @@ const tvbotHTML = `<!doctype html>
       renderGlobalExchangeSwitch();
       updateDashboardBalanceWindowButtons();
       renderBalanceOverview();
+      renderDashboardOrderStats();
+    }
+
+    function dashboardAnalysisExchangeSummary(exchange) {
+      const summaries = state.dashboardAnalysis && Array.isArray(state.dashboardAnalysis.exchange_summaries)
+        ? state.dashboardAnalysis.exchange_summaries : [];
+      const found = summaries.find((row) => normalizeExchange(row.exchange) === normalizeExchange(exchange));
+      return found || { exchange: normalizeExchange(exchange), trade_count: 0, wins: 0, losses: 0, net_pnl: 0, fees: 0, turnover: 0, win_rate: 0, profit_factor: 0, payoff_ratio: 0 };
+    }
+
+    function renderDashboardOrderStats() {
+      ["okx", "binance", "gate"].forEach((exchange) => {
+        const prefix = "overview-" + exchange;
+        const status = $(prefix + "-order-stats-status");
+        const fields = ["net-pnl", "win-rate", "profit-factor", "payoff-ratio", "trades", "turnover", "fees", "position-count", "position-upl"];
+        if (!state.dashboardAnalysis) {
+          fields.forEach((field) => {
+            const element = $(prefix + "-" + field);
+            if (element) {
+              element.textContent = "-";
+              if (field === "position-upl") element.className = "value";
+            }
+          });
+          if (status) status.textContent = state.dashboardAnalysisError || "-";
+          return;
+        }
+        const summary = dashboardAnalysisExchangeSummary(exchange);
+        const positionSummary = analysisPositionSummary(exchange);
+        const values = {
+          "net-pnl": analysisAmountText(summary.net_pnl),
+          "win-rate": formatPct(summary.win_rate),
+          "profit-factor": formatFactor(summary),
+          "payoff-ratio": formatNumber(summary.payoff_ratio),
+          trades: asText(summary.trade_count || 0),
+          turnover: analysisAmountText(summary.turnover),
+          fees: analysisAmountText(summary.fees),
+          "position-count": positionSummary.ready ? asText(positionSummary.count) : "-",
+          "position-upl": positionSummary.ready ? analysisAmountText(positionSummary.upl) : "-"
+        };
+        Object.entries(values).forEach(([field, value]) => {
+          const element = $(prefix + "-" + field);
+          if (!element) return;
+          element.textContent = value;
+          if (field === "position-upl") {
+            element.className = ["value", positionSummary.ready ? signedToneClass(positionSummary.upl) : ""].filter(Boolean).join(" ");
+          }
+        });
+        if (status) status.textContent = state.dashboardAnalysis.cache && state.dashboardAnalysis.cache.stale ? "缓存数据" : "已更新";
+      });
     }
 
     function renderSystem() {
@@ -7039,7 +7158,7 @@ const tvbotHTML = `<!doctype html>
       if (!Number.isFinite(parsed)) return;
       state.dashboardBalanceWindowMinutes = parsed;
       updateDashboardBalanceWindowButtons();
-      await loadBalanceOverview(false, parsed);
+      await Promise.all([loadBalanceOverview(false, parsed), loadDashboardOrderAnalysis(false)]);
       toast("资金回看已切换为 " + balanceWindowLabel(parsed));
     }
 
