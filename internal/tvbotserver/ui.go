@@ -1502,6 +1502,7 @@ const tvbotHTML = `<!doctype html>
     .position-symbol-detail-panel {
       display: flex;
       flex-direction: column;
+      flex: 1 1 auto;
       min-width: 0;
       min-height: 0;
       border: 1px solid var(--line);
