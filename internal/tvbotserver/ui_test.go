@@ -152,6 +152,35 @@ func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/positions", nil))
+	for _, want := range []string{
+		`cell: (row) => positionSymbolCell(row)`,
+		`function positionSymbolCell(row)`,
+		`data-position-symbol-details="true"`,
+		`id="position-symbol-dialog"`,
+		`id="position-symbol-chart-frame"`,
+		`id="position-symbol-history-rows"`,
+		`function positionSymbolHistoryRows(row)`,
+		`function buildTradeChartURL(symbol, trades, selectedRow)`,
+		`async function loadPositionSymbolAnalysis()`,
+		`async function openPositionSymbolDetails(row)`,
+		`renderPositionSymbolHistory(rows, "")`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("position symbol details marker missing %q", want)
+		}
+	}
+	positionsStart := strings.Index(page, "const positionTableColumnDefs = [")
+	positionsEnd := strings.Index(page, "const pendingOrderTableColumnDefs = [")
+	if positionsStart < 0 || positionsEnd <= positionsStart {
+		t.Fatal("position table column definitions are missing")
+	}
+	if strings.Contains(page[positionsStart:positionsEnd], `cell: (row) => textTableCell(displayInstID(row.instId))`) {
+		t.Fatal("position symbol column should no longer render as plain text")
+	}
+}
+
 func TestRenderTVBotHTMLShowsCurrentUserBeforeLogout(t *testing.T) {
 	req := httptest.NewRequest("GET", "/tvbot/view/dashboard", nil)
 	req.Header.Set("X-Forwarded-Prefix", "/liquidation")

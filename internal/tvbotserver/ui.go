@@ -1343,8 +1343,23 @@ const tvbotHTML = `<!doctype html>
       text-decoration-color: color-mix(in srgb, var(--link) 45%, transparent);
       text-underline-offset: 3px;
     }
-    .analysis-symbol-link:hover { color: var(--text); }
-    .analysis-symbol-link:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; border-radius: 3px; }
+    .analysis-symbol-link:hover,
+    .position-symbol-link:hover { color: var(--text); }
+    .analysis-symbol-link:focus-visible,
+    .position-symbol-link:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; border-radius: 3px; }
+    .position-symbol-link {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--link);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      padding: 0;
+      text-decoration: underline;
+      text-decoration-color: color-mix(in srgb, var(--link) 45%, transparent);
+      text-underline-offset: 3px;
+    }
     .analysis-realized-pnl-cell {
       display: flex;
       align-items: center;
@@ -1447,6 +1462,64 @@ const tvbotHTML = `<!doctype html>
       margin-top: 0;
       border-top: 1px solid var(--line);
       justify-content: flex-end;
+    }
+    .position-symbol-dialog {
+      width: min(1500px, calc(100vw - 32px));
+      height: min(900px, calc(100vh - 32px));
+      max-width: none;
+      max-height: none;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0;
+      color: var(--text);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .position-symbol-dialog::backdrop { background: rgba(15, 23, 42, 0.55); }
+    .position-symbol-dialog:not([open]) { display: none; }
+    .position-symbol-dialog-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .position-symbol-dialog-head h3 { margin: 0 0 3px; }
+    .position-symbol-dialog-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(420px, .9fr);
+      gap: 12px;
+      height: calc(100% - 70px);
+      min-height: 0;
+      padding: 12px;
+    }
+    .position-symbol-detail-panel {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--control-bg);
+      padding: 10px;
+    }
+    .position-symbol-detail-panel h4 { margin: 0 0 8px; }
+    .position-symbol-chart-frame {
+      display: block;
+      width: 100%;
+      height: calc(100% - 30px);
+      min-height: 420px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--chart-bg);
+    }
+    .position-symbol-history-panel { overflow: hidden; }
+    .position-symbol-history-wrap { max-height: calc(100% - 36px); overflow: auto; }
+    .position-symbol-history-table { min-width: 1050px; }
+    @media (max-width: 1100px) {
+      .position-symbol-dialog { height: min(900px, calc(100vh - 20px)); }
+      .position-symbol-dialog-body { grid-template-columns: 1fr; height: auto; overflow: auto; }
+      .position-symbol-chart-frame { height: min(62vh, 620px); }
+      .position-symbol-history-panel { min-height: 300px; }
     }
     .toast {
       position: fixed;
@@ -2188,6 +2261,34 @@ const tvbotHTML = `<!doctype html>
       <button class="btn" type="button" id="copy-raw-json">复制 JSON</button>
     </div>
   </dialog>
+  <dialog class="position-symbol-dialog" id="position-symbol-dialog">
+    <div class="position-symbol-dialog-head">
+      <div>
+        <h3 id="position-symbol-dialog-title">币对详情</h3>
+        <div class="muted" id="position-symbol-dialog-status">-</div>
+      </div>
+      <button class="btn small" type="button" id="close-position-symbol-dialog">关闭</button>
+    </div>
+    <div class="position-symbol-dialog-body">
+      <section class="position-symbol-detail-panel">
+        <h4>气泡图</h4>
+        <iframe class="position-symbol-chart-frame" id="position-symbol-chart-frame" title="币对气泡图" src="about:blank"></iframe>
+      </section>
+      <section class="position-symbol-detail-panel position-symbol-history-panel">
+        <div class="section-head" style="margin:0 0 8px">
+          <h4>历史下单信息</h4>
+          <span class="muted" id="position-symbol-history-status">-</span>
+        </div>
+        <div class="symbol-table-wrap position-symbol-history-wrap">
+          <table class="symbol-table analysis-trade-table position-symbol-history-table">
+            <colgroup id="position-symbol-history-cols"></colgroup>
+            <thead id="position-symbol-history-head"></thead>
+            <tbody id="position-symbol-history-rows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </dialog>
 
   <script>
     const state = {
@@ -2256,6 +2357,7 @@ const tvbotHTML = `<!doctype html>
     let coinpairBlockPollTimer = null;
     let coinpairBlockPollBusy = false;
     let coinpairBlockCountdownTimer = null;
+    let positionSymbolDetailsSequence = 0;
     let menuSettingsSynced = false;
     let tableColumnDrag = null;
     let tableColumnDropSuppressClick = false;
@@ -2324,7 +2426,7 @@ const tvbotHTML = `<!doctype html>
 
     const positionTableColumnDefs = [
       { id: "exchange", title: "交易所", colClass: "pos-exchange-col", cell: (row) => textTableCell(exchangeLabel(normalizeExchange(row._exchange || "okx"))) },
-      { id: "symbol", title: "币对", colClass: "pos-symbol-col", cell: (row) => textTableCell(displayInstID(row.instId)) },
+      { id: "symbol", title: "币对", colClass: "pos-symbol-col", cell: (row) => positionSymbolCell(row) },
       { id: "side", title: "方向", colClass: "pos-side-col", cell: (row) => positionSideCell(row) },
       { id: "strategy", title: "策略", colClass: "pos-strategy-col", cell: (row) => textTableCell(positionSignalTriggerText(row)) },
       { id: "size", title: "持仓量", colClass: "pos-size-col", cell: (row) => textTableCell(formatQuantityAmount(row, row.pos)) },
@@ -5417,6 +5519,15 @@ const tvbotHTML = `<!doctype html>
       return '<td' + (tone ? ' class="' + tone + '"' : "") + ">" + escapeHTML(formatted) + "</td>";
     }
 
+    function positionSymbolCell(row) {
+      const instID = asText(row && row.instId);
+      const display = displayInstID(instID);
+      if (!instID || display === "-") return textTableCell(display);
+      const key = positionCloseRowKey(row);
+      const title = "查看 " + display + " 气泡图和历史下单信息";
+      return tableCell('<button class="position-symbol-link" type="button" data-position-symbol-details="true" data-position-key="' + escapeHTML(key) + '" title="' + escapeHTML(title) + '">' + escapeHTML(display) + '</button>');
+    }
+
     function positionSideCell(row) {
       const kind = positionSideKind(row ? row.posSide : "", row ? row.pos : "");
       const tone = kind === "long" ? "signed-profit" : (kind === "short" ? "signed-loss" : "");
@@ -5722,6 +5833,40 @@ const tvbotHTML = `<!doctype html>
       return new URL(base + "/bubbles", window.location.origin);
     }
 
+    function buildTradeChartURL(symbol, trades, selectedRow) {
+      const normalizedSymbol = analysisGateChartSymbol(symbol);
+      if (!normalizedSymbol) return null;
+      const tokenSource = window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2));
+      const token = tokenSource.replace(/[^A-Za-z0-9_-]/g, "");
+      const payload = {
+        version: 1,
+        created_at: Date.now(),
+        symbol: normalizedSymbol,
+        focus_at: selectedRow && (selectedRow.exit_time || selectedRow.entry_time) ? (selectedRow.exit_time || selectedRow.entry_time) : "",
+        selected_key: selectedRow ? analysisTradeRowKey(selectedRow) : "",
+        rows: (Array.isArray(trades) ? trades : []).map((item) => ({
+          inst_id: String(item.inst_id || ""),
+          side: String(item.side || "").toLowerCase(),
+          entry_time: item.entry_time || "",
+          exit_time: item.exit_time || "",
+          entry_px: item.entry_px,
+          exit_px: item.exit_px,
+          row_key: analysisTradeRowKey(item)
+        }))
+      };
+      const url = analysisBubblesURL();
+      url.searchParams.set("symbol", normalizedSymbol);
+      if (!payload.rows.length) return url;
+      try {
+        window.localStorage.setItem("tvbot.analysisChart." + token, JSON.stringify(payload));
+      } catch (_) {
+        return null;
+      }
+      url.searchParams.set("trade_ref", token);
+      if (payload.focus_at) url.searchParams.set("focus_at", payload.focus_at);
+      return url;
+    }
+
     function openAnalysisTradeChart(row) {
       if (activeExchange() !== "gate") return;
       const symbol = analysisGateChartSymbol(row && row.inst_id);
@@ -5734,40 +5879,109 @@ const tvbotHTML = `<!doctype html>
         toast("当前分析窗口没有该 Gate 币对的交易记录");
         return;
       }
-      const tokenSource = window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2));
-      const token = tokenSource.replace(/[^A-Za-z0-9_-]/g, "");
-      const payload = {
-        version: 1,
-        created_at: Date.now(),
-        symbol,
-        focus_at: row && row.exit_time ? row.exit_time : "",
-        selected_key: analysisTradeRowKey(row),
-        rows: trades.map((item) => ({
-          inst_id: String(item.inst_id || ""),
-          side: String(item.side || "").toLowerCase(),
-          entry_time: item.entry_time || "",
-          exit_time: item.exit_time || "",
-          entry_px: item.entry_px,
-          exit_px: item.exit_px,
-          row_key: analysisTradeRowKey(item)
-        }))
-      };
-      try {
-        window.localStorage.setItem("tvbot.analysisChart." + token, JSON.stringify(payload));
-      } catch (_) {
+      const url = buildTradeChartURL(symbol, trades, row);
+      if (!url) {
         toast("无法暂存交易图表数据，请检查浏览器本地存储权限");
         return;
       }
-      const url = analysisBubblesURL();
-      url.searchParams.set("symbol", symbol);
-      url.searchParams.set("trade_ref", token);
-      if (payload.focus_at) url.searchParams.set("focus_at", payload.focus_at);
       const opened = window.open(url.toString(), "_blank", "noopener,noreferrer");
       if (opened) {
         try { opened.opener = null; opened.focus(); } catch (_) {}
       } else {
         toast("新标签页被浏览器拦截，请允许此站点打开新标签页");
       }
+    }
+
+    function positionSymbolHistoryRows(row) {
+      const exchange = normalizeExchange(row && row._exchange || activeExchange());
+      const apiID = String(row && row._api_id || "").trim();
+      const symbol = analysisGateChartSymbol(row && row.instId);
+      const source = state.analysis && Array.isArray(state.analysis.position_trades) ? state.analysis.position_trades : [];
+      return source
+        .filter((item) => normalizeExchange(item && item.exchange) === exchange)
+        .filter((item) => analysisGateChartSymbol(item && item.inst_id) === symbol)
+        .filter((item) => !apiID || !item.api_id || String(item.api_id).trim() === apiID)
+        .slice()
+        .sort((a, b) => String(b && (b.exit_time || b.entry_time) || "").localeCompare(String(a && (a.exit_time || a.entry_time) || "")));
+    }
+
+    function positionSymbolHistoryCellHTML(col, row) {
+      if (col.id !== "inst_id") return analysisTradeCellHTML(col, row);
+      const plain = Object.assign({}, col, { renderHTML: null, render: (item) => analysisInstIDText(item && item.inst_id) });
+      return analysisTradeCellHTML(plain, row);
+    }
+
+    function renderPositionSymbolHistory(rows, errorText) {
+      const columns = currentAnalysisTradeColumns();
+      const cols = $("position-symbol-history-cols");
+      const head = $("position-symbol-history-head");
+      const body = $("position-symbol-history-rows");
+      const status = $("position-symbol-history-status");
+      if (cols) cols.innerHTML = columns.map((col) => '<col class="' + escapeHTML(col.colClass || "") + '">').join("");
+      if (head) head.innerHTML = "<tr>" + columns.map((col) => "<th>" + escapeHTML(col.title) + "</th>").join("") + "</tr>";
+      if (!body) return;
+      if (errorText) {
+        body.innerHTML = '<tr><td colspan="' + columns.length + '" class="muted">' + escapeHTML(errorText) + "</td></tr>";
+        if (status) status.textContent = errorText;
+        return;
+      }
+      body.innerHTML = rows.length
+        ? rows.map((row) => "<tr>" + columns.map((col) => positionSymbolHistoryCellHTML(col, row)).join("") + "</tr>").join("")
+        : '<tr><td colspan="' + columns.length + '" class="muted">暂无该币对历史下单记录</td></tr>';
+      if (status) status.textContent = rows.length ? "共 " + rows.length + " 条" : "-";
+    }
+
+    async function loadPositionSymbolAnalysis() {
+      const qs = new URLSearchParams({ price_days: "3", pnl_minutes: String(analysisPNLWindowMinutes()), refresh: "true" });
+      state.analysis = await api("/tvbot/analysis?" + qs.toString());
+      state.analysisError = "";
+    }
+
+    async function openPositionSymbolDetails(row) {
+      const symbol = analysisGateChartSymbol(row && row.instId);
+      if (!symbol) {
+        toast("该币对无法转换为 Binance USDT 气泡图");
+        return;
+      }
+      const dialog = $("position-symbol-dialog");
+      const title = $("position-symbol-dialog-title");
+      const status = $("position-symbol-dialog-status");
+      const frame = $("position-symbol-chart-frame");
+      const sequence = ++positionSymbolDetailsSequence;
+      const label = displayInstID(row && row.instId);
+      if (title) title.textContent = label + " · " + exchangeLabel(row && row._exchange) + " 持仓详情";
+      if (status) status.textContent = "正在读取气泡图和历史下单信息…";
+      renderPositionSymbolHistory([], "正在读取历史下单信息…");
+      const chartURL = analysisBubblesURL();
+      chartURL.searchParams.set("symbol", symbol);
+      if (frame) frame.src = chartURL.toString();
+      if (dialog) {
+        if (dialog.showModal) dialog.showModal();
+        else dialog.setAttribute("open", "open");
+      }
+      try {
+        await loadPositionSymbolAnalysis();
+        if (sequence !== positionSymbolDetailsSequence) return;
+        const rows = positionSymbolHistoryRows(row);
+        const tradeURL = buildTradeChartURL(symbol, rows, rows[0]);
+        if (frame && tradeURL) frame.src = tradeURL.toString();
+        renderPositionSymbolHistory(rows, "");
+        if (status) status.textContent = "气泡图已加载 · 历史下单周期 " + balanceWindowLabel(analysisPNLWindowMinutes());
+      } catch (err) {
+        if (sequence !== positionSymbolDetailsSequence) return;
+        renderPositionSymbolHistory([], err && err.message ? err.message : "历史下单信息读取失败");
+        if (status) status.textContent = "气泡图已加载；历史下单信息读取失败";
+        toast(err && err.message ? err.message : "历史下单信息读取失败");
+      }
+    }
+
+    function closePositionSymbolDetails() {
+      positionSymbolDetailsSequence++;
+      const dialog = $("position-symbol-dialog");
+      if (dialog && dialog.close) dialog.close();
+      else if (dialog) dialog.removeAttribute("open");
+      const frame = $("position-symbol-chart-frame");
+      if (frame) frame.src = "about:blank";
     }
 
     function analysisPositionSideText(side) {
@@ -7461,6 +7675,7 @@ const tvbotHTML = `<!doctype html>
       toast("已复制");
     });
     $("close-raw-json").addEventListener("click", () => closeRawJSONDialog());
+    $("close-position-symbol-dialog").addEventListener("click", () => closePositionSymbolDetails());
     $("copy-raw-json").addEventListener("click", async () => {
       await navigator.clipboard.writeText($("raw-json-output").textContent || "");
       toast("原始 JSON 已复制");
@@ -7522,6 +7737,14 @@ const tvbotHTML = `<!doctype html>
     $("refresh-trade-monitor").addEventListener("click", () => loadTradeMonitor().then(() => toast("成交监听已刷新")).catch((err) => toast(err.message)));
     $("close-all-positions").addEventListener("click", () => closeAllPositions().catch((err) => toast(err.message)));
     $("position-rows").addEventListener("click", (event) => {
+      const symbolButton = event.target.closest("button[data-position-symbol-details]");
+      if (symbolButton) {
+        const key = symbolButton.dataset.positionKey || "";
+        const rows = state.positions && Array.isArray(state.positions.positions) ? state.positions.positions : [];
+        const row = rows.find((item) => positionCloseRowKey(item) === key);
+        if (row) openPositionSymbolDetails(row).catch((err) => toast(err.message));
+        return;
+      }
       const button = event.target.closest("button[data-position-close]");
       if (!button) return;
       closePosition(button).catch((err) => toast(err.message));
