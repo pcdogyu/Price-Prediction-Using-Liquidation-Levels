@@ -71,6 +71,15 @@ test('collapseTradeMarkers shows one opening action per direction and candle', (
   assert.equal(collapsed[0].selected, true);
 });
 
+test('opening markers use B below long candles and S above short candles', () => {
+  const markers = B.normalizeTradeMarkers([
+    { row_key: 'long-entry', inst_id: 'ETHUSDT', side: 'long', entry_time: '2026-01-01T00:00:00Z', entry_px: 2000 },
+    { row_key: 'short-entry', inst_id: 'ETHUSDT', side: 'short', entry_time: '2026-01-01T01:00:00Z', entry_px: 2100 }
+  ], 'ETHUSDT');
+  const layout = B.tradeMarkerPlacements(markers, [1900, 2200], { start: 0, end: Date.parse('2026-01-01T02:00:00Z'), x: () => 150 }, price => (2200 - price) / 2, { left: 0, right: 300, top: 0, bottom: 300 });
+  assert.deepEqual(layout.markers.map(item => [item.labelText, item.labelBelow]), [['B', true], ['S', false]]);
+});
+
 test('tradeMarkerPlacements separates labels that share one candle and price', () => {
   const markers = [
     { id: 'long-entry', time: 1000, price: 100, side: 'long', phase: 'entry' },

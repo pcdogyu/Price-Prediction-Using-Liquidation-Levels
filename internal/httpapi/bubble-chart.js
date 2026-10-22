@@ -147,7 +147,10 @@
       const operationLabel = operation === 'take_profit' ? '止盈' : operation === 'stop_loss' ? '止损' : operation === 'close' ? '平仓' : '开仓';
       const source = String(marker.operation_source || '').toLowerCase();
       const sourceLabel = source === 'manual' ? '手动' : source === 'auto' ? '自动' : source === 'exchange' ? '成交' : '';
-      const labelText = label + operationLabel + (sourceLabel ? '·' + sourceLabel : '');
+      // Opening markers use the compact trading-chart convention requested by
+      // the position view: B for long below the candle, S for short above it.
+      // Keep close/TP/SL labels descriptive so their operation remains clear.
+      const labelText = closing ? label + operationLabel + (sourceLabel ? '·' + sourceLabel : '') : (long ? 'B' : 'S');
       const labelWidth = labelText.length * 11 + 12;
       const labelBelow = closing ? !long : long;
       const direction = labelBelow ? 1 : -1;
