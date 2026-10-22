@@ -181,6 +181,39 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotPositionsShowsOverallReturn(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/positions", nil))
+	metricsStart := strings.Index(page, `<div class="analysis-metrics position-metrics">`)
+	if metricsStart < 0 {
+		t.Fatalf("position summary metrics are missing: start=%d", metricsStart)
+	}
+	metricsEnd := strings.Index(page[metricsStart:], `</div>
+      <div class="symbol-table-wrap">`)
+	if metricsStart < 0 || metricsEnd < 0 {
+		t.Fatalf("position summary metrics are missing: start=%d end=%d", metricsStart, metricsEnd)
+	}
+	metrics := page[metricsStart : metricsStart+metricsEnd]
+	labels := []string{"持仓数", "名义价值", "未实现盈亏", "收益率", "更新时间"}
+	previous := -1
+	for _, label := range labels {
+		index := strings.Index(metrics, `<div class="label">`+label+`</div>`)
+		if index < 0 || index <= previous {
+			t.Fatalf("position summary labels should be ordered %v: label=%q index=%d previous=%d", labels, label, index, previous)
+		}
+		previous = index
+	}
+	for _, want := range []string{
+		`id="positions-return"`,
+		`function positionOverallReturnRatio(rows)`,
+		`return totalUpl / totalNotional;`,
+		`$("positions-return").className = ["value", signedToneClass(overallReturn)]`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("position overall return marker missing %q", want)
+		}
+	}
+}
+
 func TestRenderTVBotHTMLShowsCurrentUserBeforeLogout(t *testing.T) {
 	req := httptest.NewRequest("GET", "/tvbot/view/dashboard", nil)
 	req.Header.Set("X-Forwarded-Prefix", "/liquidation")

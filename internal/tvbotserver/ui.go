@@ -1755,8 +1755,9 @@ const tvbotHTML = `<!doctype html>
       </div>
       <div class="analysis-metrics position-metrics">
         <div class="analysis-card"><div class="label">持仓数</div><div class="value" id="positions-count">-</div></div>
-        <div class="analysis-card"><div class="label">未实现盈亏</div><div class="value" id="positions-upl">-</div></div>
         <div class="analysis-card"><div class="label">名义价值</div><div class="value" id="positions-notional">-</div></div>
+        <div class="analysis-card"><div class="label">未实现盈亏</div><div class="value" id="positions-upl">-</div></div>
+        <div class="analysis-card"><div class="label">收益率</div><div class="value" id="positions-return">-</div></div>
         <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="positions-updated">-</div></div>
       </div>
       <div class="symbol-table-wrap">
@@ -5499,6 +5500,13 @@ const tvbotHTML = `<!doctype html>
       }, 0);
     }
 
+    function positionOverallReturnRatio(rows) {
+      const totalNotional = Math.abs(positionSum(rows, "notionalUsd"));
+      const totalUpl = positionSum(rows, "upl");
+      if (!Number.isFinite(totalNotional) || totalNotional <= 0 || !Number.isFinite(totalUpl)) return null;
+      return totalUpl / totalNotional;
+    }
+
     function positionAmount(row) {
       const notionalRaw = row ? row.notionalUsd : null;
       if (notionalRaw !== null && notionalRaw !== undefined) {
@@ -5601,6 +5609,7 @@ const tvbotHTML = `<!doctype html>
       const rows = state.positions && Array.isArray(state.positions.positions) ? state.positions.positions : [];
       const totalUpl = positionSum(rows, "upl");
       const positionsReady = state.positions && state.positions.ok;
+      const overallReturn = positionsReady ? positionOverallReturnRatio(rows) : null;
       const closeAllButton = $("close-all-positions");
       if (closeAllButton) {
         closeAllButton.disabled = !positionsReady || rows.length === 0 || state.positionClosingAll;
@@ -5610,6 +5619,8 @@ const tvbotHTML = `<!doctype html>
       $("positions-upl").textContent = positionsReady ? formatNumber(totalUpl) + " USDT" : "-";
       $("positions-upl").className = ["value", positionsReady ? signedToneClass(totalUpl) : ""].filter(Boolean).join(" ");
       $("positions-notional").textContent = positionsReady ? formatUSD(positionSum(rows, "notionalUsd")) : "-";
+      $("positions-return").textContent = overallReturn === null ? "-" : formatPct(overallReturn);
+      $("positions-return").className = ["value", signedToneClass(overallReturn)].filter(Boolean).join(" ");
       $("positions-updated").textContent = state.positions ? combinedStatusText(state.positions) : "-";
       if (!state.positions) {
         $("position-rows").innerHTML = '<tr><td colspan="' + colspan + '" class="muted">' + escapeHTML(state.positionsError || "-") + '</td></tr>';
