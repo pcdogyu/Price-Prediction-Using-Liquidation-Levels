@@ -53,6 +53,24 @@ test('trade markers preserve take-profit, stop-loss and manual/automatic labels'
   assert.equal(layout.markers[1].labelText, '空单止损·手动');
 });
 
+test('collapseTradeMarkers shows one opening action per direction and candle', () => {
+  const markers = B.normalizeTradeMarkers([
+    { row_key: 'long-1', inst_id: 'ETHUSDT', side: 'long', operation_source: 'auto', entry_time: '2026-01-01T00:01:00Z', entry_px: 2000 },
+    { row_key: 'long-2', inst_id: 'ETHUSDT', side: 'long', operation_source: 'auto', entry_time: '2026-01-01T00:04:00Z', entry_px: 2002 },
+    { row_key: 'short-1', inst_id: 'ETHUSDT', side: 'short', operation_source: 'manual', entry_time: '2026-01-01T00:04:30Z', entry_px: 2001 },
+    { row_key: 'long-3', inst_id: 'ETHUSDT', side: 'long', operation_source: 'auto', entry_time: '2026-01-01T00:06:00Z', entry_px: 2003 },
+    { row_key: 'long-exit', inst_id: 'ETHUSDT', side: 'long', operation: 'take_profit', operation_source: 'auto', exit_time: '2026-01-01T00:04:00Z', exit_px: 2010 }
+  ], 'ETHUSDT', 'long-2');
+  const collapsed = B.collapseTradeMarkers(markers, 5 * 60 * 1000);
+  assert.deepEqual(collapsed.map(item => [item.row_key, item.phase, item.side, item.collapsed_count]), [
+    ['long-1', 'entry', 'long', 2],
+    ['long-exit', 'exit', 'long', undefined],
+    ['short-1', 'entry', 'short', 1],
+    ['long-3', 'entry', 'long', 1]
+  ]);
+  assert.equal(collapsed[0].selected, true);
+});
+
 test('tradeMarkerPlacements separates labels that share one candle and price', () => {
   const markers = [
     { id: 'long-entry', time: 1000, price: 100, side: 'long', phase: 'entry' },

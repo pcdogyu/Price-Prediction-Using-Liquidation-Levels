@@ -92,6 +92,36 @@
     return markers.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
   }
 
+  // A single candle can contain several fills for the same opening action.
+  // Keep one marker per direction in that candle so the chart describes the
+  // action without covering the candles with repeated labels. Exit markers
+  // are intentionally left untouched because close/TP/SL are distinct actions.
+  function collapseTradeMarkers(markers, intervalMs) {
+    const step = Number(intervalMs);
+    if (!Array.isArray(markers) || !Number.isFinite(step) || step <= 0) return Array.isArray(markers) ? markers.slice() : [];
+    const result = [];
+    const entries = new Map();
+    for (const marker of markers) {
+      if (!marker || marker.phase !== 'entry' || !Number.isFinite(marker.time) || (marker.side !== 'long' && marker.side !== 'short')) {
+        result.push(marker);
+        continue;
+      }
+      const bucket = Math.floor(marker.time / step) * step;
+      const key = bucket + ':' + marker.side;
+      const existing = entries.get(key);
+      if (!existing) {
+        const copy = Object.assign({}, marker, { collapsed_count: 1 });
+        entries.set(key, copy);
+        result.push(copy);
+        continue;
+      }
+      existing.collapsed_count += 1;
+      existing.selected = existing.selected || marker.selected === true;
+      if (existing.operation_source !== marker.operation_source) existing.operation_source = '';
+    }
+    return result.sort((a, b) => a.time - b.time || String(a.id || '').localeCompare(String(b.id || '')));
+  }
+
   function tradeMarkerPlacements(markers, range, scale, y, bounds) {
     let outside = 0;
     const placed = [];
@@ -303,7 +333,7 @@
     }
   }
 
-  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, WindowLoader };
+  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, collapseTradeMarkers, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, WindowLoader };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.BubbleChart = exported;
 })(typeof window === 'object' ? window : globalThis);
