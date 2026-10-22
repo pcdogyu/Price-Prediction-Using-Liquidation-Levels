@@ -2669,10 +2669,11 @@ const tvbotHTML = `<!doctype html>
 
     function renderGlobalExchangeSwitch() {
       const selected = ensureSelectedExchangeAvailable();
+      const allowUnconfigured = allExchangesUnconfiguredForCurrentEnvironment();
       document.querySelectorAll("[data-global-exchange]").forEach((button) => {
         const exchange = normalizeExchange(button.dataset.globalExchange);
         const configured = exchangeConfiguredForCurrentEnvironment(exchange);
-        const disabled = state.exchangeAvailabilityReady && !configured;
+        const disabled = state.exchangeAvailabilityReady && !configured && !allowUnconfigured;
         button.disabled = disabled;
         button.setAttribute("aria-disabled", disabled ? "true" : "false");
         if (disabled) {
@@ -2694,6 +2695,15 @@ const tvbotHTML = `<!doctype html>
       return !!(status && status.configured);
     }
 
+    function allExchangesUnconfiguredForCurrentEnvironment() {
+      if (!state.exchangeAvailabilityReady || !state.config) return false;
+      return !positionExchanges.some((exchange) => exchangeConfiguredForCurrentEnvironment(exchange));
+    }
+
+    function exchangeSelectionAllowed(exchange) {
+      return !state.exchangeAvailabilityReady || exchangeConfiguredForCurrentEnvironment(exchange) || allExchangesUnconfiguredForCurrentEnvironment();
+    }
+
     function ensureSelectedExchangeAvailable() {
       const selected = activeExchange();
       if (!state.exchangeAvailabilityReady || exchangeConfiguredForCurrentEnvironment(selected)) return selected;
@@ -2708,7 +2718,7 @@ const tvbotHTML = `<!doctype html>
 
     function setSelectedExchange(exchange) {
       const selected = normalizeExchange(exchange);
-      if (state.exchangeAvailabilityReady && !exchangeConfiguredForCurrentEnvironment(selected)) {
+      if (!exchangeSelectionAllowed(selected)) {
         renderGlobalExchangeSwitch();
         return;
       }

@@ -93,6 +93,11 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`apiKeyTestMatchesCurrentForm`,
 		`updateAPIKeySaveState`,
 		`zeroTime(status.updated_at) ? "-" : status.updated_at`,
+		`function allExchangesUnconfiguredForCurrentEnvironment()`,
+		`const allowUnconfigured = allExchangesUnconfiguredForCurrentEnvironment();`,
+		`const disabled = state.exchangeAvailabilityReady && !configured && !allowUnconfigured;`,
+		`function exchangeSelectionAllowed(exchange)`,
+		`if (!exchangeSelectionAllowed(selected))`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("API key form is missing single-account test gate marker %q", want)
