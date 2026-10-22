@@ -203,6 +203,8 @@ func TestRenderTVBotPositionsShowsOverallReturn(t *testing.T) {
 		previous = index
 	}
 	for _, want := range []string{
+		".position-metrics {",
+		"grid-template-columns: repeat(5, minmax(0, 1fr));",
 		`id="positions-return"`,
 		`function positionOverallReturnRatio(rows)`,
 		`return totalUpl / totalNotional;`,
