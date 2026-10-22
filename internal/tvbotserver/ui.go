@@ -1464,6 +1464,8 @@ const tvbotHTML = `<!doctype html>
       justify-content: flex-end;
     }
     .position-symbol-dialog {
+      display: flex;
+      flex-direction: column;
       width: min(1500px, calc(100vw - 32px));
       height: min(900px, calc(100vh - 32px));
       max-width: none;
@@ -1471,6 +1473,8 @@ const tvbotHTML = `<!doctype html>
       border: 1px solid var(--line);
       border-radius: 10px;
       padding: 0;
+      box-sizing: border-box;
+      overflow: hidden;
       color: var(--text);
       background: var(--panel);
       box-shadow: var(--shadow);
@@ -1482,6 +1486,7 @@ const tvbotHTML = `<!doctype html>
       align-items: flex-start;
       justify-content: space-between;
       gap: 12px;
+      flex: 0 0 auto;
       padding: 12px 14px;
       border-bottom: 1px solid var(--line);
     }
@@ -1490,11 +1495,15 @@ const tvbotHTML = `<!doctype html>
       display: grid;
       grid-template-columns: minmax(0, 1.35fr) minmax(420px, .9fr);
       gap: 12px;
-      height: calc(100% - 70px);
+      flex: 1 1 auto;
+      height: auto;
       min-height: 0;
+      overflow: hidden;
       padding: 12px;
     }
     .position-symbol-detail-panel {
+      display: flex;
+      flex-direction: column;
       min-width: 0;
       min-height: 0;
       border: 1px solid var(--line);
@@ -1505,21 +1514,24 @@ const tvbotHTML = `<!doctype html>
     .position-symbol-detail-panel h4 { margin: 0 0 8px; }
     .position-symbol-chart-frame {
       display: block;
+      flex: 1 1 auto;
       width: 100%;
-      height: calc(100% - 30px);
+      height: auto;
       min-height: 420px;
       border: 1px solid var(--line);
       border-radius: 6px;
       background: var(--chart-bg);
     }
     .position-symbol-history-panel { overflow: hidden; }
-    .position-symbol-history-wrap { max-height: calc(100% - 36px); overflow: auto; }
+    .position-symbol-history-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
     .position-symbol-history-table { min-width: 1050px; }
     @media (max-width: 1100px) {
       .position-symbol-dialog { height: min(900px, calc(100vh - 20px)); }
-      .position-symbol-dialog-body { grid-template-columns: 1fr; height: auto; overflow: auto; }
-      .position-symbol-chart-frame { height: min(62vh, 620px); }
+      .position-symbol-dialog-body { display: flex; flex-direction: column; overflow: auto; }
+      .position-symbol-detail-panel { flex: 0 0 auto; }
+      .position-symbol-chart-frame { flex: 0 0 auto; height: min(62vh, 620px); }
       .position-symbol-history-panel { min-height: 300px; }
+      .position-symbol-history-wrap { max-height: 500px; }
     }
     .toast {
       position: fixed;
