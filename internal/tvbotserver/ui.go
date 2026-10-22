@@ -1621,7 +1621,7 @@ const tvbotHTML = `<!doctype html>
           <button class="btn" type="button" id="refresh-all">刷新</button>
         </div>
       </div>
-      <p class="muted" id="dashboard-balance-sampling-note">后台每 10 分钟采集一次三家交易所余额并生成数据点；未配置 API Key 的交易所自动跳过。</p>
+      <p class="muted" id="dashboard-balance-sampling-note">后台每 5 分钟采集一次三家交易所余额并生成权益数据点（Gate 含持仓浮盈浮亏）；未配置 API Key 的交易所自动跳过。</p>
       <div class="analysis-period-row dashboard-balance-period-row">
         <div class="analysis-time-status">
           <div class="label">资金回看</div>
@@ -2377,8 +2377,8 @@ const tvbotHTML = `<!doctype html>
     const positionViewPollIntervalMs = 5000;
     const pendingLimitCloseOrderCacheMs = 90000;
     const missingPositionEntrySyncIntervalMs = 180000;
-    const analysisBalanceRefreshIntervalMs = 10 * 60 * 1000;
-    const dashboardBalanceRefreshIntervalMs = 10 * 60 * 1000;
+    const analysisBalanceRefreshIntervalMs = 5 * 60 * 1000;
+    const dashboardBalanceRefreshIntervalMs = 5 * 60 * 1000;
     const coinpairBlockPollIntervalMs = 20000;
     const defaultMenuItems = [
       { tab: "dashboard", label: "资金" },
@@ -6340,14 +6340,27 @@ const tvbotHTML = `<!doctype html>
         grid += '<text class="chart-label" x="8" y="' + (lineY + 4).toFixed(2) + '">' + chartAxisPercentValue(labelValue, baselineValue) + '</text>';
         grid += '<text class="chart-label chart-axis-value-right" x="' + (width - 8) + '" y="' + (lineY + 4).toFixed(2) + '" text-anchor="end">' + chartAxisValue(labelValue) + '</text>';
       }
-      const xTicks = chartTickIndexes(chartPoints.length, 6);
-      xTicks.forEach((tickIndex) => {
-        const point = chartPoints[tickIndex];
-        const lineX = x(point);
-        const anchor = tickIndex === 0 ? "start" : (tickIndex === chartPoints.length - 1 ? "end" : "middle");
-        grid += '<line class="chart-grid" x1="' + lineX.toFixed(2) + '" y1="' + pad.top + '" x2="' + lineX.toFixed(2) + '" y2="' + plotBottom + '"/>';
-        grid += '<text class="chart-label" x="' + lineX.toFixed(2) + '" y="' + (height - 22) + '" text-anchor="' + anchor + '">' + escapeHTML(chartTimeLabel(point.date)) + '</text>';
-      });
+      const useHourlyGateTicks = svgID === "analysis-gate-usdt-chart" && Number(state.balanceWindowMinutes) === 720 && timeSpan > 0;
+      if (useHourlyGateTicks) {
+        const hourMS = 60 * 60 * 1000;
+        const firstHour = Math.ceil(minTime / hourMS) * hourMS;
+        for (let tickTime = firstHour; tickTime <= maxTime; tickTime += hourMS) {
+          const lineX = pad.left + (tickTime - minTime) * plotWidth / timeSpan;
+          const tickDate = new Date(tickTime);
+          const anchor = tickTime === firstHour ? "start" : (tickTime + hourMS > maxTime ? "end" : "middle");
+          grid += '<line class="chart-grid" x1="' + lineX.toFixed(2) + '" y1="' + pad.top + '" x2="' + lineX.toFixed(2) + '" y2="' + plotBottom + '"/>';
+          grid += '<text class="chart-label" x="' + lineX.toFixed(2) + '" y="' + (height - 22) + '" text-anchor="' + anchor + '">' + escapeHTML(chartTimeLabel(tickDate)) + '</text>';
+        }
+      } else {
+        const xTicks = chartTickIndexes(chartPoints.length, 6);
+        xTicks.forEach((tickIndex) => {
+          const point = chartPoints[tickIndex];
+          const lineX = x(point);
+          const anchor = tickIndex === 0 ? "start" : (tickIndex === chartPoints.length - 1 ? "end" : "middle");
+          grid += '<line class="chart-grid" x1="' + lineX.toFixed(2) + '" y1="' + pad.top + '" x2="' + lineX.toFixed(2) + '" y2="' + plotBottom + '"/>';
+          grid += '<text class="chart-label" x="' + lineX.toFixed(2) + '" y="' + (height - 22) + '" text-anchor="' + anchor + '">' + escapeHTML(chartTimeLabel(point.date)) + '</text>';
+        });
+      }
       const last = chartPoints[chartPoints.length - 1];
       svg.innerHTML =
         grid +

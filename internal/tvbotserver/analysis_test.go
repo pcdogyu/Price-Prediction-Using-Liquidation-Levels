@@ -14,6 +14,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotstorage"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
@@ -446,6 +447,22 @@ func TestAnalysisBalanceFromBinanceIncludesUSDTPositionUnrealizedPnL(t *testing.
 	}
 	if len(got.Details) != 1 || got.Details[0].Eq != "9985.87654322" || got.Details[0].EqUsd != "9985.87654322" || got.Details[0].CashBal != "10000" {
 		t.Fatalf("bad Binance USDT detail: %#v", got.Details)
+	}
+}
+
+func TestAnalysisBalanceFromGateIncludesUnrealizedPnL(t *testing.T) {
+	now := time.Date(2026, 10, 22, 3, 0, 0, 0, time.UTC)
+	got := analysisBalanceFromGate(gate.Account{
+		Currency:      "USDT",
+		Total:         "1000.125",
+		UnrealisedPnl: "-12.3456",
+		Available:     "900.5",
+	}, now)
+	if got.TotalEq != "987.7794" || got.AvailEq != "900.5" || len(got.Details) != 1 {
+		t.Fatalf("bad Gate balance: %#v", got)
+	}
+	if got.Details[0].Eq != "987.7794" || got.Details[0].EqUsd != "987.7794" {
+		t.Fatalf("bad Gate USDT detail: %#v", got.Details[0])
 	}
 }
 

@@ -424,7 +424,7 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("balance-pnl-block")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("analysis-okx-net-pnl")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("analysis-binance-net-pnl")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("analysisBalanceRefreshIntervalMs = 10 * 60 * 1000")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("analysisBalanceRefreshIntervalMs = 5 * 60 * 1000")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("refreshAnalysisBalanceOverviewAuto")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("visibilitychange")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("formatPriceAmount")) ||
@@ -3227,8 +3227,8 @@ func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T
 
 func TestUSDTBalanceSamplerStoresConfiguredAccounts(t *testing.T) {
 	srv := newTestServer(t)
-	if usdtSampleInterval != 10*time.Minute {
-		t.Fatalf("USDT balance sampler interval = %s, want 10m", usdtSampleInterval)
+	if usdtSampleInterval != 5*time.Minute {
+		t.Fatalf("USDT balance sampler interval = %s, want 5m", usdtSampleInterval)
 	}
 	observedAt := time.Date(2026, 7, 24, 3, 4, 45, 0, time.UTC)
 	srv.Now = func() time.Time { return observedAt }
@@ -3303,7 +3303,7 @@ func TestUSDTBalanceSamplerStoresConfiguredGateAccount(t *testing.T) {
 		}
 		calls++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"user":1,"currency":"USDT","total":"321.5","available":"300.25"}`))
+		_, _ = w.Write([]byte(`{"user":1,"currency":"USDT","total":"321.5","unrealised_pnl":"-1.25","available":"300.25"}`))
 	}))
 	defer gateServer.Close()
 
@@ -3337,7 +3337,7 @@ func TestUSDTBalanceSamplerStoresConfiguredGateAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshots) != 1 || snapshots[0].Eq != "321.5" || snapshots[0].EqUsd != "321.5" || snapshots[0].AvailBal != "300.25" || snapshots[0].BucketTS != observedAt.Truncate(time.Minute).UnixMilli() {
+	if len(snapshots) != 1 || snapshots[0].Eq != "320.25" || snapshots[0].EqUsd != "320.25" || snapshots[0].AvailBal != "300.25" || snapshots[0].BucketTS != observedAt.Truncate(time.Minute).UnixMilli() {
 		t.Fatalf("bad Gate balance snapshot: %#v", snapshots)
 	}
 }

@@ -31,7 +31,7 @@ const (
 	maxAnalysisPNLMinutes      = maxAnalysisPNLDays * 24 * 60
 	minPositionLookbackMinutes = 30 * 24 * 60
 	analysisCacheTTL           = 60 * time.Second
-	usdtSampleInterval         = 10 * time.Minute
+	usdtSampleInterval         = 5 * time.Minute
 	maxBalanceMinutes          = 90 * 24 * 60
 
 	binanceAnalysisTradeWindow = 7 * 24 * time.Hour
@@ -2647,13 +2647,38 @@ func analysisBalanceFromGate(account gate.Account, now time.Time) analysisBalanc
 	if currency == "" {
 		currency = "USDT"
 	}
+	equity := gateUSDTEq(account)
 	return analysisBalance{
-		TotalEq: account.Total, AvailEq: account.Available, Currency: currency, UpdatedAt: updatedAt,
+		TotalEq: equity, AvailEq: account.Available, Currency: currency, UpdatedAt: updatedAt,
 		Details: []analysisBalanceDetail{{
-			Ccy: currency, Eq: account.Total, EqUsd: account.Total, AvailBal: account.Available,
+			Ccy: currency, Eq: equity, EqUsd: equity, AvailBal: account.Available,
 			AvailEq: account.Available, UpdatedAt: updatedAt,
 		}},
 	}
+}
+
+// gateUSDTEq returns the mark-to-market futures equity. Gate's total balance
+// excludes unrealised position P&L, so the chart must add it explicitly.
+func gateUSDTEq(account gate.Account) string {
+	rawTotal := strings.TrimSpace(account.Total)
+	rawUnrealised := strings.TrimSpace(account.UnrealisedPnl)
+	if rawUnrealised == "" {
+		return rawTotal
+	}
+	total, ok := new(big.Rat).SetString(rawTotal)
+	if !ok {
+		return rawTotal
+	}
+	unrealised, ok := new(big.Rat).SetString(rawUnrealised)
+	if !ok {
+		return rawTotal
+	}
+	decimals := decimalsFromDecimalString(rawTotal)
+	if unrealisedDecimals := decimalsFromDecimalString(rawUnrealised); unrealisedDecimals > decimals {
+		decimals = unrealisedDecimals
+	}
+	total.Add(total, unrealised)
+	return trimDecimalZeros(total.FloatString(decimals))
 }
 
 func analysisBalanceFromLatestPoint(points []analysisBalancePoint) (analysisBalance, bool) {
