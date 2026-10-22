@@ -129,12 +129,6 @@
     const placed = [];
     const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
     const overlaps = (a, b) => a.left < b.right + 3 && a.right > b.left - 3 && a.top < b.bottom + 3 && a.bottom > b.top - 3;
-    const offsetAt = index => {
-      if (index === 0) return 0;
-      const distance = Math.ceil(index / 2);
-      return distance * (index % 2 ? 1 : -1);
-    };
-
     (Array.isArray(markers) ? markers : []).forEach(marker => {
       if (marker.time < scale.start || marker.time >= scale.end || marker.price < range[0] || marker.price > range[1]) {
         outside++;
@@ -156,7 +150,9 @@
       const labelWidth = labelText.length * 11 + 12;
       const labelBelow = closing ? !long : long;
       const direction = labelBelow ? 1 : -1;
-      const horizontalStep = Math.max(24, labelWidth + 12);
+      // Keep every label over its own candle. When a marker is close to the
+      // edge, only clamp it enough to keep the full badge inside the plot.
+      const labelX = clamp(x, bounds.left + labelWidth / 2 + 3, bounds.right - labelWidth / 2 - 3);
       const maxLevels = Math.ceil((bounds.bottom - bounds.top) / 24) + 2;
       let chosen = null;
       let fallback = null;
@@ -164,27 +160,23 @@
 
       for (let level = 0; level < maxLevels; level++) {
         const distance = 25 + level * 24;
-        for (let offsetIndex = 0; offsetIndex < 9; offsetIndex++) {
-          const labelX = clamp(x + offsetAt(offsetIndex) * horizontalStep, bounds.left + labelWidth / 2 + 3, bounds.right - labelWidth / 2 - 3);
-          const labelCenterY = clamp(priceY + direction * distance, bounds.top + 12, bounds.bottom - 12);
-          const box = {
-            left: labelX - labelWidth / 2 - 3,
-            right: labelX + labelWidth / 2 + 3,
-            top: labelCenterY - 12,
-            bottom: labelCenterY + 12
-          };
-          const collisionCount = placed.reduce((count, prior) => count + (overlaps(box, prior.box) ? 1 : 0), 0);
-          const score = collisionCount * 100000 + level * 100 + Math.abs(offsetAt(offsetIndex));
-          if (score < fallbackScore) {
-            fallbackScore = score;
-            fallback = { labelX, labelCenterY, box };
-          }
-          if (collisionCount === 0) {
-            chosen = { labelX, labelCenterY, box };
-            break;
-          }
+        const labelCenterY = clamp(priceY + direction * distance, bounds.top + 12, bounds.bottom - 12);
+        const box = {
+          left: labelX - labelWidth / 2 - 3,
+          right: labelX + labelWidth / 2 + 3,
+          top: labelCenterY - 12,
+          bottom: labelCenterY + 12
+        };
+        const collisionCount = placed.reduce((count, prior) => count + (overlaps(box, prior.box) ? 1 : 0), 0);
+        const score = collisionCount * 100000 + level * 100;
+        if (score < fallbackScore) {
+          fallbackScore = score;
+          fallback = { labelX, labelCenterY, box };
         }
-        if (chosen) break;
+        if (collisionCount === 0) {
+          chosen = { labelX, labelCenterY, box };
+          break;
+        }
       }
 
       const layout = chosen || fallback;

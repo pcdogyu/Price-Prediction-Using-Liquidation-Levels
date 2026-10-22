@@ -400,9 +400,10 @@
   // Position detail mode draws the actual order/fill rows supplied by the
   // parent TVBot page. Open markers use long/short colours; every close uses
   // yellow, while the label retains the operation and manual/automatic source.
-  // BubbleChart supplies the same collision-aware placement used by the full
-  // analysis chart; repeated same-direction openings are collapsed per candle
-  // before placement, while different actions remain separate.
+  // BubbleChart supplies the same candle-anchored, vertically collision-aware
+  // placement used by the full analysis chart; repeated same-direction
+  // openings are collapsed per candle before placement, while different
+  // actions remain separate.
   function drawTradeMarkers(ctx, x, y, plot, intervalStep) {
     if (!state.tradeMarkers.length || !BubbleChart || typeof BubbleChart.tradeMarkerPlacements !== 'function') return;
     const markers = typeof BubbleChart.collapseTradeMarkers === 'function'
@@ -419,12 +420,6 @@
       const marker = item.marker;
       const colour = marker.phase === 'exit' ? colors.warning : marker.side === 'short' ? colors.sell : colors.buy;
       ctx.save();
-      ctx.strokeStyle = colour;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(item.x, item.priceY);
-      ctx.lineTo(item.labelX, item.labelCenterY + (item.labelBelow ? -12 : 12));
-      ctx.stroke();
       const width = item.labelWidth + 6, height = 24;
       const left = item.labelX - width / 2, top = item.labelCenterY - height / 2;
       ctx.fillStyle = colour;

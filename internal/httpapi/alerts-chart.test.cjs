@@ -1,9 +1,16 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const K = require('./alerts-chart.js');
+const chartApp = fs.readFileSync(require.resolve('./alerts-chart-app.js'), 'utf8');
 
 const candle = (at, open = 1, high = 2, low = 0.5, close = 1.5, volume = 1000) => ({ t: at, open, high, low, close, volume });
 const signal = (id, at, kind = 'aggressive', side = 'long', price = 100) => ({ id, t: at, kind, side, reference_price: price });
+
+test('position trade labels are standalone candle-anchored badges', () => {
+  assert.doesNotMatch(chartApp, /ctx\.lineTo\(item\.labelX, item\.labelCenterY/);
+  assert.match(chartApp, /vertically collision-aware/);
+});
 
 test('only the nine requested periods are offered', () => {
   assert.deepEqual(K.INTERVALS, ['1m', '2m', '5m', '15m', '30m', '1h', '4h', '8h', '12h']);
