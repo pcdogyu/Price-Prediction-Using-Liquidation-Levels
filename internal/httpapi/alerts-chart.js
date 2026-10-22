@@ -2,10 +2,11 @@
   'use strict';
   const finite = value => typeof value === 'number' && Number.isFinite(value);
 
-  // The chart offers exactly the periods the alert strategy is readable against.
-  // Binance serves all of them natively, so nothing is aggregated in the browser.
-  const INTERVALS = ['1m', '2m', '5m', '15m', '30m', '1h', '4h', '8h', '12h'];
-  const INTERVAL_MS = { '1m': 6e4, '2m': 12e4, '5m': 3e5, '15m': 9e5, '30m': 18e5, '1h': 36e5, '4h': 144e5, '8h': 288e5, '12h': 432e5 };
+  // The chart offers the periods the alert strategy is readable against.
+  // Binance serves all of them natively except 2m, which the server aggregates
+  // from 1m candles before returning it to the browser.
+  const INTERVALS = ['1m', '2m', '3m', '5m', '15m', '30m', '1h', '4h', '8h', '12h'];
+  const INTERVAL_MS = { '1m': 6e4, '2m': 12e4, '3m': 18e4, '5m': 3e5, '15m': 9e5, '30m': 18e5, '1h': 36e5, '4h': 144e5, '8h': 288e5, '12h': 432e5 };
   const DEFAULT_VISIBLE = 150, MIN_VISIBLE = 12, MAX_VISIBLE = 800, RIGHT_PAD = 2;
   const HISTORY_TRIGGER = 25, CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000, SIGNAL_PAGES = 3;
   const STORE_INTERVAL = 'liquidation.kline.interval', STORE_SIGNALS = 'liquidation.kline.signals';

@@ -578,15 +578,15 @@ func TestAlertChartStandalonePositionPage(t *testing.T) {
 	}
 }
 
-// TestAlertChartPeriodsAreTheNineRequested keeps the offered periods exactly as
-// requested: the chart builds its buttons from one shared list.
-func TestAlertChartPeriodsAreTheNineRequested(t *testing.T) {
+// TestAlertChartPeriods keeps the offered periods exactly as requested: the
+// chart builds its buttons from one shared list.
+func TestAlertChartPeriods(t *testing.T) {
 	srv, _ := alertTestServer(t)
 	script := serveAlert(srv, http.MethodGet, "/assets/alerts-chart.js", nil).Body.String()
-	if !strings.Contains(script, "['1m', '2m', '5m', '15m', '30m', '1h', '4h', '8h', '12h']") {
-		t.Fatal("the chart must offer the nine requested periods, in order")
+	if !strings.Contains(script, "['1m', '2m', '3m', '5m', '15m', '30m', '1h', '4h', '8h', '12h']") {
+		t.Fatal("the chart must offer the requested periods, in order")
 	}
-	for _, forbidden := range []string{"'1d'", "'3m'", "'6h'", "'1w'"} {
+	for _, forbidden := range []string{"'1d'", "'6h'", "'1w'"} {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("the chart must not offer period %s", forbidden)
 		}
@@ -644,7 +644,6 @@ func TestAlertKlineQueryValidation(t *testing.T) {
 		{"symbol with a query", url.Values{"symbol": []string{"BTCUSDT&limit=1"}}},
 		{"symbol too long", url.Values{"symbol": []string{strings.Repeat("A", 33)}}},
 		{"period one day", url.Values{"symbol": []string{"BTCUSDT"}, "interval": []string{"1d"}}},
-		{"period three min", url.Values{"symbol": []string{"BTCUSDT"}, "interval": []string{"3m"}}},
 		{"limit zero", url.Values{"symbol": []string{"BTCUSDT"}, "limit": []string{"0"}}},
 		{"limit past the page", url.Values{"symbol": []string{"BTCUSDT"}, "limit": []string{"1001"}}},
 		{"limit not a number", url.Values{"symbol": []string{"BTCUSDT"}, "limit": []string{"many"}}},

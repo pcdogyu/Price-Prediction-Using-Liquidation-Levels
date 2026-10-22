@@ -191,11 +191,11 @@ func TestBinanceKlinesReportsUpstreamFailure(t *testing.T) {
 	}
 }
 
-// TestKlineIntervalCatalog keeps the nine offered periods and their lengths.
+// TestKlineIntervalCatalog keeps the ten offered periods and their lengths.
 func TestKlineIntervalCatalog(t *testing.T) {
-	want := map[string]int{"1m": 1, "2m": 2, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "8h": 480, "12h": 720}
+	want := map[string]int{"1m": 1, "2m": 2, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "8h": 480, "12h": 720}
 	if len(KlineIntervals) != len(want) {
-		t.Fatalf("the chart must offer exactly nine periods: %v", KlineIntervals)
+		t.Fatalf("the chart must offer exactly ten periods: %v", KlineIntervals)
 	}
 	for _, name := range KlineIntervals {
 		minutes, ok := KlineIntervalMinutes[name]

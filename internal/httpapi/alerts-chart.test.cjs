@@ -12,8 +12,9 @@ test('position trade labels are standalone candle-anchored badges', () => {
   assert.match(chartApp, /vertically collision-aware/);
 });
 
-test('only the nine requested periods are offered', () => {
-  assert.deepEqual(K.INTERVALS, ['1m', '2m', '5m', '15m', '30m', '1h', '4h', '8h', '12h']);
+test('the requested periods are offered', () => {
+  assert.deepEqual(K.INTERVALS, ['1m', '2m', '3m', '5m', '15m', '30m', '1h', '4h', '8h', '12h']);
+  assert.equal(K.intervalMs('3m'), 180000);
   assert.equal(K.intervalMs('4h'), 14400000);
   assert.equal(K.intervalMs('12h'), 43200000);
   assert.equal(K.intervalMs('13m'), 0);
