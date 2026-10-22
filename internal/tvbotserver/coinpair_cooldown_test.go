@@ -62,6 +62,41 @@ func TestConfiguredLossCooldownDurationAndDisable(t *testing.T) {
 	}
 }
 
+func TestConfiguredGlobalLossCooldownBlocksEveryCoinpair(t *testing.T) {
+	srv := newTestServer(t)
+	now := srv.now()
+	cfg := config.Default()
+	cfg.Trading.LossCooldown.Enabled = false
+	cfg.Trading.LossCooldown.GlobalEnabled = true
+	cfg.Trading.LossCooldown.Hours = 3
+	srv.ConfigStore = config.NewStore("", cfg)
+
+	block, created, err := srv.recordLossCoinpairCooldown(cfg, "global-loss:1", "exchange_fill", trading.ExchangeBinance, "main", "49000", now, "BTCUSDT")
+	if err != nil || !created || block.Keyword != globalCoinpairCooldownKeyword || !block.ExpiresAt.Equal(now.Add(3*time.Hour)) {
+		t.Fatalf("global loss cooldown was not created: created=%v block=%#v err=%v", created, block, err)
+	}
+	blocks, err := srv.Orders.ListActiveCoinpairBlocks(now)
+	if err != nil || len(blocks) != 1 || blocks[0].Keyword != globalCoinpairCooldownKeyword {
+		t.Fatalf("unexpected global loss cooldown blocks: blocks=%#v err=%v", blocks, err)
+	}
+	for _, symbol := range []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"} {
+		probe := trading.Signal{Coinpair: symbol, Ticker: "BINANCE:" + symbol, PositionEffect: trading.PositionEffectOpen}
+		if matched, blocked, err := srv.activeCoinpairCooldown(probe, now); err != nil || !blocked || matched.Keyword != globalCoinpairCooldownKeyword {
+			t.Fatalf("global cooldown did not block %s: blocked=%v block=%#v err=%v", symbol, blocked, matched, err)
+		}
+	}
+	closeProbe := trading.Signal{Coinpair: "ETHUSDT", PositionEffect: trading.PositionEffectClose}
+	if _, blocked, err := srv.activeCoinpairCooldown(closeProbe, now); err != nil || blocked {
+		t.Fatalf("global cooldown should not block close signals: blocked=%v err=%v", blocked, err)
+	}
+
+	cfg.Trading.LossCooldown.GlobalEnabled = false
+	srv.ConfigStore = config.NewStore("", cfg)
+	if _, blocked, err := srv.activeCoinpairCooldown(trading.Signal{Coinpair: "BTCUSDT", PositionEffect: trading.PositionEffectOpen}, now); err != nil || blocked {
+		t.Fatalf("disabled global cooldown should not block open signals: blocked=%v err=%v", blocked, err)
+	}
+}
+
 func TestWebhookCloseCooldownSourceRequiresStopLoss(t *testing.T) {
 	cases := []struct {
 		signal trading.Signal
@@ -206,6 +241,24 @@ func TestTVBotDeletesCoinpairCooldownWithAdminAuth(t *testing.T) {
 	rr = request("ETH")
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("missing delete status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestTVBotDeletesGlobalCoinpairCooldownWithAdminAuth(t *testing.T) {
+	srv := newTestServer(t)
+	now := srv.now()
+	if _, _, err := srv.recordCoinpairCooldownWithDurationAndKeyword("global-delete:1", "exchange_fill", trading.ExchangeBinance, "main", "49000", now, time.Hour, globalCoinpairCooldownKeyword, "BTCUSDT"); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodDelete, "/tvbot/coinpair-blocks/"+globalCoinpairCooldownKeyword, nil)
+	request.SetBasicAuth("admin", "Admin123")
+	response := httptest.NewRecorder()
+	srv.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"removed"`) || !strings.Contains(response.Body.String(), globalCoinpairCooldownKeyword) {
+		t.Fatalf("global cooldown delete status=%d body=%s", response.Code, response.Body.String())
+	}
+	if blocks, err := srv.Orders.ListActiveCoinpairBlocks(now); err != nil || len(blocks) != 0 {
+		t.Fatalf("deleted global cooldown remains active: blocks=%#v err=%v", blocks, err)
 	}
 }
 

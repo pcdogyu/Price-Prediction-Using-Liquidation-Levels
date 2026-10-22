@@ -333,6 +333,42 @@ func (s *OrderStore) DeleteAutomaticCoinpairBlocks() (int, error) {
 	return before - len(out), nil
 }
 
+// DeleteAutomaticCoinpairBlocksExcept clears active system-generated
+// cooldowns except for one reserved scope, preserving that scope when the
+// other automatic cooldown setting is disabled.
+func (s *OrderStore) DeleteAutomaticCoinpairBlocksExcept(keyword string) (int, error) {
+	keyword = strings.ToUpper(strings.TrimSpace(keyword))
+	if keyword == "" {
+		return s.DeleteAutomaticCoinpairBlocks()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		res, err := s.db.Exec(`DELETE FROM coinpair_blocks WHERE source <> 'analysis_manual' AND keyword <> ?`, keyword)
+		if err != nil {
+			return 0, err
+		}
+		count, _ := res.RowsAffected()
+		return int(count), nil
+	}
+	before := len(s.state.CoinpairBlocks)
+	out := s.state.CoinpairBlocks[:0]
+	for _, block := range s.state.CoinpairBlocks {
+		if block.Source != "analysis_manual" && block.Keyword != keyword {
+			continue
+		}
+		out = append(out, block)
+	}
+	if len(out) == before {
+		return 0, nil
+	}
+	s.state.CoinpairBlocks = out
+	if err := s.saveLocked(); err != nil {
+		return 0, err
+	}
+	return before - len(out), nil
+}
+
 func (s *OrderStore) deleteExpiredCoinpairBlocksSQLiteLocked(now time.Time) (int, error) {
 	res, err := s.db.Exec(`DELETE FROM coinpair_blocks WHERE expires_at <= ?`, now.Format(time.RFC3339Nano))
 	if err != nil {

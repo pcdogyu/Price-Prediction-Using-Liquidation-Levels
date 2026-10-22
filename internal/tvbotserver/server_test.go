@@ -823,13 +823,56 @@ func TestTVBotConfigUpdatesLossCooldownAndClearsAutomaticBlocks(t *testing.T) {
 	}
 }
 
+func TestTVBotConfigUpdatesGlobalLossCooldownAndPreservesScopes(t *testing.T) {
+	srv := newTestServer(t)
+	now := srv.now()
+	cfg := config.Default()
+	cfg.Trading.LossCooldown.GlobalEnabled = true
+	srv.ConfigStore = config.NewStore("", cfg)
+	if _, _, err := srv.recordLossCoinpairCooldown(cfg, "scope-loss:1", "exchange_fill", trading.ExchangeBinance, "main", "49000", now, "BTCUSDT"); err != nil {
+		t.Fatal(err)
+	}
+	blocks, err := srv.Orders.ListActiveCoinpairBlocks(now)
+	if err != nil || len(blocks) != 2 {
+		t.Fatalf("expected same-coinpair and global cooldowns: blocks=%#v err=%v", blocks, err)
+	}
+
+	put := func(payload string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPut, "/tvbot/config", strings.NewReader(payload))
+		req.SetBasicAuth("admin", "Admin123")
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := put(`{"trading":{"loss_cooldown":{"enabled":false,"global_enabled":true,"hours":12}}}`); rr.Code != http.StatusOK {
+		t.Fatalf("disable same-coinpair cooldown status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	blocks, err = srv.Orders.ListActiveCoinpairBlocks(now)
+	if err != nil || len(blocks) != 1 || blocks[0].Keyword != globalCoinpairCooldownKeyword {
+		t.Fatalf("disabling same-coinpair cooldown should preserve global cooldown: blocks=%#v err=%v", blocks, err)
+	}
+	if _, blocked, err := srv.activeCoinpairCooldown(trading.Signal{Coinpair: "ETHUSDT", PositionEffect: trading.PositionEffectOpen}, now); err != nil || !blocked {
+		t.Fatalf("global cooldown should continue blocking after same-coinpair scope is disabled: blocked=%v err=%v", blocked, err)
+	}
+
+	if rr := put(`{"trading":{"loss_cooldown":{"enabled":false,"global_enabled":false,"hours":12}}}`); rr.Code != http.StatusOK {
+		t.Fatalf("disable global cooldown status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	blocks, err = srv.Orders.ListActiveCoinpairBlocks(now)
+	if err != nil || len(blocks) != 0 {
+		t.Fatalf("disabling global cooldown should clear automatic blocks: blocks=%#v err=%v", blocks, err)
+	}
+}
+
 func TestTVBotUIIncludesLossCooldownControls(t *testing.T) {
 	for _, marker := range []string{
 		`id="loss-cooldown-enabled"`,
+		`id="loss-cooldown-global-enabled"`,
 		`id="loss-cooldown-hours"`,
 		`id="save-loss-cooldown"`,
 		`function saveLossCooldownSettings()`,
-		`loss_cooldown: { enabled: enabled.checked, hours: value }`,
+		`loss_cooldown: { enabled: enabled.checked, global_enabled: globalEnabled.checked, hours: value }`,
 	} {
 		if !strings.Contains(tvbotHTML, marker) {
 			t.Fatalf("tvbot UI missing loss cooldown marker %q", marker)

@@ -1168,9 +1168,22 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_config", err.Error())
 			return
 		}
-		if previous.Trading.LossCooldown.Enabled && !cfg.Trading.LossCooldown.Enabled && s.Orders != nil {
-			if _, clearErr := s.Orders.DeleteAutomaticCoinpairBlocks(); clearErr != nil && s.Logger != nil {
-				s.Logger.Error("failed to clear automatic coinpair cooldowns after disabling loss cooldown", "error", clearErr)
+		if s.Orders != nil {
+			if previous.Trading.LossCooldown.Enabled && !cfg.Trading.LossCooldown.Enabled {
+				var clearErr error
+				if cfg.Trading.LossCooldown.GlobalEnabled {
+					_, clearErr = s.Orders.DeleteAutomaticCoinpairBlocksExcept(globalCoinpairCooldownKeyword)
+				} else {
+					_, clearErr = s.Orders.DeleteAutomaticCoinpairBlocks()
+				}
+				if clearErr != nil && s.Logger != nil {
+					s.Logger.Error("failed to clear automatic coinpair cooldowns after disabling same-coinpair loss cooldown", "error", clearErr)
+				}
+			}
+			if previous.Trading.LossCooldown.GlobalEnabled && !cfg.Trading.LossCooldown.GlobalEnabled {
+				if _, clearErr := s.Orders.DeleteCoinpairBlock(globalCoinpairCooldownKeyword); clearErr != nil && s.Logger != nil {
+					s.Logger.Error("failed to clear global loss cooldown", "error", clearErr)
+				}
 			}
 		}
 		writeJSON(w, http.StatusOK, cfg)
@@ -2874,8 +2887,9 @@ type tradingPatch struct {
 }
 
 type lossCooldownPatch struct {
-	Enabled *bool `json:"enabled"`
-	Hours   *int  `json:"hours"`
+	Enabled       *bool `json:"enabled"`
+	GlobalEnabled *bool `json:"global_enabled"`
+	Hours         *int  `json:"hours"`
 }
 
 type uiPatch struct {
@@ -2978,6 +2992,9 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 	if patch.Trading.LossCooldown != nil {
 		if patch.Trading.LossCooldown.Enabled != nil {
 			c.Trading.LossCooldown.Enabled = *patch.Trading.LossCooldown.Enabled
+		}
+		if patch.Trading.LossCooldown.GlobalEnabled != nil {
+			c.Trading.LossCooldown.GlobalEnabled = *patch.Trading.LossCooldown.GlobalEnabled
 		}
 		if patch.Trading.LossCooldown.Hours != nil {
 			c.Trading.LossCooldown.Hours = *patch.Trading.LossCooldown.Hours

@@ -82,12 +82,14 @@ type TradingConfig struct {
 	PositionMonitor           PositionMonitorConfig        `json:"position_monitor"`
 }
 
-// LossCooldownConfig controls the global block applied to a coinpair after a
-// confirmed losing exit. It is separate from auto_reentry, whose cooldown only
-// governs the reentry lifecycle.
+// LossCooldownConfig controls the automatic block applied after a confirmed
+// losing exit. The two scopes are independent: Enabled blocks the losing
+// coinpair and GlobalEnabled blocks every coinpair. It is separate from
+// auto_reentry, whose cooldown only governs the reentry lifecycle.
 type LossCooldownConfig struct {
-	Enabled bool `json:"enabled"`
-	Hours   int  `json:"hours"`
+	Enabled       bool `json:"enabled"`
+	GlobalEnabled bool `json:"global_enabled"`
+	Hours         int  `json:"hours"`
 }
 
 type FillMonitorConfig struct {
@@ -254,8 +256,9 @@ func Default() Config {
 			ShortLimitPriceMultiplier: 1.003,
 			LayeredOrder:              trading.DefaultLayeredOrderSettings(),
 			LossCooldown: LossCooldownConfig{
-				Enabled: true,
-				Hours:   24,
+				Enabled:       true,
+				GlobalEnabled: false,
+				Hours:         24,
 			},
 			FillMonitor: FillMonitorConfig{
 				Enabled:             true,

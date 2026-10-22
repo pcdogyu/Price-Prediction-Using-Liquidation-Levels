@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,6 +18,7 @@ import (
 const (
 	coinpairCooldownDuration        = 24 * time.Hour
 	coinpairCooldownCleanupInterval = time.Minute
+	globalCoinpairCooldownKeyword   = "__ALL_COINPAIRS__"
 )
 
 var manualCoinpairCooldownSequence atomic.Uint64
@@ -152,7 +154,10 @@ func (s *Server) handleCoinpairBlockDelete(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only DELETE is allowed")
 		return
 	}
-	keyword, _ := coinpairCooldownIdentity(rawKeyword)
+	keyword := strings.ToUpper(strings.TrimSpace(rawKeyword))
+	if !isGlobalCoinpairCooldownKeyword(keyword) {
+		keyword, _ = coinpairCooldownIdentity(rawKeyword)
+	}
 	if keyword == "" {
 		writeError(w, http.StatusBadRequest, "invalid_coinpair_block", "coinpair block keyword is required")
 		return
@@ -178,6 +183,9 @@ func coinpairBlockCoveringSymbol(blocks []storage.CoinpairBlock, symbol string) 
 		return storage.CoinpairBlock{}, false
 	}
 	for _, block := range blocks {
+		if isGlobalCoinpairCooldownKeyword(block.Keyword) {
+			return block, true
+		}
 		filter := normalizeCoinpairFilter(block.Keyword)
 		if filter != "" && strings.Contains(candidate, filter) {
 			return block, true
@@ -193,6 +201,17 @@ func (s *Server) lossCooldownEnabled() bool {
 	return s.ConfigStore.Get().Trading.LossCooldown.Enabled
 }
 
+func (s *Server) globalLossCooldownEnabled() bool {
+	if s.ConfigStore == nil {
+		return false
+	}
+	return s.ConfigStore.Get().Trading.LossCooldown.GlobalEnabled
+}
+
+func isGlobalCoinpairCooldownKeyword(keyword string) bool {
+	return strings.EqualFold(strings.TrimSpace(keyword), globalCoinpairCooldownKeyword)
+}
+
 func isAutomaticCoinpairCooldown(block storage.CoinpairBlock) bool {
 	return strings.ToLower(strings.TrimSpace(block.Source)) != "analysis_manual"
 }
@@ -206,6 +225,12 @@ func (s *Server) activeCoinpairCooldown(signal trading.Signal, now time.Time) (s
 		return storage.CoinpairBlock{}, false, err
 	}
 	for _, block := range blocks {
+		if isGlobalCoinpairCooldownKeyword(block.Keyword) {
+			if !s.globalLossCooldownEnabled() && isAutomaticCoinpairCooldown(block) {
+				continue
+			}
+			return block, true, nil
+		}
 		if !s.lossCooldownEnabled() && isAutomaticCoinpairCooldown(block) {
 			continue
 		}
@@ -228,23 +253,67 @@ func (s *Server) recordCoinpairCooldown(eventID, source, exchange, apiID, trigge
 
 func (s *Server) recordLossCoinpairCooldown(cfg config.Config, eventID, source, exchange, apiID, triggerPrice string, occurredAt time.Time, symbolCandidates ...string) (storage.CoinpairBlock, bool, error) {
 	cooldown := cfg.Trading.LossCooldown
-	if !cooldown.Enabled {
+	if !cooldown.Enabled && !cooldown.GlobalEnabled {
 		return storage.CoinpairBlock{}, false, nil
 	}
 	duration := time.Duration(cooldown.Hours) * time.Hour
-	return s.recordCoinpairCooldownWithDuration(eventID, source, exchange, apiID, triggerPrice, occurredAt, duration, symbolCandidates...)
+	var block storage.CoinpairBlock
+	created := false
+	if cooldown.Enabled {
+		var err error
+		block, created, err = s.recordCoinpairCooldownWithDuration(eventID, source, exchange, apiID, triggerPrice, occurredAt, duration, symbolCandidates...)
+		if err != nil {
+			return storage.CoinpairBlock{}, false, err
+		}
+	}
+	if cooldown.GlobalEnabled {
+		globalSymbol := globalCoinpairCooldownKeyword
+		for _, candidate := range symbolCandidates {
+			if strings.TrimSpace(candidate) != "" {
+				globalSymbol = strings.TrimSpace(candidate)
+				break
+			}
+		}
+		globalBlock, globalCreated, err := s.recordCoinpairCooldownWithDurationAndKeyword(
+			eventID+":global",
+			source,
+			exchange,
+			apiID,
+			triggerPrice,
+			occurredAt,
+			duration,
+			globalCoinpairCooldownKeyword,
+			globalSymbol,
+		)
+		if err != nil {
+			return storage.CoinpairBlock{}, false, err
+		}
+		if block.Keyword == "" {
+			block = globalBlock
+		}
+		created = created || globalCreated
+	}
+	return block, created, nil
 }
 
 func (s *Server) recordCoinpairCooldownWithDuration(eventID, source, exchange, apiID, triggerPrice string, occurredAt time.Time, duration time.Duration, symbolCandidates ...string) (storage.CoinpairBlock, bool, error) {
+	keyword, symbol := coinpairCooldownIdentity(symbolCandidates...)
+	if keyword == "" {
+		return storage.CoinpairBlock{}, false, fmt.Errorf("cannot derive cooldown keyword from %q", symbolCandidates)
+	}
+	return s.recordCoinpairCooldownWithDurationAndKeyword(eventID, source, exchange, apiID, triggerPrice, occurredAt, duration, keyword, symbol)
+}
+
+func (s *Server) recordCoinpairCooldownWithDurationAndKeyword(eventID, source, exchange, apiID, triggerPrice string, occurredAt time.Time, duration time.Duration, keyword, symbol string) (storage.CoinpairBlock, bool, error) {
 	if s.Orders == nil {
 		return storage.CoinpairBlock{}, false, nil
 	}
 	if duration <= 0 {
 		return storage.CoinpairBlock{}, false, fmt.Errorf("cooldown duration must be positive")
 	}
-	keyword, symbol := coinpairCooldownIdentity(symbolCandidates...)
+	keyword = strings.ToUpper(strings.TrimSpace(keyword))
 	if keyword == "" {
-		return storage.CoinpairBlock{}, false, fmt.Errorf("cannot derive cooldown keyword from %q", symbolCandidates)
+		return storage.CoinpairBlock{}, false, errors.New("cooldown keyword must not be empty")
 	}
 	if occurredAt.IsZero() {
 		occurredAt = s.now()
@@ -253,7 +322,7 @@ func (s *Server) recordCoinpairCooldownWithDuration(eventID, source, exchange, a
 	return s.Orders.AddCoinpairBlockEvent(storage.CoinpairBlockEvent{
 		EventID:      eventID,
 		Keyword:      keyword,
-		Symbol:       symbol,
+		Symbol:       strings.TrimSpace(symbol),
 		TriggerPrice: strings.TrimSpace(triggerPrice),
 		Source:       source,
 		Exchange:     exchange,

@@ -2165,6 +2165,7 @@ const tvbotHTML = `<!doctype html>
           <h4 class="coinpair-filter-group-title">亏损平仓后冷静期</h4>
           <div class="coinpair-filter-actions coinpair-cooldown-settings">
             <label><input id="loss-cooldown-enabled" type="checkbox">启用亏损平仓后同币对冷静期</label>
+            <label><input id="loss-cooldown-global-enabled" type="checkbox">启用亏损平仓后全局冷静期</label>
             <label>时长（小时）<input class="coinpair-cooldown-hours" id="loss-cooldown-hours" type="number" min="1" max="8760" step="1" inputmode="numeric"></label>
             <button class="btn primary" type="button" id="save-loss-cooldown">保存冷静期设置</button>
           </div>
@@ -6467,35 +6468,43 @@ const tvbotHTML = `<!doctype html>
       const hours = Number(cooldown.hours);
       return {
         enabled: cooldown.enabled !== false,
+        globalEnabled: cooldown.global_enabled === true,
         hours: Number.isInteger(hours) && hours >= 1 && hours <= 8760 ? hours : 24
       };
     }
 
     function syncLossCooldownControls() {
       const enabled = $("loss-cooldown-enabled");
+      const globalEnabled = $("loss-cooldown-global-enabled");
       const hours = $("loss-cooldown-hours");
       const status = $("loss-cooldown-status");
-      if (!enabled || !hours || !status) return;
-      hours.disabled = !enabled.checked;
-      status.textContent = enabled.checked
-        ? ("已开启：确认亏损平仓后阻止同币对新开仓 " + hours.value + " 小时")
+      if (!enabled || !globalEnabled || !hours || !status) return;
+      hours.disabled = !enabled.checked && !globalEnabled.checked;
+      const scopes = [];
+      if (enabled.checked) scopes.push("同币对");
+      if (globalEnabled.checked) scopes.push("全部币对");
+      status.textContent = scopes.length
+        ? ("已开启：确认亏损平仓后阻止" + scopes.join("及") + "新开仓 " + hours.value + " 小时")
         : "已关闭：不会创建或执行自动亏损冷静期；手动过滤和手动冷静期不受影响。";
     }
 
     function renderLossCooldownSettings() {
       const enabled = $("loss-cooldown-enabled");
+      const globalEnabled = $("loss-cooldown-global-enabled");
       const hours = $("loss-cooldown-hours");
-      if (!enabled || !hours) return;
+      if (!enabled || !globalEnabled || !hours) return;
       const cooldown = lossCooldownConfig();
       enabled.checked = cooldown.enabled;
+      globalEnabled.checked = cooldown.globalEnabled;
       hours.value = cooldown.hours;
       syncLossCooldownControls();
     }
 
     async function saveLossCooldownSettings() {
       const enabled = $("loss-cooldown-enabled");
+      const globalEnabled = $("loss-cooldown-global-enabled");
       const hours = $("loss-cooldown-hours");
-      if (!enabled || !hours) return;
+      if (!enabled || !globalEnabled || !hours) return;
       const value = Number(hours.value);
       if (!Number.isInteger(value) || value < 1 || value > 8760) {
         throw new Error("冷静时长必须是 1 到 8760 的整数小时");
@@ -6503,12 +6512,12 @@ const tvbotHTML = `<!doctype html>
       state.config = await api("/tvbot/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trading: { loss_cooldown: { enabled: enabled.checked, hours: value } } })
+        body: JSON.stringify({ trading: { loss_cooldown: { enabled: enabled.checked, global_enabled: globalEnabled.checked, hours: value } } })
       });
       renderConfig();
       renderDashboard();
       await loadCoinpairBlocks();
-      toast(enabled.checked ? ("亏损冷静期已保存：" + value + " 小时") : "亏损冷静期已关闭，自动冷静期已解除");
+      toast((enabled.checked || globalEnabled.checked) ? ("亏损冷静期已保存：" + value + " 小时") : "亏损冷静期已关闭，自动冷静期已解除");
     }
 
     function syncIgnoredCoinpairControls() {
@@ -6572,17 +6581,22 @@ const tvbotHTML = `<!doctype html>
       if (!list) return;
       const blocks = activeCoinpairBlocks();
       list.innerHTML = blocks.map((block) => {
-        const keyword = String(block.keyword || "-");
+        const global = String(block.keyword || "").trim().toUpperCase() === "__ALL_COINPAIRS__";
+        const keyword = global ? "全部币对" : String(block.keyword || "-");
+        const removeKeyword = global ? "__ALL_COINPAIRS__" : keyword;
         const price = String(block.trigger_price || "").trim();
         const expiresAt = String(block.expires_at || "");
         const source = coinpairCooldownSource(block.source);
         const sourceExchange = block.exchange ? (" · " + exchangeLabel(block.exchange)) : "";
         const priceLabel = coinpairCooldownPriceLabel(block.source);
-        const removing = !!state.coinpairCooldownRemoving[ignoredCoinpairKey(keyword)];
+        const removing = !!state.coinpairCooldownRemoving[ignoredCoinpairKey(removeKeyword)];
         const removeLabel = "提前解除 " + keyword + " 的冷静期";
-        return '<div class="coinpair-filter-item coinpair-cooldown-item" title="冷静期内禁止新开仓">' +
-          '<button class="coinpair-filter-remove" type="button" data-cooldown-keyword="' + escapeHTML(keyword) + '" title="' + escapeHTML(removeLabel) + '" aria-label="' + escapeHTML(removeLabel) + '"' + (removing ? " disabled" : "") + '>×</button>' +
+        const title = global ? "冷静期内禁止所有币对新开仓" : "冷静期内禁止该币对新开仓";
+        const symbolLabel = global && block.symbol ? '<span class="coinpair-cooldown-meta">触发币对：' + escapeHTML(block.symbol) + '</span>' : '';
+        return '<div class="coinpair-filter-item coinpair-cooldown-item" title="' + escapeHTML(title) + '">' +
+          '<button class="coinpair-filter-remove" type="button" data-cooldown-keyword="' + escapeHTML(removeKeyword) + '" title="' + escapeHTML(removeLabel) + '" aria-label="' + escapeHTML(removeLabel) + '"' + (removing ? " disabled" : "") + '>×</button>' +
           '<div class="coinpair-cooldown-title"><span aria-hidden="true">&#128274;</span><strong>' + escapeHTML(keyword) + '</strong></div>' +
+          symbolLabel +
           '<span class="coinpair-cooldown-meta">' + escapeHTML(priceLabel) + '：' + escapeHTML(price || "价格待确认") + '</span>' +
           '<span class="coinpair-cooldown-meta">来源：' + escapeHTML(source + sourceExchange) + '</span>' +
           '<span class="coinpair-cooldown-meta">剩余：' + escapeHTML(coinpairCooldownRemaining(expiresAt)) + '</span>' +
@@ -6607,7 +6621,7 @@ const tvbotHTML = `<!doctype html>
       try {
         await api("/tvbot/coinpair-blocks/" + encodeURIComponent(keyword), { method: "DELETE" });
         await loadCoinpairBlocks();
-        toast(keyword + " 已移出冷静期");
+        toast((keyword === "__ALL_COINPAIRS__" ? "全局" : keyword) + " 已移出冷静期");
       } finally {
         delete state.coinpairCooldownRemoving[key];
         renderCoinpairCooldownList();
@@ -7773,6 +7787,7 @@ const tvbotHTML = `<!doctype html>
     });
     $("add-ignored-coinpair").addEventListener("click", () => addIgnoredCoinpair().catch((err) => toast(err.message)));
     $("loss-cooldown-enabled").addEventListener("change", () => syncLossCooldownControls());
+    $("loss-cooldown-global-enabled").addEventListener("change", () => syncLossCooldownControls());
     $("loss-cooldown-hours").addEventListener("input", () => syncLossCooldownControls());
     $("save-loss-cooldown").addEventListener("click", () => saveLossCooldownSettings().catch((err) => toast(err.message)));
     $("ignored-coinpair-list").addEventListener("click", (event) => {
