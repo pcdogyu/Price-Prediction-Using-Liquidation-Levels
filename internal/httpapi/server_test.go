@@ -44,7 +44,7 @@ func testService(t *testing.T, cfg config.Config, logger *slog.Logger, logs *obs
 	return srv, st
 }
 
-func TestSecurityHeadersPermitOnlyEmbeddedBubbleChart(t *testing.T) {
+func TestSecurityHeadersPermitOnlyEmbeddedCharts(t *testing.T) {
 	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -54,6 +54,8 @@ func TestSecurityHeadersPermitOnlyEmbeddedBubbleChart(t *testing.T) {
 		frameAncestors string
 	}{
 		{path: "/bubbles?embed=1", frameOption: "SAMEORIGIN", frameAncestors: "frame-ancestors 'self'"},
+		{path: "/alerts/chart?position=1", frameOption: "SAMEORIGIN", frameAncestors: "frame-ancestors 'self'"},
+		{path: "/alerts/chart?symbol=BTCUSDT", frameOption: "DENY", frameAncestors: "frame-ancestors 'none'"},
 		{path: "/bubbles", frameOption: "DENY", frameAncestors: "frame-ancestors 'none'"},
 		{path: "/tvbot/view/positions", frameOption: "DENY", frameAncestors: "frame-ancestors 'none'"},
 	}

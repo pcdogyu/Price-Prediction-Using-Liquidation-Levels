@@ -740,7 +740,8 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		frameOption := "DENY"
 		frameAncestors := "'none'"
-		if r.URL.Path == "/bubbles" && r.URL.Query().Get("embed") == "1" {
+		positionChart := r.URL.Path == "/alerts/chart" && r.URL.Query().Get("position") == "1"
+		if (r.URL.Path == "/bubbles" && r.URL.Query().Get("embed") == "1") || positionChart {
 			frameOption = "SAMEORIGIN"
 			frameAncestors = "'self'"
 		}
