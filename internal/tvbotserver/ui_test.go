@@ -165,7 +165,8 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`id="position-symbol-dialog"`,
 		`id="position-symbol-chart-frame"`,
 		`K线 / 开平仓信息`,
-		`function positionSymbolTradeRows(row)`,
+		`function positionSymbolTradeRows(row, includeAnalysis)`,
+		`includeAnalysis !== false`,
 		`state.analysis.trades`,
 		`entry_fill_time`,
 		`tradeChartPayloadRow(item)`,
@@ -179,6 +180,9 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`exchange: String(item && item.exchange || "").trim() ? normalizeExchange(item && item.exchange) : ""`,
 		`async function loadPositionSymbolAnalysis()`,
 		`async function openPositionSymbolDetails(row)`,
+		`const initialRows = positionSymbolTradeRows(row, false)`,
+		`const initialURL = buildPositionChartURL(symbol, exchange, initialRows, initialRows[0])`,
+		`if (frame && initialURL) frame.src = initialURL.toString()`,
 		`K 线已加载 · 开平仓标记`,
 	} {
 		if !strings.Contains(page, want) {

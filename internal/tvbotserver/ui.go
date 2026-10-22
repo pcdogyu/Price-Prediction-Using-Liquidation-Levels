@@ -6011,11 +6011,11 @@ const tvbotHTML = `<!doctype html>
       if (sequence === positionSymbolDetailsSequence && status) status.textContent = "买卖历史已加载 · K 线下单标记 " + trades.length + " 个";
     }
 
-    function positionSymbolTradeRows(row) {
+    function positionSymbolTradeRows(row, includeAnalysis) {
       const exchange = normalizeExchange(row && row._exchange || activeExchange());
       const apiID = String(row && row._api_id || "").trim();
       const symbol = analysisGateChartSymbol(row && row.instId);
-      const source = state.analysis && Array.isArray(state.analysis.trades) ? state.analysis.trades : [];
+      const source = includeAnalysis !== false && state.analysis && Array.isArray(state.analysis.trades) ? state.analysis.trades : [];
       const trades = source
         .filter((item) => normalizeExchange(item && item.exchange) === exchange)
         .filter((item) => analysisGateChartSymbol(item && item.inst_id) === symbol)
@@ -6079,6 +6079,13 @@ const tvbotHTML = `<!doctype html>
         if (dialog.showModal) dialog.showModal();
         else dialog.setAttribute("open", "open");
       }
+      // Start the K-line immediately from the current position. The full
+      // analysis refresh can be slow; it must enrich the chart later rather
+      // than leave the modal on about:blank while it is in flight.
+      const initialRows = positionSymbolTradeRows(row, false);
+      const initialURL = buildPositionChartURL(symbol, exchange, initialRows, initialRows[0]);
+      if (frame && initialURL) frame.src = initialURL.toString();
+      if (status) status.textContent = "正在加载 K 线…";
       try {
         await loadPositionSymbolAnalysis();
         if (sequence !== positionSymbolDetailsSequence) return;
