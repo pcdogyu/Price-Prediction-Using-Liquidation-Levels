@@ -13,6 +13,15 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 	if strings.Contains(page, "tvbot-nav") || strings.Contains(page, "tvbot-menu-row") {
 		t.Fatal("TVBot navigation should not use a page-specific layout")
 	}
+	topMenuStart := strings.Index(page, `<div class="app-links">`)
+	if topMenuStart < 0 {
+		t.Fatalf("top navigation links container is missing: page=%s", page)
+	}
+	topMenuEnd := strings.Index(page[topMenuStart:], `</div>`)
+	if topMenuEnd < 0 {
+		t.Fatalf("top navigation links container is missing: page=%s", page)
+	}
+	topMenu := page[topMenuStart : topMenuStart+topMenuEnd]
 	want := []string{
 		`href="/alerts"`,
 		`href="/bubbles"`,
@@ -28,23 +37,33 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 		`href="/tvbot/view/api-keys"`,
 		`href="/tvbot/view/order-settings"`,
 		`href="/tvbot/view/template"`,
-		`href="/tvbot/view/trade-monitor"`,
-		`href="/tvbot/view/upgrade"`,
-		`href="/system"`,
 	}
 	last := -1
 	for _, marker := range want {
-		at := strings.Index(page, marker)
+		at := strings.Index(topMenu, marker)
 		if at <= last {
-			t.Fatalf("navigation marker %q is out of order: index=%d last=%d page=%s", marker, at, last, page)
+			t.Fatalf("top navigation marker %q is out of order: index=%d last=%d page=%s", marker, at, last, page)
 		}
 		last = at
+	}
+	if strings.Contains(topMenu, `href="/tvbot/view/trade-monitor"`) || strings.Contains(topMenu, `href="/tvbot/view/upgrade"`) {
+		t.Fatal("trade monitor and upgrade should not be direct top-navigation links")
 	}
 	if strings.Contains(page, `href="/tvbot/view/dashboard"`) {
 		t.Fatal("funding dashboard should not be exposed in the top navigation")
 	}
-	if !strings.Contains(page, `>升级</a>`) {
-		t.Fatal("upgrade should remain a direct top-navigation link")
+	systemPanelStart := strings.Index(page, `<div class="nav-system-panel"`)
+	if systemPanelStart < 0 {
+		t.Fatal("system menu panel is missing")
+	}
+	systemPanel := page[systemPanelStart:]
+	for _, marker := range []string{
+		`href="/tvbot/view/trade-monitor">成交监听</a>`,
+		`href="/tvbot/view/upgrade">升级</a>`,
+	} {
+		if !strings.Contains(systemPanel, marker) {
+			t.Fatalf("system submenu is missing %q: page=%s", marker, page)
+		}
 	}
 	if !strings.Contains(page, `href="/tvbot/view/orders">信号</a>`) {
 		t.Fatal("signal should be shown immediately before positions")
