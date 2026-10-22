@@ -5925,15 +5925,6 @@ const tvbotHTML = `<!doctype html>
       return '<button type="button" class="analysis-symbol-link" data-analysis-chart-symbol="' + escapeHTML(symbol) + '" data-analysis-chart-key="' + escapeHTML(key) + '" title="' + title + '">' + escapeHTML(text) + '</button>';
     }
 
-    function analysisBubblesURL(embedded) {
-      const marker = "/tvbot/";
-      const start = location.pathname.indexOf(marker);
-      const base = start >= 0 ? location.pathname.slice(0, start) : "";
-      const url = new URL(base + "/bubbles", window.location.origin);
-      if (embedded) url.searchParams.set("embed", "1");
-      return url;
-    }
-
     function analysisPositionKlineURL() {
       const marker = "/tvbot/";
       const start = location.pathname.indexOf(marker);
@@ -5941,7 +5932,7 @@ const tvbotHTML = `<!doctype html>
       return new URL(base + "/alerts/chart", window.location.origin);
     }
 
-    function buildTradeChartPayloadURL(symbol, exchange, trades, selectedRow, embedded, page) {
+    function buildPositionChartURL(symbol, exchange, trades, selectedRow) {
       const normalizedSymbol = analysisGateChartSymbol(symbol);
       if (!normalizedSymbol) return null;
       const rawExchange = String(exchange || (selectedRow && selectedRow.exchange) || "").trim();
@@ -5957,8 +5948,8 @@ const tvbotHTML = `<!doctype html>
         selected_key: selectedRow ? tradeChartRowKey(selectedRow) : "",
         rows: (Array.isArray(trades) ? trades : []).map((item) => tradeChartPayloadRow(item))
       };
-      const url = page === "position" ? analysisPositionKlineURL() : analysisBubblesURL(embedded);
-      if (page === "position") url.searchParams.set("position", "1");
+      const url = analysisPositionKlineURL();
+      url.searchParams.set("position", "1");
       if (normalizedExchange) url.searchParams.set("exchange", normalizedExchange);
       url.searchParams.set("symbol", normalizedSymbol);
       if (!payload.rows.length) return url;
@@ -5972,12 +5963,38 @@ const tvbotHTML = `<!doctype html>
       return url;
     }
 
-    function buildTradeChartURL(symbol, exchange, trades, selectedRow, embedded) {
-      return buildTradeChartPayloadURL(symbol, exchange, trades, selectedRow, true, "position");
-    }
-
-    function buildPositionChartURL(symbol, exchange, trades, selectedRow) {
-      return buildTradeChartPayloadURL(symbol, exchange, trades, selectedRow, true, "position");
+    async function openSharedPositionKlineDialog(options) {
+      const config = options || {};
+      const symbol = String(config.symbol || "");
+      const exchange = normalizeExchange(config.exchange || activeExchange());
+      const initialRows = Array.isArray(config.initialRows) ? config.initialRows : [];
+      const dialog = $("position-symbol-dialog");
+      const title = $("position-symbol-dialog-title");
+      const status = $("position-symbol-dialog-status");
+      const frame = $("position-symbol-chart-frame");
+      const sequence = ++positionSymbolDetailsSequence;
+      if (title) title.textContent = String(config.label || symbol) + " · " + exchangeLabel(exchange) + " " + String(config.titleSuffix || "持仓详情");
+      if (status) status.textContent = String(config.loadingStatus || "正在读取 K 线和开平仓信息…");
+      if (frame) frame.src = "about:blank";
+      if (dialog) {
+        if (dialog.showModal) dialog.showModal();
+        else dialog.setAttribute("open", "open");
+      }
+      const initialURL = buildPositionChartURL(symbol, exchange, initialRows, initialRows[0]);
+      if (frame && initialURL) frame.src = initialURL.toString();
+      if (status) status.textContent = "正在加载 K 线…";
+      try {
+        const rows = typeof config.loadRows === "function" ? await config.loadRows() : initialRows;
+        if (sequence !== positionSymbolDetailsSequence) return;
+        const chartRows = Array.isArray(rows) ? rows : [];
+        const chartURL = buildPositionChartURL(symbol, exchange, chartRows, chartRows[0]);
+        if (frame && chartURL) frame.src = chartURL.toString();
+        if (status) status.textContent = String(config.loadedStatus || "K 线已加载 · 开平仓标记 " + chartRows.length + " 个");
+      } catch (err) {
+        if (sequence !== positionSymbolDetailsSequence) return;
+        if (status) status.textContent = String(config.errorStatus || "K 线加载完成；开平仓信息读取失败");
+        toast(err && err.message ? err.message : "K 线下单信息读取失败");
+      }
     }
 
     function openAnalysisTradeChart(row) {
@@ -5993,24 +6010,16 @@ const tvbotHTML = `<!doctype html>
         toast("当前分析窗口没有该币对的交易记录");
         return;
       }
-      const url = buildTradeChartURL(symbol, exchange, trades, row, true);
-      if (!url) {
-        toast("无法暂存交易图表数据，请检查浏览器本地存储权限");
-        return;
-      }
-      const dialog = $("position-symbol-dialog");
-      const title = $("position-symbol-dialog-title");
-      const status = $("position-symbol-dialog-status");
-      const frame = $("position-symbol-chart-frame");
-      const sequence = ++positionSymbolDetailsSequence;
-      if (title) title.textContent = analysisInstIDText(row && row.inst_id) + " · " + exchangeLabel(exchange) + " 订单分析";
-      if (status) status.textContent = "正在加载买卖历史…";
-      if (frame) frame.src = url.toString();
-      if (dialog) {
-        if (dialog.showModal) dialog.showModal();
-        else dialog.setAttribute("open", "open");
-      }
-      if (sequence === positionSymbolDetailsSequence && status) status.textContent = "买卖历史已加载 · K 线下单标记 " + trades.length + " 个";
+      openSharedPositionKlineDialog({
+        symbol,
+        exchange,
+        label: analysisInstIDText(row && row.inst_id),
+        titleSuffix: "订单分析",
+        loadingStatus: "正在加载买卖历史…",
+        initialRows: trades,
+        loadRows: async () => trades,
+        loadedStatus: "买卖历史已加载 · K 线下单标记 " + trades.length + " 个"
+      });
     }
 
     function positionSymbolTradeRows(row, includeAnalysis) {
@@ -6069,39 +6078,20 @@ const tvbotHTML = `<!doctype html>
         toast("该币对无法转换为 Binance USDT K 线");
         return;
       }
-      const dialog = $("position-symbol-dialog");
-      const title = $("position-symbol-dialog-title");
-      const status = $("position-symbol-dialog-status");
-      const frame = $("position-symbol-chart-frame");
-      const sequence = ++positionSymbolDetailsSequence;
       const label = displayInstID(row && row.instId);
-      if (title) title.textContent = label + " · " + exchangeLabel(row && row._exchange) + " 持仓详情";
-      if (status) status.textContent = "正在读取 K 线和开平仓信息…";
       const exchange = normalizeExchange(row && row._exchange || activeExchange());
-      if (frame) frame.src = "about:blank";
-      if (dialog) {
-        if (dialog.showModal) dialog.showModal();
-        else dialog.setAttribute("open", "open");
-      }
-      // Start the K-line immediately from the current position. The full
-      // analysis refresh can be slow; it must enrich the chart later rather
-      // than leave the modal on about:blank while it is in flight.
       const initialRows = positionSymbolTradeRows(row, false);
-      const initialURL = buildPositionChartURL(symbol, exchange, initialRows, initialRows[0]);
-      if (frame && initialURL) frame.src = initialURL.toString();
-      if (status) status.textContent = "正在加载 K 线…";
-      try {
-        await loadPositionSymbolAnalysis();
-        if (sequence !== positionSymbolDetailsSequence) return;
-        const rows = positionSymbolTradeRows(row);
-        const tradeURL = buildPositionChartURL(symbol, exchange, rows, rows[0]);
-        if (frame && tradeURL) frame.src = tradeURL.toString();
-        if (status) status.textContent = "K 线已加载 · 开平仓标记 " + rows.length + " 个";
-      } catch (err) {
-        if (sequence !== positionSymbolDetailsSequence) return;
-        if (status) status.textContent = "K 线加载完成；开平仓信息读取失败";
-        toast(err && err.message ? err.message : "K 线下单信息读取失败");
-      }
+      await openSharedPositionKlineDialog({
+        symbol,
+        exchange,
+        label,
+        titleSuffix: "持仓详情",
+        initialRows,
+        loadRows: async () => {
+          await loadPositionSymbolAnalysis();
+          return positionSymbolTradeRows(row);
+        }
+      });
     }
 
     function closePositionSymbolDetails() {

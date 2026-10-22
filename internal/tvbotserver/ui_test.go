@@ -146,6 +146,9 @@ func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 		`tvbot.analysisChart.`,
 		`url.searchParams.set("trade_ref", token)`,
 		`url.searchParams.set("exchange", normalizedExchange)`,
+		`function buildPositionChartURL(symbol, exchange, trades, selectedRow)`,
+		`async function openSharedPositionKlineDialog(options)`,
+		`openSharedPositionKlineDialog({`,
 		`id="position-symbol-dialog"`,
 		`买卖历史已加载`,
 		`function analysisTimeText(v)`,
@@ -172,8 +175,6 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`tradeChartPayloadRow(item)`,
 		`operation_source: String(item && item.operation_source || "").trim().toLowerCase()`,
 		`operation: "open"`,
-		`function buildTradeChartURL(symbol, exchange, trades, selectedRow, embedded)`,
-		`return buildTradeChartPayloadURL(symbol, exchange, trades, selectedRow, true, "position")`,
 		`function buildPositionChartURL(symbol, exchange, trades, selectedRow)`,
 		`function analysisPositionKlineURL()`,
 		`base + "/alerts/chart"`,
@@ -181,9 +182,9 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`exchange: String(item && item.exchange || "").trim() ? normalizeExchange(item && item.exchange) : ""`,
 		`async function loadPositionSymbolAnalysis()`,
 		`async function openPositionSymbolDetails(row)`,
+		`openSharedPositionKlineDialog({`,
 		`const initialRows = positionSymbolTradeRows(row, false)`,
-		`const initialURL = buildPositionChartURL(symbol, exchange, initialRows, initialRows[0])`,
-		`if (frame && initialURL) frame.src = initialURL.toString()`,
+		`loadRows: async () =>`,
 		`K 线已加载 · 开平仓标记`,
 	} {
 		if !strings.Contains(page, want) {
@@ -212,8 +213,11 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		t.Fatal("position symbol detail handler end is missing")
 	}
 	positionHandler := page[positionOpen : positionOpen+positionClose]
-	if strings.Contains(positionHandler, "analysisBubblesURL(true)") || !strings.Contains(positionHandler, "buildPositionChartURL(symbol, exchange, rows, rows[0])") {
+	if strings.Contains(positionHandler, "analysisBubblesURL(true)") || !strings.Contains(positionHandler, "openSharedPositionKlineDialog({") {
 		t.Fatal("position symbol details must open the dedicated K-line page")
+	}
+	if strings.Contains(page, `function buildTradeChartURL(`) || strings.Contains(page, `function buildTradeChartPayloadURL(`) || strings.Contains(page, `function analysisBubblesURL(`) {
+		t.Fatal("analysis and positions must use one shared K-line builder instead of the legacy second chart path")
 	}
 }
 
