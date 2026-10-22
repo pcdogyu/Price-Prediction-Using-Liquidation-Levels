@@ -1166,9 +1166,10 @@ function installChartInteractions() {
   svg.addEventListener('pointercancel', endDrag);
 }
 
-function installEmbeddedChartWheel() {
+function installEmbeddedChartInteractions() {
   const svg = $('market-chart');
   if (!svg) return;
+  const wrap = svg.parentElement;
   svg.addEventListener('wheel', event => {
     event.preventDefault();
     const point = svgPoint(event);
@@ -1178,6 +1179,35 @@ function installEmbeddedChartWheel() {
     draw(cache.market, cache.map, cache.signal, cache.volume);
     if (chart.windowEnd <= chart.visibleCount + 12) loadOlder();
   }, { passive: false });
+  svg.addEventListener('pointerdown', event => {
+    if (event.button !== undefined && event.button !== 0) return;
+    const point = svgPoint(event);
+    if (!chart.candles.length || point.x < dims.left || point.x > embeddedChartCandleRight) return;
+    event.preventDefault();
+    chart.drag = { mode: 'chart', pointerId: event.pointerId, x: point.x, end: chart.windowEnd };
+    svg.setPointerCapture(event.pointerId);
+    wrap.classList.add('dragging');
+  });
+  svg.addEventListener('pointermove', event => {
+    if (!chart.drag || chart.drag.pointerId !== event.pointerId) return;
+    const point = svgPoint(event);
+    const step = (embeddedChartCandleRight - dims.left) / chart.visibleCount;
+    const shift = Math.round((chart.drag.x - point.x) / step);
+    const minimum = Math.min(chart.visibleCount, chart.candles.length);
+    chart.windowEnd = Math.max(minimum, Math.min(chart.candles.length, chart.drag.end + shift));
+    chart.atLatest = chart.windowEnd === chart.candles.length;
+    if (!chart.atLatest) chart.newData = false;
+    $('new-data').classList.toggle('hidden', !chart.newData);
+    draw(cache.market, cache.map, cache.signal, cache.volume);
+  });
+  const endDrag = event => {
+    if (!chart.drag || chart.drag.pointerId !== event.pointerId) return;
+    if (chart.windowEnd <= chart.visibleCount + 12) loadOlder();
+    chart.drag = null;
+    wrap.classList.remove('dragging');
+  };
+  svg.addEventListener('pointerup', endDrag);
+  svg.addEventListener('pointercancel', endDrag);
 }
 
 function resetChartState() {
@@ -1362,7 +1392,7 @@ $('log-copy').addEventListener('click', async () => {
 
 if (!embeddedChart) installChartSizeControls();
 if (!embeddedChart) installChartInteractions();
-if (embeddedChart) installEmbeddedChartWheel();
+if (embeddedChart) installEmbeddedChartInteractions();
 if (embeddedChart) refresh(true);
 else loadSymbolCatalog().finally(() => refresh(true));
 setInterval(() => refresh(false), 10000);
