@@ -179,13 +179,12 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`function analysisPositionKlineURL()`,
 		`base + "/alerts/chart"`,
 		`url.searchParams.set("position", "1")`,
+		`initialURL.searchParams.set("standalone", "1")`,
+		`window.open(initialURL.toString(), "_blank")`,
+		`chartWindow.location.href = chartURL.toString()`,
 		`exchange: String(item && item.exchange || "").trim() ? normalizeExchange(item && item.exchange) : ""`,
 		`async function loadPositionSymbolAnalysis()`,
 		`async function openPositionSymbolDetails(row)`,
-		`openSharedPositionKlineDialog({`,
-		`const initialRows = positionSymbolTradeRows(row, false)`,
-		`loadRows: async () =>`,
-		`K 线已加载 · 开平仓标记`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("position symbol details marker missing %q", want)
@@ -213,8 +212,8 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		t.Fatal("position symbol detail handler end is missing")
 	}
 	positionHandler := page[positionOpen : positionOpen+positionClose]
-	if strings.Contains(positionHandler, "analysisBubblesURL(true)") || !strings.Contains(positionHandler, "openSharedPositionKlineDialog({") {
-		t.Fatal("position symbol details must open the dedicated K-line page")
+	if strings.Contains(positionHandler, "openSharedPositionKlineDialog({") || !strings.Contains(positionHandler, `window.open(initialURL.toString(), "_blank")`) {
+		t.Fatal("position symbol details must open a standalone K-line page")
 	}
 	if strings.Contains(page, `function buildTradeChartURL(`) || strings.Contains(page, `function buildTradeChartPayloadURL(`) || strings.Contains(page, `function analysisBubblesURL(`) {
 		t.Fatal("analysis and positions must use one shared K-line builder instead of the legacy second chart path")

@@ -5569,7 +5569,7 @@ const tvbotHTML = `<!doctype html>
       const display = displayInstID(instID);
       if (!instID || display === "-") return textTableCell(display);
       const key = positionCloseRowKey(row);
-      const title = "查看 " + display + " K 线开平仓信息";
+      const title = "在新页面查看 " + display + " K 线开平仓信息";
       return tableCell('<button class="position-symbol-link" type="button" data-position-symbol-details="true" data-position-key="' + escapeHTML(key) + '" title="' + escapeHTML(title) + '">' + escapeHTML(display) + '</button>');
     }
 
@@ -6081,17 +6081,28 @@ const tvbotHTML = `<!doctype html>
       const label = displayInstID(row && row.instId);
       const exchange = normalizeExchange(row && row._exchange || activeExchange());
       const initialRows = positionSymbolTradeRows(row, false);
-      await openSharedPositionKlineDialog({
-        symbol,
-        exchange,
-        label,
-        titleSuffix: "持仓详情",
-        initialRows,
-        loadRows: async () => {
-          await loadPositionSymbolAnalysis();
-          return positionSymbolTradeRows(row);
+      const initialURL = buildPositionChartURL(symbol, exchange, initialRows, initialRows[0]);
+      if (!initialURL) {
+        toast("无法生成持仓详情页面");
+        return;
+      }
+      initialURL.searchParams.set("standalone", "1");
+      const chartWindow = window.open(initialURL.toString(), "_blank");
+      if (!chartWindow) {
+        toast("浏览器阻止了新页面，请允许弹出窗口后重试");
+        return;
+      }
+      try {
+        await loadPositionSymbolAnalysis();
+        const rows = positionSymbolTradeRows(row);
+        const chartURL = buildPositionChartURL(symbol, exchange, rows, rows[0]);
+        if (chartURL && !chartWindow.closed) {
+          chartURL.searchParams.set("standalone", "1");
+          chartWindow.location.href = chartURL.toString();
         }
-      });
+      } catch (err) {
+        toast(err && err.message ? err.message : "K 线下单信息读取失败");
+      }
     }
 
     function closePositionSymbolDetails() {

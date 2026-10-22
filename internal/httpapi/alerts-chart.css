@@ -37,18 +37,28 @@
    are not useful inside a position detail dialog. */
 html.position-chart-page,
 html.position-chart-page body{background:var(--chart-bg)}
-html.position-chart-page .app-nav,
-html.position-chart-page .page-heading,
-html.position-chart-page #kline-error,
-html.position-chart-page .kline-jump,
-html.position-chart-page .kline-actions,
-html.position-chart-page #kline-legend,
-html.position-chart-page #kline-readout,
-html.position-chart-page #kline-status,
-html.position-chart-page #kline-signal-section,
-html.position-chart-page .page-footer{display:none!important}
-html.position-chart-page .workspace{max-width:none;padding:0}
-html.position-chart-page .surface{margin:0;padding:0;border:0;background:transparent}
-html.position-chart-page .kline-toolbar{padding:0 0 10px}
-html.position-chart-page .kline-intervals{gap:5px}
-html.position-chart-page .kline-wrap{border-radius:8px}
+html.position-chart-page:not(.position-chart-standalone) .app-nav,
+html.position-chart-page:not(.position-chart-standalone) .page-heading,
+html.position-chart-page:not(.position-chart-standalone) #kline-error,
+html.position-chart-page:not(.position-chart-standalone) .kline-jump,
+html.position-chart-page:not(.position-chart-standalone) .kline-actions,
+html.position-chart-page:not(.position-chart-standalone) #kline-legend,
+html.position-chart-page:not(.position-chart-standalone) #kline-readout,
+html.position-chart-page:not(.position-chart-standalone) #kline-status,
+html.position-chart-page:not(.position-chart-standalone) #kline-signal-section,
+html.position-chart-page:not(.position-chart-standalone) .page-footer{display:none!important}
+html.position-chart-page:not(.position-chart-standalone) .workspace{max-width:none;padding:0}
+html.position-chart-page:not(.position-chart-standalone) .surface{margin:0;padding:0;border:0;background:transparent}
+html.position-chart-page:not(.position-chart-standalone) .kline-toolbar{padding:0 0 10px}
+html.position-chart-page:not(.position-chart-standalone) .kline-intervals{gap:5px}
+html.position-chart-page:not(.position-chart-standalone) .kline-wrap{border-radius:8px}
+
+/* Standalone position details keep the normal page shell and can be opened in
+   a browser tab. Only alert-specific controls are hidden because position
+   markers are supplied through the trade_ref payload. */
+html.position-chart-page.position-chart-standalone .kline-jump,
+html.position-chart-page.position-chart-standalone .kline-actions,
+html.position-chart-page.position-chart-standalone #kline-legend,
+html.position-chart-page.position-chart-standalone #kline-readout,
+html.position-chart-page.position-chart-standalone #kline-status,
+html.position-chart-page.position-chart-standalone #kline-signal-section{display:none!important}

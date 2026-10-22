@@ -17,6 +17,7 @@
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000;
   const params = new URLSearchParams(location.search);
   const positionMode = params.get('position') === '1';
+  const standalonePositionMode = params.get('standalone') === '1';
   const tradeRef = String(params.get('trade_ref') || '').trim();
   const wantedInterval = (params.get('interval') || '').toLowerCase();
   const priceText = value => finite(value) && value > 0 ? (value >= 1000 ? value.toFixed(2) : value >= 1 ? value.toFixed(4) : value.toFixed(6)) : '—';
@@ -63,6 +64,7 @@
     let url = base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '&interval=' + encodeURIComponent(interval);
     if (positionMode) {
       url += '&position=1';
+      if (standalonePositionMode) url += '&standalone=1';
       if (tradeRef) url += '&trade_ref=' + encodeURIComponent(tradeRef);
       if (params.get('focus_at')) url += '&focus_at=' + encodeURIComponent(params.get('focus_at'));
     }
@@ -733,7 +735,8 @@
     syncIntervals();
     $('kline-symbol-input').value = state.symbol;
     $('kline-symbol-label').textContent = state.symbol || '—';
-    $('kline-back').href = base + 'alerts';
+    $('kline-back').href = standalonePositionMode ? base + 'tvbot/view/positions' : base + 'alerts';
+    $('kline-back').textContent = standalonePositionMode ? '← 返回持仓' : '← 返回报警';
     if (!state.symbol) {
       $('kline-title').textContent = '币对 K 线';
       showError('缺少币对参数：请从报警页点击币对名，或在上方输入 Binance 永续合约名后跳转。');

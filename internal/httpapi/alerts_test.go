@@ -561,6 +561,20 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 	}
 }
 
+func TestAlertChartStandalonePositionPage(t *testing.T) {
+	srv, _ := alertTestServer(t)
+	w := serveAlert(srv, http.MethodGet, "/alerts/chart?position=1&standalone=1&symbol=BTCUSDT", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("standalone position chart status=%d body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"position-chart-page", "position-chart-standalone", "kline-chart", "返回报警"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("standalone position chart must contain %q", want)
+		}
+	}
+}
+
 // TestAlertChartPeriodsAreTheNineRequested keeps the offered periods exactly as
 // requested: the chart builds its buttons from one shared list.
 func TestAlertChartPeriodsAreTheNineRequested(t *testing.T) {
