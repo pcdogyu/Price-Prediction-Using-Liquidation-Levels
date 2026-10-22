@@ -164,16 +164,22 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`data-position-symbol-details="true"`,
 		`id="position-symbol-dialog"`,
 		`id="position-symbol-chart-frame"`,
-		`气泡图 / K线下单信息`,
+		`K线 / 开平仓信息`,
 		`function positionSymbolTradeRows(row)`,
 		`state.analysis.trades`,
 		`entry_fill_time`,
 		`tradeChartPayloadRow(item)`,
+		`operation_source: String(item && item.operation_source || "").trim().toLowerCase()`,
+		`operation: "open"`,
 		`function buildTradeChartURL(symbol, exchange, trades, selectedRow, embedded)`,
+		`function buildPositionChartURL(symbol, exchange, trades, selectedRow)`,
+		`function analysisPositionKlineURL()`,
+		`base + "/alerts/chart"`,
+		`url.searchParams.set("position", "1")`,
 		`exchange: String(item && item.exchange || "").trim() ? normalizeExchange(item && item.exchange) : ""`,
 		`async function loadPositionSymbolAnalysis()`,
 		`async function openPositionSymbolDetails(row)`,
-		`K 线下单标记`,
+		`K 线已加载 · 开平仓标记`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("position symbol details marker missing %q", want)
@@ -191,6 +197,18 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 	}
 	if strings.Contains(page[positionsStart:positionsEnd], `cell: (row) => textTableCell(displayInstID(row.instId))`) {
 		t.Fatal("position symbol column should no longer render as plain text")
+	}
+	positionOpen := strings.Index(page, "async function openPositionSymbolDetails(row)")
+	if positionOpen < 0 {
+		t.Fatal("position symbol detail handler is missing")
+	}
+	positionClose := strings.Index(page[positionOpen:], "\n    function closePositionSymbolDetails()")
+	if positionClose < 0 {
+		t.Fatal("position symbol detail handler end is missing")
+	}
+	positionHandler := page[positionOpen : positionOpen+positionClose]
+	if strings.Contains(positionHandler, "analysisBubblesURL(true)") || !strings.Contains(positionHandler, "buildPositionChartURL(symbol, exchange, rows, rows[0])") {
+		t.Fatal("position symbol details must open the dedicated K-line page")
 	}
 }
 

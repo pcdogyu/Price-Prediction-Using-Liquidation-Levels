@@ -607,7 +607,10 @@ function drawLiquidationBubbles(plot, events, range, scale, y, left, candleRight
 }
 
 function tradeMarkerTip(marker) {
-  const phase = marker.phase === 'entry' ? '开仓' : '平仓';
+  const operation = String(marker.operation || (marker.phase === 'entry' ? 'open' : 'close')).toLowerCase();
+  const operationLabel = operation === 'take_profit' ? '止盈' : operation === 'stop_loss' ? '止损' : operation === 'close' ? '平仓' : '开仓';
+  const source = String(marker.operation_source || '').toLowerCase();
+  const sourceLabel = source === 'manual' ? '手动' : source === 'auto' ? '自动' : source === 'exchange' ? '成交' : '';
   const action = marker.action === 'buy' ? '买入' : '卖出';
   const side = marker.side === 'long' ? '多单' : '空单';
   const details = [];
@@ -618,7 +621,7 @@ function tradeMarkerTip(marker) {
   if (marker.fill_pnl) details.push('成交盈亏 ' + marker.fill_pnl);
   if (marker.net_pnl) details.push('净盈亏 ' + marker.net_pnl);
   if (marker.fee) details.push('手续费 ' + marker.fee + (marker.fee_ccy ? ' ' + marker.fee_ccy : ''));
-  return tradeExchangeLabel(marker.exchange || tradeView.exchange) + ' 下单信息 · ' + phase + ' ' + action + '\n时间 ' + when(marker.time_iso) + '\n价格 ' + money(marker.price) + '\n方向 ' + side + (details.length ? '\n' + details.join('\n') : '') + (marker.selected ? '\n当前点击记录' : '');
+  return tradeExchangeLabel(marker.exchange || tradeView.exchange) + ' 下单信息 · ' + (sourceLabel ? sourceLabel + ' ' : '') + operationLabel + ' ' + action + '\n时间 ' + when(marker.time_iso) + '\n价格 ' + money(marker.price) + '\n方向 ' + side + (details.length ? '\n' + details.join('\n') : '') + (marker.selected ? '\n当前点击记录' : '');
 }
 
 function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top, plotBottom) {

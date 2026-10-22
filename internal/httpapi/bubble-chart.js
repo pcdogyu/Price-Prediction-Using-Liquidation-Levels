@@ -60,6 +60,8 @@
         const isEntry = phase === 'entry';
         const action = side === 'long' ? (isEntry ? 'buy' : 'sell') : (isEntry ? 'sell' : 'buy');
         const orderID = String(isEntry ? (row.ord_id || row.entry_ord_id) : (row.ord_id || row.exit_ord_id) || '').trim();
+        const rowOperation = String(row.operation || '').trim().toLowerCase();
+        const operation = isEntry ? 'open' : (rowOperation || 'close');
         markers.push({
           id: rowKey + ':' + phase,
           row_key: rowKey,
@@ -68,6 +70,8 @@
           side,
           phase,
           action,
+          operation,
+          operation_source: String(row.operation_source || '').trim().toLowerCase(),
           time,
           time_iso: new Date(time).toISOString(),
           price,
@@ -109,8 +113,11 @@
       const long = marker.side === 'long';
       const closing = marker.phase === 'exit';
       const label = long ? '多单' : '空单';
-      const phase = marker.phase === 'entry' ? '开仓' : '平仓';
-      const labelText = label + phase;
+      const operation = String(marker.operation || (closing ? 'close' : 'open')).toLowerCase();
+      const operationLabel = operation === 'take_profit' ? '止盈' : operation === 'stop_loss' ? '止损' : operation === 'close' ? '平仓' : '开仓';
+      const source = String(marker.operation_source || '').toLowerCase();
+      const sourceLabel = source === 'manual' ? '手动' : source === 'auto' ? '自动' : source === 'exchange' ? '成交' : '';
+      const labelText = label + operationLabel + (sourceLabel ? '·' + sourceLabel : '');
       const labelWidth = labelText.length * 11 + 12;
       const labelBelow = closing ? !long : long;
       const direction = labelBelow ? 1 : -1;

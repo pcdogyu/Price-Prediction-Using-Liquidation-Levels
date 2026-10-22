@@ -42,6 +42,17 @@ test('trade markers map long and short entry/exit actions and keep the selected 
   assert.equal(markers[0].exchange, 'binance');
 });
 
+test('trade markers preserve take-profit, stop-loss and manual/automatic labels', () => {
+  const markers = B.normalizeTradeMarkers([
+    { row_key: 'tp', inst_id: 'ETHUSDT', side: 'long', operation: 'take_profit', operation_source: 'auto', entry_time: '', entry_px: '', exit_time: '2026-01-01T01:00:00Z', exit_px: 2100 },
+    { row_key: 'sl', inst_id: 'ETHUSDT', side: 'short', operation: 'stop_loss', operation_source: 'manual', entry_time: '', entry_px: '', exit_time: '2026-01-01T02:00:00Z', exit_px: 2200 }
+  ], 'ETHUSDT');
+  const layout = B.tradeMarkerPlacements(markers, [1900, 2300], { start: 0, end: Date.parse('2026-01-01T03:00:00Z'), x: () => 150 }, price => (2300 - price) / 2, { left: 0, right: 300, top: 0, bottom: 300 });
+  assert.deepEqual(markers.map(item => [item.operation, item.operation_source]), [['take_profit', 'auto'], ['stop_loss', 'manual']]);
+  assert.equal(layout.markers[0].labelText, '多单止盈·自动');
+  assert.equal(layout.markers[1].labelText, '空单止损·手动');
+});
+
 test('tradeMarkerPlacements separates labels that share one candle and price', () => {
   const markers = [
     { id: 'long-entry', time: 1000, price: 100, side: 'long', phase: 'entry' },

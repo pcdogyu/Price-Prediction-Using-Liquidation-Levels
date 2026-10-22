@@ -26,6 +26,35 @@ func (f analysisRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, err
 	return f(req)
 }
 
+func TestAnalysisTradeOperationMetadataClassifiesOrderAndMonitorActions(t *testing.T) {
+	record := storage.OrderRecord{
+		OrderIntent:    "sl_long",
+		PositionEffect: trading.PositionEffectClose,
+		RawJSON:        `{"source":"liquidation_alert"}`,
+	}
+	operation, source := analysisOrderOperation(record, record.PositionEffect)
+	if operation != "stop_loss" || source != "auto" {
+		t.Fatalf("unexpected order metadata operation=%q source=%q", operation, source)
+	}
+
+	f := storage.BinanceFill{Symbol: "ETHUSDT", OrderID: "exit-1", FillTime: time.Now().UnixMilli()}
+	raw, err := json.Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := []storage.TradeMonitorEvent{{
+		Exchange:  trading.ExchangeBinance,
+		APIID:     "binance-main",
+		EventType: "lifecycle_exit",
+		Status:    storage.TradeLifecycleTPHit,
+		RawJSON:   string(raw),
+	}}
+	meta, ok := analysisTradeMonitorEventIndex(events)[analysisOrderKey(trading.ExchangeBinance, "binance-main", "ETHUSDT", "exit-1")]
+	if !ok || meta.Operation != "take_profit" || meta.OperationSource != "auto" {
+		t.Fatalf("unexpected monitor metadata: %#v found=%v", meta, ok)
+	}
+}
+
 func TestBuildAnalysisUsesStaleCacheWhenOKXBalanceIsUnavailable(t *testing.T) {
 	srv := newTestServer(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

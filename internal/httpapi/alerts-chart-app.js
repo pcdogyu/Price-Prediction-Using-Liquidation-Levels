@@ -3,6 +3,7 @@
 (function () {
   'use strict';
   const K = window.LiquidationKline;
+  const BubbleChart = window.BubbleChart;
   const $ = id => document.getElementById(id);
   const base = (document.querySelector('meta[name="app-base"]') || {}).content || '/';
   const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -15,6 +16,8 @@
   const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady';
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000;
   const params = new URLSearchParams(location.search);
+  const positionMode = params.get('position') === '1';
+  const tradeRef = String(params.get('trade_ref') || '').trim();
   const wantedInterval = (params.get('interval') || '').toLowerCase();
   const priceText = value => finite(value) && value > 0 ? (value >= 1000 ? value.toFixed(2) : value >= 1 ? value.toFixed(4) : value.toFixed(6)) : '—';
   const money = value => !finite(value) ? '—' : value >= 1e9 ? '$' + (value / 1e9).toFixed(2) + 'B' : value >= 1e6 ? '$' + (value / 1e6).toFixed(2) + 'M' : value >= 1e3 ? '$' + (value / 1e3).toFixed(1) + 'K' : '$' + value.toFixed(2);
@@ -23,7 +26,7 @@
   const state = {
     symbol: (params.get('symbol') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32),
     interval: K.INTERVALS.includes(wantedInterval) ? wantedInterval : (K.INTERVALS.includes(storedText('liquidation.kline.interval', '')) ? storedText('liquidation.kline.interval', '15m') : '15m'),
-    candles: [], alerts: [], signals: [], hits: [],
+    candles: [], alerts: [], signals: [], tradeMarkers: [], hits: [],
     view: { start: 0, end: 0 }, yLow: 0, yHigh: 1, yManual: false,
     hasMore: true, nextBefore: '', newest: 0, atLatest: true, newData: false, keepSpan: 0,
     loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false,
@@ -57,7 +60,27 @@
   function note(message) { $('kline-status').textContent = message; }
 
   function pageUrl(symbol, interval) {
-    return base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '&interval=' + encodeURIComponent(interval);
+    let url = base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '&interval=' + encodeURIComponent(interval);
+    if (positionMode) {
+      url += '&position=1';
+      if (tradeRef) url += '&trade_ref=' + encodeURIComponent(tradeRef);
+      if (params.get('focus_at')) url += '&focus_at=' + encodeURIComponent(params.get('focus_at'));
+    }
+    return url;
+  }
+
+  function loadPositionTradeMarkers() {
+    if (!positionMode || !tradeRef || !BubbleChart || typeof BubbleChart.normalizeTradeMarkers !== 'function') return;
+    try {
+      const raw = localStorage.getItem('tvbot.analysisChart.' + tradeRef);
+      if (!raw) return;
+      const payload = JSON.parse(raw);
+      const rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
+      const symbol = String(payload && payload.symbol || state.symbol).toUpperCase();
+      state.tradeMarkers = BubbleChart.normalizeTradeMarkers(rows, symbol, payload && payload.selected_key || '');
+    } catch (_) {
+      state.tradeMarkers = [];
+    }
   }
 
   // buildIntervals renders the nine period buttons; switching keeps the visible
@@ -175,6 +198,7 @@
   // the chart always answers the user's question: "what would this pair have
   // signalled under the parameters I just saved?"
   async function loadChartSignals() {
+    if (positionMode) return;
     if (state.loadingSignals || state.loadingAlerts || !state.symbol) return;
     state.loadingSignals = true;
     state.loadingAlerts = true;
@@ -290,7 +314,7 @@
     }
     const shown = K.visibleCandles(state.candles, state.view, intervalStep);
     const slot = plot.width / Math.max(1, span / intervalStep), body = Math.max(1, Math.min(18, slot * .68));
-    const peak = K.volumeMax(state.candles, state.view, intervalStep);
+    const peak = positionMode ? 0 : K.volumeMax(state.candles, state.view, intervalStep);
     for (const candle of shown) {
       const cx = x(candle.t + intervalStep / 2);
       if (cx < plot.left - 12 || cx > plot.right + 12) continue;
@@ -308,8 +332,11 @@
       ctx.fillStyle = colour;
       ctx.fillRect(cx - body / 2, top, body, Math.max(1, bottom - top));
     }
-    drawAlerts(ctx, shown, x, y, plot, priceBottom, intervalStep);
-    drawSignals(ctx, shown, x, y, plot, priceBottom, intervalStep);
+    if (positionMode) drawTradeMarkers(ctx, x, y, plot, intervalStep);
+    else {
+      drawAlerts(ctx, shown, x, y, plot, priceBottom, intervalStep);
+      drawSignals(ctx, shown, x, y, plot, priceBottom, intervalStep);
+    }
     drawLastPrice(ctx, y, plot, priceBottom);
     if (state.hoverCandle) drawCrosshair(ctx, x, plot, priceBottom);
     renderReadout();
@@ -367,6 +394,51 @@
         ctx.fillText('×' + group.count, cx + 10, py);
       }
       state.hits.push({ x: cx, y: py, group: Object.assign({ type: 'signal' }, group) });
+    }
+  }
+
+  // Position detail mode draws the actual order/fill rows supplied by the
+  // parent TVBot page. Open markers use long/short colours; every close uses
+  // yellow, while the label retains the operation and manual/automatic source.
+  // BubbleChart supplies the same collision-aware placement used by the full
+  // analysis chart, so simultaneous actions remain separate instead of being
+  // painted on top of one another.
+  function drawTradeMarkers(ctx, x, y, plot, intervalStep) {
+    if (!state.tradeMarkers.length || !BubbleChart || typeof BubbleChart.tradeMarkerPlacements !== 'function') return;
+    const placements = BubbleChart.tradeMarkerPlacements(
+      state.tradeMarkers,
+      [state.yLow, state.yHigh],
+      { start: state.view.start, end: state.view.end, x },
+      y,
+      { left: plot.left, right: plot.right, top: plot.top, bottom: plot.bottom }
+    );
+    for (const item of placements.markers) {
+      const marker = item.marker;
+      const colour = marker.phase === 'exit' ? colors.warning : marker.side === 'short' ? colors.sell : colors.buy;
+      ctx.save();
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(item.x, item.priceY);
+      ctx.lineTo(item.labelX, item.labelCenterY + (item.labelBelow ? -12 : 12));
+      ctx.stroke();
+      const width = item.labelWidth + 6, height = 24;
+      const left = item.labelX - width / 2, top = item.labelCenterY - height / 2;
+      ctx.fillStyle = colour;
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath();
+        ctx.roundRect(left, top, width, height, 5);
+        ctx.fill();
+      } else {
+        ctx.fillRect(left, top, width, height);
+      }
+      ctx.fillStyle = '#fff';
+      ctx.font = '600 12px system-ui, "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(item.labelText, item.labelX, item.labelCenterY);
+      ctx.restore();
+      state.hits.push({ x: item.labelX, y: item.labelCenterY, group: Object.assign({ type: 'trade', bucket: marker.time }, marker) });
     }
   }
 
@@ -458,7 +530,7 @@
     const plot = { left: margins.left, top: margins.top, width: Math.max(60, width - margins.left - margins.right), height: Math.max(140, height - margins.top - margins.bottom) };
     plot.right = plot.left + plot.width;
     plot.bottom = plot.top + plot.height;
-    const volumeHeight = Math.max(34, Math.min(90, plot.height * .18));
+    const volumeHeight = positionMode ? 0 : Math.max(34, Math.min(90, plot.height * .18));
     return { plot, priceBottom: plot.bottom - volumeHeight - 8, volumeTop: plot.bottom - volumeHeight };
   }
 
@@ -501,7 +573,17 @@
     const tooltip = $('kline-tooltip'), wrap = $('kline-wrap');
     if (!state.hoverMarker || !dims) { tooltip.hidden = true; return; }
     const marker = state.hoverMarker;
-    if (marker.type === 'alert') {
+    if (marker.type === 'trade') {
+      const operationLabels = { open: '开仓', close: '平仓', take_profit: '止盈', stop_loss: '止损' };
+      const sourceLabels = { manual: '手动', auto: '自动', exchange: '成交' };
+      const side = marker.side === 'short' ? '空单' : '多单';
+      const operation = operationLabels[marker.operation] || (marker.phase === 'exit' ? '平仓' : '开仓');
+      const source = sourceLabels[marker.operation_source] || '';
+      tooltip.innerHTML = '<b>' + escape(side + operation + (source ? '·' + source : '')) + '</b><br>' +
+        escape(clock(marker.time)) + '<br>成交价 ' + escape(priceText(marker.price)) +
+        (marker.quantity ? '<br>数量 ' + escape(marker.quantity) : '') +
+        (marker.order_id ? '<br>订单号 ' + escape(marker.order_id) : '');
+    } else if (marker.type === 'alert') {
       tooltip.innerHTML = '<b>预警 · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>清算方向 ' +
         escape(marker.liquidationSide === 'short' ? '空单爆仓' : '多单爆仓') + '<br>参考价 ' + escape(priceText(marker.price)) +
@@ -641,6 +723,7 @@
   }
 
   function boot() {
+    loadPositionTradeMarkers();
     buildIntervals();
     bindControls();
     bindCanvas();
@@ -659,13 +742,13 @@
       return;
     }
     $('kline-title').textContent = state.symbol + ' K 线';
-    document.title = state.symbol + ' K线 · 清算墙雷达';
+    document.title = state.symbol + ' K线 · 持仓详情';
     note('正在读取 ' + state.symbol + ' ' + state.interval + ' K 线');
     loadCandles();
-    loadChartSignals();
+    if (!positionMode) loadChartSignals();
     setInterval(() => { if (!document.hidden && !state.drag) loadCandles(); }, CANDLE_REFRESH_MS);
-    setInterval(() => { if (!document.hidden && !state.drag) loadChartSignals(); }, SIGNAL_REFRESH_MS);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadCandles(); loadChartSignals(); } });
+    if (!positionMode) setInterval(() => { if (!document.hidden && !state.drag) loadChartSignals(); }, SIGNAL_REFRESH_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadCandles(); if (!positionMode) loadChartSignals(); } });
     window.addEventListener('resize', resize);
     window.addEventListener('themechange', () => { palette(); draw(); });
     if (window.ResizeObserver) new ResizeObserver(resize).observe($('kline-wrap'));

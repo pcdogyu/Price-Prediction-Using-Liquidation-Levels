@@ -30,3 +30,25 @@
 .kline-note{margin-top:10px;overflow-wrap:anywhere}
 .kline-signal-table{min-width:660px}
 @media(max-width:900px){.kline-actions{margin-left:0;width:100%}}
+
+/* Position detail embeds use this page as a deliberately small chart surface.
+   The modal already owns the symbol title, so keep only the period buttons and
+   the K-line canvas; the full alert-page navigation and signal replay controls
+   are not useful inside a position detail dialog. */
+html.position-chart-page,
+html.position-chart-page body{background:var(--chart-bg)}
+html.position-chart-page .app-nav,
+html.position-chart-page .page-heading,
+html.position-chart-page #kline-error,
+html.position-chart-page .kline-jump,
+html.position-chart-page .kline-actions,
+html.position-chart-page #kline-legend,
+html.position-chart-page #kline-readout,
+html.position-chart-page #kline-status,
+html.position-chart-page #kline-signal-section,
+html.position-chart-page .page-footer{display:none!important}
+html.position-chart-page .workspace{max-width:none;padding:0}
+html.position-chart-page .surface{margin:0;padding:0;border:0;background:transparent}
+html.position-chart-page .kline-toolbar{padding:0 0 10px}
+html.position-chart-page .kline-intervals{gap:5px}
+html.position-chart-page .kline-wrap{border-radius:8px}

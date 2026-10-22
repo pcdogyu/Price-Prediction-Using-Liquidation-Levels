@@ -2320,8 +2320,8 @@ const tvbotHTML = `<!doctype html>
     </div>
     <div class="position-symbol-dialog-body">
       <section class="position-symbol-detail-panel">
-        <h4>气泡图 / K线下单信息</h4>
-        <iframe class="position-symbol-chart-frame" id="position-symbol-chart-frame" title="币对气泡图和 K 线下单信息" src="about:blank"></iframe>
+        <h4>K线 / 开平仓信息</h4>
+        <iframe class="position-symbol-chart-frame" id="position-symbol-chart-frame" title="币对 K 线和开平仓信息" src="about:blank"></iframe>
       </section>
     </div>
   </dialog>
@@ -5569,7 +5569,7 @@ const tvbotHTML = `<!doctype html>
       const display = displayInstID(instID);
       if (!instID || display === "-") return textTableCell(display);
       const key = positionCloseRowKey(row);
-      const title = "查看 " + display + " 气泡图和 K 线下单信息";
+      const title = "查看 " + display + " K 线开平仓信息";
       return tableCell('<button class="position-symbol-link" type="button" data-position-symbol-details="true" data-position-key="' + escapeHTML(key) + '" title="' + escapeHTML(title) + '">' + escapeHTML(display) + '</button>');
     }
 
@@ -5873,7 +5873,9 @@ const tvbotHTML = `<!doctype html>
         row && row.trade_id,
         row && row.fill_time,
         row && row.fill_px,
-        row && row.position_effect
+        row && row.position_effect,
+        row && row.operation,
+        row && row.operation_source
       ].map((value) => String(value == null ? "" : value)).join("|");
     }
 
@@ -5899,6 +5901,8 @@ const tvbotHTML = `<!doctype html>
         exit_ord_id: String(item && item.exit_ord_id || ""),
         trade_id: String(item && item.trade_id || ""),
         position_effect: rawEffect,
+        operation: String(item && item.operation || "").trim().toLowerCase(),
+        operation_source: String(item && item.operation_source || "").trim().toLowerCase(),
         fill_sz: item && (item.fill_sz || item.qty) || "",
         qty: item && item.qty || "",
         turnover: item && item.turnover || "",
@@ -5928,7 +5932,14 @@ const tvbotHTML = `<!doctype html>
       return url;
     }
 
-    function buildTradeChartURL(symbol, exchange, trades, selectedRow, embedded) {
+    function analysisPositionKlineURL() {
+      const marker = "/tvbot/";
+      const start = location.pathname.indexOf(marker);
+      const base = start >= 0 ? location.pathname.slice(0, start) : "";
+      return new URL(base + "/alerts/chart", window.location.origin);
+    }
+
+    function buildTradeChartPayloadURL(symbol, exchange, trades, selectedRow, embedded, page) {
       const normalizedSymbol = analysisGateChartSymbol(symbol);
       if (!normalizedSymbol) return null;
       const rawExchange = String(exchange || (selectedRow && selectedRow.exchange) || "").trim();
@@ -5944,7 +5955,8 @@ const tvbotHTML = `<!doctype html>
         selected_key: selectedRow ? tradeChartRowKey(selectedRow) : "",
         rows: (Array.isArray(trades) ? trades : []).map((item) => tradeChartPayloadRow(item))
       };
-      const url = analysisBubblesURL(embedded);
+      const url = page === "position" ? analysisPositionKlineURL() : analysisBubblesURL(embedded);
+      if (page === "position") url.searchParams.set("position", "1");
       if (normalizedExchange) url.searchParams.set("exchange", normalizedExchange);
       url.searchParams.set("symbol", normalizedSymbol);
       if (!payload.rows.length) return url;
@@ -5956,6 +5968,14 @@ const tvbotHTML = `<!doctype html>
       url.searchParams.set("trade_ref", token);
       if (payload.focus_at) url.searchParams.set("focus_at", payload.focus_at);
       return url;
+    }
+
+    function buildTradeChartURL(symbol, exchange, trades, selectedRow, embedded) {
+      return buildTradeChartPayloadURL(symbol, exchange, trades, selectedRow, embedded, "bubbles");
+    }
+
+    function buildPositionChartURL(symbol, exchange, trades, selectedRow) {
+      return buildTradeChartPayloadURL(symbol, exchange, trades, selectedRow, true, "position");
     }
 
     function openAnalysisTradeChart(row) {
@@ -6019,6 +6039,8 @@ const tvbotHTML = `<!doctype html>
             side,
             pos_side: side,
             position_effect: "open",
+            operation: "open",
+            operation_source: "exchange",
             fill_time: row.entry_fill_time,
             fill_px: row.avgPx,
             fill_sz: row.pos,
@@ -6040,7 +6062,7 @@ const tvbotHTML = `<!doctype html>
     async function openPositionSymbolDetails(row) {
       const symbol = analysisGateChartSymbol(row && row.instId);
       if (!symbol) {
-        toast("该币对无法转换为 Binance USDT 气泡图");
+        toast("该币对无法转换为 Binance USDT K 线");
         return;
       }
       const dialog = $("position-symbol-dialog");
@@ -6050,12 +6072,9 @@ const tvbotHTML = `<!doctype html>
       const sequence = ++positionSymbolDetailsSequence;
       const label = displayInstID(row && row.instId);
       if (title) title.textContent = label + " · " + exchangeLabel(row && row._exchange) + " 持仓详情";
-      if (status) status.textContent = "正在读取气泡图和 K 线下单信息…";
-      const chartURL = analysisBubblesURL(true);
+      if (status) status.textContent = "正在读取 K 线和开平仓信息…";
       const exchange = normalizeExchange(row && row._exchange || activeExchange());
-      if (exchange) chartURL.searchParams.set("exchange", exchange);
-      chartURL.searchParams.set("symbol", symbol);
-      if (frame) frame.src = chartURL.toString();
+      if (frame) frame.src = "about:blank";
       if (dialog) {
         if (dialog.showModal) dialog.showModal();
         else dialog.setAttribute("open", "open");
@@ -6064,12 +6083,12 @@ const tvbotHTML = `<!doctype html>
         await loadPositionSymbolAnalysis();
         if (sequence !== positionSymbolDetailsSequence) return;
         const rows = positionSymbolTradeRows(row);
-        const tradeURL = buildTradeChartURL(symbol, exchange, rows, rows[0], true);
+        const tradeURL = buildPositionChartURL(symbol, exchange, rows, rows[0]);
         if (frame && tradeURL) frame.src = tradeURL.toString();
-        if (status) status.textContent = "气泡图已加载 · K 线下单标记 " + rows.length + " 个";
+        if (status) status.textContent = "K 线已加载 · 开平仓标记 " + rows.length + " 个";
       } catch (err) {
         if (sequence !== positionSymbolDetailsSequence) return;
-        if (status) status.textContent = "气泡图已加载；K 线下单信息读取失败";
+        if (status) status.textContent = "K 线加载完成；开平仓信息读取失败";
         toast(err && err.message ? err.message : "K 线下单信息读取失败");
       }
     }

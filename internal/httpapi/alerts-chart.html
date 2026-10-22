@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="app-base" content="{{BASE}}"><script src="{{BASE}}assets/theme.js"></script><title>币对 K 线 · 清算墙雷达</title><link rel="stylesheet" href="{{BASE}}assets/pages.css"><link rel="stylesheet" href="{{BASE}}assets/theme.css"><link rel="stylesheet" href="{{BASE}}assets/alerts.css"><link rel="stylesheet" href="{{BASE}}assets/alerts-chart.css"><script src="{{BASE}}assets/shared.js" defer></script><script src="{{BASE}}assets/alerts-chart.js" defer></script><script src="{{BASE}}assets/alerts-chart-app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="app-base" content="{{BASE}}"><script>(function(){if(new URLSearchParams(location.search).get('position')==='1')document.documentElement.classList.add('position-chart-page');}());</script><script src="{{BASE}}assets/theme.js"></script><title>币对 K 线 · 清算墙雷达</title><link rel="stylesheet" href="{{BASE}}assets/pages.css"><link rel="stylesheet" href="{{BASE}}assets/theme.css"><link rel="stylesheet" href="{{BASE}}assets/alerts.css"><link rel="stylesheet" href="{{BASE}}assets/alerts-chart.css"><script src="{{BASE}}assets/shared.js" defer></script><script src="{{BASE}}assets/bubble-chart.js" defer></script><script src="{{BASE}}assets/alerts-chart.js" defer></script><script src="{{BASE}}assets/alerts-chart-app.js" defer></script></head>
 <body data-page="alerts">
 {{NAV}}
 <main class="workspace">
@@ -24,7 +24,7 @@
         <button id="kline-refresh" type="button">立即刷新</button>
       </div>
     </div>
-    <div class="kline-legend">
+    <div id="kline-legend" class="kline-legend">
       <span><i class="dot" style="background:var(--buy)"></i>上涨 K 线</span>
       <span><i class="dot" style="background:var(--sell)"></i>下跌 K 线</span>
       <span><i class="dot" style="background:var(--blue)"></i>成交额（下方柱状）</span>
@@ -41,7 +41,7 @@
     </div>
     <p id="kline-status" class="muted kline-note" role="status">正在读取 K 线</p>
   </section>
-  <section class="surface">
+  <section id="kline-signal-section" class="surface">
     <div class="section-head"><h2>该币对下单信号</h2><span id="kline-signal-status" class="muted">读取信号</span><span id="kline-alert-status" class="muted">读取预警</span></div>
     <div class="table-scroll alerts-scroll"><table class="alerts-signal-table kline-signal-table"><thead><tr><th>时间（北京时间）</th><th>类型</th><th>下单方向</th><th>参考价</th><th>预警爆仓额</th><th>通知</th></tr></thead><tbody id="kline-signal-rows"><tr><td colspan="6">尚无信号</td></tr></tbody></table></div>
     <p class="muted alerts-note">信号按报警页当前已保存的阈值和周期重新回放生成；保存参数后重新打开或刷新币对，图表会显示新参数对应的预警、激进和稳健信号。历史数据库记录仍保留原参数，不会被改写。图中 ◆! 为预警，△ 为空心激进信号，▲ / ▼ 为实心稳健信号（稳健实心 / 激进空心），三类信号均画在对应 K 线上。</p>

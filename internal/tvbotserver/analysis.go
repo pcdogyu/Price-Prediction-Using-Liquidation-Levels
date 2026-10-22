@@ -174,27 +174,29 @@ type analysisSymbolStats struct {
 }
 
 type analysisTrade struct {
-	Exchange       string    `json:"exchange"`
-	APIID          string    `json:"api_id,omitempty"`
-	InstID         string    `json:"inst_id"`
-	TradeID        string    `json:"trade_id"`
-	OrdID          string    `json:"ord_id,omitempty"`
-	Side           string    `json:"side,omitempty"`
-	PosSide        string    `json:"pos_side,omitempty"`
-	PositionEffect string    `json:"position_effect,omitempty"`
-	FillPx         string    `json:"fill_px,omitempty"`
-	FillSz         string    `json:"fill_sz,omitempty"`
-	Turnover       string    `json:"turnover,omitempty"`
-	FillPnl        string    `json:"fill_pnl,omitempty"`
-	Fee            string    `json:"fee,omitempty"`
-	FeeCcy         string    `json:"fee_ccy,omitempty"`
-	Margin         string    `json:"margin"`
-	Leverage       int       `json:"leverage"`
-	FundingFee     string    `json:"funding_fee"`
-	NetPnL         string    `json:"net_pnl"`
-	FillTime       time.Time `json:"fill_time"`
-	FillTS         int64     `json:"fill_ts"`
-	FillCount      int       `json:"fill_count"`
+	Exchange        string    `json:"exchange"`
+	APIID           string    `json:"api_id,omitempty"`
+	InstID          string    `json:"inst_id"`
+	TradeID         string    `json:"trade_id"`
+	OrdID           string    `json:"ord_id,omitempty"`
+	Side            string    `json:"side,omitempty"`
+	PosSide         string    `json:"pos_side,omitempty"`
+	PositionEffect  string    `json:"position_effect,omitempty"`
+	FillPx          string    `json:"fill_px,omitempty"`
+	FillSz          string    `json:"fill_sz,omitempty"`
+	Turnover        string    `json:"turnover,omitempty"`
+	FillPnl         string    `json:"fill_pnl,omitempty"`
+	Fee             string    `json:"fee,omitempty"`
+	FeeCcy          string    `json:"fee_ccy,omitempty"`
+	Margin          string    `json:"margin"`
+	Leverage        int       `json:"leverage"`
+	FundingFee      string    `json:"funding_fee"`
+	NetPnL          string    `json:"net_pnl"`
+	Operation       string    `json:"operation,omitempty"`
+	OperationSource string    `json:"operation_source,omitempty"`
+	FillTime        time.Time `json:"fill_time"`
+	FillTS          int64     `json:"fill_ts"`
+	FillCount       int       `json:"fill_count"`
 }
 
 type analysisPositionTrade struct {
@@ -1452,6 +1454,11 @@ func aggregateAnalysisTrades(trades []analysisTrade) []analysisTrade {
 		trade.Side = strings.TrimSpace(trade.Side)
 		trade.PosSide = normalizeAnalysisPositionSide(trade.PosSide)
 		trade.PositionEffect = normalizeAnalysisPositionEffect(trade.PositionEffect)
+		trade.Operation = normalizeAnalysisTradeOperation(trade.Operation, trade.PositionEffect)
+		trade.OperationSource = normalizeAnalysisTradeSource(trade.OperationSource)
+		if trade.OperationSource == "" && trade.Operation != "" {
+			trade.OperationSource = "exchange"
+		}
 		if trade.InstID == "" || trade.FillTS <= 0 {
 			continue
 		}
@@ -1551,6 +1558,12 @@ func mergeAnalysisTradeText(dst *analysisTrade, src analysisTrade) {
 	if dst.PositionEffect == "" {
 		dst.PositionEffect = src.PositionEffect
 	}
+	if dst.Operation == "" {
+		dst.Operation = src.Operation
+	}
+	if dst.OperationSource == "" {
+		dst.OperationSource = src.OperationSource
+	}
 	if dst.FillPx == "" {
 		dst.FillPx = src.FillPx
 	}
@@ -1571,13 +1584,31 @@ func mergeAnalysisTradeText(dst *analysisTrade, src analysisTrade) {
 }
 
 type analysisOrderMeta struct {
-	Leverage       int
-	PositionEffect string
-	PositionSide   string
+	Leverage        int
+	PositionEffect  string
+	PositionSide    string
+	Operation       string
+	OperationSource string
 }
 
 func enrichAnalysisTrades(cfg config.Config, trades []analysisTrade, records []storage.OrderRecord) {
+	enrichAnalysisTradesWithEvents(cfg, trades, records, nil)
+}
+
+func (s *Server) analysisTradeMonitorEvents() []storage.TradeMonitorEvent {
+	if s == nil || s.Orders == nil {
+		return nil
+	}
+	events, err := s.Orders.ListTradeMonitorEvents(storage.TradeMonitorFilter{}, 1000)
+	if err != nil {
+		return nil
+	}
+	return events
+}
+
+func enrichAnalysisTradesWithEvents(cfg config.Config, trades []analysisTrade, records []storage.OrderRecord, events []storage.TradeMonitorEvent) {
 	orderIndex := analysisOrderMetaIndex(records)
+	eventIndex := analysisTradeMonitorEventIndex(events)
 	for i := range trades {
 		trade := &trades[i]
 		if meta, ok := orderIndex[analysisOrderKey(trade.Exchange, trade.APIID, trade.InstID, trade.OrdID)]; ok {
@@ -1590,6 +1621,20 @@ func enrichAnalysisTrades(cfg config.Config, trades []analysisTrade, records []s
 			if meta.PositionSide != "" {
 				trade.PosSide = meta.PositionSide
 			}
+			if meta.Operation != "" {
+				trade.Operation = meta.Operation
+			}
+			if meta.OperationSource != "" {
+				trade.OperationSource = meta.OperationSource
+			}
+		}
+		if meta, ok := eventIndex[analysisOrderKey(trade.Exchange, trade.APIID, trade.InstID, trade.OrdID)]; ok {
+			if meta.Operation != "" {
+				trade.Operation = meta.Operation
+			}
+			if meta.OperationSource != "" {
+				trade.OperationSource = meta.OperationSource
+			}
 		}
 		// OKX fill history does not include leverage. Keep the recorded order
 		// leverage when available, and otherwise use the configured OKX leverage
@@ -1599,6 +1644,11 @@ func enrichAnalysisTrades(cfg config.Config, trades []analysisTrade, records []s
 		}
 		trade.PosSide = normalizeAnalysisPositionSide(trade.PosSide)
 		trade.PositionEffect = normalizeAnalysisPositionEffect(trade.PositionEffect)
+		trade.Operation = normalizeAnalysisTradeOperation(trade.Operation, trade.PositionEffect)
+		trade.OperationSource = normalizeAnalysisTradeSource(trade.OperationSource)
+		if trade.OperationSource == "" && trade.Operation != "" {
+			trade.OperationSource = "exchange"
+		}
 		if trade.Leverage > 0 {
 			if margin, ok := analysisTradeMargin(cfg, *trade); ok {
 				trade.Margin = margin
@@ -1630,6 +1680,7 @@ func analysisOrderMetaIndex(records []storage.OrderRecord) map[string]analysisOr
 		}
 		positionEffect := normalizeAnalysisPositionEffect(firstNonEmptyString(rec.Result.PositionEffect, rec.PositionEffect))
 		positionSide := normalizeAnalysisPositionSide(firstNonEmptyString(rec.Result.PositionSide, rec.PositionSide))
+		operation, operationSource := analysisOrderOperation(rec, positionEffect)
 		for _, ordID := range splitAnalysisOrderIDs(rec.Result.OrdID) {
 			for _, apiID := range analysisRecordAPIIDs(rec) {
 				key := analysisOrderKey(exchange, apiID, instID, ordID)
@@ -1637,10 +1688,111 @@ func analysisOrderMetaIndex(records []storage.OrderRecord) map[string]analysisOr
 					continue
 				}
 				if _, exists := out[key]; !exists {
-					out[key] = analysisOrderMeta{Leverage: leverage, PositionEffect: positionEffect, PositionSide: positionSide}
+					out[key] = analysisOrderMeta{
+						Leverage:        leverage,
+						PositionEffect:  positionEffect,
+						PositionSide:    positionSide,
+						Operation:       operation,
+						OperationSource: operationSource,
+					}
 				}
 			}
 		}
+	}
+	return out
+}
+
+func analysisOrderOperation(rec storage.OrderRecord, positionEffect string) (string, string) {
+	var raw struct {
+		Condition   string `json:"condition"`
+		Text        string `json:"text"`
+		OrderIntent string `json:"order_intent"`
+		Source      string `json:"source"`
+	}
+	if strings.TrimSpace(rec.RawJSON) != "" {
+		_ = json.Unmarshal([]byte(rec.RawJSON), &raw)
+	}
+	intent := strings.Join([]string{
+		rec.OrderIntent,
+		raw.OrderIntent,
+		raw.Condition,
+		raw.Text,
+	}, " ")
+	operation := normalizeAnalysisTradeOperation(intent, positionEffect)
+	source := normalizeAnalysisTradeSource(strings.Join([]string{raw.Source, raw.Condition, raw.Text}, " "))
+	if source == "" && operation != "" {
+		source = "auto"
+	}
+	return operation, source
+}
+
+func normalizeAnalysisTradeOperation(raw, positionEffect string) string {
+	text := strings.ToLower(strings.TrimSpace(raw))
+	switch {
+	case strings.Contains(text, "stop_loss"), strings.Contains(text, "stop-loss"), strings.Contains(text, "stop loss"), strings.Contains(text, "stoploss"), strings.Contains(text, "止损"), strings.Contains(text, "止損"), strings.Contains(text, "sl"):
+		return "stop_loss"
+	case strings.Contains(text, "take_profit"), strings.Contains(text, "take-profit"), strings.Contains(text, "take profit"), strings.Contains(text, "takeprofit"), strings.Contains(text, "止盈"), strings.Contains(text, "tp"):
+		return "take_profit"
+	case strings.Contains(text, "close"), strings.Contains(text, "exit"), strings.Contains(text, "reduce"), strings.Contains(text, "平仓"), strings.Contains(text, "平倉"), strings.Contains(text, "离场"), strings.Contains(text, "離場"):
+		return "close"
+	case strings.Contains(text, "open"), strings.Contains(text, "entry"), strings.Contains(text, "enter"), strings.Contains(text, "开仓"), strings.Contains(text, "開倉"), strings.Contains(text, "入场"), strings.Contains(text, "入場"):
+		return "open"
+	}
+	switch normalizeAnalysisPositionEffect(positionEffect) {
+	case trading.PositionEffectOpen:
+		return "open"
+	case trading.PositionEffectClose:
+		return "close"
+	default:
+		return ""
+	}
+}
+
+func normalizeAnalysisTradeSource(raw string) string {
+	text := strings.ToLower(strings.TrimSpace(raw))
+	switch {
+	case strings.Contains(text, "manual"), strings.Contains(text, "手动"), strings.Contains(text, "手動"):
+		return "manual"
+	case strings.Contains(text, "auto"), strings.Contains(text, "automated"), strings.Contains(text, "自动"), strings.Contains(text, "自動"), strings.Contains(text, "tradingview"), strings.Contains(text, "liquidation_alert"), strings.Contains(text, "position_monitor"), strings.Contains(text, "reentry"):
+		return "auto"
+	case text != "":
+		return "exchange"
+	default:
+		return ""
+	}
+}
+
+func analysisTradeMonitorEventIndex(events []storage.TradeMonitorEvent) map[string]analysisOrderMeta {
+	out := map[string]analysisOrderMeta{}
+	for _, event := range events {
+		if strings.ToLower(strings.TrimSpace(event.EventType)) != "lifecycle_exit" && strings.ToLower(strings.TrimSpace(event.EventType)) != "lifecycle_open" {
+			continue
+		}
+		var fill storage.BinanceFill
+		if strings.TrimSpace(event.RawJSON) == "" || json.Unmarshal([]byte(event.RawJSON), &fill) != nil {
+			continue
+		}
+		operation := ""
+		switch strings.ToLower(strings.TrimSpace(event.Status)) {
+		case storage.TradeLifecycleTPHit:
+			operation = "take_profit"
+		case storage.TradeLifecycleSLHit:
+			operation = "stop_loss"
+		case storage.TradeLifecycleExited:
+			operation = "close"
+		default:
+			if strings.EqualFold(event.EventType, "lifecycle_open") {
+				operation = "open"
+			}
+		}
+		key := analysisOrderKey(event.Exchange, event.APIID, fill.Symbol, fill.OrderID)
+		if key == "" || operation == "" {
+			continue
+		}
+		if _, exists := out[key]; exists {
+			continue
+		}
+		out[key] = analysisOrderMeta{Operation: operation, OperationSource: "auto"}
 	}
 	return out
 }
@@ -2445,7 +2597,7 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, gateA
 	positionTradesInput := append([]analysisTrade(nil), trades...)
 	trades = append(trades, gateTrades...)
 	trades = aggregateAnalysisTrades(trades)
-	enrichAnalysisTrades(cfg, trades, s.Orders.List(10000))
+	enrichAnalysisTradesWithEvents(cfg, trades, s.Orders.List(10000), s.analysisTradeMonitorEvents())
 	sortAnalysisTrades(trades)
 	positionTrades := buildAnalysisPositionTrades(cfg, positionTradesInput, pnlSince)
 	positionTrades = append(positionTrades, gatePositions...)
@@ -2487,7 +2639,7 @@ func (s *Server) analysisFromExternalData(cfg config.Config, apiID, binanceAPIID
 	trades = append(trades, binanceTrades...)
 	trades = append(trades, gateTrades...)
 	trades = aggregateAnalysisTrades(trades)
-	enrichAnalysisTrades(cfg, trades, s.Orders.List(10000))
+	enrichAnalysisTradesWithEvents(cfg, trades, s.Orders.List(10000), s.analysisTradeMonitorEvents())
 	sortAnalysisTrades(trades)
 	positionTrades := buildAnalysisPositionTrades(cfg, binanceTrades, pnlSince)
 	positionTrades = append(positionTrades, gatePositions...)
