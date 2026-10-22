@@ -162,7 +162,7 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`id="position-symbol-chart-frame"`,
 		`id="position-symbol-history-rows"`,
 		`function positionSymbolHistoryRows(row)`,
-		`function buildTradeChartURL(symbol, trades, selectedRow)`,
+		`function buildTradeChartURL(symbol, trades, selectedRow, embedded)`,
 		`async function loadPositionSymbolAnalysis()`,
 		`async function openPositionSymbolDetails(row)`,
 		`renderPositionSymbolHistory(rows, "")`,

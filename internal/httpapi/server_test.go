@@ -44,6 +44,32 @@ func testService(t *testing.T, cfg config.Config, logger *slog.Logger, logs *obs
 	return srv, st
 }
 
+func TestSecurityHeadersPermitOnlyEmbeddedBubbleChart(t *testing.T) {
+	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	cases := []struct {
+		path           string
+		frameOption    string
+		frameAncestors string
+	}{
+		{path: "/bubbles?embed=1", frameOption: "SAMEORIGIN", frameAncestors: "frame-ancestors 'self'"},
+		{path: "/bubbles", frameOption: "DENY", frameAncestors: "frame-ancestors 'none'"},
+		{path: "/tvbot/view/positions", frameOption: "DENY", frameAncestors: "frame-ancestors 'none'"},
+	}
+	for _, tc := range cases {
+		r := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if got := w.Header().Get("X-Frame-Options"); got != tc.frameOption {
+			t.Fatalf("%s X-Frame-Options=%q, want %q", tc.path, got, tc.frameOption)
+		}
+		if got := w.Header().Get("Content-Security-Policy"); !strings.Contains(got, tc.frameAncestors) {
+			t.Fatalf("%s Content-Security-Policy=%q, missing %q", tc.path, got, tc.frameAncestors)
+		}
+	}
+}
+
 func TestBusinessPagesRenderVersionFooter(t *testing.T) {
 	originalTime, originalRevision, originalBranch := BuildTime, BuildRevision, BuildBranch
 	t.Cleanup(func() {

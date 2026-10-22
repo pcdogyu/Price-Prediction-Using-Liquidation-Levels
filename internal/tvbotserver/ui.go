@@ -5838,14 +5838,16 @@ const tvbotHTML = `<!doctype html>
       return '<button type="button" class="analysis-symbol-link" data-analysis-chart-symbol="' + escapeHTML(symbol) + '" data-analysis-chart-key="' + escapeHTML(key) + '" title="在新标签页查看 Gate 买卖点 K 线">' + escapeHTML(text) + '</button>';
     }
 
-    function analysisBubblesURL() {
+    function analysisBubblesURL(embedded) {
       const marker = "/tvbot/";
       const start = location.pathname.indexOf(marker);
       const base = start >= 0 ? location.pathname.slice(0, start) : "";
-      return new URL(base + "/bubbles", window.location.origin);
+      const url = new URL(base + "/bubbles", window.location.origin);
+      if (embedded) url.searchParams.set("embed", "1");
+      return url;
     }
 
-    function buildTradeChartURL(symbol, trades, selectedRow) {
+    function buildTradeChartURL(symbol, trades, selectedRow, embedded) {
       const normalizedSymbol = analysisGateChartSymbol(symbol);
       if (!normalizedSymbol) return null;
       const tokenSource = window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2));
@@ -5866,7 +5868,7 @@ const tvbotHTML = `<!doctype html>
           row_key: analysisTradeRowKey(item)
         }))
       };
-      const url = analysisBubblesURL();
+      const url = analysisBubblesURL(embedded);
       url.searchParams.set("symbol", normalizedSymbol);
       if (!payload.rows.length) return url;
       try {
@@ -5964,7 +5966,7 @@ const tvbotHTML = `<!doctype html>
       if (title) title.textContent = label + " · " + exchangeLabel(row && row._exchange) + " 持仓详情";
       if (status) status.textContent = "正在读取气泡图和历史下单信息…";
       renderPositionSymbolHistory([], "正在读取历史下单信息…");
-      const chartURL = analysisBubblesURL();
+      const chartURL = analysisBubblesURL(true);
       chartURL.searchParams.set("symbol", symbol);
       if (frame) frame.src = chartURL.toString();
       if (dialog) {
@@ -5975,7 +5977,7 @@ const tvbotHTML = `<!doctype html>
         await loadPositionSymbolAnalysis();
         if (sequence !== positionSymbolDetailsSequence) return;
         const rows = positionSymbolHistoryRows(row);
-        const tradeURL = buildTradeChartURL(symbol, rows, rows[0]);
+        const tradeURL = buildTradeChartURL(symbol, rows, rows[0], true);
         if (frame && tradeURL) frame.src = tradeURL.toString();
         renderPositionSymbolHistory(rows, "");
         if (status) status.textContent = "气泡图已加载 · 历史下单周期 " + balanceWindowLabel(analysisPNLWindowMinutes());
