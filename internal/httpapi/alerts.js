@@ -40,7 +40,7 @@
     return '<button type="button" class="alerts-action alerts-notify-trigger" data-action="notify" data-trigger-type="' + escape(recordType) + '" data-trigger-id="' + escape(recordID) + '">触发报价</button>';
   };
 
-  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false;
+  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false;
 
   function error(message) { const node = $('alerts-error'); node.classList.remove('success'); node.textContent = message; node.hidden = false; }
   function success(message) { const node = $('alerts-error'); node.classList.add('success'); node.innerHTML = message; node.hidden = false; }
@@ -277,23 +277,37 @@
     };
   }
 
-  async function saveStrategySettings(event) {
-    event.preventDefault();
+  async function saveStrategySettings(event, automatic = false) {
+    if (event) event.preventDefault();
+    if (automatic && !strategyLoaded) return;
+    if (strategySaveBusy) {
+      strategySavePending = true;
+      strategySavePendingAuto = strategySavePendingAuto || automatic;
+      return;
+    }
+    strategySaveBusy = true;
     $('alerts-strategy-save').disabled = true;
-    $('alerts-strategy-status').textContent = '正在保存报警参数…';
+    $('alerts-strategy-status').textContent = automatic ? '正在自动保存报警参数…' : '正在保存报警参数…';
     try {
       const response = await fetch(base + 'api/v1/alerts/strategy-settings', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(strategySettingsBody()) });
       const packet = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       renderStrategySettings(packet);
-      $('alerts-strategy-status').textContent = '报警参数已保存并立即生效';
+      $('alerts-strategy-status').textContent = automatic ? '报警参数已自动保存并立即生效' : '报警参数已保存并立即生效';
       clearError();
       loadOverview();
     } catch (caught) {
       error('保存报警参数失败：' + caught.message);
       $('alerts-strategy-status').textContent = '保存失败';
     } finally {
+      strategySaveBusy = false;
       $('alerts-strategy-save').disabled = false;
+      if (strategySavePending) {
+        const pendingAutomatic = strategySavePendingAuto;
+        strategySavePending = false;
+        strategySavePendingAuto = false;
+        void saveStrategySettings(null, pendingAutomatic);
+      }
     }
   }
 
@@ -399,6 +413,7 @@
   $('alerts-next').addEventListener('click', () => { if (!historyNextCursor) return; historyCursors[historyPage + 1] = historyNextCursor; loadHistory(historyNextCursor, historyPage + 1); });
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
+  ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
   $('alerts-order-signal-settings').addEventListener('submit', saveOrderSignalSettings);
   ['alerts-order-alert-close', 'alerts-order-alert', 'alerts-order-aggressive-close', 'alerts-order-aggressive', 'alerts-order-steady-close', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));
   $('alerts-test').addEventListener('click', testSettings);
