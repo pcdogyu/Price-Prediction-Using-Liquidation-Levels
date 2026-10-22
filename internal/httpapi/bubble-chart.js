@@ -64,6 +64,7 @@
           id: rowKey + ':' + phase,
           row_key: rowKey,
           symbol: target,
+          exchange: String(row.exchange || '').trim().toLowerCase(),
           side,
           phase,
           action,

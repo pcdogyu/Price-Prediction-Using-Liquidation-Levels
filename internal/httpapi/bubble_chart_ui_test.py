@@ -316,6 +316,7 @@ with sync_playwright() as playwright:
         trade_payload = {
             "version": 1,
             "created_at": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000),
+            "exchange": "binance",
             "symbol": "BTCUSDT",
             "focus_at": iso(trade_focus),
             "selected_key": "gate-selected",
@@ -325,7 +326,7 @@ with sync_playwright() as playwright:
             ],
         }
         page.evaluate("([key, payload]) => localStorage.setItem('tvbot.analysisChart.' + key, JSON.stringify(payload))", ["gate-ui-test", trade_payload])
-        page.goto(base + "/bubbles?symbol=BTC_USDT&trade_ref=gate-ui-test&focus_at=" + iso(trade_focus), wait_until="domcontentloaded")
+        page.goto(base + "/bubbles?exchange=binance&symbol=BTC_USDT&trade_ref=gate-ui-test&focus_at=" + iso(trade_focus), wait_until="domcontentloaded")
         idle()
         assert parse_qs(urlsplit(page.url).query)["symbol"] == ["BTC_USDT"], page.url
         trade_view = page.evaluate("""() => ({
@@ -336,14 +337,14 @@ with sync_playwright() as playwright:
           windowStart: document.getElementById('market-chart').dataset.windowStart,
           windowEnd: document.getElementById('market-chart').dataset.windowEnd
         })""")
-        assert trade_view["count"] == 4 and "Gate交易点 屏内 4个" in trade_view["context"], trade_view
+        assert trade_view["count"] == 4 and "Binance交易点 屏内 4个" in trade_view["context"], trade_view
         assert len(trade_view["markers"]) == 4 and not trade_view["legendHidden"], trade_view
         tips = "\n".join(item["tip"] for item in trade_view["markers"])
         assert "买入" in tips and "卖出" in tips and "当前点击记录" in tips, tips
         assert ms(trade_view["windowStart"]) <= trade_focus <= ms(trade_view["windowEnd"]), trade_view
         marker_box = page.locator('[data-trade-marker]').first.bounding_box()
         page.mouse.move(marker_box["x"] + marker_box["width"] / 2, marker_box["y"] + marker_box["height"] / 2)
-        expect(page.locator("#tooltip")).to_contain_text("Gate 交易点")
+        expect(page.locator("#tooltip")).to_contain_text("Binance 下单信息")
         expect(page.locator("#tooltip")).to_contain_text("买入")
     page.locator("#chart-latest").click()
     idle()

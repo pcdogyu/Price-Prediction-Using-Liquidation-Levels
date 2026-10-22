@@ -5845,6 +5845,7 @@ const tvbotHTML = `<!doctype html>
       const isRawFill = !!(item && (item.fill_time || rawEffect));
       const isClose = rawEffect === "close";
       return {
+        exchange: String(item && item.exchange || "").trim() ? normalizeExchange(item && item.exchange) : "",
         inst_id: String(item && item.inst_id || ""),
         side: String(item && (item.side || item.pos_side) || "").toLowerCase(),
         entry_time: isRawFill ? (isClose ? "" : item.fill_time || "") : item && item.entry_time || "",
@@ -5886,20 +5887,24 @@ const tvbotHTML = `<!doctype html>
       return url;
     }
 
-    function buildTradeChartURL(symbol, trades, selectedRow, embedded) {
+    function buildTradeChartURL(symbol, exchange, trades, selectedRow, embedded) {
       const normalizedSymbol = analysisGateChartSymbol(symbol);
       if (!normalizedSymbol) return null;
+      const rawExchange = String(exchange || (selectedRow && selectedRow.exchange) || "").trim();
+      const normalizedExchange = rawExchange ? normalizeExchange(rawExchange) : "";
       const tokenSource = window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2));
       const token = tokenSource.replace(/[^A-Za-z0-9_-]/g, "");
       const payload = {
         version: 1,
         created_at: Date.now(),
+        exchange: normalizedExchange,
         symbol: normalizedSymbol,
         focus_at: tradeChartFocusTime(selectedRow),
         selected_key: selectedRow ? tradeChartRowKey(selectedRow) : "",
         rows: (Array.isArray(trades) ? trades : []).map((item) => tradeChartPayloadRow(item))
       };
       const url = analysisBubblesURL(embedded);
+      if (normalizedExchange) url.searchParams.set("exchange", normalizedExchange);
       url.searchParams.set("symbol", normalizedSymbol);
       if (!payload.rows.length) return url;
       try {
@@ -5925,7 +5930,7 @@ const tvbotHTML = `<!doctype html>
         toast("当前分析窗口没有该币对的交易记录");
         return;
       }
-      const url = buildTradeChartURL(symbol, trades, row, true);
+      const url = buildTradeChartURL(symbol, exchange, trades, row, true);
       if (!url) {
         toast("无法暂存交易图表数据，请检查浏览器本地存储权限");
         return;
@@ -6006,6 +6011,8 @@ const tvbotHTML = `<!doctype html>
       if (title) title.textContent = label + " · " + exchangeLabel(row && row._exchange) + " 持仓详情";
       if (status) status.textContent = "正在读取气泡图和 K 线下单信息…";
       const chartURL = analysisBubblesURL(true);
+      const exchange = normalizeExchange(row && row._exchange || activeExchange());
+      if (exchange) chartURL.searchParams.set("exchange", exchange);
       chartURL.searchParams.set("symbol", symbol);
       if (frame) frame.src = chartURL.toString();
       if (dialog) {
@@ -6016,7 +6023,7 @@ const tvbotHTML = `<!doctype html>
         await loadPositionSymbolAnalysis();
         if (sequence !== positionSymbolDetailsSequence) return;
         const rows = positionSymbolTradeRows(row);
-        const tradeURL = buildTradeChartURL(symbol, rows, rows[0], true);
+        const tradeURL = buildTradeChartURL(symbol, exchange, rows, rows[0], true);
         if (frame && tradeURL) frame.src = tradeURL.toString();
         if (status) status.textContent = "气泡图已加载 · K 线下单标记 " + rows.length + " 个";
       } catch (err) {

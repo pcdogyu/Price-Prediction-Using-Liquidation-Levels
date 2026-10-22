@@ -33,6 +33,17 @@ const chart = {
 const tradeQuery = new URLSearchParams(window.location.search);
 const requestedTradeSymbolRaw = String(tradeQuery.get('symbol') || '').trim();
 const requestedTradeSymbol = window.BubbleChart.normalizeMarketSymbol(requestedTradeSymbolRaw);
+const normalizeTradeExchange = value => {
+  const exchange = String(value || '').trim().toLowerCase();
+  return exchange === 'okx' || exchange === 'binance' || exchange === 'gate' ? exchange : '';
+};
+const tradeExchangeLabel = value => {
+  const exchange = normalizeTradeExchange(value);
+  if (exchange === 'binance') return 'Binance';
+  if (exchange === 'gate') return 'Gate';
+  if (exchange === 'okx') return 'OKX';
+  return '交易所';
+};
 let symbol = 'ETHUSDT';
 const initialSymbolButton = document.querySelector('button[data-symbol].active');
 if (initialSymbolButton) symbol = initialSymbolButton.dataset.symbol;
@@ -40,6 +51,7 @@ if (requestedTradeSymbol) symbol = requestedTradeSymbol;
 let symbolCatalog = [];
 const tradeView = {
   ref: String(tradeQuery.get('trade_ref') || '').trim(),
+  exchange: normalizeTradeExchange(tradeQuery.get('exchange')),
   requestedSymbol: requestedTradeSymbol,
   focusAt: window.BubbleChart.tradeTime(tradeQuery.get('focus_at')),
   markers: [],
@@ -133,12 +145,21 @@ function loadTradeView() {
     payload = null;
   }
   if (!payload || !Array.isArray(payload.rows)) {
-    tradeView.error = '交易点引用不存在或已过期，请从 Gate 分析表重新打开';
+    tradeView.error = '交易点引用不存在或已过期，请从交易分析表重新打开';
     return;
   }
+  const payloadExchange = normalizeTradeExchange(payload.exchange);
+  if (tradeView.exchange && payloadExchange && tradeView.exchange !== payloadExchange) {
+    tradeView.error = '交易点引用与 URL 交易所不一致';
+    return;
+  }
+  if (!tradeView.exchange && payloadExchange) tradeView.exchange = payloadExchange;
+  const scopedRows = payloadExchange
+    ? payload.rows.filter(row => !normalizeTradeExchange(row && row.exchange) || normalizeTradeExchange(row.exchange) === payloadExchange)
+    : payload.rows;
   const payloadSymbol = window.BubbleChart.normalizeMarketSymbol(payload.symbol);
   if (!payloadSymbol) {
-    tradeView.error = '交易引用中的 Gate 币对无法转换为 Binance USDT K 线币对';
+    tradeView.error = '交易引用中的币对无法转换为 Binance USDT K 线币对';
     return;
   }
   if (!tradeView.requestedSymbol && payloadSymbol) {
@@ -151,7 +172,7 @@ function loadTradeView() {
   const focus = window.BubbleChart.tradeTime(payload.focus_at || tradeQuery.get('focus_at'));
   if (Number.isFinite(focus)) tradeView.focusAt = focus;
   const selectedKey = String(payload.selected_key || '');
-  tradeView.markers = window.BubbleChart.normalizeTradeMarkers(payload.rows, symbol, selectedKey);
+  tradeView.markers = window.BubbleChart.normalizeTradeMarkers(scopedRows, symbol, selectedKey);
   tradeView.enabled = true;
   if (!tradeView.markers.length) tradeView.error = '该交易引用没有可定位的有效开平仓价格或时间';
 }
@@ -206,7 +227,7 @@ async function loadSymbolCatalog() {
     }
     if (state) state.textContent = symbolCatalog.length + ' 个可交易 USDT 永续';
     if (tradeView.requestedSymbol && !symbolCatalog.some(item => window.BubbleChart.normalizeMarketSymbol(item.symbol) === symbol)) {
-      tradeView.error = 'Binance 不支持 ' + symbol + ' 永续 K 线，Gate 分析表不受影响';
+      tradeView.error = 'Binance 不支持 ' + symbol + ' 永续 K 线，交易分析表不受影响';
     }
   } catch (error) {
     if (state) state.textContent = '币对目录暂不可用，仍可使用已配置币对';
@@ -597,7 +618,7 @@ function tradeMarkerTip(marker) {
   if (marker.fill_pnl) details.push('成交盈亏 ' + marker.fill_pnl);
   if (marker.net_pnl) details.push('净盈亏 ' + marker.net_pnl);
   if (marker.fee) details.push('手续费 ' + marker.fee + (marker.fee_ccy ? ' ' + marker.fee_ccy : ''));
-  return 'Gate 下单信息 · ' + phase + ' ' + action + '\n时间 ' + when(marker.time_iso) + '\n价格 ' + money(marker.price) + '\n方向 ' + side + (details.length ? '\n' + details.join('\n') : '') + (marker.selected ? '\n当前点击记录' : '');
+  return tradeExchangeLabel(marker.exchange || tradeView.exchange) + ' 下单信息 · ' + phase + ' ' + action + '\n时间 ' + when(marker.time_iso) + '\n价格 ' + money(marker.price) + '\n方向 ' + side + (details.length ? '\n' + details.join('\n') : '') + (marker.selected ? '\n当前点击记录' : '');
 }
 
 function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top, plotBottom) {
@@ -748,7 +769,7 @@ function draw(view, map, signal, volume) {
   const tradeMarkers = tradeView.enabled ? drawTradeMarkers(plot, tradeView.markers, range, timeScale, y, left, candleRight, top, plotBottom) : { visible: 0, outside: 0 };
   svg.setAttribute('data-bubble-count', bubbles.points.length);
   svg.setAttribute('data-trade-marker-count', tradeMarkers.visible);
-  const tradeText = tradeView.enabled ? ' · Gate交易点 屏内 ' + tradeMarkers.visible + '个' + (tradeMarkers.outside ? ' · 视野外 ' + tradeMarkers.outside + '个' : '') : '';
+  const tradeText = tradeView.enabled ? ' · ' + tradeExchangeLabel(tradeView.exchange || tradeView.markers[0]?.exchange) + '交易点 屏内 ' + tradeMarkers.visible + '个' + (tradeMarkers.outside ? ' · 视野外 ' + tradeMarkers.outside + '个' : '') : '';
   $('chart-context').textContent = context + ' · 窗口已加载 ' + windowLiquidations.length + '笔 · 屏内气泡 ' + bubbles.points.length + '笔' + (bubbles.outside ? ' · 价格视野外 ' + bubbles.outside + '笔' : '') + tradeText + ' · ' + loadState;
   if (!embeddedChart && bins.length) {
     const maximum = Math.max(...bins.map(item => item.total_usd), 1);
@@ -858,7 +879,7 @@ function bindTips(svg) {
 function showFailures(failures) {
   const all = [...failures];
   if (streamError) all.push('实时推送 · ' + streamError);
-  if (tradeView.error) all.push('Gate 交易点 · ' + tradeView.error);
+  if (tradeView.error) all.push(tradeExchangeLabel(tradeView.exchange) + '交易点 · ' + tradeView.error);
   $('api-errors').textContent = all.length ? '数据接口异常：\n' + all.join('\n') : '';
   $('api-errors').classList.toggle('hidden', all.length === 0);
 }

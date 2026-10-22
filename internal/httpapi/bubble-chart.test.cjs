@@ -28,8 +28,8 @@ test('Gate contract symbols normalize to Binance USDT symbols', () => {
 
 test('trade markers map long and short entry/exit actions and keep the selected row', () => {
   const markers = B.normalizeTradeMarkers([
-    { row_key: 'long-row', inst_id: 'BTC_USDT', side: 'long', entry_time: '2026-01-01T00:00:00Z', entry_px: '100', exit_time: '2026-01-01T01:00:00Z', exit_px: '110' },
-    { row_key: 'short-row', inst_id: 'BTCUSDT', side: 'short', entry_time: '2026-01-01T02:00:00Z', entry_px: 120, exit_time: '2026-01-01T03:00:00Z', exit_px: 105 }
+    { row_key: 'long-row', exchange: 'binance', inst_id: 'BTC_USDT', side: 'long', entry_time: '2026-01-01T00:00:00Z', entry_px: '100', exit_time: '2026-01-01T01:00:00Z', exit_px: '110' },
+    { row_key: 'short-row', exchange: 'binance', inst_id: 'BTCUSDT', side: 'short', entry_time: '2026-01-01T02:00:00Z', entry_px: 120, exit_time: '2026-01-01T03:00:00Z', exit_px: 105 }
   ], 'BTCUSDT', 'short-row');
   assert.deepEqual(markers.map(item => [item.row_key, item.phase, item.action, item.selected]), [
     ['long-row', 'entry', 'buy', false],
@@ -39,6 +39,7 @@ test('trade markers map long and short entry/exit actions and keep the selected 
   ]);
   assert.equal(markers[0].price, 100);
   assert.equal(markers[0].time, Date.parse('2026-01-01T00:00:00Z'));
+  assert.equal(markers[0].exchange, 'binance');
 });
 
 test('tradeMarkerPlacements separates labels that share one candle and price', () => {
