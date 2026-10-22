@@ -86,6 +86,7 @@ const rankLabelWidthScale = .8;
 const rankLabelLeft = rightPriceAxisX(1614);
 const rankLabelRight = rankLabelLeft + (rightPriceAxisX(1728) - rankLabelLeft) * rankLabelWidthScale;
 const dims = { height: 560, width: 1740, left: 72, top: 24, bottom: 42, candleRight: 1025 + rightPriceAxisShift, volumeLeft: 1060 + rightPriceAxisShift, volumeRight: 1280 + rightPriceAxisShift, liquidationLeft: liquidationWallRight - liquidationWallWidth, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft, rankLabelRight };
+const embeddedChartCandleRight = 1668;
 if (!intervalName[chart.interval]) chart.interval = '15m';
 
 function svgNode(tag, attrs = {}, text = '') {
@@ -653,7 +654,7 @@ function draw(view, map, signal, volume) {
   const svg = $('market-chart');
   svg.replaceChildren();
   const candles = visibleCandles();
-  const layout = embeddedChart ? { ...dims, candleRight: 1668, profileRight: 1668, axisPriceRight: 1718 } : dims;
+  const layout = embeddedChart ? { ...dims, candleRight: embeddedChartCandleRight, profileRight: embeddedChartCandleRight, axisPriceRight: 1718 } : dims;
   const bins = embeddedChart ? [] : (map?.bins || []);
   $('chart-title').textContent = (intervalName[chart.interval] || chart.interval) + ' K线 · 成交量分布 · 清算墙';
   if (!embeddedChart) renderClassicPivots(view, signal);
@@ -1165,6 +1166,20 @@ function installChartInteractions() {
   svg.addEventListener('pointercancel', endDrag);
 }
 
+function installEmbeddedChartWheel() {
+  const svg = $('market-chart');
+  if (!svg) return;
+  svg.addEventListener('wheel', event => {
+    event.preventDefault();
+    const point = svgPoint(event);
+    const fraction = (point.x - dims.left) / (embeddedChartCandleRight - dims.left);
+    const factor = event.deltaY > 0 ? 1.12 : 1 / 1.12;
+    if (!zoomCandleWindow(fraction, factor)) return;
+    draw(cache.market, cache.map, cache.signal, cache.volume);
+    if (chart.windowEnd <= chart.visibleCount + 12) loadOlder();
+  }, { passive: false });
+}
+
 function resetChartState() {
   bubbleLoader.reset();
   refreshController?.abort();
@@ -1347,6 +1362,7 @@ $('log-copy').addEventListener('click', async () => {
 
 if (!embeddedChart) installChartSizeControls();
 if (!embeddedChart) installChartInteractions();
+if (embeddedChart) installEmbeddedChartWheel();
 if (embeddedChart) refresh(true);
 else loadSymbolCatalog().finally(() => refresh(true));
 setInterval(() => refresh(false), 10000);
