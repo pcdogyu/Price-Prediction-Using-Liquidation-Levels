@@ -2902,6 +2902,8 @@ const tvbotHTML = `<!doctype html>
       if (okxMatch) return okxMatch[1];
       const binanceMatch = upper.match(/^([A-Z0-9]+)USDT$/);
       if (binanceMatch) return binanceMatch[1];
+      const gateMatch = upper.match(/^([A-Z0-9]+)[_-]USDT(?:[_-]SWAP)?$/);
+      if (gateMatch) return gateMatch[1];
       return raw;
     }
 
