@@ -5963,6 +5963,35 @@ const tvbotHTML = `<!doctype html>
       return url;
     }
 
+    async function openStandalonePositionKline(options) {
+      const config = options || {};
+      const symbol = String(config.symbol || "");
+      const exchange = normalizeExchange(config.exchange || activeExchange());
+      const initialRows = Array.isArray(config.initialRows) ? config.initialRows : [];
+      const initialURL = buildPositionChartURL(symbol, exchange, initialRows, initialRows[0]);
+      if (!initialURL) {
+        toast(String(config.invalidStatus || "无法生成持仓详情页面"));
+        return;
+      }
+      initialURL.searchParams.set("standalone", "1");
+      const chartWindow = window.open(initialURL.toString(), "_blank");
+      if (!chartWindow) {
+        toast("浏览器阻止了新页面，请允许弹出窗口后重试");
+        return;
+      }
+      try {
+        const rows = typeof config.loadRows === "function" ? await config.loadRows() : initialRows;
+        const chartRows = Array.isArray(rows) ? rows : [];
+        const chartURL = buildPositionChartURL(symbol, exchange, chartRows, chartRows[0]);
+        if (chartURL && !chartWindow.closed) {
+          chartURL.searchParams.set("standalone", "1");
+          chartWindow.location.href = chartURL.toString();
+        }
+      } catch (err) {
+        toast(err && err.message ? err.message : "K 线下单信息读取失败");
+      }
+    }
+
     async function openSharedPositionKlineDialog(options) {
       const config = options || {};
       const symbol = String(config.symbol || "");
@@ -6010,15 +6039,12 @@ const tvbotHTML = `<!doctype html>
         toast("当前分析窗口没有该币对的交易记录");
         return;
       }
-      openSharedPositionKlineDialog({
+      openStandalonePositionKline({
         symbol,
         exchange,
-        label: analysisInstIDText(row && row.inst_id),
-        titleSuffix: "订单分析",
-        loadingStatus: "正在加载买卖历史…",
         initialRows: trades,
         loadRows: async () => trades,
-        loadedStatus: "买卖历史已加载 · K 线下单标记 " + trades.length + " 个"
+        invalidStatus: "无法生成订单分析 K 线"
       });
     }
 

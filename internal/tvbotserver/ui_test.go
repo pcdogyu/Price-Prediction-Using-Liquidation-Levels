@@ -147,15 +147,23 @@ func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 		`url.searchParams.set("trade_ref", token)`,
 		`url.searchParams.set("exchange", normalizedExchange)`,
 		`function buildPositionChartURL(symbol, exchange, trades, selectedRow)`,
-		`async function openSharedPositionKlineDialog(options)`,
-		`openSharedPositionKlineDialog({`,
-		`id="position-symbol-dialog"`,
-		`买卖历史已加载`,
+		`async function openStandalonePositionKline(options)`,
+		`openStandalonePositionKline({`,
+		`initialURL.searchParams.set("standalone", "1")`,
+		`window.open(initialURL.toString(), "_blank")`,
 		`function analysisTimeText(v)`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("Gate trade chart integration marker missing %q", want)
 		}
+	}
+	analysisStart := strings.Index(page, "function openAnalysisTradeChart(row)")
+	if analysisStart < 0 {
+		t.Fatal("analysis trade chart handler is missing")
+	}
+	analysisHandler := page[analysisStart:]
+	if strings.Contains(analysisHandler, "openSharedPositionKlineDialog({") || !strings.Contains(analysisHandler, "openStandalonePositionKline({") {
+		t.Fatal("analysis symbol details must use the standalone position K-line page")
 	}
 }
 
