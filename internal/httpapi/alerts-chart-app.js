@@ -538,7 +538,11 @@
   function resize() {
     const wrap = $('kline-wrap'), canvas = $('kline-chart');
     const ratio = window.devicePixelRatio || 1;
-    const width = Math.max(320, wrap.clientWidth), height = Math.max(360, Math.min(660, Math.round(window.innerHeight * .58)));
+    const width = Math.max(320, wrap.clientWidth);
+    const standaloneHeight = wrap.clientHeight || Math.round(window.innerHeight - 52);
+    const height = standalonePositionMode
+      ? Math.max(240, standaloneHeight)
+      : Math.max(360, Math.min(660, Math.round(window.innerHeight * .58)));
     canvas.style.width = width + 'px';
     canvas.style.height = height + 'px';
     canvas.width = Math.round(width * ratio);
