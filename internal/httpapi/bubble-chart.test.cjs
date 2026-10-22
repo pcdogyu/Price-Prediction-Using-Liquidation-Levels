@@ -41,6 +41,31 @@ test('trade markers map long and short entry/exit actions and keep the selected 
   assert.equal(markers[0].time, Date.parse('2026-01-01T00:00:00Z'));
 });
 
+test('tradeMarkerPlacements separates labels that share one candle and price', () => {
+  const markers = [
+    { id: 'long-entry', time: 1000, price: 100, side: 'long', phase: 'entry' },
+    { id: 'short-exit', time: 1000, price: 100, side: 'short', phase: 'exit' },
+    { id: 'short-entry', time: 1000, price: 100, side: 'short', phase: 'entry' },
+    { id: 'long-exit', time: 1000, price: 100, side: 'long', phase: 'exit' }
+  ];
+  const layout = B.tradeMarkerPlacements(markers, [90, 110], { start: 0, end: 2000, x: () => 150 }, () => 150, { left: 0, right: 300, top: 0, bottom: 300 });
+  assert.equal(layout.visible, 4);
+  assert.equal(layout.outside, 0);
+  assert.deepEqual(Object.fromEntries(layout.markers.map(item => [item.marker.id, item.labelBelow])), {
+    'long-entry': true,
+    'short-exit': true,
+    'short-entry': false,
+    'long-exit': false
+  });
+  for (let i = 0; i < layout.markers.length; i++) {
+    for (let j = i + 1; j < layout.markers.length; j++) {
+      const a = layout.markers[i].box;
+      const b = layout.markers[j].box;
+      assert.ok(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top, `${layout.markers[i].marker.id} overlaps ${layout.markers[j].marker.id}`);
+    }
+  }
+});
+
 test('trade marker normalization omits incomplete or invalid values without dropping valid points', () => {
   const markers = B.normalizeTradeMarkers([
     { row_key: 'valid', inst_id: 'ETH_USDT', side: 'long', entry_time: '1704067200000', entry_px: '2000', exit_time: '', exit_px: 2100 },

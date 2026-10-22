@@ -601,35 +601,19 @@ function tradeMarkerTip(marker) {
 }
 
 function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top, plotBottom) {
-  let outside = 0;
-  let visible = 0;
-  const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
-  markers.forEach(marker => {
-    if (marker.time < scale.start || marker.time >= scale.end || marker.price < range[0] || marker.price > range[1]) {
-      outside++;
-      return;
-    }
-    const x = clamp(scale.x(marker.time), left + 9, candleRight - 9);
-    const priceY = clamp(y(marker.price), top + 9, plotBottom - 9);
+  const layout = window.BubbleChart.tradeMarkerPlacements(markers, range, scale, y, { left, right: candleRight, top, bottom: plotBottom });
+  layout.markers.forEach(({ marker, x, priceY, labelX, labelCenterY, labelBelow, labelText, labelWidth }) => {
     const long = marker.side === 'long';
     const closing = marker.phase === 'exit';
     const color = closing ? '#f5c400' : (long ? '#2dd4bf' : '#fb7185');
-    const label = long ? '多单' : '空单';
-    const phase = marker.phase === 'entry' ? '开仓' : '平仓';
-    const labelText = label + phase;
-    const labelWidth = labelText.length * 11 + 12;
-    const labelBelow = closing ? !long : long;
-    const labelCenterY = clamp(priceY + (labelBelow ? 25 : -25), top + 12, plotBottom - 12);
-    const labelX = clamp(x, left + labelWidth / 2, candleRight - labelWidth / 2);
     const group = svgNode('g', { 'data-trade-marker': marker.id, 'data-tip': tradeMarkerTip(marker) });
     if (marker.selected) group.appendChild(svgNode('rect', { x: labelX - labelWidth / 2 - 3, y: labelCenterY - 12, width: labelWidth + 6, height: 24, fill: 'none', stroke: '#f8fafc', 'stroke-width': 2, rx: 5, opacity: .95 }));
     group.appendChild(svgNode('line', { x1: x, y1: priceY, x2: labelX, y2: labelBelow ? labelCenterY - 10 : labelCenterY + 10, stroke: color, 'stroke-width': 1.2, opacity: .9 }));
     group.appendChild(svgNode('rect', { x: labelX - labelWidth / 2, y: labelCenterY - 10, width: labelWidth, height: 20, fill: color, stroke: '#07141d', 'stroke-width': 1.2, rx: 5 }));
     group.appendChild(svgNode('text', { x: labelX, y: labelCenterY + 4, 'text-anchor': 'middle', fill: '#07141d', 'font-size': 10, 'font-weight': 750 }, labelText));
     plot.appendChild(group);
-    visible++;
   });
-  return { visible, outside };
+  return { visible: layout.visible, outside: layout.outside };
 }
 
 function drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high) {

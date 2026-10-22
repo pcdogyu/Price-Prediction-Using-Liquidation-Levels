@@ -87,6 +87,69 @@
     return markers.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
   }
 
+  function tradeMarkerPlacements(markers, range, scale, y, bounds) {
+    let outside = 0;
+    const placed = [];
+    const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+    const overlaps = (a, b) => a.left < b.right + 3 && a.right > b.left - 3 && a.top < b.bottom + 3 && a.bottom > b.top - 3;
+    const offsetAt = index => {
+      if (index === 0) return 0;
+      const distance = Math.ceil(index / 2);
+      return distance * (index % 2 ? 1 : -1);
+    };
+
+    (Array.isArray(markers) ? markers : []).forEach(marker => {
+      if (marker.time < scale.start || marker.time >= scale.end || marker.price < range[0] || marker.price > range[1]) {
+        outside++;
+        return;
+      }
+      const x = clamp(scale.x(marker.time), bounds.left + 9, bounds.right - 9);
+      const priceY = clamp(y(marker.price), bounds.top + 9, bounds.bottom - 9);
+      const long = marker.side === 'long';
+      const closing = marker.phase === 'exit';
+      const label = long ? '多单' : '空单';
+      const phase = marker.phase === 'entry' ? '开仓' : '平仓';
+      const labelText = label + phase;
+      const labelWidth = labelText.length * 11 + 12;
+      const labelBelow = closing ? !long : long;
+      const direction = labelBelow ? 1 : -1;
+      const horizontalStep = Math.max(24, labelWidth + 12);
+      const maxLevels = Math.ceil((bounds.bottom - bounds.top) / 24) + 2;
+      let chosen = null;
+      let fallback = null;
+      let fallbackScore = Infinity;
+
+      for (let level = 0; level < maxLevels; level++) {
+        const distance = 25 + level * 24;
+        for (let offsetIndex = 0; offsetIndex < 9; offsetIndex++) {
+          const labelX = clamp(x + offsetAt(offsetIndex) * horizontalStep, bounds.left + labelWidth / 2 + 3, bounds.right - labelWidth / 2 - 3);
+          const labelCenterY = clamp(priceY + direction * distance, bounds.top + 12, bounds.bottom - 12);
+          const box = {
+            left: labelX - labelWidth / 2 - 3,
+            right: labelX + labelWidth / 2 + 3,
+            top: labelCenterY - 12,
+            bottom: labelCenterY + 12
+          };
+          const collisionCount = placed.reduce((count, prior) => count + (overlaps(box, prior.box) ? 1 : 0), 0);
+          const score = collisionCount * 100000 + level * 100 + Math.abs(offsetAt(offsetIndex));
+          if (score < fallbackScore) {
+            fallbackScore = score;
+            fallback = { labelX, labelCenterY, box };
+          }
+          if (collisionCount === 0) {
+            chosen = { labelX, labelCenterY, box };
+            break;
+          }
+        }
+        if (chosen) break;
+      }
+
+      const layout = chosen || fallback;
+      placed.push({ marker, x, priceY, labelX: layout.labelX, labelCenterY: layout.labelCenterY, labelBelow, labelText, labelWidth, box: layout.box });
+    });
+    return { visible: placed.length, outside, markers: placed };
+  }
+
   function mergeEvents(current, incoming, symbol) {
     const values = new Map();
     for (const event of [...current, ...incoming]) {
@@ -232,7 +295,7 @@
     }
   }
 
-  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, mergeEvents, windowEvents, radius, placements, hitIndex, WindowLoader };
+  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, WindowLoader };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.BubbleChart = exported;
 })(typeof window === 'object' ? window : globalThis);
