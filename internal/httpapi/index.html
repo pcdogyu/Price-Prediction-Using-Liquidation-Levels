@@ -38,7 +38,6 @@ html.embedded-chart .app-nav,
 html.embedded-chart #api-errors,
 html.embedded-chart .ticker,
 html.embedded-chart .chart-head,
-html.embedded-chart .chart-toolbar,
 html.embedded-chart .trigger-grid,
 html.embedded-chart .classic-pivot-panel,
 html.embedded-chart .status-row,
@@ -49,14 +48,31 @@ html.embedded-chart #drawer-backdrop {
   display: none !important;
 }
 html.embedded-chart .chart-panel {
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   padding: 0;
   margin: 0;
   border: 0;
   border-radius: 0;
 }
+html.embedded-chart .chart-toolbar {
+  display: flex !important;
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  overflow-x: auto;
+  padding: 8px 0;
+}
+html.embedded-chart .chart-actions {
+  display: none !important;
+}
+html.embedded-chart .intervals {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
 html.embedded-chart .chart-wrap {
-  height: 100vh;
+  flex: 1 1 auto;
+  height: auto;
   min-height: 320px;
   border-radius: 0;
   overflow: hidden;
