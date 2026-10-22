@@ -2031,7 +2031,7 @@ const tvbotHTML = `<!doctype html>
         <div class="symbol-controls">
         <label>交易所<select id="symbol-exchange"><option value="okx">OKX</option><option value="binance">Binance</option><option value="gate">Gate</option></select></label>
           <label>环境<select id="symbol-env"><option value="live">实盘</option><option value="demo">模拟</option></select></label>
-          <label>交易范围<select id="symbol-turnover-scope"><option value="top50">成交量前 50</option><option value="top100">成交量前 100</option><option value="top200">成交量前 200</option><option value="top500">成交量前 500</option><option value="all">全部</option></select></label>
+          <label>交易范围<select id="symbol-turnover-scope"><option value="top5">成交量前 5</option><option value="top10">成交量前 10</option><option value="top20">成交量前 20</option><option value="top50">成交量前 50</option><option value="top100">成交量前 100</option><option value="top200">成交量前 200</option><option value="top500">成交量前 500</option><option value="all">全部</option></select></label>
           <label class="symbol-search-label"><span id="symbol-search-label-text">搜索成交量前 100 币对</span><input id="symbol-search" autocomplete="off" spellcheck="false" placeholder="例如 BTC"></label>
           <div class="symbol-search-actions">
             <button class="btn" type="button" id="clear-symbol-search" disabled>清除搜索</button>
@@ -2092,7 +2092,7 @@ const tvbotHTML = `<!doctype html>
         <label>移动止损 %<input id="order-trailing" type="number" min="0" step="0.01"></label>
         <label>多单限价倍率<input id="order-long-multiplier" type="number" min="0" step="0.000001"></label>
         <label>空单限价倍率<input id="order-short-multiplier" type="number" min="0" step="0.000001"></label>
-        <label>24h 交易额排名限制<select id="order-turnover-scope"><option value="top50">前 50</option><option value="top100">前 100</option><option value="top200">前 200</option><option value="top500">前 500</option><option value="all">不限排名</option></select></label>
+        <label>24h 交易额排名限制<select id="order-turnover-scope"><option value="top5">前 5</option><option value="top10">前 10</option><option value="top20">前 20</option><option value="top50">前 50</option><option value="top100">前 100</option><option value="top200">前 200</option><option value="top500">前 500</option><option value="all">不限排名</option></select></label>
       </div>
       <div id="layered-order-fields" style="display:none;margin-top:14px">
         <div class="muted">多层订单按一次实时价快照计算：市价层立即成交，信号价层按 TradingView 价格挂单，其余层按当前价格的方向性价差挂单。每层成交价都会单独计算并提交对应的止盈、止损触发价；比例合计必须为 100%。</div>
@@ -4422,16 +4422,16 @@ const tvbotHTML = `<!doctype html>
     function marketTurnoverScope() {
       const trading = state.config && state.config.trading ? state.config.trading : {};
       const scope = String(trading.market_turnover_scope || "top100").trim().toLowerCase();
-      return ["top50", "top100", "top200", "top500", "all"].includes(scope) ? scope : "top100";
+      return ["top5", "top10", "top20", "top50", "top100", "top200", "top500", "all"].includes(scope) ? scope : "top100";
     }
 
     function marketTurnoverScopeLabel(scope) {
-      const labels = { top50: "成交量前 50", top100: "成交量前 100", top200: "成交量前 200", top500: "成交量前 500", all: "全部符合条件" };
+      const labels = { top5: "成交量前 5", top10: "成交量前 10", top20: "成交量前 20", top50: "成交量前 50", top100: "成交量前 100", top200: "成交量前 200", top500: "成交量前 500", all: "全部符合条件" };
       return labels[scope] || labels.top100;
     }
 
     function orderTurnoverScopeLabel(scope) {
-      const labels = { top50: "前 50", top100: "前 100", top200: "前 200", top500: "前 500", all: "不限排名" };
+      const labels = { top5: "前 5", top10: "前 10", top20: "前 20", top50: "前 50", top100: "前 100", top200: "前 200", top500: "前 500", all: "不限排名" };
       return labels[scope] || labels.top100;
     }
 
@@ -6831,6 +6831,13 @@ const tvbotHTML = `<!doctype html>
       return labels[status] || status;
     }
 
+    function orderHistoryMarketScope(errorDetails) {
+      const configured = String(errorDetails || "").match(/outside_market_(top5|top10|top20|top50|top100|top200|top500|all)/i);
+      if (configured) return configured[1].toLowerCase();
+      const legacy = String(errorDetails || "").match(/outside(?: gate [^ ]+)? .*turnover top\s+(5|10|20|50|100|200|500)\b/i);
+      return legacy ? "top" + legacy[1] : "";
+    }
+
     function orderHistoryErrorText(order) {
       if (!order) return "";
       const result = order.result || {};
@@ -6844,8 +6851,10 @@ const tvbotHTML = `<!doctype html>
       const symbol = asText(order.coinpair || order.ticker || result.inst_id);
       const positionSide = positionSideKind(order.position_side || result.position_side, "");
       const positionSideText = positionSide === "long" ? "多单" : (positionSide === "short" ? "空单" : "");
-      if (code === "outside_market_top100" || details.includes("outside_market_top100") || details.includes("outside gate demo turnover top 100")) {
-        return "该币对不在 " + exchangeName + " " + tradeEnv + " 成交额前 100 范围内（outside_market_top100）";
+      const marketScope = orderHistoryMarketScope(details);
+      if (marketScope) {
+        const scopeLabel = marketScope === "all" ? "全部符合条件" : "成交额" + orderTurnoverScopeLabel(marketScope);
+        return "该币对不在 " + exchangeName + " " + tradeEnv + " " + scopeLabel + " 范围内（outside_market_" + marketScope + "）";
       }
       if (code === "position_not_open" || details.includes("position is not open")) {
         const positionText = positionSideText ? symbol + " " + positionSideText : symbol + " 对应方向";

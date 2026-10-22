@@ -113,19 +113,22 @@ func TestMarketTurnoverScopeDefaultsPersistsAndValidates(t *testing.T) {
 		t.Fatalf("legacy scope=%q", legacy.Trading.MarketTurnoverScope)
 	}
 
-	for _, scope := range []string{MarketTurnoverScopeTop50, MarketTurnoverScopeTop100, MarketTurnoverScopeTop200, MarketTurnoverScopeTop500, MarketTurnoverScopeAll} {
+	for _, scope := range []string{MarketTurnoverScopeTop5, MarketTurnoverScopeTop10, MarketTurnoverScopeTop20, MarketTurnoverScopeTop50, MarketTurnoverScopeTop100, MarketTurnoverScopeTop200, MarketTurnoverScopeTop500, MarketTurnoverScopeAll} {
 		cfg.Trading.MarketTurnoverScope = scope
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("scope %q should validate: %v", scope, err)
 		}
 	}
 	if limits := []int{
+		MarketTurnoverScopeLimit(MarketTurnoverScopeTop5),
+		MarketTurnoverScopeLimit(MarketTurnoverScopeTop10),
+		MarketTurnoverScopeLimit(MarketTurnoverScopeTop20),
 		MarketTurnoverScopeLimit(MarketTurnoverScopeTop50),
 		MarketTurnoverScopeLimit(MarketTurnoverScopeTop100),
 		MarketTurnoverScopeLimit(MarketTurnoverScopeTop200),
 		MarketTurnoverScopeLimit(MarketTurnoverScopeTop500),
 		MarketTurnoverScopeLimit(MarketTurnoverScopeAll),
-	}; !reflect.DeepEqual(limits, []int{50, 100, 200, 500, 0}) {
+	}; !reflect.DeepEqual(limits, []int{5, 10, 20, 50, 100, 200, 500, 0}) {
 		t.Fatalf("unexpected market turnover limits: %#v", limits)
 	}
 

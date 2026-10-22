@@ -22,6 +22,9 @@ const (
 	PositionNet       = "net"
 	PositionLongShort = "long_short"
 
+	MarketTurnoverScopeTop5   = "top5"
+	MarketTurnoverScopeTop10  = "top10"
+	MarketTurnoverScopeTop20  = "top20"
 	MarketTurnoverScopeTop50  = "top50"
 	MarketTurnoverScopeTop100 = "top100"
 	MarketTurnoverScopeTop200 = "top200"
@@ -646,7 +649,7 @@ func (c Config) Validate() error {
 
 func ValidMarketTurnoverScope(scope string) bool {
 	switch strings.ToLower(strings.TrimSpace(scope)) {
-	case MarketTurnoverScopeTop50, MarketTurnoverScopeTop100, MarketTurnoverScopeTop200, MarketTurnoverScopeTop500, MarketTurnoverScopeAll:
+	case MarketTurnoverScopeTop5, MarketTurnoverScopeTop10, MarketTurnoverScopeTop20, MarketTurnoverScopeTop50, MarketTurnoverScopeTop100, MarketTurnoverScopeTop200, MarketTurnoverScopeTop500, MarketTurnoverScopeAll:
 		return true
 	default:
 		return false
@@ -655,6 +658,12 @@ func ValidMarketTurnoverScope(scope string) bool {
 
 func MarketTurnoverScopeLimit(scope string) int {
 	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case MarketTurnoverScopeTop5:
+		return 5
+	case MarketTurnoverScopeTop10:
+		return 10
+	case MarketTurnoverScopeTop20:
+		return 20
 	case MarketTurnoverScopeTop50:
 		return 50
 	case MarketTurnoverScopeTop200:

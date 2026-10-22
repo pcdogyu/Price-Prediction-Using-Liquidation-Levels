@@ -323,6 +323,9 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("/tvbot/symbols")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("symbol-exchange")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("symbol-turnover-scope")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`value="top5"`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`value="top10"`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`value="top20"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`value="top50"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`value="top100"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`value="top200"`)) ||
@@ -946,7 +949,7 @@ func TestTVBotConfigSavesOrderType(t *testing.T) {
 
 func TestTVBotConfigSavesMarketTurnoverScopeAndRejectsInvalidValue(t *testing.T) {
 	srv := newTestServer(t)
-	for _, scope := range []string{"top50", "top100", "top200", "top500", "all"} {
+	for _, scope := range []string{"top5", "top10", "top20", "top50", "top100", "top200", "top500", "all"} {
 		req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"market_turnover_scope":"`+scope+`"}}`)))
 		req.SetBasicAuth("admin", "Admin123")
 		rr := httptest.NewRecorder()

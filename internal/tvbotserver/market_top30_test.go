@@ -160,6 +160,9 @@ func TestMarketTurnoverScopesControlCachedRankingsAndDecisions(t *testing.T) {
 		scope string
 		want  int
 	}{
+		{scope: config.MarketTurnoverScopeTop5, want: 5},
+		{scope: config.MarketTurnoverScopeTop10, want: 10},
+		{scope: config.MarketTurnoverScopeTop20, want: 20},
 		{scope: config.MarketTurnoverScopeTop50, want: 50},
 		{scope: config.MarketTurnoverScopeTop100, want: 100},
 		{scope: config.MarketTurnoverScopeTop200, want: 200},
