@@ -586,6 +586,8 @@
         escape(clock(marker.time)) + '<br>成交价 ' + escape(priceText(marker.price)) +
         (marker.collapsed_count > 1 ? '<br>同一根K线合并 ' + escape(String(marker.collapsed_count)) + ' 次开仓' : '') +
         (marker.quantity ? '<br>数量 ' + escape(marker.quantity) : '') +
+         (marker.notional_usdt ? '<br>名义USDT金额 ' + escape(marker.notional_usdt) : '') +
+         (marker.margin_usdt ? '<br>保证金USDT金额 ' + escape(marker.margin_usdt) : '') +
         (marker.order_id ? '<br>订单号 ' + escape(marker.order_id) : '');
     } else if (marker.type === 'alert') {
       tooltip.innerHTML = '<b>预警 · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +

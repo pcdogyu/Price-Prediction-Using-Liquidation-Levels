@@ -1654,6 +1654,11 @@ func enrichAnalysisTradesWithEvents(cfg config.Config, trades []analysisTrade, r
 				trade.Margin = margin
 			}
 		}
+		if strings.TrimSpace(trade.Turnover) == "" {
+			if turnover := analysisTradeTurnoverValue(cfg, *trade); turnover > 0 {
+				trade.Turnover = trading.NormalizeFloat(turnover)
+			}
+		}
 		trade.NetPnL = analysisTradeNetPnL(*trade)
 	}
 }

@@ -617,7 +617,8 @@ function tradeMarkerTip(marker) {
   if (marker.order_id) details.push('订单号 ' + marker.order_id);
   if (marker.trade_id) details.push('成交号 ' + marker.trade_id);
   if (marker.quantity) details.push('成交量 ' + marker.quantity);
-  if (marker.turnover) details.push('成交额 ' + marker.turnover);
+  if (marker.notional_usdt) details.push('名义USDT金额 ' + marker.notional_usdt);
+  if (marker.margin_usdt) details.push('保证金USDT金额 ' + marker.margin_usdt);
   if (marker.fill_pnl) details.push('成交盈亏 ' + marker.fill_pnl);
   if (marker.net_pnl) details.push('净盈亏 ' + marker.net_pnl);
   if (marker.fee) details.push('手续费 ' + marker.fee + (marker.fee_ccy ? ' ' + marker.fee_ccy : ''));

@@ -173,6 +173,7 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`operation_source: String(item && item.operation_source || "").trim().toLowerCase()`,
 		`operation: "open"`,
 		`function buildTradeChartURL(symbol, exchange, trades, selectedRow, embedded)`,
+		`return buildTradeChartPayloadURL(symbol, exchange, trades, selectedRow, true, "position")`,
 		`function buildPositionChartURL(symbol, exchange, trades, selectedRow)`,
 		`function analysisPositionKlineURL()`,
 		`base + "/alerts/chart"`,

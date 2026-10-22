@@ -5906,6 +5906,8 @@ const tvbotHTML = `<!doctype html>
         fill_sz: item && (item.fill_sz || item.qty) || "",
         qty: item && item.qty || "",
         turnover: item && item.turnover || "",
+        notional_usdt: item && (item.notional_usdt || item.notional || item.turnover) || "",
+        margin_usdt: item && (item.margin_usdt || item.margin) || "",
         fill_pnl: item && (item.fill_pnl || item.realized_pnl) || "",
         fee: item && item.fee || "",
         fee_ccy: item && item.fee_ccy || "",
@@ -5971,7 +5973,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function buildTradeChartURL(symbol, exchange, trades, selectedRow, embedded) {
-      return buildTradeChartPayloadURL(symbol, exchange, trades, selectedRow, embedded, "bubbles");
+      return buildTradeChartPayloadURL(symbol, exchange, trades, selectedRow, true, "position");
     }
 
     function buildPositionChartURL(symbol, exchange, trades, selectedRow) {
@@ -6045,6 +6047,8 @@ const tvbotHTML = `<!doctype html>
             fill_px: row.avgPx,
             fill_sz: row.pos,
             turnover: row.position_amount,
+            notional_usdt: row.position_amount,
+            margin_usdt: row.margin,
             trade_id: "position-entry",
             ord_id: ""
           });

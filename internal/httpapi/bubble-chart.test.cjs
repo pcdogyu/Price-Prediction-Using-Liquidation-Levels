@@ -130,6 +130,7 @@ test('trade markers retain order and fill details for K-line tooltips', () => {
       trade_id: 'gate-trade-1',
       fill_sz: '963',
       turnover: '77.77',
+      margin: '7.777',
       fee: '-0.0777',
       fee_ccy: 'USDT'
     }
@@ -139,6 +140,8 @@ test('trade markers retain order and fill details for K-line tooltips', () => {
   assert.equal(markers[0].trade_id, 'gate-trade-1');
   assert.equal(markers[0].quantity, '963');
   assert.equal(markers[0].turnover, '77.77');
+  assert.equal(markers[0].notional_usdt, '77.77');
+  assert.equal(markers[0].margin_usdt, '7.777');
   assert.equal(markers[0].fee, '-0.0777');
 });
 

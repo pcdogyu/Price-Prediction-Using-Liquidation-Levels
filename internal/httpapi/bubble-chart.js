@@ -80,6 +80,8 @@
           trade_id: String(row.trade_id || '').trim(),
           quantity: String(row.fill_sz || row.qty || '').trim(),
           turnover: String(row.turnover || '').trim(),
+          notional_usdt: String(row.notional_usdt || row.notional || row.turnover || '').trim(),
+          margin_usdt: String(row.margin_usdt || row.margin || '').trim(),
           fill_pnl: String(row.fill_pnl || '').trim(),
           net_pnl: String(row.net_pnl || '').trim(),
           fee: String(row.fee || '').trim(),

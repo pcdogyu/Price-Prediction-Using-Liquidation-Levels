@@ -564,16 +564,16 @@ func TestEnrichAnalysisTradesUsesMatchedOrderLeverageAndComputesNetPnL(t *testin
 		},
 	}
 	enrichAnalysisTrades(cfg, trades, records)
-	if trades[0].Leverage != 5 || trades[0].Margin != "200" || trades[0].NetPnL != "2.88" {
+	if trades[0].Leverage != 5 || trades[0].Margin != "200" || trades[0].Turnover != "1000" || trades[0].NetPnL != "2.88" {
 		t.Fatalf("bad OKX enrichment: %#v", trades[0])
 	}
-	if trades[1].Leverage != 10 || trades[1].Margin != "192" || trades[1].NetPnL != "4.75" {
+	if trades[1].Leverage != 10 || trades[1].Margin != "192" || trades[1].Turnover != "1920" || trades[1].NetPnL != "4.75" {
 		t.Fatalf("bad Binance enrichment: %#v", trades[1])
 	}
-	if trades[2].Leverage != 3 || trades[2].Margin != "" || trades[2].NetPnL != "0.99" {
+	if trades[2].Leverage != 3 || trades[2].Margin != "" || trades[2].Turnover != "" || trades[2].NetPnL != "0.99" {
 		t.Fatalf("missing ctVal should keep leverage/net pnl but omit margin: %#v", trades[2])
 	}
-	if trades[3].Leverage != 10 || trades[3].Margin != "100" || trades[3].NetPnL != "2.88" {
+	if trades[3].Leverage != 10 || trades[3].Margin != "100" || trades[3].Turnover != "1000" || trades[3].NetPnL != "2.88" {
 		t.Fatalf("unrecorded OKX fill should use configured leverage: %#v", trades[3])
 	}
 }
