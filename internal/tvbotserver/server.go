@@ -1196,8 +1196,14 @@ func validateConfigPatch(patch configPatch) error {
 	if patch.Trading == nil {
 		return nil
 	}
-	if cooldown := patch.Trading.LossCooldown; cooldown != nil && cooldown.Hours != nil {
-		if *cooldown.Hours < 1 || *cooldown.Hours > 8760 {
+	if cooldown := patch.Trading.LossCooldown; cooldown != nil {
+		if cooldown.CoinpairHours != nil && (*cooldown.CoinpairHours < 1 || *cooldown.CoinpairHours > 8760) {
+			return errors.New("loss_cooldown.coinpair_hours must be between 1 and 8760")
+		}
+		if cooldown.GlobalHours != nil && (*cooldown.GlobalHours < 1 || *cooldown.GlobalHours > 8760) {
+			return errors.New("loss_cooldown.global_hours must be between 1 and 8760")
+		}
+		if cooldown.Hours != nil && (*cooldown.Hours < 1 || *cooldown.Hours > 8760) {
 			return errors.New("loss_cooldown.hours must be between 1 and 8760")
 		}
 	}
@@ -2889,6 +2895,8 @@ type tradingPatch struct {
 type lossCooldownPatch struct {
 	Enabled       *bool `json:"enabled"`
 	GlobalEnabled *bool `json:"global_enabled"`
+	CoinpairHours *int  `json:"coinpair_hours"`
+	GlobalHours   *int  `json:"global_hours"`
 	Hours         *int  `json:"hours"`
 }
 
@@ -2996,8 +3004,21 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 		if patch.Trading.LossCooldown.GlobalEnabled != nil {
 			c.Trading.LossCooldown.GlobalEnabled = *patch.Trading.LossCooldown.GlobalEnabled
 		}
+		if patch.Trading.LossCooldown.CoinpairHours != nil {
+			c.Trading.LossCooldown.CoinpairHours = *patch.Trading.LossCooldown.CoinpairHours
+		}
+		if patch.Trading.LossCooldown.GlobalHours != nil {
+			c.Trading.LossCooldown.GlobalHours = *patch.Trading.LossCooldown.GlobalHours
+		}
 		if patch.Trading.LossCooldown.Hours != nil {
-			c.Trading.LossCooldown.Hours = *patch.Trading.LossCooldown.Hours
+			// Keep older API clients functional by applying the legacy shared
+			// value to both scopes when no new value was supplied for that scope.
+			if patch.Trading.LossCooldown.CoinpairHours == nil {
+				c.Trading.LossCooldown.CoinpairHours = *patch.Trading.LossCooldown.Hours
+			}
+			if patch.Trading.LossCooldown.GlobalHours == nil {
+				c.Trading.LossCooldown.GlobalHours = *patch.Trading.LossCooldown.Hours
+			}
 		}
 	}
 	if patch.Trading.FillMonitor != nil {

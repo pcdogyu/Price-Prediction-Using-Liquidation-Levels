@@ -89,7 +89,50 @@ type TradingConfig struct {
 type LossCooldownConfig struct {
 	Enabled       bool `json:"enabled"`
 	GlobalEnabled bool `json:"global_enabled"`
-	Hours         int  `json:"hours"`
+	CoinpairHours int  `json:"coinpair_hours"`
+	GlobalHours   int  `json:"global_hours"`
+	// Hours is retained as a compatibility alias for older clients and config
+	// files. New code must use the scope-specific fields above.
+	Hours int `json:"hours,omitempty"`
+}
+
+// UnmarshalJSON migrates the original shared hours setting to both scopes
+// when loading a pre-split configuration. Explicit scope-specific values take
+// precedence when both old and new fields are present.
+func (c *LossCooldownConfig) UnmarshalJSON(data []byte) error {
+	type lossCooldownFields struct {
+		Enabled       *bool `json:"enabled"`
+		GlobalEnabled *bool `json:"global_enabled"`
+		CoinpairHours *int  `json:"coinpair_hours"`
+		GlobalHours   *int  `json:"global_hours"`
+		Hours         *int  `json:"hours"`
+	}
+	var fields lossCooldownFields
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if fields.Enabled != nil {
+		c.Enabled = *fields.Enabled
+	}
+	if fields.GlobalEnabled != nil {
+		c.GlobalEnabled = *fields.GlobalEnabled
+	}
+	if fields.CoinpairHours != nil {
+		c.CoinpairHours = *fields.CoinpairHours
+	}
+	if fields.GlobalHours != nil {
+		c.GlobalHours = *fields.GlobalHours
+	}
+	if fields.Hours != nil {
+		c.Hours = *fields.Hours
+		if fields.CoinpairHours == nil {
+			c.CoinpairHours = *fields.Hours
+		}
+		if fields.GlobalHours == nil {
+			c.GlobalHours = *fields.Hours
+		}
+	}
+	return nil
 }
 
 type FillMonitorConfig struct {
@@ -258,7 +301,8 @@ func Default() Config {
 			LossCooldown: LossCooldownConfig{
 				Enabled:       true,
 				GlobalEnabled: false,
-				Hours:         24,
+				CoinpairHours: 24,
+				GlobalHours:   24,
 			},
 			FillMonitor: FillMonitorConfig{
 				Enabled:             true,
@@ -434,9 +478,23 @@ func (c *Config) Normalize() {
 		c.Trading.ShortLimitPriceMultiplier = 1.003
 	}
 	c.Trading.LayeredOrder = c.Trading.LayeredOrder.Normalize()
-	if c.Trading.LossCooldown.Hours <= 0 {
-		c.Trading.LossCooldown.Hours = 24
+	if c.Trading.LossCooldown.CoinpairHours <= 0 {
+		if c.Trading.LossCooldown.Hours > 0 {
+			c.Trading.LossCooldown.CoinpairHours = c.Trading.LossCooldown.Hours
+		} else {
+			c.Trading.LossCooldown.CoinpairHours = 24
+		}
 	}
+	if c.Trading.LossCooldown.GlobalHours <= 0 {
+		if c.Trading.LossCooldown.Hours > 0 {
+			c.Trading.LossCooldown.GlobalHours = c.Trading.LossCooldown.Hours
+		} else {
+			c.Trading.LossCooldown.GlobalHours = 24
+		}
+	}
+	// Keep the legacy alias aligned with the per-coinpair scope for older API
+	// consumers while the two new fields remain authoritative.
+	c.Trading.LossCooldown.Hours = c.Trading.LossCooldown.CoinpairHours
 	if c.Trading.FillMonitor.PollIntervalSeconds <= 0 {
 		c.Trading.FillMonitor.PollIntervalSeconds = 20
 	}
@@ -537,8 +595,11 @@ func (c Config) Validate() error {
 	if err := c.Trading.LayeredOrder.Validate(); err != nil {
 		return err
 	}
-	if c.Trading.LossCooldown.Hours < 1 || c.Trading.LossCooldown.Hours > 8760 {
-		return errors.New("loss_cooldown.hours must be between 1 and 8760")
+	if c.Trading.LossCooldown.CoinpairHours < 1 || c.Trading.LossCooldown.CoinpairHours > 8760 {
+		return errors.New("loss_cooldown.coinpair_hours must be between 1 and 8760")
+	}
+	if c.Trading.LossCooldown.GlobalHours < 1 || c.Trading.LossCooldown.GlobalHours > 8760 {
+		return errors.New("loss_cooldown.global_hours must be between 1 and 8760")
 	}
 	if c.Trading.FillMonitor.PollIntervalSeconds <= 0 {
 		return errors.New("fill_monitor.poll_interval_seconds must be positive")

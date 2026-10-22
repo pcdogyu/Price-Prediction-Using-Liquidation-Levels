@@ -50,7 +50,7 @@ func TestConfiguredLossCooldownDurationAndDisable(t *testing.T) {
 	srv := newTestServer(t)
 	now := srv.now()
 	cfg := config.Default()
-	cfg.Trading.LossCooldown.Hours = 3
+	cfg.Trading.LossCooldown.CoinpairHours = 3
 	block, created, err := srv.recordLossCoinpairCooldown(cfg, "loss:1", "exchange_fill", trading.ExchangeOKX, "main", "2500", now, "ETHUSDT")
 	if err != nil || !created || !block.ExpiresAt.Equal(now.Add(3*time.Hour)) {
 		t.Fatalf("custom loss cooldown was not created: created=%v block=%#v err=%v", created, block, err)
@@ -62,17 +62,44 @@ func TestConfiguredLossCooldownDurationAndDisable(t *testing.T) {
 	}
 }
 
+func TestLossCooldownUsesSeparateScopeDurations(t *testing.T) {
+	srv := newTestServer(t)
+	now := srv.now()
+	cfg := config.Default()
+	cfg.Trading.LossCooldown.CoinpairHours = 3
+	cfg.Trading.LossCooldown.GlobalHours = 5
+	cfg.Trading.LossCooldown.GlobalEnabled = true
+	srv.ConfigStore = config.NewStore("", cfg)
+
+	if _, created, err := srv.recordLossCoinpairCooldown(cfg, "split-loss:1", "exchange_fill", trading.ExchangeBinance, "main", "49000", now, "BTCUSDT"); err != nil || !created {
+		t.Fatalf("separate scope cooldowns were not created: created=%v err=%v", created, err)
+	}
+	blocks, err := srv.Orders.ListActiveCoinpairBlocks(now)
+	if err != nil || len(blocks) != 2 {
+		t.Fatalf("unexpected separate scope cooldown blocks: blocks=%#v err=%v", blocks, err)
+	}
+	for _, block := range blocks {
+		want := 3 * time.Hour
+		if block.Keyword == globalCoinpairCooldownKeyword {
+			want = 5 * time.Hour
+		}
+		if !block.ExpiresAt.Equal(now.Add(want)) {
+			t.Fatalf("cooldown %q used %s, want %s: %#v", block.Keyword, block.ExpiresAt.Sub(now), want, block)
+		}
+	}
+}
+
 func TestConfiguredGlobalLossCooldownBlocksEveryCoinpair(t *testing.T) {
 	srv := newTestServer(t)
 	now := srv.now()
 	cfg := config.Default()
 	cfg.Trading.LossCooldown.Enabled = false
 	cfg.Trading.LossCooldown.GlobalEnabled = true
-	cfg.Trading.LossCooldown.Hours = 3
+	cfg.Trading.LossCooldown.GlobalHours = 5
 	srv.ConfigStore = config.NewStore("", cfg)
 
 	block, created, err := srv.recordLossCoinpairCooldown(cfg, "global-loss:1", "exchange_fill", trading.ExchangeBinance, "main", "49000", now, "BTCUSDT")
-	if err != nil || !created || block.Keyword != globalCoinpairCooldownKeyword || !block.ExpiresAt.Equal(now.Add(3*time.Hour)) {
+	if err != nil || !created || block.Keyword != globalCoinpairCooldownKeyword || !block.ExpiresAt.Equal(now.Add(5*time.Hour)) {
 		t.Fatalf("global loss cooldown was not created: created=%v block=%#v err=%v", created, block, err)
 	}
 	blocks, err := srv.Orders.ListActiveCoinpairBlocks(now)

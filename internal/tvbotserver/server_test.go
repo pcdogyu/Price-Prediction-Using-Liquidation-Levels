@@ -808,7 +808,7 @@ func TestTVBotConfigUpdatesLossCooldownAndClearsAutomaticBlocks(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Trading.LossCooldown.Enabled || cfg.Trading.LossCooldown.Hours != 12 {
+	if cfg.Trading.LossCooldown.Enabled || cfg.Trading.LossCooldown.CoinpairHours != 12 || cfg.Trading.LossCooldown.GlobalHours != 12 {
 		t.Fatalf("bad saved loss cooldown config: %#v", cfg.Trading.LossCooldown)
 	}
 	blocks, err := srv.Orders.ListActiveCoinpairBlocks(now)
@@ -869,10 +869,11 @@ func TestTVBotUIIncludesLossCooldownControls(t *testing.T) {
 	for _, marker := range []string{
 		`id="loss-cooldown-enabled"`,
 		`id="loss-cooldown-global-enabled"`,
-		`id="loss-cooldown-hours"`,
+		`id="loss-cooldown-coinpair-hours"`,
+		`id="loss-cooldown-global-hours"`,
 		`id="save-loss-cooldown"`,
 		`function saveLossCooldownSettings()`,
-		`loss_cooldown: { enabled: enabled.checked, global_enabled: globalEnabled.checked, hours: value }`,
+		`loss_cooldown: { enabled: enabled.checked, global_enabled: globalEnabled.checked, coinpair_hours: coinpairValue, global_hours: globalValue }`,
 	} {
 		if !strings.Contains(tvbotHTML, marker) {
 			t.Fatalf("tvbot UI missing loss cooldown marker %q", marker)

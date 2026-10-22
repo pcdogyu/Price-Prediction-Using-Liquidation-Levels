@@ -256,10 +256,10 @@ func (s *Server) recordLossCoinpairCooldown(cfg config.Config, eventID, source, 
 	if !cooldown.Enabled && !cooldown.GlobalEnabled {
 		return storage.CoinpairBlock{}, false, nil
 	}
-	duration := time.Duration(cooldown.Hours) * time.Hour
 	var block storage.CoinpairBlock
 	created := false
 	if cooldown.Enabled {
+		duration := time.Duration(cooldown.CoinpairHours) * time.Hour
 		var err error
 		block, created, err = s.recordCoinpairCooldownWithDuration(eventID, source, exchange, apiID, triggerPrice, occurredAt, duration, symbolCandidates...)
 		if err != nil {
@@ -281,7 +281,7 @@ func (s *Server) recordLossCoinpairCooldown(cfg config.Config, eventID, source, 
 			apiID,
 			triggerPrice,
 			occurredAt,
-			duration,
+			time.Duration(cooldown.GlobalHours)*time.Hour,
 			globalCoinpairCooldownKeyword,
 			globalSymbol,
 		)
