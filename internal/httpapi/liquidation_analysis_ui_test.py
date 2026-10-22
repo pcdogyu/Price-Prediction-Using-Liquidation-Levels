@@ -71,10 +71,15 @@ with sync_playwright() as playwright:
             return
         packet = copy.deepcopy(baseline)
         if summary:
-            packet["data"]["periods"] = state["custom"] if state["custom"] is not None else [
-                {"label": label, "long_usd": 200 if side == "空" else 100, "short_usd": 200 if side == "多" else 100, "count": 3}
-                for label, side in zip(labels, state["pattern"])
-            ]
+            pattern = state["custom"] if state["custom"] is not None else state["pattern"]
+            if query["symbol"] == "BTCUSDT":
+                pattern = "多多多多多多"
+            if isinstance(pattern, str):
+                pattern = [
+                    {"label": label, "long_usd": 200 if side == "空" else 100, "short_usd": 200 if side == "多" else 100, "count": 3}
+                    for label, side in zip(labels, pattern)
+                ]
+            packet["data"]["periods"] = pattern
         else:
             symbol = query["symbol"] if query["symbol"] != "ALL" else "SOLUSDT"
             packet["data"]["symbols"] = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
@@ -99,10 +104,10 @@ with sync_playwright() as playwright:
         page.wait_for_function("() => window.__testActiveRequests === 0")
         page.wait_for_load_state("networkidle")
 
-    def check_queries():
+    def check_queries(symbol="ETHUSDT"):
         summary = next(q for q in reversed(records) if q["limit"] == "1")
         detail = next(q for q in reversed(records) if q["limit"] == "50")
-        assert all(summary[k] == v for k, v in {"symbol": "ETHUSDT", "side": "all", "field": "notional_usd", "minimum": "0"}.items()), summary
+        assert all(summary[k] == v for k, v in {"symbol": symbol, "side": "all", "field": "notional_usd", "minimum": "0"}.items()), summary
         assert "cursor" not in summary
         assert summary["to"] == detail["to"], (summary, detail)
         return summary, detail
@@ -150,22 +155,26 @@ with sync_playwright() as playwright:
     page.locator('[data-symbol="BTCUSDT"]').click()
     page.wait_for_function("() => window.__testActiveRequests === 0")
     page.wait_for_load_state("networkidle")
+    expect(page.locator("#liq-analysis-heading")).to_have_text("BTCUSDT 六周期清算结构")
+    assert page.locator("#liq-periods .label").all_text_contents() == ["BTCUSDT · " + label + " 清算金额 USD" for label in labels]
+    expect(page.locator("#liq-combination")).to_have_text("多多多多多多")
+    check_queries("BTCUSDT")
     page.locator("#liq-side").select_option("short")
     page.locator("#liq-field").select_option("quantity")
     page.locator("#liq-min").fill("500")
     page.get_by_role("button", name="应用筛选", exact=True).click()
     page.wait_for_function("() => window.__testActiveRequests === 0")
     page.wait_for_load_state("networkidle")
-    summary, detail = check_queries()
+    summary, detail = check_queries("BTCUSDT")
     assert {k: detail[k] for k in ["symbol", "side", "field", "minimum"]} == {"symbol": "BTCUSDT", "side": "short", "field": "quantity", "minimum": "500"}
     if not production:
-        expect(page.locator("#liq-combination")).to_have_text("空空多多多多")
+        expect(page.locator("#liq-combination")).to_have_text("多多多多多多")
         expect(page.locator("#liq-rows")).to_contain_text("BTCUSDT")
         anchor = summary["to"]
         page.locator("#liq-next").click()
         page.wait_for_load_state("networkidle")
         expect(page.locator("#liq-page")).to_contain_text("第 2 页")
-        assert check_queries()[0]["to"] == anchor
+        assert check_queries("BTCUSDT")[0]["to"] == anchor
         expect(page.locator("#liq-analysis-status")).to_contain_text("历史分页保持此截止时间")
         page.locator("#liq-prev").click()
         page.wait_for_load_state("networkidle")
@@ -177,7 +186,7 @@ with sync_playwright() as playwright:
         expect(page.locator("#liq-analysis-status")).to_contain_text("保留上次成功数据")
         expect(page.locator("#liq-page")).to_contain_text("第 1 页")
         expect(page.locator("#page-error")).to_be_hidden()
-        expect(page.locator("#liq-combination")).to_have_text("空空多多多多")
+        expect(page.locator("#liq-combination")).to_have_text("多多多多多多")
         expect(page.locator("#liq-rows")).to_contain_text("321")
         state["failure"] = False
         state["detail_failure"] = True
@@ -202,7 +211,7 @@ with sync_playwright() as playwright:
     page.wait_for_function("() => window.__testActiveRequests === 0")
     page.wait_for_load_state("networkidle")
     assert len(records) >= before + 2, {"before": before, "after": len(records), "recent_queries": records[-6:]}
-    summary, detail = check_queries()
+    summary, detail = check_queries("ALL")
     assert detail["symbol"] == "ALL"
 
     if production:
@@ -240,6 +249,6 @@ with sync_playwright() as playwright:
         expect(first_failure.locator("#liq-combination")).to_have_text("尚未形成完整多空组合")
         expect(first_failure.locator("#liq-rows")).to_contain_text("321")
         first_failure.close()
-    print(json.dumps({"production": production, "all_64_combinations": not production, "current_row_only": True, "fixed_eth_scope": True, "independent_filters": True, "paired_cutoff": True, "five_second_refresh": True, "failure_and_recovery": not production, "themes": ["dark", "light"], "widths": [1440, 390], "javascript_errors": errors, "live_periods": actual if production else None}, ensure_ascii=False))
+    print(json.dumps({"production": production, "all_64_combinations": not production, "current_row_only": True, "symbol_scoped_analysis": True, "independent_filters": True, "paired_cutoff": True, "five_second_refresh": True, "failure_and_recovery": not production, "themes": ["dark", "light"], "widths": [1440, 390], "javascript_errors": errors, "live_periods": actual if production else None}, ensure_ascii=False))
     context.close()
     browser.close()

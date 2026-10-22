@@ -19,7 +19,7 @@
   let liqAnalysisAnchor = '';
   let historyCursor = '', historyRows = [], historyNext = '', historyAnchor = '', frozenBook = null, historyKind = 'events';
   $(page + '-page').hidden = false;
-  $('page-subtitle').textContent = ({liquidations:'默认 ETHUSDT · 六周期清算结构与逐笔爆仓历史', 'hedge-wall':'盘口挂单墙 · 实时分布与历史记录', 'market-info':'永续市场数据与期权 Gamma/GEX'})[page];
+  $('page-subtitle').textContent = ({liquidations:'按所选币对显示六周期清算结构与逐笔爆仓历史', 'hedge-wall':'盘口挂单墙 · 实时分布与历史记录', 'market-info':'永续市场数据与期权 Gamma/GEX'})[page];
   if (page === 'liquidations') $('symbol').hidden = true;
   async function get(path, params = {}) {
     const response = await fetch(base + 'api/v1/' + path + '?' + new URLSearchParams(params), {cache:'no-store', credentials:'same-origin'});
@@ -56,12 +56,12 @@
             $('page-error').hidden = false;
             $('status').textContent = '明细更新失败 · 保留上次数据';
           }),
-          get('liquidations', {symbol:'ETHUSDT', side:'all', field:'notional_usd', minimum:0, limit:1, to:anchor}).then(packet => {
+          get('liquidations', {symbol:liqSymbol, side:'all', field:'notional_usd', minimum:0, limit:1, to:anchor}).then(packet => {
             if (!pendingLoad) renderLiquidationAnalysis(packet, anchor);
           }).catch(error => {
             if (pendingLoad) return;
             $('liq-analysis-status').classList.add('warning');
-            $('liq-analysis-status').textContent = 'ETHUSDT分析更新失败 · ' + (liqAnalysisAnchor ? '保留上次成功数据，统计截止：' + when(liqAnalysisAnchor) : '等待有效数据') + ' · ' + error.message;
+            $('liq-analysis-status').textContent = symbolLabel(liqSymbol) + '分析更新失败 · ' + (liqAnalysisAnchor ? '保留上次成功数据，统计截止：' + when(liqAnalysisAnchor) : '等待有效数据') + ' · ' + error.message;
           })
         ]);
       } else if (page === 'hedge-wall') {
@@ -87,11 +87,13 @@
   }
   function renderLiquidationAnalysis(packet, anchor) {
     const analysis = window.LiquidationAnalysis.analyze(packet?.data?.periods);
+    const symbol = symbolLabel(liqSymbol);
     const share = value => valid(value) ? (value * 100).toFixed(1) + '%' : '—';
+    $('liq-analysis-symbol').textContent = symbol;
     $('liq-periods').innerHTML = analysis.periods.map(p => {
       const detail = p.state === 'missing' ? '等待有效的双侧清算数据' : '多头 ' + compact(p.long_usd) + ' / 空头 ' + compact(p.short_usd) + ' · ' + (p.count ?? '—') + ' 笔';
       const side = p.state === 'long' || p.state === 'short' ? p.marker : '—';
-      return `<div class="info-metric ${p.card_class}"><div class="label">ETHUSDT · ${p.label} 清算金额 USD</div><div class="number-row"><div class="number">${compact(p.total)}</div><div class="liq-side" aria-label="${escape(p.state_label)}">${escape(side)}</div></div><div class="liq-period-state">${p.state_label}</div><div class="detail">${escape(detail)}</div><div class="detail liq-shares">多头占比 ${share(p.long_share)} / 空头占比 ${share(p.short_share)}</div></div>`;
+      return `<div class="info-metric ${p.card_class}"><div class="label">${escape(symbol)} · ${p.label} 清算金额 USD</div><div class="number-row"><div class="number">${compact(p.total)}</div><div class="liq-side" aria-label="${escape(p.state_label)}">${escape(side)}</div></div><div class="liq-period-state">${p.state_label}</div><div class="detail">${escape(detail)}</div><div class="detail liq-shares">多头占比 ${share(p.long_share)} / 空头占比 ${share(p.short_share)}</div></div>`;
     }).join('');
     $('liq-combination').textContent = analysis.combination;
     $('liq-period-states').innerHTML = analysis.periods.map(p => `<span class="liq-state-chip ${p.card_class}">${p.label} ${p.state_label}</span>`).join('');
