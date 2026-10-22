@@ -5919,7 +5919,7 @@ const tvbotHTML = `<!doctype html>
         toast("当前分析窗口没有该 Gate 币对的交易记录");
         return;
       }
-      const url = buildTradeChartURL(symbol, trades, row);
+      const url = buildTradeChartURL(symbol, trades, row, true);
       if (!url) {
         toast("无法暂存交易图表数据，请检查浏览器本地存储权限");
         return;

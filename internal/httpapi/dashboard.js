@@ -1,6 +1,8 @@
 'use strict';
 
 const NS = 'http://www.w3.org/2000/svg';
+const embeddedChart = new URLSearchParams(window.location.search).get('embed') === '1';
+document.documentElement.classList.toggle('embedded-chart', embeddedChart);
 const paint = value => window.LiquidationTheme.color(value);
 const $ = id => document.getElementById(id);
 const cache = { signal: null, map: null, market: null, volume: null };
@@ -608,14 +610,19 @@ function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top
     }
     const x = clamp(scale.x(marker.time), left + 9, candleRight - 9);
     const priceY = clamp(y(marker.price), top + 9, plotBottom - 9);
-    const color = marker.action === 'buy' ? '#2dd4bf' : '#fb7185';
+    const long = marker.side === 'long';
+    const color = long ? '#2dd4bf' : '#fb7185';
+    const label = long ? '多单' : '空单';
+    const phase = marker.phase === 'entry' ? '开仓' : '平仓';
+    const labelText = label + phase;
+    const labelWidth = labelText.length * 11 + 12;
+    const labelCenterY = clamp(priceY + (long ? 25 : -25), top + 12, plotBottom - 12);
+    const labelX = clamp(x, left + labelWidth / 2, candleRight - labelWidth / 2);
     const group = svgNode('g', { 'data-trade-marker': marker.id, 'data-tip': tradeMarkerTip(marker) });
-    if (marker.selected) group.appendChild(svgNode('circle', { cx: x, cy: priceY, r: 11, fill: 'none', stroke: '#f8fafc', 'stroke-width': 2, opacity: .95 }));
-    const upward = marker.action === 'buy';
-    const d = upward
-      ? 'M ' + x + ' ' + (priceY - 9) + ' L ' + (x - 8) + ' ' + (priceY + 6) + ' L ' + (x + 8) + ' ' + (priceY + 6) + ' Z'
-      : 'M ' + x + ' ' + (priceY + 9) + ' L ' + (x - 8) + ' ' + (priceY - 6) + ' L ' + (x + 8) + ' ' + (priceY - 6) + ' Z';
-    group.appendChild(svgNode('path', { d, fill: color, stroke: '#07141d', 'stroke-width': 1.4 }));
+    if (marker.selected) group.appendChild(svgNode('rect', { x: labelX - labelWidth / 2 - 3, y: labelCenterY - 12, width: labelWidth + 6, height: 24, fill: 'none', stroke: '#f8fafc', 'stroke-width': 2, rx: 5, opacity: .95 }));
+    group.appendChild(svgNode('line', { x1: x, y1: priceY, x2: labelX, y2: long ? labelCenterY - 10 : labelCenterY + 10, stroke: color, 'stroke-width': 1.2, opacity: .9 }));
+    group.appendChild(svgNode('rect', { x: labelX - labelWidth / 2, y: labelCenterY - 10, width: labelWidth, height: 20, fill: color, stroke: '#07141d', 'stroke-width': 1.2, rx: 5 }));
+    group.appendChild(svgNode('text', { x: labelX, y: labelCenterY + 4, 'text-anchor': 'middle', fill: '#07141d', 'font-size': 10, 'font-weight': 750 }, labelText));
     plot.appendChild(group);
     visible++;
   });
@@ -646,29 +653,32 @@ function draw(view, map, signal, volume) {
   const svg = $('market-chart');
   svg.replaceChildren();
   const candles = visibleCandles();
-  const bins = map?.bins || [];
+  const layout = embeddedChart ? { ...dims, candleRight: 1668, profileRight: 1668, axisPriceRight: 1718 } : dims;
+  const bins = embeddedChart ? [] : (map?.bins || []);
   $('chart-title').textContent = (intervalName[chart.interval] || chart.interval) + ' K线 · 成交量分布 · 清算墙';
-  renderClassicPivots(view, signal);
+  if (!embeddedChart) renderClassicPivots(view, signal);
   const sessionRange = volume?.session_start ? ' (' + when(volume.session_start) + ' → ' + when(volume.session_end) + ')' : '';
   const profileState = volume?.state === 'ok' ? '当前时段成交量' + sessionRange : volume?.state === 'backfilling' ? '成交量回填 ' + ((volume.backfill_progress || 0) * 100).toFixed(0) + '%' + sessionRange : volume?.state === 'stale' ? '成交量已过期' + sessionRange : '成交量不可用';
   const leverageText = (map?.leverages || []).map(value => value + '×').join('/');
   const coinGlassMap = map?.data_source === 'coinglass_binance_liqmap';
   const liquidationName = coinGlassMap ? 'CoinGlass Binance 清算墙' : 'CoinGlass 清算墙不可用';
   const range = currentRange(candles);
-  renderLiquidationTop3(map, range);
+  if (!embeddedChart) renderLiquidationTop3(map, range);
   $('trade-marker-legend').classList.toggle('hidden', !tradeView.enabled);
   bubbleHits = () => [];
   const state = bubbleLoader.state;
   $('bubble-retry').classList.toggle('hidden', state.status !== 'error');
   const loadState = state.status === 'loading' ? '补齐中 · ' + state.pages + '页 / ' + state.loaded + '笔' : state.status === 'error' ? '补齐失败：' + state.error + '（可重试）' : state.status === 'complete' ? '窗口已补齐' : '等待数据';
-  const context = (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · K线 ' + chart.visibleCount + '根 · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom);
-  if (!range || !chartTimeScale(candles, dims.left, dims.candleRight)) {
+  const context = embeddedChart
+    ? (chart.atLatest ? '最新K线' : '历史K线')
+    : (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · K线 ' + chart.visibleCount + '根 · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom);
+  if (!range || !chartTimeScale(candles, layout.left, layout.candleRight)) {
     ['price-low', 'price-high', 'window-start', 'window-end', 'bubble-count', 'trade-marker-count'].forEach(key => svg.removeAttribute('data-' + key));
     $('chart-context').textContent = context + ' · 等待有效K线';
     svg.appendChild(svgNode('text', { x: 800, y: 280, 'text-anchor': 'middle', fill: '#83a0b2' }, '等待有效 K 线数据'));
     return;
   }
-  const { height, left, top, bottom, candleRight, volumeLeft, volumeRight, liquidationLeft, profileRight, axisPriceRight } = dims;
+  const { height, left, top, bottom, candleRight, volumeLeft, volumeRight, liquidationLeft, profileRight, axisPriceRight } = layout;
   const [low, high] = range;
   svg.setAttribute('data-price-low', low);
   svg.setAttribute('data-price-high', high);
@@ -720,11 +730,14 @@ function draw(view, map, signal, volume) {
       const bodyTop = y(Math.max(candle.open, candle.close));
       const bodyBottom = y(Math.min(candle.open, candle.close));
       const patterns = (candle.patterns || []).map(item => patternName[item.name] || item.name).join(' · ') || '无识别形态';
-      const group = svgNode('g', { 'data-tip': when(candle.time) + '\nO ' + money(candle.open) + '  H ' + money(candle.high) + '\nL ' + money(candle.low) + '  C ' + money(candle.close) + '\n成交额 $' + compact(candle.volume_usd) + '\n' + patterns + (candle.complete ? '' : '\n当前K线尚未完成') });
+      const candleTip = embeddedChart
+        ? when(candle.time) + '\nO ' + money(candle.open) + '  H ' + money(candle.high) + '\nL ' + money(candle.low) + '  C ' + money(candle.close)
+        : when(candle.time) + '\nO ' + money(candle.open) + '  H ' + money(candle.high) + '\nL ' + money(candle.low) + '  C ' + money(candle.close) + '\n成交额 $' + compact(candle.volume_usd) + '\n' + patterns + (candle.complete ? '' : '\n当前K线尚未完成');
+      const group = svgNode('g', { 'data-tip': candleTip });
       group.appendChild(svgNode('line', { x1: x, y1: y(candle.high), x2: x, y2: y(candle.low), stroke: color, 'stroke-width': 1.15 }));
       group.appendChild(svgNode('rect', { x: x - bodyWidth / 2, y: bodyTop, width: bodyWidth, height: Math.max(1.5, bodyBottom - bodyTop), fill: color, rx: .8 }));
-      const bullish = (candle.patterns || []).filter(item => item.bias === 'bullish');
-      const bearish = (candle.patterns || []).filter(item => item.bias === 'bearish');
+      const bullish = embeddedChart ? [] : (candle.patterns || []).filter(item => item.bias === 'bullish');
+      const bearish = embeddedChart ? [] : (candle.patterns || []).filter(item => item.bias === 'bearish');
       if (bullish.length) {
         const cy = y(candle.low) + 9;
         group.appendChild(svgNode('path', { d: arrowPath(x, cy, 'long', 4), fill: 'none', stroke: '#2dd4bf', 'stroke-width': 1.4, 'data-tip': 'K线形态 · 多单方向\n' + bullish.map(item => patternName[item.name] || item.name).join(' · ') + '\n' + when(candle.time) }));
@@ -733,7 +746,7 @@ function draw(view, map, signal, volume) {
         const cy = y(candle.high) - 9;
         group.appendChild(svgNode('path', { d: arrowPath(x, cy, 'short', 4), fill: 'none', stroke: '#fb7185', 'stroke-width': 1.4, 'data-tip': 'K线形态 · 空单方向\n' + bearish.map(item => patternName[item.name] || item.name).join(' · ') + '\n' + when(candle.time) }));
       }
-      const signals = modelSignals.get(new Date(candle.time).getTime()) || [];
+      const signals = embeddedChart ? [] : (modelSignals.get(new Date(candle.time).getTime()) || []);
       signals.forEach(item => {
         const patterned = item.side === 'long' ? bullish.length : bearish.length;
         const cy = item.side === 'long' ? y(candle.low) + 10 + (patterned ? 11 : 0) : y(candle.high) - 10 - (patterned ? 11 : 0);
@@ -743,14 +756,14 @@ function draw(view, map, signal, volume) {
       plot.appendChild(group);
     });
   }
-  const windowLiquidations = window.BubbleChart.windowEvents(chart.liquidations, timeScale.start, timeScale.end);
-  const bubbles = drawLiquidationBubbles(plot, windowLiquidations, range, timeScale, y, left, candleRight, top, plotBottom);
+  const windowLiquidations = embeddedChart ? [] : window.BubbleChart.windowEvents(chart.liquidations, timeScale.start, timeScale.end);
+  const bubbles = embeddedChart ? { points: [], outside: 0 } : drawLiquidationBubbles(plot, windowLiquidations, range, timeScale, y, left, candleRight, top, plotBottom);
   const tradeMarkers = tradeView.enabled ? drawTradeMarkers(plot, tradeView.markers, range, timeScale, y, left, candleRight, top, plotBottom) : { visible: 0, outside: 0 };
   svg.setAttribute('data-bubble-count', bubbles.points.length);
   svg.setAttribute('data-trade-marker-count', tradeMarkers.visible);
   const tradeText = tradeView.enabled ? ' · Gate交易点 屏内 ' + tradeMarkers.visible + '个' + (tradeMarkers.outside ? ' · 视野外 ' + tradeMarkers.outside + '个' : '') : '';
   $('chart-context').textContent = context + ' · 窗口已加载 ' + windowLiquidations.length + '笔 · 屏内气泡 ' + bubbles.points.length + '笔' + (bubbles.outside ? ' · 价格视野外 ' + bubbles.outside + '笔' : '') + tradeText + ' · ' + loadState;
-  if (bins.length) {
+  if (!embeddedChart && bins.length) {
     const maximum = Math.max(...bins.map(item => item.total_usd), 1);
     const binWidth = map?.bin_width || (high - low) / Math.max(1, bins.length);
     const barHeight = Math.max(2, Math.abs(y(low + binWidth) - y(low)) * .9);
@@ -784,8 +797,8 @@ function draw(view, map, signal, volume) {
     });
     plot.appendChild(wall);
   }
-  const volumeBins = volume?.bins || [];
-  if (volumeBins.length) {
+  const volumeBins = embeddedChart ? [] : (volume?.bins || []);
+  if (!embeddedChart && volumeBins.length) {
     const maximum = Math.max(...volumeBins.map(item => item.volume_usd), 1);
     const volumeGroup = svgNode('g', { 'clip-path': 'url(#volume-clip)' });
     volumeBins.forEach(bin => {
@@ -802,16 +815,16 @@ function draw(view, map, signal, volume) {
     plot.appendChild(volumeGroup);
   }
   svg.appendChild(plot);
-  svg.appendChild(svgNode('text', { x: (volumeLeft + volumeRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#7dd3fc', 'font-size': 11, 'font-weight': 650 }, '当前时段成交量' + zoomSuffix(chart.volumeZoom)));
-  svg.appendChild(svgNode('text', { x: (liquidationLeft + profileRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: coinGlassMap ? '#7dd3fc' : '#83a0b2', 'font-size': 11, 'font-weight': 650 }, liquidationName + zoomSuffix(chart.liquidationZoom)));
-  if (coinGlassMap) {
+  if (!embeddedChart) svg.appendChild(svgNode('text', { x: (volumeLeft + volumeRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#7dd3fc', 'font-size': 11, 'font-weight': 650 }, '当前时段成交量' + zoomSuffix(chart.volumeZoom)));
+  if (!embeddedChart) svg.appendChild(svgNode('text', { x: (liquidationLeft + profileRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: coinGlassMap ? '#7dd3fc' : '#83a0b2', 'font-size': 11, 'font-weight': 650 }, liquidationName + zoomSuffix(chart.liquidationZoom)));
+  if (!embeddedChart && coinGlassMap) {
     const above = bins.filter(bin => bin.price > high).length;
     const below = bins.filter(bin => bin.price < low).length;
     if (above) svg.appendChild(svgNode('text', { x: liquidationLeft, y: top + 28, fill: '#7dd3fc', 'font-size': 11 }, '↑ 上方视野外 ' + above + '档'));
     if (below) svg.appendChild(svgNode('text', { x: liquidationLeft, y: plotBottom - 8, fill: '#7dd3fc', 'font-size': 11 }, '↓ 下方视野外 ' + below + '档'));
   }
   const currentPrice = view?.summary?.last_price || signal?.mark_price;
-  const levels = [['现价', currentPrice, '#f8fafc', '4 5']];
+  const levels = embeddedChart ? [] : [['现价', currentPrice, '#f8fafc', '4 5']];
   levels.forEach(([name, price, color, dash]) => {
     if (!price || price < low || price > high) return;
     const yy = y(price);
@@ -820,14 +833,17 @@ function draw(view, map, signal, volume) {
     svg.appendChild(svgNode('text', { x: profileRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11 }, name + ' ' + money(price)));
   });
   [['VAL', volume?.val, '#22c55e'], ['VAH', volume?.vah, '#ef4444']].forEach(([name, price, color]) => {
+    if (embeddedChart) return;
     if (!finite(price) || price < low || price > high) return;
     const yy = y(price);
     svg.appendChild(svgNode('line', { x1: left, y1: yy, x2: profileRight, y2: yy, stroke: color, 'stroke-width': 1.7, opacity: .95 }));
     svg.appendChild(svgNode('rect', { x: volumeRight - 112, y: yy - 12, width: 112, height: 22, fill: '#071019', stroke: color, rx: 5 }));
     svg.appendChild(svgNode('text', { x: volumeRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11 }, name + ' ' + money(price)));
   });
-  drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high);
-  drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom);
+  if (!embeddedChart) {
+    drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high);
+    drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom);
+  }
   bindTips(svg);
 }
 
@@ -895,7 +911,9 @@ async function refresh(resetMarket = false) {
   const requestedInterval = chart.interval;
   refreshing = true;
   try {
-    const specs = [['signal', '预测', 'signals/latest?symbol=' + symbol], ['map', '清算地图', 'map?symbol=' + symbol], ['volume', '成交量分布', 'volume-profile?symbol=' + symbol], ['market', '市场行情', marketPath()], ['schedule', '抓取计划', 'coinglass/schedule']];
+    const specs = embeddedChart
+      ? [['market', '市场行情', marketPath()]]
+      : [['signal', '预测', 'signals/latest?symbol=' + symbol], ['map', '清算地图', 'map?symbol=' + symbol], ['volume', '成交量分布', 'volume-profile?symbol=' + symbol], ['market', '市场行情', marketPath()], ['schedule', '抓取计划', 'coinglass/schedule']];
     const results = await Promise.allSettled(specs.map(item => json(item[2], { signal: controller.signal })));
     if (requestedSymbol !== symbol || requestedInterval !== chart.interval || sequence !== refreshSequence) return;
     lastFailures = [];
@@ -914,15 +932,17 @@ async function refresh(resetMarket = false) {
       }
     });
     if (cache.market) updateTicker(cache.market);
-    if (cache.signal) {
+    if (!embeddedChart && cache.signal) {
       updateTrigger('upper', cache.signal.upper_trigger);
       updateTrigger('lower', cache.signal.lower_trigger);
       $('reason').textContent = cache.signal.state === 'ok' ? '当前领先类别：' + (cache.signal.leading_class || '—') + '；触发顺序：' + (cache.signal.trigger_order || 'pending') + '。' : (cache.signal.reason || '清算墙或历史数据不足');
       $('model-info').textContent = '模型：' + (cache.signal.model_version || '尚未训练') + ' · 数据年龄 ' + (finite(cache.signal.data_age_seconds) ? Math.max(0, cache.signal.data_age_seconds).toFixed(0) + ' 秒' : '—');
     }
     draw(cache.market, cache.map, cache.signal, cache.volume);
-    ensureWindowLiquidations();
-    updateCoinGlassCountdown();
+    if (!embeddedChart) {
+      ensureWindowLiquidations();
+      updateCoinGlassCountdown();
+    }
     showFailures(lastFailures);
   } finally {
     if (sequence === refreshSequence) refreshing = false;
@@ -1325,9 +1345,10 @@ $('log-copy').addEventListener('click', async () => {
   catch (_) { $('log-error').textContent = '浏览器不允许复制日志'; $('log-error').classList.remove('hidden'); }
 });
 
-installChartSizeControls();
-installChartInteractions();
-loadSymbolCatalog().finally(() => refresh(true));
+if (!embeddedChart) installChartSizeControls();
+if (!embeddedChart) installChartInteractions();
+if (embeddedChart) refresh(true);
+else loadSymbolCatalog().finally(() => refresh(true));
 setInterval(() => refresh(false), 10000);
 setInterval(updateCoinGlassCountdown, 1000);
 setInterval(() => { if (!$('log-drawer').classList.contains('hidden') && $('log-auto').checked) loadLogs(false); }, 5000);

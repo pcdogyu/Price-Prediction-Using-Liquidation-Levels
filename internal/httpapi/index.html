@@ -22,6 +22,54 @@
 <style>
 .classic-pivot-row>span,.classic-pivot-row>b{text-align:center}
 </style>
+<style>
+html.embedded-chart,
+html.embedded-chart body {
+  min-height: 100%;
+  overflow: hidden;
+}
+html.embedded-chart .wrap {
+  max-width: none;
+  height: 100vh;
+  padding: 0;
+}
+html.embedded-chart .top,
+html.embedded-chart #api-errors,
+html.embedded-chart .ticker,
+html.embedded-chart .chart-head,
+html.embedded-chart .chart-toolbar,
+html.embedded-chart .trigger-grid,
+html.embedded-chart .classic-pivot-panel,
+html.embedded-chart .status-row,
+html.embedded-chart .page-footer,
+html.embedded-chart #browser-backdrop,
+html.embedded-chart #log-drawer,
+html.embedded-chart #drawer-backdrop {
+  display: none !important;
+}
+html.embedded-chart .chart-panel {
+  height: 100vh;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+html.embedded-chart .chart-wrap {
+  height: 100vh;
+  min-height: 320px;
+  border-radius: 0;
+  overflow: hidden;
+  cursor: default;
+}
+html.embedded-chart .chart-wrap svg {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+}
+html.embedded-chart #chart-resize-handle {
+  display: none !important;
+}
+</style>
 </head>
 <body>
 {{NAV}}
