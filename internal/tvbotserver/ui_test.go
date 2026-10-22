@@ -140,10 +140,13 @@ func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 	for _, want := range []string{
 		`function analysisGateChartSymbol(instID)`,
 		`function analysisTradeSymbolHTML(row)`,
+		`exchange !== "gate" && exchange !== "binance"`,
+		`查看 Binance 买卖点 K 线`,
 		`data-analysis-chart-key=`,
 		`tvbot.analysisChart.`,
 		`url.searchParams.set("trade_ref", token)`,
-		`window.open(url.toString(), "_blank", "noopener,noreferrer")`,
+		`id="position-symbol-dialog"`,
+		`买卖历史已加载`,
 		`function analysisTimeText(v)`,
 	} {
 		if !strings.Contains(page, want) {

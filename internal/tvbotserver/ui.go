@@ -5868,10 +5868,12 @@ const tvbotHTML = `<!doctype html>
 
     function analysisTradeSymbolHTML(row) {
       const text = analysisInstIDText(row && row.inst_id);
-      if (activeExchange() !== "gate") return escapeHTML(text);
+      const exchange = activeExchange();
+      if (exchange !== "gate" && exchange !== "binance") return escapeHTML(text);
       const symbol = analysisGateChartSymbol(row && row.inst_id);
       const key = analysisTradeRowKey(row);
-      return '<button type="button" class="analysis-symbol-link" data-analysis-chart-symbol="' + escapeHTML(symbol) + '" data-analysis-chart-key="' + escapeHTML(key) + '" title="在新标签页查看 Gate 买卖点 K 线">' + escapeHTML(text) + '</button>';
+      const title = exchange === "binance" ? "查看 Binance 买卖点 K 线" : "查看 Gate 买卖点 K 线";
+      return '<button type="button" class="analysis-symbol-link" data-analysis-chart-symbol="' + escapeHTML(symbol) + '" data-analysis-chart-key="' + escapeHTML(key) + '" title="' + title + '">' + escapeHTML(text) + '</button>';
     }
 
     function analysisBubblesURL(embedded) {
@@ -5910,15 +5912,16 @@ const tvbotHTML = `<!doctype html>
     }
 
     function openAnalysisTradeChart(row) {
-      if (activeExchange() !== "gate") return;
+      const exchange = activeExchange();
+      if (exchange !== "gate" && exchange !== "binance") return;
       const symbol = analysisGateChartSymbol(row && row.inst_id);
       if (!symbol) {
-        toast("该 Gate 币对无法转换为 Binance USDT K 线币对");
+        toast("该币对无法转换为 Binance USDT K 线币对");
         return;
       }
       const trades = analysisTradesForActiveExchange().filter((item) => analysisGateChartSymbol(item && item.inst_id) === symbol);
       if (!trades.length) {
-        toast("当前分析窗口没有该 Gate 币对的交易记录");
+        toast("当前分析窗口没有该币对的交易记录");
         return;
       }
       const url = buildTradeChartURL(symbol, trades, row, true);
@@ -5926,12 +5929,19 @@ const tvbotHTML = `<!doctype html>
         toast("无法暂存交易图表数据，请检查浏览器本地存储权限");
         return;
       }
-      const opened = window.open(url.toString(), "_blank", "noopener,noreferrer");
-      if (opened) {
-        try { opened.opener = null; opened.focus(); } catch (_) {}
-      } else {
-        toast("新标签页被浏览器拦截，请允许此站点打开新标签页");
+      const dialog = $("position-symbol-dialog");
+      const title = $("position-symbol-dialog-title");
+      const status = $("position-symbol-dialog-status");
+      const frame = $("position-symbol-chart-frame");
+      const sequence = ++positionSymbolDetailsSequence;
+      if (title) title.textContent = analysisInstIDText(row && row.inst_id) + " · " + exchangeLabel(exchange) + " 订单分析";
+      if (status) status.textContent = "正在加载买卖历史…";
+      if (frame) frame.src = url.toString();
+      if (dialog) {
+        if (dialog.showModal) dialog.showModal();
+        else dialog.setAttribute("open", "open");
       }
+      if (sequence === positionSymbolDetailsSequence && status) status.textContent = "买卖历史已加载 · K 线下单标记 " + trades.length + " 个";
     }
 
     function positionSymbolTradeRows(row) {
