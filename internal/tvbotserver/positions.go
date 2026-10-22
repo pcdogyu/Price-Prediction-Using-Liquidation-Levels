@@ -2969,11 +2969,24 @@ func (s *Server) fetchGatePendingOrders(ctx context.Context, cfg config.Config, 
 	if err != nil {
 		return pendingOrdersResponse{}, err
 	}
+	algoOrders, err := client.OpenPriceTriggeredOrders(ctx, "")
+	if err != nil {
+		return pendingOrdersResponse{}, err
+	}
 	sort.Slice(orders, func(i, j int) bool {
 		if orders[i].Contract == orders[j].Contract {
 			return orders[i].UpdateTime > orders[j].UpdateTime
 		}
 		return orders[i].Contract < orders[j].Contract
+	})
+	sort.Slice(algoOrders, func(i, j int) bool {
+		if algoOrders[i].Initial.Contract == algoOrders[j].Initial.Contract {
+			if algoOrders[i].CreateTime == algoOrders[j].CreateTime {
+				return algoOrders[i].IDString() > algoOrders[j].IDString()
+			}
+			return algoOrders[i].CreateTime > algoOrders[j].CreateTime
+		}
+		return algoOrders[i].Initial.Contract < algoOrders[j].Initial.Contract
 	})
 	views := make([]pendingOrderView, 0, len(orders))
 	for _, raw := range orders {
@@ -2984,11 +2997,16 @@ func (s *Server) fetchGatePendingOrders(ctx context.Context, cfg config.Config, 
 			ChaseUnavailableReason: "Gate 暂不支持自动追价",
 		})
 	}
+	algoViews := make([]pendingOrderView, 0, len(algoOrders))
+	for _, raw := range algoOrders {
+		algoViews = append(algoViews, gatePriceTriggeredOrderToPendingView(raw))
+	}
 	normalCount := len(views)
+	algoCount := len(algoViews)
 	return pendingOrdersResponse{
 		OK: true, Exchange: trading.ExchangeGate, APIID: apiID, InstType: "USDT-M",
-		Count: normalCount, NormalCount: normalCount, TotalCount: normalCount,
-		RefreshedAt: s.now(), Orders: views, AlgoOrders: []pendingOrderView{},
+		Count: normalCount, NormalCount: normalCount, AlgoCount: algoCount, TotalCount: normalCount + algoCount,
+		RefreshedAt: s.now(), Orders: views, AlgoOrders: algoViews,
 	}, nil
 }
 
@@ -3751,6 +3769,62 @@ func gateOrderToOKX(order gate.Order) okx.PendingOrder {
 		ClosePosition: json.RawMessage(strconv.FormatBool(order.IsClose)),
 		CTime:         strings.TrimSpace(order.CreateTime),
 		UTime:         strings.TrimSpace(order.UpdateTime),
+	}
+}
+
+func gatePriceTriggeredOrderToPendingView(order gate.PriceTriggeredOrder) pendingOrderView {
+	orderID := order.IDString()
+	orderType := strings.ToLower(strings.TrimSpace(order.OrderType))
+	size := firstNonEmpty(order.Initial.Amount, order.Initial.Size)
+	displaySize := strings.TrimSpace(size)
+	side := "buy"
+	if value, err := strconv.ParseFloat(displaySize, 64); err == nil {
+		switch {
+		case value < 0:
+			side = "sell"
+			displaySize = trading.NormalizeFloat(math.Abs(value))
+		case value > 0:
+			displaySize = trading.NormalizeFloat(value)
+		default:
+			displaySize = ""
+		}
+	} else {
+		displaySize = strings.TrimLeft(displaySize, "-")
+	}
+	posSide := "net"
+	if strings.Contains(orderType, "long") {
+		posSide = "long"
+	} else if strings.Contains(orderType, "short") {
+		posSide = "short"
+	}
+	closePosition := order.Initial.IsClose || strings.Contains(orderType, "close")
+	reduceOnly := order.Initial.ReduceOnly || order.Initial.IsReduceOnly || closePosition
+	clOrdID := firstNonEmpty(order.Initial.Text, orderID)
+	state := strings.ToLower(strings.TrimSpace(order.Status))
+	updateTime := firstNonEmpty(order.FinishTime, order.CreateTime)
+	return pendingOrderView{
+		PendingOrder: okx.PendingOrder{
+			InstType:      "USDT-M",
+			InstID:        strings.ToUpper(strings.TrimSpace(order.Initial.Contract)),
+			OrdID:         orderID,
+			ClOrdID:       clOrdID,
+			Side:          side,
+			PosSide:       posSide,
+			OrdType:       "conditional",
+			Px:            strings.TrimSpace(order.Initial.Price),
+			Sz:            displaySize,
+			State:         state,
+			ReduceOnly:    json.RawMessage(strconv.FormatBool(reduceOnly)),
+			ClosePosition: json.RawMessage(strconv.FormatBool(closePosition)),
+			CTime:         strings.TrimSpace(order.CreateTime),
+			UTime:         strings.TrimSpace(updateTime),
+		},
+		OrderGroup:             "algo",
+		AlgoID:                 orderID,
+		AlgoClOrdID:            clOrdID,
+		TriggerPx:              strings.TrimSpace(order.Trigger.Price),
+		Chaseable:              false,
+		ChaseUnavailableReason: "Gate 止盈止损算法单暂不支持自动追价",
 	}
 }
 

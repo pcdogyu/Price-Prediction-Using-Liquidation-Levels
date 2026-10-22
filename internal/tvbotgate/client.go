@@ -430,6 +430,168 @@ func rawString(raw json.RawMessage) string {
 	return strings.Trim(string(raw), "\"")
 }
 
+// PriceTriggeredInitial is the order that Gate will submit after a price
+// trigger fires. Gate returns size as an integer for most contracts and amount
+// as a decimal string for decimal contracts, so both are normalized to text.
+type PriceTriggeredInitial struct {
+	Contract     string `json:"contract"`
+	Size         string `json:"size"`
+	Amount       string `json:"amount"`
+	Price        string `json:"price"`
+	TIF          string `json:"tif"`
+	Text         string `json:"text"`
+	ReduceOnly   bool   `json:"reduce_only"`
+	IsReduceOnly bool   `json:"is_reduce_only"`
+	IsClose      bool   `json:"is_close"`
+}
+
+func (p *PriceTriggeredInitial) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Contract     json.RawMessage `json:"contract"`
+		Size         json.RawMessage `json:"size"`
+		Amount       json.RawMessage `json:"amount"`
+		Price        json.RawMessage `json:"price"`
+		TIF          json.RawMessage `json:"tif"`
+		Text         json.RawMessage `json:"text"`
+		ReduceOnly   bool            `json:"reduce_only"`
+		IsReduceOnly bool            `json:"is_reduce_only"`
+		IsClose      bool            `json:"is_close"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fields := []struct {
+		raw *json.RawMessage
+		out *string
+	}{
+		{&raw.Contract, &p.Contract}, {&raw.Size, &p.Size}, {&raw.Amount, &p.Amount},
+		{&raw.Price, &p.Price}, {&raw.TIF, &p.TIF}, {&raw.Text, &p.Text},
+	}
+	for _, field := range fields {
+		value, err := gateJSONText(*field.raw)
+		if err != nil {
+			return err
+		}
+		*field.out = value
+	}
+	p.ReduceOnly = raw.ReduceOnly
+	p.IsReduceOnly = raw.IsReduceOnly
+	p.IsClose = raw.IsClose
+	return nil
+}
+
+// PriceTriggeredTrigger contains the Gate trigger condition for an auto
+// order. The display layer only needs the normalized trigger price and rule,
+// but retaining the other fields keeps the client response useful for future
+// trigger-order operations.
+type PriceTriggeredTrigger struct {
+	StrategyType int64  `json:"strategy_type"`
+	PriceType    int64  `json:"price_type"`
+	Price        string `json:"price"`
+	Rule         int64  `json:"rule"`
+	Expiration   int64  `json:"expiration"`
+}
+
+func (p *PriceTriggeredTrigger) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		StrategyType json.RawMessage `json:"strategy_type"`
+		PriceType    json.RawMessage `json:"price_type"`
+		Price        json.RawMessage `json:"price"`
+		Rule         json.RawMessage `json:"rule"`
+		Expiration   json.RawMessage `json:"expiration"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	parseInt := func(value json.RawMessage) (int64, error) {
+		text, err := gateJSONText(value)
+		if err != nil || text == "" {
+			return 0, err
+		}
+		return strconv.ParseInt(text, 10, 64)
+	}
+	var err error
+	if p.StrategyType, err = parseInt(raw.StrategyType); err != nil {
+		return err
+	}
+	if p.PriceType, err = parseInt(raw.PriceType); err != nil {
+		return err
+	}
+	if p.Price, err = gateJSONText(raw.Price); err != nil {
+		return err
+	}
+	if p.Rule, err = parseInt(raw.Rule); err != nil {
+		return err
+	}
+	if p.Expiration, err = parseInt(raw.Expiration); err != nil {
+		return err
+	}
+	return nil
+}
+
+// PriceTriggeredOrder is Gate's futures auto/price-triggered order model.
+// These are the exchange-side TP/SL records that must be queried separately
+// from ordinary futures orders.
+type PriceTriggeredOrder struct {
+	Initial       PriceTriggeredInitial `json:"initial"`
+	Trigger       PriceTriggeredTrigger `json:"trigger"`
+	ID            json.RawMessage       `json:"id"`
+	IDStringValue json.RawMessage       `json:"id_string"`
+	CreateTime    string                `json:"create_time"`
+	FinishTime    string                `json:"finish_time"`
+	Status        string                `json:"status"`
+	FinishAs      string                `json:"finish_as"`
+	Reason        string                `json:"reason"`
+	OrderType     string                `json:"order_type"`
+	PosMarginMode string                `json:"pos_margin_mode"`
+}
+
+func (p *PriceTriggeredOrder) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Initial       PriceTriggeredInitial `json:"initial"`
+		Trigger       PriceTriggeredTrigger `json:"trigger"`
+		ID            json.RawMessage       `json:"id"`
+		IDString      json.RawMessage       `json:"id_string"`
+		CreateTime    json.RawMessage       `json:"create_time"`
+		FinishTime    json.RawMessage       `json:"finish_time"`
+		Status        json.RawMessage       `json:"status"`
+		FinishAs      json.RawMessage       `json:"finish_as"`
+		Reason        json.RawMessage       `json:"reason"`
+		OrderType     json.RawMessage       `json:"order_type"`
+		PosMarginMode json.RawMessage       `json:"pos_margin_mode"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fields := []struct {
+		raw *json.RawMessage
+		out *string
+	}{
+		{&raw.CreateTime, &p.CreateTime}, {&raw.FinishTime, &p.FinishTime},
+		{&raw.Status, &p.Status}, {&raw.FinishAs, &p.FinishAs}, {&raw.Reason, &p.Reason},
+		{&raw.OrderType, &p.OrderType}, {&raw.PosMarginMode, &p.PosMarginMode},
+	}
+	for _, field := range fields {
+		value, err := gateJSONText(*field.raw)
+		if err != nil {
+			return err
+		}
+		*field.out = value
+	}
+	p.Initial = raw.Initial
+	p.Trigger = raw.Trigger
+	p.ID = raw.ID
+	p.IDStringValue = raw.IDString
+	return nil
+}
+
+func (p PriceTriggeredOrder) IDString() string {
+	if id := rawString(p.IDStringValue); id != "" {
+		return id
+	}
+	return rawString(p.ID)
+}
+
 type PlaceOrderRequest struct {
 	Contract       string `json:"contract"`
 	Size           string `json:"size"`
@@ -561,6 +723,17 @@ func (c Client) OpenOrders(ctx context.Context, contract string) ([]Order, error
 	err := c.Do(ctx, http.MethodGet, "/futures/usdt/orders", q, nil, true, &out)
 	return out, err
 }
+
+func (c Client) OpenPriceTriggeredOrders(ctx context.Context, contract string) ([]PriceTriggeredOrder, error) {
+	q := url.Values{"status": []string{"open"}}
+	if strings.TrimSpace(contract) != "" {
+		q.Set("contract", contract)
+	}
+	var out []PriceTriggeredOrder
+	err := c.Do(ctx, http.MethodGet, "/futures/usdt/price_orders", q, nil, true, &out)
+	return out, err
+}
+
 func (c Client) CancelOrder(ctx context.Context, contract, orderID string) (Order, error) {
 	var out Order
 	err := c.Do(ctx, http.MethodDelete, "/futures/usdt/orders/"+url.PathEscape(strings.TrimSpace(orderID)), url.Values{"contract": []string{strings.TrimSpace(contract)}}, nil, true, &out)

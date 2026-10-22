@@ -149,3 +149,35 @@ func TestClientDecodesNumericOpenOrderFields(t *testing.T) {
 		t.Fatalf("decoded order = %#v", got)
 	}
 }
+
+func TestClientFetchesOpenPriceTriggeredOrders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v4/futures/usdt/price_orders" || r.URL.Query().Get("status") != "open" || r.URL.Query().Get("contract") != "BTC_USDT" {
+			t.Fatalf("unexpected request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`[
+			{
+				"initial":{"contract":"BTC_USDT","size":-2,"amount":"-2.5","price":"0","tif":"ioc","text":"entry-1SL","is_reduce_only":true,"is_close":true},
+				"trigger":{"strategy_type":0,"price_type":1,"price":83000.5,"rule":2,"expiration":86400},
+				"id":1234567890123,"id_string":"1234567890123","create_time":1761027807.25,"status":"open","order_type":"close-long-order","pos_margin_mode":"cross"
+			}
+		]`))
+	}))
+	defer server.Close()
+
+	client := Client{BaseURL: server.URL, Credentials: Credentials{APIKey: "key", SecretKey: "secret"}, HTTPClient: server.Client()}
+	orders, err := client.OpenPriceTriggeredOrders(context.Background(), "BTC_USDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orders) != 1 {
+		t.Fatalf("orders = %#v", orders)
+	}
+	got := orders[0]
+	if got.IDString() != "1234567890123" || got.Initial.Contract != "BTC_USDT" || got.Initial.Size != "-2" || got.Initial.Amount != "-2.5" || got.Initial.Price != "0" || got.Initial.Text != "entry-1SL" || !got.Initial.IsReduceOnly || !got.Initial.IsClose {
+		t.Fatalf("decoded initial order = %#v", got.Initial)
+	}
+	if got.Trigger.Price != "83000.5" || got.Trigger.PriceType != 1 || got.Trigger.Rule != 2 || got.Trigger.Expiration != 86400 || got.CreateTime != "1761027807.25" || got.Status != "open" || got.OrderType != "close-long-order" || got.PosMarginMode != "cross" {
+		t.Fatalf("decoded triggered order = %#v", got)
+	}
+}
