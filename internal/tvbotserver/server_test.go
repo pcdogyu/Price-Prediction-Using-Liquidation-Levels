@@ -2927,6 +2927,23 @@ func TestTVBotAPIKeySelectionSetsSingleAlertTradeTarget(t *testing.T) {
 	if _, _, err := srv.GateCredentials.GateCredentials(""); err != nil {
 		t.Fatalf("Gate active API should remain usable: %v", err)
 	}
+	disableReq := httptest.NewRequest(http.MethodPut, "/tvbot/api-keys?exchange=gate&env=demo", strings.NewReader(`{"exchange":"gate","env":"demo","id":"gate-main","active":false}`))
+	disableReq.SetBasicAuth("admin", "Admin123")
+	disableRR := httptest.NewRecorder()
+	srv.ServeHTTP(disableRR, disableReq)
+	if disableRR.Code != http.StatusOK {
+		t.Fatalf("disable Gate trading API status=%d body=%s", disableRR.Code, disableRR.Body.String())
+	}
+	if status := srv.GateCredentials.Status(); status.ActiveID != "" {
+		t.Fatalf("disabling Gate trading API should persist an empty active ID: %#v", status)
+	}
+	cfg = srv.ConfigStore.Get()
+	if cfg.Trading.TargetAPIID != "" || cfg.Trading.TargetTradeEnv != "" {
+		t.Fatalf("disabling Gate trading API should clear the alert trade target: %#v", cfg.Trading)
+	}
+	if _, _, err := srv.GateCredentials.GateCredentials("gate-main"); err != nil {
+		t.Fatalf("disabling Gate trading API should preserve stored credentials: %v", err)
+	}
 }
 
 func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T) {

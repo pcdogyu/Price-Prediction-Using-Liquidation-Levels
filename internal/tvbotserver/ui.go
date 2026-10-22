@@ -6815,6 +6815,19 @@ const tvbotHTML = `<!doctype html>
       return body;
     }
 
+    function apiKeySaveBody(exchange, env, active) {
+      return {
+        exchange: exchange,
+        env: env,
+        id: $("key-id").value.trim(),
+        name: $("key-name").value.trim(),
+        api_key: $("key-api").value.trim(),
+        secret_key: $("key-secret").value.trim(),
+        passphrase: exchange === "okx" ? $("key-passphrase").value.trim() : "",
+        active: active
+      };
+    }
+
     async function requestAPIKeyTest(body) {
       $("okx-output").textContent = "checking...";
       const result = await api("/tvbot/api-keys/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -6844,25 +6857,9 @@ const tvbotHTML = `<!doctype html>
       updateAPIKeySaveState();
     }
 
-    async function saveAPIKeys() {
-      if (!apiKeyTestMatchesCurrentForm()) {
-        toast("请先测试 API，并确认返回有效的 USDT 余额");
-        updateAPIKeySaveState();
-        return;
-      }
-      const exchange = normalizeExchange(state.apiKeyExchange);
-      const env = state.apiKeyEnv === "live" ? "live" : "demo";
-      const body = {
-        exchange: exchange,
-        env: env,
-        id: $("key-id").value.trim(),
-        name: $("key-name").value.trim(),
-        api_key: $("key-api").value.trim(),
-        secret_key: $("key-secret").value.trim(),
-        passphrase: exchange === "okx" ? $("key-passphrase").value.trim() : "",
-        active: $("key-active").checked
-      };
-      state.apiKeysByEnvironment[env][exchange] = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange) + "&env=" + env, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    async function persistAPIKey(body, exchange, env) {
+      const saved = await api("/tvbot/api-keys?exchange=" + encodeURIComponent(exchange) + "&env=" + env, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      state.apiKeysByEnvironment[env][exchange] = saved;
       state.apiKeysByExchange = state.apiKeysByEnvironment[env];
       state.apiKeys = apiKeyStatus(exchange);
       if (!state.config) state.config = {};
@@ -6886,6 +6883,41 @@ const tvbotHTML = `<!doctype html>
       renderPositionAPIs();
       renderOrders();
       updateMetrics();
+      return saved;
+    }
+
+    async function autoSaveAPIKeyDeactivation() {
+      const exchange = normalizeExchange(state.apiKeyExchange);
+      const env = state.apiKeyEnv === "live" ? "live" : "demo";
+      const id = $("key-id").value.trim();
+      const account = selectedAPIAccount(id, exchange, env);
+      if (!account || account.configured !== true) return;
+      if (state.apiKeyDeactivationSaving) return;
+      state.apiKeyDeactivationSaving = true;
+      $("key-active").disabled = true;
+      try {
+        await persistAPIKey(apiKeySaveBody(exchange, env, false), exchange, env);
+        toast(exchangeLabel(exchange) + " 已取消交易 API，状态已自动保存");
+      } catch (err) {
+        $("key-active").checked = true;
+        renderAPIKeyStatus(state.selectedAPIID);
+        throw err;
+      } finally {
+        state.apiKeyDeactivationSaving = false;
+        $("key-active").disabled = false;
+      }
+    }
+
+    async function saveAPIKeys() {
+      if (!apiKeyTestMatchesCurrentForm()) {
+        toast("请先测试 API，并确认返回有效的 USDT 余额");
+        updateAPIKeySaveState();
+        return;
+      }
+      const exchange = normalizeExchange(state.apiKeyExchange);
+      const env = state.apiKeyEnv === "live" ? "live" : "demo";
+      const body = apiKeySaveBody(exchange, env, $("key-active").checked);
+      await persistAPIKey(body, exchange, env);
       toast(exchangeLabel(exchange) + " API Key 已保存");
     }
 
@@ -7332,6 +7364,9 @@ const tvbotHTML = `<!doctype html>
       node.addEventListener("change", () => {
         clearAPIKeyTestState(state.apiKeyExchange);
         renderAPIKeyStatus(state.selectedAPIID);
+        if (id === "key-active" && !node.checked) {
+          autoSaveAPIKeyDeactivation().catch((err) => toast(err.message));
+        }
       });
     });
     document.querySelectorAll("[data-api-key-exchange]").forEach((button) => {

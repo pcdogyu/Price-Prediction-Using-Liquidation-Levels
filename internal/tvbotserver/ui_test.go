@@ -79,6 +79,10 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	for _, want := range []string{
 		`function fillAPIForm(id, preserveCredentials)`,
 		`renderAPIKeys(true);`,
+		`function apiKeySaveBody(exchange, env, active)`,
+		`async function autoSaveAPIKeyDeactivation()`,
+		`active: active`,
+		`已取消交易 API，状态已自动保存`,
 		`const apiKey = preserveCredentials ? $("key-api").value : "";`,
 		`const secretKey = preserveCredentials ? $("key-secret").value : "";`,
 		`apiKeyTestEnv`,
@@ -107,6 +111,9 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		if !strings.Contains(saveFunction, want) {
 			t.Fatalf("API key save flow missing %q", want)
 		}
+	}
+	if !strings.Contains(page, `if (id === "key-active" && !node.checked)`) || !strings.Contains(page, `autoSaveAPIKeyDeactivation().catch`) {
+		t.Fatal("unchecking the trading API checkbox should trigger an automatic save")
 	}
 	if strings.Contains(page, "清算墙雷达") || strings.Contains(page, `class="brand"`) || strings.Contains(page, `class="liquidation-links"`) || strings.Contains(page, `class="app-logo"`) {
 		t.Fatal("tvbot header still contains the removed product name or legacy navigation classes")
