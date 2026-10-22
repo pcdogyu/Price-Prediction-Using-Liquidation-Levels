@@ -1492,9 +1492,7 @@ const tvbotHTML = `<!doctype html>
     }
     .position-symbol-dialog-head h3 { margin: 0 0 3px; }
     .position-symbol-dialog-body {
-      display: grid;
-      grid-template-columns: minmax(0, 1.35fr) minmax(420px, .9fr);
-      gap: 12px;
+      display: flex;
       flex: 1 1 auto;
       height: auto;
       min-height: 0;
@@ -1522,16 +1520,11 @@ const tvbotHTML = `<!doctype html>
       border-radius: 6px;
       background: var(--chart-bg);
     }
-    .position-symbol-history-panel { overflow: hidden; }
-    .position-symbol-history-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
-    .position-symbol-history-table { min-width: 1050px; }
     @media (max-width: 1100px) {
       .position-symbol-dialog { height: min(900px, calc(100vh - 20px)); }
       .position-symbol-dialog-body { display: flex; flex-direction: column; overflow: auto; }
       .position-symbol-detail-panel { flex: 0 0 auto; }
       .position-symbol-chart-frame { flex: 0 0 auto; height: min(62vh, 620px); }
-      .position-symbol-history-panel { min-height: 300px; }
-      .position-symbol-history-wrap { max-height: 500px; }
     }
     .toast {
       position: fixed;
@@ -2284,21 +2277,8 @@ const tvbotHTML = `<!doctype html>
     </div>
     <div class="position-symbol-dialog-body">
       <section class="position-symbol-detail-panel">
-        <h4>气泡图</h4>
-        <iframe class="position-symbol-chart-frame" id="position-symbol-chart-frame" title="币对气泡图" src="about:blank"></iframe>
-      </section>
-      <section class="position-symbol-detail-panel position-symbol-history-panel">
-        <div class="section-head" style="margin:0 0 8px">
-          <h4>历史下单信息</h4>
-          <span class="muted" id="position-symbol-history-status">-</span>
-        </div>
-        <div class="symbol-table-wrap position-symbol-history-wrap">
-          <table class="symbol-table analysis-trade-table position-symbol-history-table">
-            <colgroup id="position-symbol-history-cols"></colgroup>
-            <thead id="position-symbol-history-head"></thead>
-            <tbody id="position-symbol-history-rows"></tbody>
-          </table>
-        </div>
+        <h4>气泡图 / K线下单信息</h4>
+        <iframe class="position-symbol-chart-frame" id="position-symbol-chart-frame" title="币对气泡图和 K 线下单信息" src="about:blank"></iframe>
       </section>
     </div>
   </dialog>
@@ -5544,7 +5524,7 @@ const tvbotHTML = `<!doctype html>
       const display = displayInstID(instID);
       if (!instID || display === "-") return textTableCell(display);
       const key = positionCloseRowKey(row);
-      const title = "查看 " + display + " 气泡图和历史下单信息";
+      const title = "查看 " + display + " 气泡图和 K 线下单信息";
       return tableCell('<button class="position-symbol-link" type="button" data-position-symbol-details="true" data-position-key="' + escapeHTML(key) + '" title="' + escapeHTML(title) + '">' + escapeHTML(display) + '</button>');
     }
 
@@ -5841,6 +5821,48 @@ const tvbotHTML = `<!doctype html>
       return [row && row.inst_id, row && row.side, row && row.entry_time, row && row.exit_time, row && row.entry_px, row && row.exit_px, row && row.net_pnl].map((value) => String(value == null ? "" : value)).join("|");
     }
 
+    function tradeChartRowKey(row) {
+      return [
+        analysisTradeRowKey(row),
+        row && row.ord_id,
+        row && row.trade_id,
+        row && row.fill_time,
+        row && row.fill_px,
+        row && row.position_effect
+      ].map((value) => String(value == null ? "" : value)).join("|");
+    }
+
+    function tradeChartFocusTime(row) {
+      return row && (row.fill_time || row.exit_time || row.entry_time) ? (row.fill_time || row.exit_time || row.entry_time) : "";
+    }
+
+    function tradeChartPayloadRow(item) {
+      const rawEffect = String(item && item.position_effect || "").trim().toLowerCase();
+      const isRawFill = !!(item && (item.fill_time || rawEffect));
+      const isClose = rawEffect === "close";
+      return {
+        inst_id: String(item && item.inst_id || ""),
+        side: String(item && (item.side || item.pos_side) || "").toLowerCase(),
+        entry_time: isRawFill ? (isClose ? "" : item.fill_time || "") : item && item.entry_time || "",
+        exit_time: isRawFill ? (isClose ? item.fill_time || "" : "") : item && item.exit_time || "",
+        entry_px: isRawFill ? (isClose ? "" : item.fill_px) : item && item.entry_px,
+        exit_px: isRawFill ? (isClose ? item.fill_px : "") : item && item.exit_px,
+        row_key: tradeChartRowKey(item),
+        ord_id: String(item && (item.ord_id || item.entry_ord_id || item.exit_ord_id) || ""),
+        entry_ord_id: String(item && item.entry_ord_id || ""),
+        exit_ord_id: String(item && item.exit_ord_id || ""),
+        trade_id: String(item && item.trade_id || ""),
+        position_effect: rawEffect,
+        fill_sz: item && (item.fill_sz || item.qty) || "",
+        qty: item && item.qty || "",
+        turnover: item && item.turnover || "",
+        fill_pnl: item && (item.fill_pnl || item.realized_pnl) || "",
+        fee: item && item.fee || "",
+        fee_ccy: item && item.fee_ccy || "",
+        net_pnl: item && item.net_pnl || ""
+      };
+    }
+
     function analysisTradeSymbolHTML(row) {
       const text = analysisInstIDText(row && row.inst_id);
       if (activeExchange() !== "gate") return escapeHTML(text);
@@ -5867,17 +5889,9 @@ const tvbotHTML = `<!doctype html>
         version: 1,
         created_at: Date.now(),
         symbol: normalizedSymbol,
-        focus_at: selectedRow && (selectedRow.exit_time || selectedRow.entry_time) ? (selectedRow.exit_time || selectedRow.entry_time) : "",
-        selected_key: selectedRow ? analysisTradeRowKey(selectedRow) : "",
-        rows: (Array.isArray(trades) ? trades : []).map((item) => ({
-          inst_id: String(item.inst_id || ""),
-          side: String(item.side || "").toLowerCase(),
-          entry_time: item.entry_time || "",
-          exit_time: item.exit_time || "",
-          entry_px: item.entry_px,
-          exit_px: item.exit_px,
-          row_key: analysisTradeRowKey(item)
-        }))
+        focus_at: tradeChartFocusTime(selectedRow),
+        selected_key: selectedRow ? tradeChartRowKey(selectedRow) : "",
+        rows: (Array.isArray(trades) ? trades : []).map((item) => tradeChartPayloadRow(item))
       };
       const url = analysisBubblesURL(embedded);
       url.searchParams.set("symbol", normalizedSymbol);
@@ -5917,43 +5931,44 @@ const tvbotHTML = `<!doctype html>
       }
     }
 
-    function positionSymbolHistoryRows(row) {
+    function positionSymbolTradeRows(row) {
       const exchange = normalizeExchange(row && row._exchange || activeExchange());
       const apiID = String(row && row._api_id || "").trim();
       const symbol = analysisGateChartSymbol(row && row.instId);
-      const source = state.analysis && Array.isArray(state.analysis.position_trades) ? state.analysis.position_trades : [];
-      return source
+      const source = state.analysis && Array.isArray(state.analysis.trades) ? state.analysis.trades : [];
+      const trades = source
         .filter((item) => normalizeExchange(item && item.exchange) === exchange)
         .filter((item) => analysisGateChartSymbol(item && item.inst_id) === symbol)
         .filter((item) => !apiID || !item.api_id || String(item.api_id).trim() === apiID)
+        .filter((item) => String(item && item.position_effect || "").trim().toLowerCase() === "open" || String(item && item.position_effect || "").trim().toLowerCase() === "close")
+        .map((item) => {
+          const side = String(item && item.pos_side || "").trim().toLowerCase();
+          return Object.assign({}, item, { side: side === "short" ? "short" : side === "long" ? "long" : "" });
+        })
+        .filter((item) => item.side)
         .slice()
-        .sort((a, b) => String(b && (b.exit_time || b.entry_time) || "").localeCompare(String(a && (a.exit_time || a.entry_time) || "")));
-    }
-
-    function positionSymbolHistoryCellHTML(col, row) {
-      if (col.id !== "inst_id") return analysisTradeCellHTML(col, row);
-      const plain = Object.assign({}, col, { renderHTML: null, render: (item) => analysisInstIDText(item && item.inst_id) });
-      return analysisTradeCellHTML(plain, row);
-    }
-
-    function renderPositionSymbolHistory(rows, errorText) {
-      const columns = currentAnalysisTradeColumns();
-      const cols = $("position-symbol-history-cols");
-      const head = $("position-symbol-history-head");
-      const body = $("position-symbol-history-rows");
-      const status = $("position-symbol-history-status");
-      if (cols) cols.innerHTML = columns.map((col) => '<col class="' + escapeHTML(col.colClass || "") + '">').join("");
-      if (head) head.innerHTML = "<tr>" + columns.map((col) => "<th>" + escapeHTML(col.title) + "</th>").join("") + "</tr>";
-      if (!body) return;
-      if (errorText) {
-        body.innerHTML = '<tr><td colspan="' + columns.length + '" class="muted">' + escapeHTML(errorText) + "</td></tr>";
-        if (status) status.textContent = errorText;
-        return;
+        .sort((a, b) => String(b && b.fill_time || "").localeCompare(String(a && a.fill_time || "")));
+      const hasOpenMarker = trades.some((item) => String(item && item.position_effect || "").trim().toLowerCase() === "open" && item.fill_time && item.fill_px);
+      if (!hasOpenMarker && row && row.entry_fill_time && row.avgPx) {
+        const side = positionSideKind(row.posSide, row.pos);
+        if (side) {
+          trades.push({
+            exchange,
+            api_id: apiID,
+            inst_id: row.instId,
+            side,
+            pos_side: side,
+            position_effect: "open",
+            fill_time: row.entry_fill_time,
+            fill_px: row.avgPx,
+            fill_sz: row.pos,
+            turnover: row.position_amount,
+            trade_id: "position-entry",
+            ord_id: ""
+          });
+        }
       }
-      body.innerHTML = rows.length
-        ? rows.map((row) => "<tr>" + columns.map((col) => positionSymbolHistoryCellHTML(col, row)).join("") + "</tr>").join("")
-        : '<tr><td colspan="' + columns.length + '" class="muted">暂无该币对历史下单记录</td></tr>';
-      if (status) status.textContent = rows.length ? "共 " + rows.length + " 条" : "-";
+      return trades;
     }
 
     async function loadPositionSymbolAnalysis() {
@@ -5975,8 +5990,7 @@ const tvbotHTML = `<!doctype html>
       const sequence = ++positionSymbolDetailsSequence;
       const label = displayInstID(row && row.instId);
       if (title) title.textContent = label + " · " + exchangeLabel(row && row._exchange) + " 持仓详情";
-      if (status) status.textContent = "正在读取气泡图和历史下单信息…";
-      renderPositionSymbolHistory([], "正在读取历史下单信息…");
+      if (status) status.textContent = "正在读取气泡图和 K 线下单信息…";
       const chartURL = analysisBubblesURL(true);
       chartURL.searchParams.set("symbol", symbol);
       if (frame) frame.src = chartURL.toString();
@@ -5987,16 +6001,14 @@ const tvbotHTML = `<!doctype html>
       try {
         await loadPositionSymbolAnalysis();
         if (sequence !== positionSymbolDetailsSequence) return;
-        const rows = positionSymbolHistoryRows(row);
+        const rows = positionSymbolTradeRows(row);
         const tradeURL = buildTradeChartURL(symbol, rows, rows[0], true);
         if (frame && tradeURL) frame.src = tradeURL.toString();
-        renderPositionSymbolHistory(rows, "");
-        if (status) status.textContent = "气泡图已加载 · 历史下单周期 " + balanceWindowLabel(analysisPNLWindowMinutes());
+        if (status) status.textContent = "气泡图已加载 · K 线下单标记 " + rows.length + " 个";
       } catch (err) {
         if (sequence !== positionSymbolDetailsSequence) return;
-        renderPositionSymbolHistory([], err && err.message ? err.message : "历史下单信息读取失败");
-        if (status) status.textContent = "气泡图已加载；历史下单信息读取失败";
-        toast(err && err.message ? err.message : "历史下单信息读取失败");
+        if (status) status.textContent = "气泡图已加载；K 线下单信息读取失败";
+        toast(err && err.message ? err.message : "K 线下单信息读取失败");
       }
     }
 

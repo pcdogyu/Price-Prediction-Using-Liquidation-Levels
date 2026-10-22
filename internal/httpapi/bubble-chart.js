@@ -59,6 +59,7 @@
         if (!Number.isFinite(time) || !Number.isFinite(price) || price <= 0) return;
         const isEntry = phase === 'entry';
         const action = side === 'long' ? (isEntry ? 'buy' : 'sell') : (isEntry ? 'sell' : 'buy');
+        const orderID = String(isEntry ? (row.ord_id || row.entry_ord_id) : (row.ord_id || row.exit_ord_id) || '').trim();
         markers.push({
           id: rowKey + ':' + phase,
           row_key: rowKey,
@@ -69,7 +70,15 @@
           time,
           time_iso: new Date(time).toISOString(),
           price,
-          selected
+          selected,
+          order_id: orderID,
+          trade_id: String(row.trade_id || '').trim(),
+          quantity: String(row.fill_sz || row.qty || '').trim(),
+          turnover: String(row.turnover || '').trim(),
+          fill_pnl: String(row.fill_pnl || '').trim(),
+          net_pnl: String(row.net_pnl || '').trim(),
+          fee: String(row.fee || '').trim(),
+          fee_ccy: String(row.fee_ccy || '').trim()
         });
       };
       add('entry', row.entry_time, row.entry_px);

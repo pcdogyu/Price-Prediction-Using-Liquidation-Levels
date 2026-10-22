@@ -160,15 +160,23 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`data-position-symbol-details="true"`,
 		`id="position-symbol-dialog"`,
 		`id="position-symbol-chart-frame"`,
-		`id="position-symbol-history-rows"`,
-		`function positionSymbolHistoryRows(row)`,
+		`气泡图 / K线下单信息`,
+		`function positionSymbolTradeRows(row)`,
+		`state.analysis.trades`,
+		`entry_fill_time`,
+		`tradeChartPayloadRow(item)`,
 		`function buildTradeChartURL(symbol, trades, selectedRow, embedded)`,
 		`async function loadPositionSymbolAnalysis()`,
 		`async function openPositionSymbolDetails(row)`,
-		`renderPositionSymbolHistory(rows, "")`,
+		`K 线下单标记`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("position symbol details marker missing %q", want)
+		}
+	}
+	for _, removed := range []string{"position-symbol-history-panel", "position-symbol-history-rows", "历史下单信息"} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("position symbol details should not render the right-side history panel marker %q", removed)
 		}
 	}
 	positionsStart := strings.Index(page, "const positionTableColumnDefs = [")

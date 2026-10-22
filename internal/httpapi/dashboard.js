@@ -586,7 +586,15 @@ function tradeMarkerTip(marker) {
   const phase = marker.phase === 'entry' ? '开仓' : '平仓';
   const action = marker.action === 'buy' ? '买入' : '卖出';
   const side = marker.side === 'long' ? '多单' : '空单';
-  return 'Gate 交易点 · ' + phase + ' ' + action + '\n时间 ' + when(marker.time_iso) + '\n价格 ' + money(marker.price) + '\n方向 ' + side + (marker.selected ? '\n当前点击记录' : '');
+  const details = [];
+  if (marker.order_id) details.push('订单号 ' + marker.order_id);
+  if (marker.trade_id) details.push('成交号 ' + marker.trade_id);
+  if (marker.quantity) details.push('成交量 ' + marker.quantity);
+  if (marker.turnover) details.push('成交额 ' + marker.turnover);
+  if (marker.fill_pnl) details.push('成交盈亏 ' + marker.fill_pnl);
+  if (marker.net_pnl) details.push('净盈亏 ' + marker.net_pnl);
+  if (marker.fee) details.push('手续费 ' + marker.fee + (marker.fee_ccy ? ' ' + marker.fee_ccy : ''));
+  return 'Gate 下单信息 · ' + phase + ' ' + action + '\n时间 ' + when(marker.time_iso) + '\n价格 ' + money(marker.price) + '\n方向 ' + side + (details.length ? '\n' + details.join('\n') : '') + (marker.selected ? '\n当前点击记录' : '');
 }
 
 function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top, plotBottom) {

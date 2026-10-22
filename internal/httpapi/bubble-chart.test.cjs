@@ -53,6 +53,31 @@ test('trade marker normalization omits incomplete or invalid values without drop
   assert.deepEqual(markers.map(item => [item.row_key, item.phase]), [['valid', 'entry'], ['bad-time', 'exit']]);
 });
 
+test('trade markers retain order and fill details for K-line tooltips', () => {
+  const markers = B.normalizeTradeMarkers([
+    {
+      row_key: 'doge-open',
+      inst_id: 'DOGE_USDT',
+      side: 'long',
+      position_effect: 'open',
+      entry_time: '2026-10-22T09:38:52Z',
+      entry_px: '0.08076',
+      ord_id: 'gate-order-1',
+      trade_id: 'gate-trade-1',
+      fill_sz: '963',
+      turnover: '77.77',
+      fee: '-0.0777',
+      fee_ccy: 'USDT'
+    }
+  ], 'DOGEUSDT');
+  assert.equal(markers.length, 1);
+  assert.equal(markers[0].order_id, 'gate-order-1');
+  assert.equal(markers[0].trade_id, 'gate-trade-1');
+  assert.equal(markers[0].quantity, '963');
+  assert.equal(markers[0].turnover, '77.77');
+  assert.equal(markers[0].fee, '-0.0777');
+});
+
 test('timestamp placements need no candle bucket, offset in pixels, border circles and overlaps survive', () => {
   const events = [event('long', 2000), event('short', 2000, 100, 'short'), event('edge', 0, 90), event('outside', 1000, 120), event('same', 2000)];
   const result = B.placements(events, [90, 110], { left: 0, right: 100, top: 0, bottom: 100 }, at => at / 40, price => (110 - price) * 5);
