@@ -65,7 +65,7 @@ func TestTVBotGatePendingOrdersIncludesPriceTriggeredOrders(t *testing.T) {
 	if !resp.OK || resp.Exchange != "gate" || resp.APIID != "gate-main" || resp.Count != 1 || resp.NormalCount != 1 || resp.AlgoCount != 2 || resp.TotalCount != 3 || len(resp.AlgoOrders) != 2 {
 		t.Fatalf("bad Gate pending response: %#v", resp)
 	}
-	if resp.AlgoOrders[0].OrderGroup != "algo" || resp.AlgoOrders[0].AlgoID != "202" || resp.AlgoOrders[0].AlgoClOrdID != "entry-1SL" || resp.AlgoOrders[0].TriggerPx != "81000" || resp.AlgoOrders[0].Side != "sell" || resp.AlgoOrders[0].PosSide != "long" || resp.AlgoOrders[0].Chaseable || resp.AlgoOrders[0].ChaseUnavailableReason == "" {
+	if resp.AlgoOrders[0].OrderGroup != "algo" || resp.AlgoOrders[0].AlgoID != "202" || resp.AlgoOrders[0].AlgoClOrdID != "entry-1SL" || resp.AlgoOrders[0].TriggerPx != "81000" || resp.AlgoOrders[0].Side != "sell" || resp.AlgoOrders[0].PosSide != "long" || resp.AlgoOrders[0].CTime != "1761027810000" || resp.AlgoOrders[0].UTime != "1761027810000" || resp.AlgoOrders[0].Chaseable || resp.AlgoOrders[0].ChaseUnavailableReason == "" {
 		t.Fatalf("bad Gate stop-loss algo order: %#v", resp.AlgoOrders[0])
 	}
 }

@@ -3801,7 +3801,8 @@ func gatePriceTriggeredOrderToPendingView(order gate.PriceTriggeredOrder) pendin
 	reduceOnly := order.Initial.ReduceOnly || order.Initial.IsReduceOnly || closePosition
 	clOrdID := firstNonEmpty(order.Initial.Text, orderID)
 	state := strings.ToLower(strings.TrimSpace(order.Status))
-	updateTime := firstNonEmpty(order.FinishTime, order.CreateTime)
+	createTime := gateTimeMillis(order.CreateTime)
+	updateTime := gateTimeMillis(firstNonEmpty(order.FinishTime, order.CreateTime))
 	return pendingOrderView{
 		PendingOrder: okx.PendingOrder{
 			InstType:      "USDT-M",
@@ -3816,8 +3817,8 @@ func gatePriceTriggeredOrderToPendingView(order gate.PriceTriggeredOrder) pendin
 			State:         state,
 			ReduceOnly:    json.RawMessage(strconv.FormatBool(reduceOnly)),
 			ClosePosition: json.RawMessage(strconv.FormatBool(closePosition)),
-			CTime:         strings.TrimSpace(order.CreateTime),
-			UTime:         strings.TrimSpace(updateTime),
+			CTime:         createTime,
+			UTime:         updateTime,
 		},
 		OrderGroup:             "algo",
 		AlgoID:                 orderID,
