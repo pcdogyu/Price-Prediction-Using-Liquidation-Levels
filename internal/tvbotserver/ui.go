@@ -970,14 +970,46 @@ const tvbotHTML = `<!doctype html>
     }
     .coinpair-cooldown-settings {
       justify-content: flex-start;
+      align-items: stretch;
+      gap: 12px;
     }
-    .coinpair-cooldown-settings label {
+    .coinpair-cooldown-card {
+      display: flex;
+      flex: 1 1 300px;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 260px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .coinpair-cooldown-card h5 {
+      margin: 0;
+      color: var(--text);
+      font-size: 14px;
+    }
+    .coinpair-cooldown-card label {
       display: inline-flex;
       align-items: center;
       gap: 7px;
       color: var(--text);
       font-size: 13px;
       font-weight: 700;
+    }
+    .coinpair-cooldown-card .coinpair-cooldown-checkbox {
+      align-items: flex-start;
+      justify-content: flex-start;
+      line-height: 1.45;
+    }
+    .coinpair-cooldown-card .coinpair-cooldown-duration {
+      justify-content: space-between;
+      font-weight: 600;
+    }
+    .coinpair-cooldown-submit {
+      display: flex;
+      align-items: flex-end;
+      padding-bottom: 12px;
     }
     .coinpair-cooldown-hours {
       width: 96px;
@@ -2164,11 +2196,19 @@ const tvbotHTML = `<!doctype html>
         <div class="coinpair-filter-group">
           <h4 class="coinpair-filter-group-title">亏损平仓后冷静期</h4>
           <div class="coinpair-filter-actions coinpair-cooldown-settings">
-            <label><input id="loss-cooldown-enabled" type="checkbox">启用亏损平仓后同币对冷静期</label>
-            <label><input id="loss-cooldown-global-enabled" type="checkbox">启用亏损平仓后全局冷静期</label>
-            <label>单币对时长（小时）<input class="coinpair-cooldown-hours" id="loss-cooldown-coinpair-hours" type="number" min="1" max="8760" step="1" inputmode="numeric"></label>
-            <label>全局时长（小时）<input class="coinpair-cooldown-hours" id="loss-cooldown-global-hours" type="number" min="1" max="8760" step="1" inputmode="numeric"></label>
-            <button class="btn primary" type="button" id="save-loss-cooldown">保存冷静期设置</button>
+            <div class="coinpair-cooldown-card" id="loss-cooldown-coinpair-card">
+              <h5>单币对设置</h5>
+              <label class="coinpair-cooldown-checkbox"><input id="loss-cooldown-enabled" type="checkbox">启用亏损平仓后同币对冷静期</label>
+              <label class="coinpair-cooldown-duration">时长（小时）<input class="coinpair-cooldown-hours" id="loss-cooldown-coinpair-hours" type="number" min="1" max="8760" step="1" inputmode="numeric"></label>
+            </div>
+            <div class="coinpair-cooldown-card" id="loss-cooldown-global-card">
+              <h5>全局设置</h5>
+              <label class="coinpair-cooldown-checkbox"><input id="loss-cooldown-global-enabled" type="checkbox">启用亏损平仓后全局冷静期</label>
+              <label class="coinpair-cooldown-duration">时长（小时）<input class="coinpair-cooldown-hours" id="loss-cooldown-global-hours" type="number" min="1" max="8760" step="1" inputmode="numeric"></label>
+            </div>
+            <div class="coinpair-cooldown-submit">
+              <button class="btn primary" type="button" id="save-loss-cooldown">保存冷静期设置</button>
+            </div>
           </div>
           <div class="muted coinpair-cooldown-status" id="loss-cooldown-status">-</div>
         </div>

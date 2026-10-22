@@ -869,6 +869,10 @@ func TestTVBotUIIncludesLossCooldownControls(t *testing.T) {
 	for _, marker := range []string{
 		`id="loss-cooldown-enabled"`,
 		`id="loss-cooldown-global-enabled"`,
+		`id="loss-cooldown-coinpair-card"`,
+		`id="loss-cooldown-global-card"`,
+		`单币对设置`,
+		`全局设置`,
 		`id="loss-cooldown-coinpair-hours"`,
 		`id="loss-cooldown-global-hours"`,
 		`id="save-loss-cooldown"`,
