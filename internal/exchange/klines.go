@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"time"
 
@@ -14,8 +15,9 @@ import (
 // variable so the kline proxy can be pointed at a local HTTP fixture in tests.
 var binanceFuturesBase = "https://fapi.binance.com"
 
-// KlineIntervals lists the native Binance intervals used by the on-demand
-// chart loader. The page may aggregate these into its custom display periods.
+// KlineIntervals lists the periods offered by the on-demand chart loader.
+// Binance does not provide 2m natively, so that period is built from 1m rows
+// in BinanceKlines below.
 var KlineIntervals = []string{"1m", "2m", "5m", "15m", "30m", "1h", "4h", "8h", "12h"}
 
 // KlineIntervalMinutes maps those names to their length in minutes.
@@ -30,6 +32,9 @@ const KlinePageLimit = 1000
 // oldest first, and reports whether older candles are probably still available.
 // A zero until means "up to now".
 func BinanceKlines(ctx context.Context, symbol, interval string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+	if interval == "2m" {
+		return binanceTwoMinuteKlines(ctx, symbol, limit, until)
+	}
 	return binanceKlines(ctx, symbol, interval, limit, until, false)
 }
 
@@ -37,6 +42,103 @@ func BinanceKlines(ctx context.Context, symbol, interval string, limit int, unti
 // public alert-image proxy keeps its historical nine-period contract intact.
 func BinanceDailyKlines(ctx context.Context, symbol string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
 	return binanceKlines(ctx, symbol, "1d", limit, until, true)
+}
+
+// binanceTwoMinuteKlines implements the chart's custom 2m period from Binance
+// 1m candles. The upstream API rejects interval=2m, while the UI and alert
+// history use 2m as a useful display period. Fetching whole 1m pages here also
+// keeps the browser pagination contract in 2m candles.
+func binanceTwoMinuteKlines(ctx context.Context, symbol string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+	if limit < 1 {
+		limit = 300
+	}
+	if limit > KlinePageLimit {
+		limit = KlinePageLimit
+	}
+	step := 2 * time.Minute
+	end := time.Now().UTC().Truncate(step).Add(step)
+	if !until.IsZero() {
+		end = until.UTC().Truncate(step)
+	}
+
+	required := limit * 2
+	var raw []domain.MarketCandle
+	cursor := end
+	hasMore := false
+	for len(raw) < required {
+		pageLimit := required - len(raw)
+		if pageLimit > KlinePageLimit {
+			pageLimit = KlinePageLimit
+		}
+		page, more, err := binanceKlines(ctx, symbol, "1m", pageLimit, cursor, false)
+		if err != nil {
+			return nil, false, fmt.Errorf("binance klines %s 2m: %w", symbol, err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		raw = append(page, raw...)
+		hasMore = more
+		oldest := page[0].Time.UTC()
+		if !more || oldest.IsZero() || !oldest.Before(cursor) {
+			break
+		}
+		cursor = oldest
+	}
+
+	candles := aggregateKlines(raw, step, time.Now().UTC())
+	if len(candles) > limit {
+		candles = candles[len(candles)-limit:]
+	}
+	return candles, hasMore, nil
+}
+
+// aggregateKlines combines ordered lower-resolution Binance candles into a
+// display candle. Missing minutes remain visible as incomplete rather than
+// being silently presented as a complete two-minute bar.
+func aggregateKlines(raw []domain.MarketCandle, interval time.Duration, now time.Time) []domain.MarketCandle {
+	if len(raw) == 0 || interval <= 0 {
+		return nil
+	}
+	sort.SliceStable(raw, func(i, j int) bool { return raw[i].Time.Before(raw[j].Time) })
+	type bucket struct {
+		c      domain.MarketCandle
+		points int
+	}
+	buckets := make(map[int64]*bucket)
+	keys := make([]int64, 0, len(raw))
+	required := int(interval / time.Minute)
+	for _, candle := range raw {
+		key := candle.Time.UTC().Truncate(interval).Unix()
+		b := buckets[key]
+		if b == nil {
+			b = &bucket{c: domain.MarketCandle{Time: time.Unix(key, 0).UTC(), Open: candle.Open, High: candle.High, Low: candle.Low}}
+			buckets[key] = b
+			keys = append(keys, key)
+		}
+		if b.points > 0 {
+			if candle.High > b.c.High {
+				b.c.High = candle.High
+			}
+			if candle.Low < b.c.Low {
+				b.c.Low = candle.Low
+			}
+		}
+		b.c.Close = candle.Close
+		b.c.VolumeUSD += candle.VolumeUSD
+		if candle.ExchangeCount > b.c.ExchangeCount {
+			b.c.ExchangeCount = candle.ExchangeCount
+		}
+		b.points++
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	out := make([]domain.MarketCandle, 0, len(keys))
+	for _, key := range keys {
+		b := buckets[key]
+		b.c.Complete = b.points >= required && !b.c.Time.Add(interval).After(now.UTC())
+		out = append(out, b.c)
+	}
+	return out
 }
 
 func binanceKlines(ctx context.Context, symbol, interval string, limit int, until time.Time, allowDaily bool) ([]domain.MarketCandle, bool, error) {

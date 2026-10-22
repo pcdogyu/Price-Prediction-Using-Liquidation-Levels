@@ -74,6 +74,44 @@ func TestBinanceKlinesQueryAndMapping(t *testing.T) {
 	}
 }
 
+func TestBinanceKlinesAggregatesUnsupportedTwoMinutePeriod(t *testing.T) {
+	until := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	start := until.Add(-4 * time.Minute)
+	seen := fakeKlines(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("interval") != "1m" {
+			t.Fatalf("2m must be fetched from Binance as 1m rows: %s", r.URL.Query().Get("interval"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "[%s,%s,%s,%s]",
+			klineRow(start, "100", "102", "99", "101", "10"),
+			klineRow(start.Add(time.Minute), "101", "103", "100", "102", "20"),
+			klineRow(start.Add(2*time.Minute), "102", "104", "101", "103", "30"),
+			klineRow(start.Add(3*time.Minute), "103", "105", "102", "104", "40"))
+	})
+	candles, hasMore, err := BinanceKlines(context.Background(), "XRPUSDT", "2m", 2, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seen.Get("limit"); got != "4" {
+		t.Fatalf("the 2m request must fetch two 1m rows per candle, got %s", got)
+	}
+	if got := seen.Get("startTime"); got != strconv.FormatInt(start.UnixMilli(), 10) {
+		t.Fatalf("unexpected aggregated startTime %s", got)
+	}
+	if got := seen.Get("endTime"); got != strconv.FormatInt(until.UnixMilli()-1, 10) {
+		t.Fatalf("unexpected aggregated endTime %s", got)
+	}
+	if len(candles) != 2 || !hasMore {
+		t.Fatalf("unexpected aggregate page: candles=%+v hasMore=%v", candles, hasMore)
+	}
+	if first := candles[0]; !first.Time.Equal(start) || first.Open != 100 || first.High != 103 || first.Low != 99 || first.Close != 102 || first.VolumeUSD != 30 || !first.Complete {
+		t.Fatalf("first 2m candle was aggregated wrong: %+v", first)
+	}
+	if second := candles[1]; !second.Time.Equal(start.Add(2*time.Minute)) || second.Open != 102 || second.High != 105 || second.Low != 101 || second.Close != 104 || second.VolumeUSD != 70 || !second.Complete {
+		t.Fatalf("second 2m candle was aggregated wrong: %+v", second)
+	}
+}
+
 // TestBinanceKlinesGuards pins the interval check, the page clamp and the short
 // page answer, none of which a browser can bypass through the proxy.
 func TestBinanceKlinesGuards(t *testing.T) {
