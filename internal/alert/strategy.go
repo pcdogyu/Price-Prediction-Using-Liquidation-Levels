@@ -6,7 +6,8 @@
 // The rules, in the order the strategy applies them:
 //
 //  1. A context-aware threshold breach enters ARMED; the legacy Observe path
-//     remains available only for isolated backwards-compatible callers.
+//     remains available only for isolated backwards-compatible callers. An
+//     explicit historical replay may opt out of the ARMED decay phase.
 //  2. ARMED becomes FIRED only after peak-decay and price-absorption confirm
 //     the cascade has exhausted, then VWAP zone, quota/ATR, and grid filters
 //     decide whether to open or only close the opposite position.
@@ -60,15 +61,19 @@ type Config struct {
 	PeakDecayWindow      time.Duration
 	PeakDecayRatio       float64
 	AbsorptionWickRatio  float64
-	DeepQuotaUSD         float64
-	DeepQuotaMultiplier  float64
-	ATRPeriod            int
-	DeepDrawdownATR      float64
-	MinProfitSpread      float64
-	GridStep0Price       float64
-	GridStep0Pct         float64
-	GridStepMultiplier   float64
-	GridThresholdSlope   float64
+	// SkipPeakDecay is used only by explicit historical signal recalculation.
+	// It keeps the market/VWAP/position filters but does not wait for the
+	// context-aware peak-decay or price-absorption gates.
+	SkipPeakDecay       bool
+	DeepQuotaUSD        float64
+	DeepQuotaMultiplier float64
+	ATRPeriod           int
+	DeepDrawdownATR     float64
+	MinProfitSpread     float64
+	GridStep0Price      float64
+	GridStep0Pct        float64
+	GridStepMultiplier  float64
+	GridThresholdSlope  float64
 }
 
 // Defaults returns the production strategy configuration.
@@ -466,14 +471,26 @@ func (e *Engine) observe(event domain.LiquidationEvent, ctx MarketContext, force
 	}
 	c := &cycle{id: AlertID(symbol, side, at), side: side, status: domain.AlertStateWatching, threshold: threshold, windowStart: windowStart, triggeredAt: at, total: total, peak: total, count: count, lastSameSideAt: at, lastPrice: event.Price, quietUntil: at.Add(e.cfg.Quiet), contextAware: contextAware, filterApplied: contextAware, lastContext: ctx, lowestPrice: cyclePrice, highestPrice: cyclePrice, peakRateUSDPerSecond: currentRate}
 	if contextAware {
-		c.quietUntil = at.Add(e.cfg.PeakDecayWindow)
+		if e.cfg.SkipPeakDecay {
+			c.quietUntil = at
+		} else {
+			c.quietUntil = at.Add(e.cfg.PeakDecayWindow)
+		}
 		c.decision = filterDecision(e.cfg, side, ctx, *st, e.cfg.ThresholdFor(symbol))
-		c.decision.OpenAllowed = false
-		c.decision.CloseAllowed = false
-		c.decision.Ready = false
-		c.decision.Reason = "peak_decay_armed;" + c.decision.Reason
+		if !e.cfg.SkipPeakDecay {
+			c.decision.OpenAllowed = false
+			c.decision.CloseAllowed = false
+			c.decision.Ready = false
+			c.decision.Reason = "peak_decay_armed;" + c.decision.Reason
+		}
 	}
 	st.cycles[side] = c
+	if contextAware && e.cfg.SkipPeakDecay {
+		if !e.tryFireRadar(symbol, st, c, at, &res) {
+			res.addAlert(c.view(e.cfg, symbol))
+		}
+		return res
+	}
 	res.addAlert(c.view(e.cfg, symbol))
 	return res
 }
@@ -584,8 +601,10 @@ func (e *Engine) refreshCycle(symbol string, c *cycle, at time.Time, total float
 	if c.status == domain.AlertStateWatching && notional >= e.cfg.FollowUpMinimumUSD && at.After(c.lastSameSideAt) {
 		c.followUps++
 		c.lastSameSideAt = at
-		if c.contextAware {
+		if c.contextAware && !e.cfg.SkipPeakDecay {
 			c.quietUntil = at.Add(e.cfg.PeakDecayWindow)
+		} else if c.contextAware {
+			c.quietUntil = at
 		} else {
 			c.quietUntil = at.Add(e.cfg.Quiet)
 		}
@@ -680,9 +699,9 @@ func (e *Engine) Tick(now time.Time) Result {
 	return res
 }
 
-// tryFireRadar implements ARMED -> FIRED. A threshold breach alone never emits
-// an opening signal on the context-aware path: the latest decay window must be
-// below the configured fraction of the pulse peak and price must show absorption.
+// tryFireRadar implements ARMED -> FIRED. Live context-aware cycles require
+// peak-decay and price absorption; explicit historical recalculation sets
+// SkipPeakDecay and keeps only the market/position filters.
 func (e *Engine) tryFireRadar(symbol string, st *symbolState, c *cycle, now time.Time, res *Result) bool {
 	currentRate := liquidationRate(st.windows[c.side], now, e.cfg.PeakDecayWindow)
 	if currentRate > c.peakRateUSDPerSecond {
@@ -693,34 +712,42 @@ func (e *Engine) tryFireRadar(symbol string, st *symbolState, c *cycle, now time
 		decayRatio = currentRate / c.peakRateUSDPerSecond
 	}
 	ctx := c.lastContext
-	absorbed := false
-	recovered := false
-	if ctx.Price > 0 {
-		if c.side == "short" && c.highestPrice > 0 {
-			recovered = ctx.Price <= c.highestPrice
-		} else if c.side == "long" && c.lowestPrice > 0 {
-			recovered = ctx.Price >= c.lowestPrice
-		}
-	}
-	if ctx.CurrentCandle.Close > 0 || ctx.CurrentCandle.Low > 0 {
-		absorbed = recovered || candleAbsorbed(c.side, ctx.CurrentCandle, ctx.Price, e.cfg.AbsorptionWickRatio)
-	} else {
-		absorbed = recovered
-	}
 	d := filterDecision(e.cfg, c.side, ctx, *st, e.cfg.ThresholdFor(symbol))
 	d.PeakRateUSDPerSecond = c.peakRateUSDPerSecond
 	d.CurrentRateUSDPerSecond = currentRate
-	d.PeakDecayRatio = decayRatio
-	d.AbsorptionConfirmed = absorbed
-	if decayRatio >= e.cfg.PeakDecayRatio || !absorbed {
-		if decayRatio >= e.cfg.PeakDecayRatio {
-			d.Reason += ";peak_decay_not_confirmed"
+	if e.cfg.SkipPeakDecay {
+		// Explicit recalculation deliberately removes the temporal decay and
+		// candle-absorption gates. The remaining market filters still decide
+		// whether this historical event is ready to produce a signal.
+		d.PeakDecayRatio = 0
+		d.AbsorptionConfirmed = true
+	} else {
+		recovered := false
+		if ctx.Price > 0 {
+			if c.side == "short" && c.highestPrice > 0 {
+				recovered = ctx.Price <= c.highestPrice
+			} else if c.side == "long" && c.lowestPrice > 0 {
+				recovered = ctx.Price >= c.lowestPrice
+			}
 		}
-		if !absorbed {
-			d.Reason += ";price_absorption_not_confirmed"
+		absorbed := false
+		if ctx.CurrentCandle.Close > 0 || ctx.CurrentCandle.Low > 0 {
+			absorbed = recovered || candleAbsorbed(c.side, ctx.CurrentCandle, ctx.Price, e.cfg.AbsorptionWickRatio)
+		} else {
+			absorbed = recovered
 		}
-		c.decision = d
-		return false
+		d.PeakDecayRatio = decayRatio
+		d.AbsorptionConfirmed = absorbed
+		if decayRatio >= e.cfg.PeakDecayRatio || !absorbed {
+			if decayRatio >= e.cfg.PeakDecayRatio {
+				d.Reason += ";peak_decay_not_confirmed"
+			}
+			if !absorbed {
+				d.Reason += ";price_absorption_not_confirmed"
+			}
+			c.decision = d
+			return false
+		}
 	}
 	if !d.Ready {
 		c.decision = d
@@ -826,7 +853,7 @@ func (e *Engine) releaseIdle(st *symbolState, now time.Time) {
 // view renders the cycle as a persisted alert row.
 func (c *cycle) view(cfg Config, symbol string) domain.LiquidationAlert {
 	quiet := cfg.Quiet
-	if c.contextAware {
+	if c.contextAware && !cfg.SkipPeakDecay {
 		quiet = cfg.PeakDecayWindow
 	}
 	out := domain.LiquidationAlert{

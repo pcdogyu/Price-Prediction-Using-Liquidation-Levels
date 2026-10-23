@@ -150,6 +150,10 @@ func (s *Service) RecalculateAlertSignalsForContext(ctx context.Context) (domain
 	if err != nil {
 		return domain.AlertSignalRecalculation{}, err
 	}
+	// Historical recalculation intentionally does not wait for the live
+	// Peak-Decay/absorption phase. Keep the normal chart replay and live engine
+	// on the production radar path by setting this only on the local replay cfg.
+	cfg.SkipPeakDecay = true
 	symbols := s.alertReplaySymbols(rtm)
 
 	result := domain.AlertSignalRecalculation{

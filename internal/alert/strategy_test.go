@@ -1,6 +1,7 @@
 package alert
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -328,6 +329,31 @@ func TestRadarArmedPeakDecayAndHighZoneShortEntry(t *testing.T) {
 	fired := engine.Tick(testStart.Add(31 * time.Second))
 	if len(fired.Signals) != 1 || fired.Signals[0].Side != "short" || !fired.Signals[0].OpenAllowed || fired.Signals[0].PeakDecayRatio >= .4 {
 		t.Fatalf("decayed high-zone short signal=%+v", fired.Signals)
+	}
+}
+
+func TestHistoricalRecalculationSkipsPeakDecay(t *testing.T) {
+	cfg := Defaults()
+	cfg.OtherUSD = 100
+	cfg.VWAPPeriodMinutes = 3
+	cfg.ATRPeriod = 2
+	cfg.PeakDecayWindow = 30 * time.Second
+	cfg.SkipPeakDecay = true
+	engine := testEngine(t, cfg, "SOLUSDT")
+	candles := radarCandles(100, 101, 102)
+	ctx := radarShortContext(103, candles)
+	first := testEvent("SOLUSDT", "short", testStart, 150)
+	first.Price = 103
+	result := engine.ObserveWithContext(first, ctx)
+	if len(result.Signals) != 1 || result.Signals[0].Kind != domain.SignalAggressive {
+		t.Fatalf("historical recalculation should fire without peak-decay: %+v", result)
+	}
+	signal := result.Signals[0]
+	if signal.CreatedAt != testStart || signal.PeakDecayRatio != 0 || !signal.AbsorptionConfirmed {
+		t.Fatalf("historical signal should record skipped peak-decay gates: %+v", signal)
+	}
+	if strings.Contains(signal.FilterReason, "peak_decay") || strings.Contains(signal.FilterReason, "absorption") {
+		t.Fatalf("historical signal should not carry peak-decay blockers: %+v", signal)
 	}
 }
 

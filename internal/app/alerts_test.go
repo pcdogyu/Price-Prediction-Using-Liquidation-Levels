@@ -302,6 +302,7 @@ func TestAlertSignalRecalculationUses48HourWindow(t *testing.T) {
 	ctx := context.Background()
 	svc, _, st := alertTestService(t, "chart-recalculate.db")
 	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	seedAlertRadarCandles(t, st, "BTCUSDT", base)
 	if err := st.InsertLiquidation(ctx, alertTestEvent("recalculate-long", "BTCUSDT", "long", base, 120000)); err != nil {
 		t.Fatal(err)
 	}
@@ -316,6 +317,9 @@ func TestAlertSignalRecalculationUses48HourWindow(t *testing.T) {
 	}
 	if result.AlertCount != 1 {
 		t.Fatalf("the replay should include the recent alert = %+v", result)
+	}
+	if result.SignalCount != 1 {
+		t.Fatalf("recalculation should produce the ready signal without peak-decay = %+v", result)
 	}
 	view, err := svc.AlertChartSignalsForContextWindow(ctx, "BTCUSDT", 48*time.Hour)
 	if err != nil {

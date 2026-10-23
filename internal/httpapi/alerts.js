@@ -101,11 +101,11 @@
   function startSignalProgress() {
     if (signalProgressTimer) window.clearInterval(signalProgressTimer);
     const startedAt = performance.now();
-    setSignalProgress(1, '正在准备过去 48 小时信号…');
+    setSignalProgress(1, '正在准备过去 48 小时信号（跳过 Peak-Decay）…');
     signalProgressTimer = window.setInterval(() => {
       const elapsed = performance.now() - startedAt;
       const progress = Math.min(99, 1 + Math.floor(98 * (1 - Math.exp(-elapsed / 9000))));
-      const label = progress < 35 ? '正在读取爆仓脉冲…' : progress < 75 ? '正在回放 Peak-Decay…' : '正在确认衰竭与吸收…';
+      const label = progress < 35 ? '正在读取爆仓脉冲…' : progress < 75 ? '正在按当前过滤条件重算…' : '正在整理历史信号…';
       setSignalProgress(progress, label);
       if (progress >= 99) {
         window.clearInterval(signalProgressTimer);
@@ -118,7 +118,7 @@
     if (signalProgressTimer) window.clearInterval(signalProgressTimer);
     signalProgressTimer = 0;
     if (successful) {
-      setSignalProgress(100, '过去 48 小时信号重算完成');
+      setSignalProgress(100, '过去 48 小时信号重算完成（已跳过 Peak-Decay）');
       return;
     }
     const panel = $('alerts-signal-progress');
@@ -308,7 +308,7 @@
       historyPage = page;
       historyNextCursor = packet.next_cursor || '';
       timelineRows(historyRows);
-      const sourceLabel = packet.replayed ? '过去 48 小时按当前参数重算 · ' : '';
+      const sourceLabel = packet.replayed ? '过去 48 小时按当前参数重算（跳过 Peak-Decay） · ' : '';
       $('alerts-history-status').textContent = sourceLabel + '预警 ' + packet.alert_count + ' · 激进 ' + packet.aggressive_count + ' · 稳健 ' + packet.steady_count + ' · 共 ' + packet.total_count + ' 条';
       $('alerts-count').textContent = '第 ' + (historyPage + 1) + ' 页 · 本页 ' + historyRows.length + ' 条';
       $('alerts-prev').disabled = historyPage === 0;
@@ -413,7 +413,7 @@
     signalRecalculateBusy = true;
     button.disabled = true;
     startSignalProgress();
-    $('alerts-strategy-status').textContent = '正在重算过去 48 小时信号…';
+    $('alerts-strategy-status').textContent = '正在重算过去 48 小时信号（跳过 Peak-Decay）…';
     try {
       const response = await fetch(base + 'api/v1/alerts/recalculate', { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
       const packet = await response.json().catch(() => ({}));
@@ -423,7 +423,7 @@
       const symbols = Number(packet.symbol_count) || 0;
       const alerts = Number(packet.alert_count) || 0;
       const signals = Number(packet.signal_count) || 0;
-      $('alerts-strategy-status').textContent = '过去 48 小时已重算 · ' + symbols + ' 个币对 · 预警 ' + alerts + ' · 信号 ' + signals;
+      $('alerts-strategy-status').textContent = '过去 48 小时已重算（跳过 Peak-Decay） · ' + symbols + ' 个币对 · 预警 ' + alerts + ' · 信号 ' + signals;
       finishSignalProgress(true);
       clearError();
       loadOverview();
