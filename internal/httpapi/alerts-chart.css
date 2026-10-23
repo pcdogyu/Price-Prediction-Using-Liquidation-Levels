@@ -28,6 +28,7 @@
 .kline-readout{margin:0 0 6px;font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted);min-height:18px;overflow-wrap:anywhere}
 .kline-readout b{color:var(--text)}
 .kline-wrap{position:relative;user-select:none;cursor:crosshair;border:1px solid var(--line);border-radius:12px;background:var(--chart-bg);overflow:hidden;touch-action:none}
+html:not(.position-chart-page) .kline-chart-surface .kline-wrap{width:110%;max-width:none}
 .kline-wrap.dragging{cursor:grabbing}
 .kline-wrap.price-axis-hover:not(.dragging){cursor:ns-resize}
 #kline-chart{display:block;width:100%}
@@ -35,6 +36,7 @@
 .kline-note{margin-top:10px;overflow-wrap:anywhere}
 .kline-signal-table{min-width:660px}
 @media(max-width:900px){.kline-actions{margin-left:0;width:100%}}
+@media(max-width:720px){html:not(.position-chart-page) .kline-chart-surface .kline-wrap{width:100%}}
 
 /* Position detail embeds use this page as a deliberately small chart surface.
    The modal already owns the symbol title, so keep only the period buttons and

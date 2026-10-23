@@ -13,7 +13,7 @@
   const storedText = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (error) { return fallback; } };
   const rememberText = (key, value) => { try { localStorage.setItem(key, value); } catch (error) { /* private mode keeps defaults */ } };
 
-  const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
+  const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_ZONES = 'liquidation.kline.zones', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000;
   const params = new URLSearchParams(location.search);
   const positionMode = params.get('position') === '1';
@@ -33,7 +33,7 @@
     loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false,
     drag: null, hoverCandle: null, hoverMarker: null,
     radarConfig: { periodMinutes: 240, zScoreThreshold: .8 }, radarZone: null,
-    toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true) }
+    toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true), zones: stored(STORE_ZONES, true) }
   };
   let dims = null, colors = {}, scales = null, signalReplayWindowHours = storedText(STORE_SIGNAL_RECALCULATE, '') ? 48 : 0;
 
@@ -141,7 +141,8 @@
     parts.push(shownAlerts().length + ' 个预警');
     parts.push(shownSignals().length + ' 个下单信号');
     const zone = currentRadarZone();
-    if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 · 高于 ' + priceText(zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.lower_open_price) + ' 接多 · 中间仅平仓');
+    if (!state.toggles.zones) parts.push('VWAP 开仓区与仅平仓区已隐藏');
+    else if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 · 高于 ' + priceText(zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.lower_open_price) + ' 接多 · 中间仅平仓');
     else parts.push('VWAP 开仓区计算中');
     parts.push(state.atLatest ? '每 5 秒自动刷新' : '已暂停跟随最新');
     return parts.join(' · ');
@@ -359,6 +360,7 @@
   }
 
   function drawRadarZones(ctx, y, plot, priceBottom) {
+    if (!state.toggles.zones) return;
     const zone = currentRadarZone();
     if (!zone || !finite(zone.upper_open_price) || !finite(zone.lower_open_price) || zone.upper_open_price <= zone.lower_open_price) return;
     const upperRaw = y(zone.upper_open_price), lowerRaw = y(zone.lower_open_price);
@@ -599,9 +601,10 @@
     const ratio = window.devicePixelRatio || 1;
     const width = Math.max(320, wrap.clientWidth);
     const standaloneHeight = wrap.clientHeight || Math.round(window.innerHeight - 52);
-    const height = standalonePositionMode
+    const baseHeight = standalonePositionMode
       ? Math.max(240, standaloneHeight)
       : Math.max(360, Math.min(660, Math.round(window.innerHeight * .58)));
+    const height = standalonePositionMode ? baseHeight : Math.round(baseHeight * 1.1);
     canvas.style.width = width + 'px';
     canvas.style.height = height + 'px';
     canvas.width = Math.round(width * ratio);
@@ -674,7 +677,9 @@
       const mode = inPriceAxis(at) ? 'price' : inPlot(at) ? 'chart' : '';
       if (!mode || !state.candles.length) return;
       canvas.setPointerCapture(event.pointerId);
-      state.drag = { id: event.pointerId, mode, x: at.x, y: at.y, view: { start: state.view.start, end: state.view.end }, low: state.yLow, high: state.yHigh };
+      const axisY = Math.max(dims.plot.top, Math.min(dims.priceBottom, at.y));
+      state.drag = { id: event.pointerId, mode, x: at.x, y: at.y, view: { start: state.view.start, end: state.view.end }, low: state.yLow, high: state.yHigh,
+        anchorPrice: mode === 'price' && scales ? scales.priceAt(axisY) : NaN };
       wrap.classList.add('dragging');
       $('kline-tooltip').hidden = true;
       event.preventDefault();
@@ -716,7 +721,19 @@
     if (drag.mode === 'chart') {
       state.view = K.panWindow(drag.view, (drag.x - at.x) / plot.width * (drag.view.end - drag.view.start), chartLimits());
     }
-    if (Math.abs(at.y - drag.y) > 2) {
+    if (drag.mode === 'price') {
+      const extent = Math.max(1, dims.priceBottom - plot.top);
+      const anchor = finite(drag.anchorPrice) ? drag.anchorPrice : (drag.low + drag.high) / 2;
+      const auto = K.priceRange(state.candles, state.view, step()) || [drag.low, drag.high];
+      const minimum = Math.max((drag.high - drag.low) * .0002, 1e-9);
+      const maximum = Math.max((auto[1] - auto[0]) * 8, minimum);
+      const nextRange = K.dragPriceRange([drag.low, drag.high], anchor, at.y - drag.y, extent, { minSpan: minimum, maxSpan: maximum });
+      if (nextRange) {
+        state.yLow = nextRange[0];
+        state.yHigh = nextRange[1];
+        state.yManual = true;
+      }
+    } else if (Math.abs(at.y - drag.y) > 2) {
       const shift = (at.y - drag.y) / (dims.priceBottom - plot.top) * (drag.high - drag.low);
       state.yLow = drag.low + shift;
       state.yHigh = drag.high + shift;
@@ -777,7 +794,7 @@
   }
 
   function bindControls() {
-    const boxes = [[STORE_ALERTS, 'kline-alerts', 'alerts'], [STORE_SIGNALS, 'kline-signals', 'signals'], [STORE_AGGRESSIVE, 'kline-aggressive', 'aggressive'], [STORE_STEADY, 'kline-steady', 'steady']];
+    const boxes = [[STORE_ALERTS, 'kline-alerts', 'alerts'], [STORE_SIGNALS, 'kline-signals', 'signals'], [STORE_AGGRESSIVE, 'kline-aggressive', 'aggressive'], [STORE_STEADY, 'kline-steady', 'steady'], [STORE_ZONES, 'kline-zones', 'zones']];
     for (const [key, id, toggle] of boxes) {
       const box = $(id);
       box.checked = state.toggles[toggle];

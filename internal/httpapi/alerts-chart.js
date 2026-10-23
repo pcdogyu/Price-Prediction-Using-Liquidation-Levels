@@ -73,6 +73,14 @@
     return [low, low + next];
   }
 
+  // dragPriceRange maps vertical price-axis movement to a zoom factor while
+  // keeping the price under the initial pointer position anchored. Dragging up
+  // narrows the range; dragging down widens it.
+  function dragPriceRange(range, anchor, delta, extent, limits) {
+    if (!finite(delta) || !finite(extent) || extent <= 0) return null;
+    return zoomPriceRange(range, anchor, Math.exp(delta / extent * 2), limits);
+  }
+
   function volumeMax(candles, range, step) {
     let peak = 0;
     for (const candle of visibleCandles(candles, range, step)) if (finite(candle.volume) && candle.volume > peak) peak = candle.volume;
@@ -231,7 +239,7 @@
   const exported = { INTERVALS, INTERVAL_MS, DEFAULT_VISIBLE, MIN_VISIBLE, MAX_VISIBLE, RIGHT_PAD, HISTORY_TRIGGER,
     intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles, priceRange, volumeMax,
     niceTicks, mergeCandles, normaliseCandles, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal,
-    radarZone, zoomPriceRange };
+    radarZone, dragPriceRange, zoomPriceRange };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.LiquidationKline = exported;
 })(typeof window === 'object' ? window : globalThis);

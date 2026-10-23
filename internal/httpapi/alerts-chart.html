@@ -5,11 +5,11 @@
 {{NAV}}
 <main class="workspace">
   <header class="page-heading">
-    <div><span class="kicker">BINANCE USDⓈ-M · SYMBOL K-LINE</span><h1 id="kline-title">币对 K 线 <span id="kline-symbol-label" class="kline-symbol-label">—</span></h1><p>当前币对 · 横轴北京时间 · 左右两侧价格轴 · 按住拖动平移 · 滚轮缩放时间轴 · Ctrl/Shift + 滚轮缩放价格 · 双击重置</p></div>
+    <div><span class="kicker">BINANCE USDⓈ-M · SYMBOL K-LINE</span><h1 id="kline-title">币对 K 线 <span id="kline-symbol-label" class="kline-symbol-label">—</span></h1><p>当前币对 · 横轴北京时间 · 左右两侧价格轴 · 按住拖动平移 · 价格轴上下拖动缩放垂直价格 · 滚轮缩放时间轴 · Ctrl/Shift + 滚轮缩放价格 · 双击重置</p></div>
     <div class="kline-back"><a id="kline-back" href="{{BASE}}alerts">← 返回报警</a></div>
   </header>
   <div id="kline-error" class="error-box" role="alert" hidden></div>
-  <section class="surface">
+  <section class="surface kline-chart-surface">
     <div class="kline-toolbar">
       <div id="kline-intervals" class="kline-intervals" role="group" aria-label="K 线周期"></div>
       <form id="kline-jump" class="kline-jump" autocomplete="off"><label for="kline-symbol-input">币对</label><input id="kline-symbol-input" type="text" maxlength="32" placeholder="如 BTCUSDT"><button type="submit">跳转</button></form>
@@ -18,6 +18,7 @@
         <label class="alerts-check"><input id="kline-signals" type="checkbox"><span>显示下单信号</span></label>
         <label class="alerts-check"><input id="kline-aggressive" type="checkbox"><span>激进信号</span></label>
         <label class="alerts-check"><input id="kline-steady" type="checkbox"><span>稳健信号</span></label>
+        <label class="alerts-check"><input id="kline-zones" type="checkbox" checked><span>开仓区</span></label>
         <span id="kline-new-data" class="new-data hidden">有新数据</span>
         <button id="kline-latest" type="button">回到最新</button>
         <button id="kline-reset" type="button">重置缩放</button>
@@ -35,7 +36,7 @@
       <span><i class="zone-swatch zone-open-high"></i>开仓区 · 高位开空</span>
       <span><i class="zone-swatch zone-close-only"></i>仅平仓区 · 中轴</span>
       <span><i class="zone-swatch zone-open-low"></i>开仓区 · 低位接多</span>
-      <span class="kline-axis-note">左右价格轴 · 价格栏上下拖动平移 · 价格栏滚轮缩放最高/最低价 · 横轴为北京时间</span>
+      <span class="kline-axis-note">左右价格轴 · 价格栏上下拖动缩放垂直价格 · 价格栏滚轮缩放最高/最低价 · 横轴为北京时间</span>
     </div>
     <p id="kline-readout" class="kline-readout">等待 K 线数据</p>
     <div class="kline-wrap" id="kline-wrap">

@@ -97,6 +97,16 @@ test('zoomPriceRange keeps the pointer price anchored while clamping the span', 
   assert.equal(K.zoomPriceRange([100, 100], 100, 2, limits), null);
 });
 
+test('dragPriceRange zooms up or down around the initial price-axis pointer', () => {
+  const limits = { minSpan: 10, maxSpan: 400 };
+  const up = K.dragPriceRange([100, 200], 125, -50, 100, limits);
+  const down = K.dragPriceRange([100, 200], 125, 50, 100, limits);
+  assert.ok(up[1] - up[0] < 100);
+  assert.ok(down[1] - down[0] > 100);
+  assert.ok(Math.abs((125 - up[0]) / (up[1] - up[0]) - .25) < 1e-9);
+  assert.ok(Math.abs((125 - down[0]) / (down[1] - down[0]) - .25) < 1e-9);
+});
+
 test('volumeMax only looks at the visible candles', () => {
   assert.equal(K.volumeMax([candle(0, 1, 2, 1, 2, 4000), candle(5000, 1, 2, 1, 2, 9000)], { start: 0, end: 1000 }, 1000), 4000);
   assert.equal(K.volumeMax([candle(0, 1, 2, 1, 2, NaN)], { start: 0, end: 1000 }, 1000), 0);

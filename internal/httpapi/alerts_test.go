@@ -559,8 +559,8 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 		t.Fatal("the chart page must not render the removed K-line data note")
 	}
 	for _, want := range []string{"币对 K 线", "kline-symbol-label", "当前币对", "左右两侧价格轴", "横轴北京时间", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
-		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "显示预警", "显示下单信号", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "kline-alert-status", "当前已保存的阈值和周期重新回放生成", "回到最新", "重置缩放", "kline-signal-rows",
-		"开仓区 · 高位开空", "仅平仓区 · 中轴", "开仓区 · 低位接多", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
+		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "kline-zones", "显示预警", "显示下单信号", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "价格轴上下拖动缩放垂直价格", "当前已保存的阈值和周期重新回放生成", "回到最新", "重置缩放", "kline-signal-rows",
+		"开仓区 · 高位开空", "仅平仓区 · 中轴", "开仓区 · 低位接多", "kline-chart-surface", "开仓区", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the K-line page must contain %q", want)
 		}
@@ -575,7 +575,7 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 		}
 	}
 	chartScript := serveAlert(srv, http.MethodGet, "/assets/alerts-chart-app.js", nil).Body.String()
-	for _, want := range []string{"window_hours", "STORE_SIGNAL_RECALCULATE", "过去 48 小时重算", "addEventListener('storage'", "drawRadarZones", "upper_open_price", "仅平仓区"} {
+	for _, want := range []string{"window_hours", "STORE_SIGNAL_RECALCULATE", "过去 48 小时重算", "addEventListener('storage'", "drawRadarZones", "upper_open_price", "anchorPrice", "dragPriceRange", "STORE_ZONES", "仅平仓区"} {
 		if !strings.Contains(chartScript, want) {
 			t.Fatalf("the chart must refresh after signal recalculation with %q", want)
 		}
