@@ -35,7 +35,10 @@
     radarConfig: { periodMinutes: 240, zScoreThreshold: .8 }, radarZone: null,
     toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true), zones: stored(STORE_ZONES, true) }
   };
-  let dims = null, colors = {}, scales = null, signalReplayWindowHours = storedText(STORE_SIGNAL_RECALCULATE, '') ? 48 : 0;
+  // The standalone alert chart must be useful when opened directly from a URL.
+  // Relying only on the alert-page localStorage event made a fresh tab request
+  // the short default window and hide the 48h Peak-Decay replay entirely.
+  let dims = null, colors = {}, scales = null, signalReplayWindowHours = positionMode ? 0 : 48;
 
   const step = () => K.intervalMs(state.interval);
   const newestCandle = () => state.candles.length ? state.candles[state.candles.length - 1] : null;
