@@ -345,11 +345,12 @@ func (s *Server) alertChartSignals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, view)
 }
 
-// alertLiquidationDelta serves the compact 10-minute, 48-hour liquidation
-// imbalance shown below the symbol K-line. Keeping this aggregate server-side
-// avoids sending thousands of sampled liquidation events to the browser.
+// alertLiquidationDelta serves the compact 10-minute liquidation imbalance
+// shown below the symbol K-line. Without a range it returns the compatible
+// 48-hour view; from/to lets the browser request only the shared K-line window.
 func (s *Server) alertLiquidationDelta(w http.ResponseWriter, r *http.Request) {
-	symbol, _, err := alertFilters(r.URL.Query().Get("symbol"), "")
+	query := r.URL.Query()
+	symbol, _, err := alertFilters(query.Get("symbol"), "")
 	if err != nil || !alertSymbolPattern.MatchString(symbol) {
 		if err == nil {
 			err = fmt.Errorf("symbol must be 2 to 32 letters or digits")
@@ -357,7 +358,7 @@ func (s *Server) alertLiquidationDelta(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err)
 		return
 	}
-	interval := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("interval")))
+	interval := strings.ToLower(strings.TrimSpace(query.Get("interval")))
 	if interval == "" {
 		interval = "10m"
 	}
@@ -366,14 +367,38 @@ func (s *Server) alertLiquidationDelta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hours := 48
-	if raw := strings.TrimSpace(r.URL.Query().Get("hours")); raw != "" {
+	if raw := strings.TrimSpace(query.Get("hours")); raw != "" {
 		hours, err = strconv.Atoi(raw)
 		if err != nil || hours != 48 {
 			problem(w, http.StatusBadRequest, fmt.Errorf("hours must be 48"))
 			return
 		}
 	}
-	view, err := s.svc.AlertLiquidationDelta(r.Context(), symbol)
+	fromText, toText := strings.TrimSpace(query.Get("from")), strings.TrimSpace(query.Get("to"))
+	if (fromText == "") != (toText == "") {
+		problem(w, http.StatusBadRequest, fmt.Errorf("from and to must be provided together"))
+		return
+	}
+	var view domain.LiquidationDeltaView
+	if fromText == "" {
+		view, err = s.svc.AlertLiquidationDelta(r.Context(), symbol)
+	} else {
+		from, fromErr := time.Parse(time.RFC3339Nano, fromText)
+		to, toErr := time.Parse(time.RFC3339Nano, toText)
+		if fromErr != nil || toErr != nil {
+			problem(w, http.StatusBadRequest, fmt.Errorf("from and to must be RFC3339 timestamps"))
+			return
+		}
+		if !from.Before(to) {
+			problem(w, http.StatusBadRequest, fmt.Errorf("from must be before to"))
+			return
+		}
+		if to.Sub(from) > app.AlertLiquidationDeltaHours*time.Hour {
+			problem(w, http.StatusBadRequest, fmt.Errorf("liquidation window must not exceed %d hours", app.AlertLiquidationDeltaHours))
+			return
+		}
+		view, err = s.svc.AlertLiquidationDeltaWindow(r.Context(), symbol, from, to)
+	}
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
 		return

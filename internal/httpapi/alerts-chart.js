@@ -9,6 +9,7 @@
   const INTERVAL_MS = { '1m': 6e4, '2m': 12e4, '3m': 18e4, '5m': 3e5, '15m': 9e5, '30m': 18e5, '1h': 36e5, '4h': 144e5, '8h': 288e5, '12h': 432e5 };
   const DEFAULT_VISIBLE = 150, MIN_VISIBLE = 12, MAX_VISIBLE = 800, RIGHT_PAD = 2;
   const HISTORY_TRIGGER = 25, CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000, SIGNAL_PAGES = 3;
+  const LIQUIDATION_DELTA_INTERVAL_MS = 10 * 60 * 1000, LIQUIDATION_DELTA_MAX_MS = 48 * 60 * 60 * 1000;
   const STORE_INTERVAL = 'liquidation.kline.interval', STORE_SIGNALS = 'liquidation.kline.signals';
 
   const intervalMs = name => INTERVAL_MS[name] || 0;
@@ -45,6 +46,24 @@
 
   function visibleCandles(candles, range, step) {
     return candles.filter(candle => candle.t + step > range.start && candle.t < range.end);
+  }
+
+  // liquidationDeltaWindow converts the K-line viewport into the bounded
+  // server request used by the lower chart. It keeps only the latest 48 hours
+  // and aligns both edges to complete 10-minute buckets.
+  function liquidationDeltaWindow(range, now, interval = LIQUIDATION_DELTA_INTERVAL_MS, maxRange = LIQUIDATION_DELTA_MAX_MS) {
+    if (!range || !finite(range.start) || !finite(range.end) || range.end <= range.start || !finite(now) || interval <= 0 || maxRange <= 0) return null;
+    const latest = bucketStart(now, interval) + interval;
+    const oldest = latest - maxRange;
+    const start = Math.max(oldest, bucketStart(range.start, interval));
+    const requestedEnd = Math.min(latest, range.end);
+    const end = Math.min(latest, Math.ceil(requestedEnd / interval) * interval);
+    return end > start ? { start, end } : null;
+  }
+
+  function visibleLiquidationDelta(points, range, interval = LIQUIDATION_DELTA_INTERVAL_MS) {
+    if (!range || !finite(range.start) || !finite(range.end) || range.end <= range.start) return [];
+    return (points || []).filter(point => point && finite(point.t) && point.t + interval > range.start && point.t < range.end);
   }
 
   // priceRange fits the visible candles with padding and keeps a flat series open.
@@ -299,7 +318,8 @@
   }
 
   const exported = { INTERVALS, INTERVAL_MS, DEFAULT_VISIBLE, MIN_VISIBLE, MAX_VISIBLE, RIGHT_PAD, HISTORY_TRIGGER,
-    intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles, priceRange, volumeMax,
+    LIQUIDATION_DELTA_INTERVAL_MS, LIQUIDATION_DELTA_MAX_MS, intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles,
+    liquidationDeltaWindow, visibleLiquidationDelta, priceRange, volumeMax,
     niceTicks, mergeCandles, normaliseCandles, normaliseLiquidationDelta, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal,
     radarZone, radarZones, vwapZoneBounds, vwapSignalAllowed, dragPriceRange, zoomPriceRange };
   if (typeof module === 'object' && module.exports) module.exports = exported;

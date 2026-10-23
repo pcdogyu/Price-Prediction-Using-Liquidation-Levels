@@ -27,6 +27,16 @@ test('the K-line uses the full price canvas and the lower panel is net long-shor
   assert.match(chartApp, /净多空（空 − 多）/);
 });
 
+test('the net long-short panel follows the K-line viewport with bounded debounced requests', () => {
+  assert.match(chartApp, /LIQUIDATION_DELTA_DEBOUNCE_MS = 250/);
+  assert.match(chartApp, /liquidationDeltaWindow\(state\.view/);
+  assert.match(chartApp, /&from=' \+ encodeURIComponent/);
+  assert.match(chartApp, /&to=' \+ encodeURIComponent/);
+  assert.match(chartApp, /new AbortController\(\)/);
+  assert.match(chartApp, /requestId !== state\.liquidationDeltaRequestSequence/);
+  assert.match(chartApp, /left: 78, right: 82, top: 24, bottom: 38/);
+});
+
 test('position chart tooltip distinguishes merged closing fills', () => {
   assert.match(chartApp, /marker\.phase === 'exit' \? '平仓' : '开仓'/);
 });
@@ -184,6 +194,19 @@ test('normaliseLiquidationDelta keeps signed short-minus-long buckets ordered', 
   const points = K.normaliseLiquidationDelta(rows);
   assert.deepEqual(points.map(point => [point.t, point.delta_usd, point.count]), [[0, 150, 2], [120000, -500, 4]]);
   assert.deepEqual(K.normaliseLiquidationDelta(null), []);
+});
+
+test('liquidationDeltaWindow clips the K-line view to the latest 48 hours and 10m buckets', () => {
+  const interval = 10 * 60 * 1000;
+  const now = Date.parse('2026-10-23T04:07:00.000Z');
+  const window = K.liquidationDeltaWindow({ start: now - 60 * 60 * 60 * 1000, end: now + 60 * 60 * 1000 }, now, interval, 48 * 60 * 60 * 1000);
+  assert.deepEqual(window, { start: Date.parse('2026-10-21T04:10:00.000Z'), end: Date.parse('2026-10-23T04:10:00.000Z') });
+  assert.equal(K.liquidationDeltaWindow({ start: now - 60 * 60 * 1000, end: now - 50 * 60 * 60 * 1000 }, now, interval, 48 * 60 * 60 * 1000), null);
+});
+
+test('visibleLiquidationDelta keeps only buckets overlapping the shared K-line view', () => {
+  const points = [{ t: 0 }, { t: 600000 }, { t: 1200000 }];
+  assert.deepEqual(K.visibleLiquidationDelta(points, { start: 500000, end: 1200000 }, 600000).map(point => point.t), [0, 600000]);
 });
 
 test('filterSignals dedupes and honours the kind toggles', () => {

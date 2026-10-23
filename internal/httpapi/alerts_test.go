@@ -658,10 +658,36 @@ func TestAlertLiquidationDeltaEndpointAggregatesConfiguredWindow(t *testing.T) {
 	if current == nil || current.ShortUSD != 350 || current.LongUSD != 0 || current.DeltaUSD != 350 || current.Count != 1 || previous == nil || previous.DeltaUSD != -100 {
 		t.Fatalf("current=%+v previous=%+v", current, previous)
 	}
+	rangeFrom := bucket.Add(-19 * time.Minute)
+	rangeTo := bucket.Add(19 * time.Minute)
+	rangePath := "/api/v1/alerts/liquidation-delta?" + url.Values{
+		"symbol": []string{"BTCUSDT"},
+		"from":   []string{rangeFrom.Format(time.RFC3339Nano)},
+		"to":     []string{rangeTo.Format(time.RFC3339Nano)},
+	}.Encode()
+	ranged := serveAlert(srv, http.MethodGet, rangePath, nil)
+	if ranged.Code != http.StatusOK {
+		t.Fatalf("ranged delta status=%d body=%s", ranged.Code, ranged.Body.String())
+	}
+	var rangedView domain.LiquidationDeltaView
+	if err := json.Unmarshal(ranged.Body.Bytes(), &rangedView); err != nil {
+		t.Fatal(err)
+	}
+	if !rangedView.From.Equal(bucket.Add(-20*time.Minute)) || !rangedView.To.Equal(bucket.Add(10*time.Minute)) || len(rangedView.Points) != 3 {
+		t.Fatalf("ranged delta view=%+v", rangedView)
+	}
+	if rangedView.Points[0].DeltaUSD != 0 || rangedView.Points[1].DeltaUSD != -100 || rangedView.Points[2].DeltaUSD != 350 {
+		t.Fatalf("ranged delta points=%+v", rangedView.Points)
+	}
 	for _, path := range []string{
 		"/api/v1/alerts/liquidation-delta",
 		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&interval=5m",
 		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&hours=24",
+		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&from=2026-10-23T00:00:00Z",
+		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&to=2026-10-23T01:00:00Z",
+		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&from=bad&to=2026-10-23T01:00:00Z",
+		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&from=2026-10-23T02:00:00Z&to=2026-10-23T01:00:00Z",
+		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&from=2026-10-21T00:00:00Z&to=2026-10-23T01:00:00Z",
 	} {
 		if got := serveAlert(srv, http.MethodGet, path, nil).Code; got != http.StatusBadRequest {
 			t.Fatalf("%s status=%d want 400", path, got)
