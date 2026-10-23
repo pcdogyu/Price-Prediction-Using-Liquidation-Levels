@@ -151,6 +151,48 @@ func TestMarketTurnoverScopeDefaultsPersistsAndValidates(t *testing.T) {
 	}
 }
 
+func TestGammaNegativePolicyDefaultsPersistsAndValidates(t *testing.T) {
+	cfg := Default()
+	if cfg.Trading.GammaNegativePolicy != GammaNegativePolicyIgnore {
+		t.Fatalf("default gamma negative policy=%q", cfg.Trading.GammaNegativePolicy)
+	}
+
+	legacyPath := filepath.Join(t.TempDir(), "legacy-gamma.json")
+	if err := os.WriteFile(legacyPath, []byte(`{"trading":{"order_amount_usdt":100}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := Load(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Trading.GammaNegativePolicy != GammaNegativePolicyIgnore {
+		t.Fatalf("legacy gamma negative policy=%q", legacy.Trading.GammaNegativePolicy)
+	}
+
+	path := filepath.Join(t.TempDir(), "gamma-config.json")
+	for _, policy := range []string{GammaNegativePolicyIgnore, GammaNegativePolicyPassthrough, GammaNegativePolicyFlip} {
+		cfg.Trading.GammaNegativePolicy = policy
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("policy %q should validate: %v", policy, err)
+		}
+		if err := Save(path, cfg); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.Trading.GammaNegativePolicy != policy {
+			t.Fatalf("persisted policy=%q, want %q", loaded.Trading.GammaNegativePolicy, policy)
+		}
+	}
+
+	cfg.Trading.GammaNegativePolicy = "invalid"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("unsupported gamma negative policy should be rejected")
+	}
+}
+
 func TestLayeredOrderDefaultsPersistAndValidate(t *testing.T) {
 	cfg := Default()
 	if cfg.Trading.LayeredOrder.MarketAmountPct != 10 || len(cfg.Trading.LayeredOrder.PriceLayers) != 4 {

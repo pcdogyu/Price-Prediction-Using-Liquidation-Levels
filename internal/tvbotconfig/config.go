@@ -32,6 +32,10 @@ const (
 	MarketTurnoverScopeAll    = "all"
 
 	DefaultMarketTurnoverScope = MarketTurnoverScopeTop100
+
+	GammaNegativePolicyIgnore      = "ignore"
+	GammaNegativePolicyPassthrough = "passthrough"
+	GammaNegativePolicyFlip        = "flip"
 )
 
 type Config struct {
@@ -65,6 +69,7 @@ type TradingConfig struct {
 	DefaultMarginMode         string                       `json:"default_margin_mode"`
 	PositionMode              string                       `json:"position_mode"`
 	MarketTurnoverScope       string                       `json:"market_turnover_scope"`
+	GammaNegativePolicy       string                       `json:"gamma_negative_policy"`
 	SignalTTLSeconds          int                          `json:"signal_ttl_seconds"`
 	IgnoredCoinpair           string                       `json:"ignored_coinpair"`
 	IgnoredCoinpairs          []string                     `json:"ignored_coinpairs"`
@@ -290,6 +295,7 @@ func Default() Config {
 			DefaultMarginMode:         MarginIsolated,
 			PositionMode:              PositionNet,
 			MarketTurnoverScope:       DefaultMarketTurnoverScope,
+			GammaNegativePolicy:       GammaNegativePolicyIgnore,
 			SignalTTLSeconds:          120,
 			OrderAmountUSDT:           100,
 			Leverage:                  5,
@@ -441,6 +447,10 @@ func (c *Config) Normalize() {
 	if c.Trading.MarketTurnoverScope == "" {
 		c.Trading.MarketTurnoverScope = DefaultMarketTurnoverScope
 	}
+	c.Trading.GammaNegativePolicy = strings.ToLower(strings.TrimSpace(c.Trading.GammaNegativePolicy))
+	if c.Trading.GammaNegativePolicy == "" {
+		c.Trading.GammaNegativePolicy = GammaNegativePolicyIgnore
+	}
 	if c.Trading.SignalTTLSeconds <= 0 {
 		c.Trading.SignalTTLSeconds = 120
 	}
@@ -569,6 +579,11 @@ func (c Config) Validate() error {
 	}
 	if !ValidMarketTurnoverScope(c.Trading.MarketTurnoverScope) {
 		return fmt.Errorf("unsupported market turnover scope %q", c.Trading.MarketTurnoverScope)
+	}
+	switch c.Trading.GammaNegativePolicy {
+	case GammaNegativePolicyIgnore, GammaNegativePolicyPassthrough, GammaNegativePolicyFlip:
+	default:
+		return fmt.Errorf("unsupported gamma negative policy %q", c.Trading.GammaNegativePolicy)
 	}
 	switch trading.RiskType(c.Trading.RiskType) {
 	case trading.RiskNone, trading.RiskTPSL, trading.RiskTrailing:

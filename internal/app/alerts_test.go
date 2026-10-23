@@ -170,20 +170,21 @@ func TestAlertHistoryKeepsGammaDecisionFromSignalTime(t *testing.T) {
 		[]domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 1e9, UpdatedAt: base}},
 		base, "")
 
-	// The alert and aggressive signal are created while Gamma is positive.
+	// The alert and aggressive signal are created while shared ETH Gamma is positive.
 	svc.dashboard.Lock()
 	positive := 0.245033
-	svc.dashboard.deribit["BTCUSDT"] = domain.OptionGammaPoint{Symbol: "BTCUSDT", Underlying: "BTC", Source: "deribit", State: "ok", Time: time.Now().UTC(), Gamma: &positive, Contracts: 80}
+	svc.dashboard.deribit["ETHUSDT"] = domain.OptionGammaPoint{Symbol: "ETHUSDT", Underlying: "ETH", Source: "deribit", State: "ok", Time: time.Now().UTC(), Gamma: &positive, Contracts: 80}
 	svc.dashboard.Unlock()
 	if err := svc.RecordLiquidation(ctx, alertTestEvent("gamma-long", "BTCUSDT", "long", base, 120000)); err != nil {
 		t.Fatal(err)
 	}
 	svc.alerts.persist(ctx, svc.alerts.engine.Tick(base.Add(2*time.Minute)), true)
 
-	// A later negative Gamma suppresses only the newly created steady signal.
+	// A later negative shared ETH Gamma marks only the newly created steady signal.
 	later := base.Add(3 * time.Minute)
 	svc.dashboard.Lock()
 	negative := -0.245033
+	svc.dashboard.deribit["ETHUSDT"] = domain.OptionGammaPoint{Symbol: "ETHUSDT", Underlying: "ETH", Source: "deribit", State: "ok", Time: time.Now().UTC(), Gamma: &negative, Contracts: 80}
 	svc.dashboard.deribit["BTCUSDT"] = domain.OptionGammaPoint{Symbol: "BTCUSDT", Underlying: "BTC", Source: "deribit", State: "ok", Time: time.Now().UTC(), Gamma: &negative, Contracts: 80}
 	svc.dashboard.Unlock()
 	if err := svc.RecordLiquidation(ctx, alertTestEvent("gamma-short", "BTCUSDT", "short", later, 5000)); err != nil {

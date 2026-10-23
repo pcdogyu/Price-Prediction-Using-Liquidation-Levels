@@ -573,6 +573,37 @@ const tvbotHTML = `<!doctype html>
       gap: 12px;
     }
     .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .gamma-policy-field {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .gamma-policy-options {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .gamma-policy-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      min-height: 72px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--text);
+      background: var(--control-bg);
+      cursor: pointer;
+    }
+    .gamma-policy-option input {
+      flex: 0 0 auto;
+      width: 16px;
+      min-height: 16px;
+      margin-top: 2px;
+    }
+    .gamma-policy-option strong { display: block; margin-bottom: 4px; }
     label {
       display: grid;
       gap: 6px;
@@ -2093,6 +2124,15 @@ const tvbotHTML = `<!doctype html>
         <label>多单限价倍率<input id="order-long-multiplier" type="number" min="0" step="0.000001"></label>
         <label>空单限价倍率<input id="order-short-multiplier" type="number" min="0" step="0.000001"></label>
         <label>24h 交易额排名限制<select id="order-turnover-scope"><option value="top5">前 5</option><option value="top10">前 10</option><option value="top20">前 20</option><option value="top50">前 50</option><option value="top100">前 100</option><option value="top200">前 200</option><option value="top500">前 500</option><option value="all">不限排名</option></select></label>
+        <div class="gamma-policy-field" id="gamma-negative-policy-field">
+          <div>ETH Gamma&lt;0 开仓策略</div>
+          <div class="gamma-policy-options" role="radiogroup" aria-label="ETH Gamma 负值开仓策略">
+            <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="ignore"><span><strong>选项 1：忽略</strong>负 Gamma 时忽略开仓，平仓照常。</span></label>
+            <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="passthrough"><span><strong>选项 2：不动</strong>负 Gamma 时保持现有下单逻辑。</span></label>
+            <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="flip"><span><strong>选项 3：翻转</strong>负 Gamma 时翻转开仓多空，平仓和预平仓不变。</span></label>
+          </div>
+          <div class="muted">使用共享的最新 ETHUSDT Deribit Gamma；Gamma 不可用或过期时放行。</div>
+        </div>
       </div>
       <div id="layered-order-fields" style="display:none;margin-top:14px">
         <div class="muted">多层订单按一次实时价快照计算：市价层立即成交，信号价层按 TradingView 价格挂单，其余层按当前价格的方向性价差挂单。每层成交价都会单独计算并提交对应的止盈、止损触发价；比例合计必须为 100%。</div>
@@ -4768,6 +4808,10 @@ const tvbotHTML = `<!doctype html>
       $("order-leverage").value = trading.leverage || 5;
       $("order-type").value = trading.order_type || "layered";
       $("order-turnover-scope").value = marketTurnoverScope();
+      const gammaPolicy = gammaNegativePolicy(trading);
+      document.querySelectorAll('input[name="gamma-negative-policy"]').forEach((input) => {
+        input.checked = input.value === gammaPolicy;
+      });
       $("order-risk-type").value = trading.risk_type || "tp_sl";
       $("order-tp").value = trading.take_profit_pct || 2;
       $("order-sl").value = trading.stop_loss_pct || 1;
@@ -4819,6 +4863,20 @@ const tvbotHTML = `<!doctype html>
       $("layered-order-fields").style.display = visible ? "block" : "none";
     }
 
+    function gammaNegativePolicy(trading) {
+      const value = String(trading && trading.gamma_negative_policy || "ignore").toLowerCase();
+      return ["ignore", "passthrough", "flip"].includes(value) ? value : "ignore";
+    }
+
+    function gammaNegativePolicyLabel(policy) {
+      return { ignore: "忽略开仓（默认）", passthrough: "不动", flip: "翻转开仓多空" }[policy] || "忽略开仓（默认）";
+    }
+
+    function selectedGammaNegativePolicy() {
+      const input = document.querySelector('input[name="gamma-negative-policy"]:checked');
+      return input ? input.value : "ignore";
+    }
+
     function renderOrderSettingsPreview() {
       const orderType = $("order-type").value || "layered";
       const layered = readLayeredOrderConfig();
@@ -4826,6 +4884,7 @@ const tvbotHTML = `<!doctype html>
       const rows = [
         ["订单类型", orderTypeText(orderType)],
         ["24h 交易额排名限制", orderTurnoverScopeLabel($("order-turnover-scope").value)],
+        ["ETH Gamma<0", gammaNegativePolicyLabel(selectedGammaNegativePolicy())],
         [orderType === "limit" ? "多单限价单价格" : "市价单估算价格", orderType === "limit" ? "TradingView 当前价格 x " + asText($("order-long-multiplier").value) : "TradingView 当前价格"],
         [orderType === "limit" ? "空单限价单价格" : "OKX 下单价格", orderType === "limit" ? "TradingView 当前价格 x " + asText($("order-short-multiplier").value) : "市价"],
         ["固定止盈止损", asText($("order-tp").value) + "% / " + asText($("order-sl").value) + "%"],
@@ -7179,6 +7238,7 @@ const tvbotHTML = `<!doctype html>
           leverage: Number($("order-leverage").value),
           order_type: $("order-type").value,
           market_turnover_scope: $("order-turnover-scope").value,
+          gamma_negative_policy: selectedGammaNegativePolicy(),
           risk_type: $("order-risk-type").value,
           take_profit_pct: Number($("order-tp").value),
           stop_loss_pct: Number($("order-sl").value),
@@ -7733,6 +7793,9 @@ const tvbotHTML = `<!doctype html>
       setSymbolSort(th.dataset.symbolSort);
     });
     $("save-order-settings").addEventListener("click", () => saveOrderSettings().catch((err) => toast(err.message)));
+    document.querySelectorAll('input[name="gamma-negative-policy"]').forEach((input) => {
+      input.addEventListener("change", () => renderOrderSettingsPreview());
+    });
     ["order-amount", "order-leverage", "order-type", "order-turnover-scope", "order-risk-type", "order-tp", "order-sl", "order-trailing", "order-long-multiplier", "order-short-multiplier", "order-layered-market-pct", "order-layered-signal-pct", "order-layered-layer-0-amount", "order-layered-layer-0-offset", "order-layered-layer-1-amount", "order-layered-layer-1-offset", "order-layered-layer-2-amount", "order-layered-layer-2-offset", "order-layered-layer-3-amount", "order-layered-layer-3-offset"].forEach((id) => {
       $(id).addEventListener("input", () => renderOrderSettingsPreview());
       $(id).addEventListener("change", () => renderOrderSettingsPreview());

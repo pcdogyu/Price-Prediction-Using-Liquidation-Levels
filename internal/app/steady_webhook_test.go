@@ -196,7 +196,7 @@ func TestDisabledOpeningSignalStillSendsPreclose(t *testing.T) {
 	}
 }
 
-func TestNegativeETHGammaSuppressesEveryOpeningWebhook(t *testing.T) {
+func TestNegativeETHGammaLeavesOpeningWebhookForUnifiedTVOrderPolicy(t *testing.T) {
 	requests := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -230,22 +230,22 @@ func TestNegativeETHGammaSuppressesEveryOpeningWebhook(t *testing.T) {
 	go svc.alerts.webhook.Start(ctx)
 	svc.alerts.submitSignalWebhook(domain.TradeSignal{Symbol: "ETHUSDT", Kind: domain.SignalSteady, Side: "long", CreatedAt: now, ReferencePrice: 3210.45}, true)
 
-	select {
-	case raw := <-requests:
-		var got map[string]string
-		if err := json.Unmarshal(raw, &got); err != nil {
-			t.Fatalf("webhook body is not JSON: %v", err)
+	var payloads [2]map[string]string
+	for i := range payloads {
+		select {
+		case raw := <-requests:
+			if err := json.Unmarshal(raw, &payloads[i]); err != nil {
+				t.Fatalf("webhook body is not JSON: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("webhook %d was not delivered", i+1)
 		}
-		if got["position_effect"] != "close" || got["position_side"] != "short" || got["order_intent"] != "close_short" {
-			t.Fatalf("negative ETH gamma must send only preclose: %s", raw)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("preclose webhook was not delivered")
 	}
-	select {
-	case raw := <-requests:
-		t.Fatalf("negative ETH gamma unexpectedly opened a position: %s", raw)
-	case <-time.After(500 * time.Millisecond):
+	if payloads[0]["position_effect"] != "close" || payloads[0]["position_side"] != "short" || payloads[0]["order_intent"] != "close_short" {
+		t.Fatalf("negative ETH gamma must preserve the preclose: %#v", payloads[0])
+	}
+	if payloads[1]["position_effect"] != "open" || payloads[1]["position_side"] != "long" || payloads[1]["order_intent"] != "entry_long" {
+		t.Fatalf("opening signal should reach unified TVBot policy: %#v", payloads[1])
 	}
 }
 

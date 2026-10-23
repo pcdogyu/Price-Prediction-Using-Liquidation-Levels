@@ -202,6 +202,14 @@ func TestRoutes(t *testing.T) {
 	if bytes.Contains(ui.Body.Bytes(), []byte("max-width: 1240px")) || !bytes.Contains(ui.Body.Bytes(), []byte("Asia/Shanghai")) {
 		t.Fatalf("tvbot ui should use full-width layout and Shanghai order times")
 	}
+	if bytes.Count(ui.Body.Bytes(), []byte(`name="gamma-negative-policy"`)) < 3 ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`value="ignore"`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`value="passthrough"`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`value="flip"`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("gamma_negative_policy")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("gammaNegativePolicy")) {
+		t.Fatalf("tvbot ui should expose three gamma policy choices and persist the selected value")
+	}
 	if !bytes.Contains(ui.Body.Bytes(), []byte("订单分析")) {
 		t.Fatalf("tvbot ui should include order analysis tab")
 	}
@@ -975,6 +983,34 @@ func TestTVBotConfigSavesMarketTurnoverScopeAndRejectsInvalidValue(t *testing.T)
 	}
 }
 
+func TestTVBotConfigSavesGammaNegativePolicyAndRejectsInvalidValue(t *testing.T) {
+	srv := newTestServer(t)
+	for _, policy := range []string{config.GammaNegativePolicyIgnore, config.GammaNegativePolicyPassthrough, config.GammaNegativePolicyFlip} {
+		req := httptest.NewRequest(http.MethodPatch, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"gamma_negative_policy":"`+policy+`"}}`)))
+		req.SetBasicAuth("admin", "Admin123")
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("policy %s status=%d body=%s", policy, rr.Code, rr.Body.String())
+		}
+		var cfg config.Config
+		if err := json.Unmarshal(rr.Body.Bytes(), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Trading.GammaNegativePolicy != policy || srv.ConfigStore.Get().Trading.GammaNegativePolicy != policy {
+			t.Fatalf("policy %s not persisted: response=%q store=%q", policy, cfg.Trading.GammaNegativePolicy, srv.ConfigStore.Get().Trading.GammaNegativePolicy)
+		}
+	}
+
+	badReq := httptest.NewRequest(http.MethodPatch, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"gamma_negative_policy":"invalid"}}`)))
+	badReq.SetBasicAuth("admin", "Admin123")
+	bad := httptest.NewRecorder()
+	srv.ServeHTTP(bad, badReq)
+	if bad.Code != http.StatusBadRequest || !bytes.Contains(bad.Body.Bytes(), []byte("unsupported gamma negative policy")) {
+		t.Fatalf("invalid gamma policy status=%d body=%s", bad.Code, bad.Body.String())
+	}
+}
+
 func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 	srv := newTestServer(t)
 	req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"okx_enabled":true,"binance_enabled":true,"gate_enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8}}}`)))
@@ -1464,6 +1500,91 @@ func TestTVOrderAcceptsAndDeduplicates(t *testing.T) {
 	}
 	if len(list.Orders) != 2 || !foundDuplicate {
 		t.Fatalf("duplicate signal should be listed in history: %#v", list.Orders)
+	}
+}
+
+func TestTVOrderAppliesNegativeETHGammaPoliciesToOpeningSignals(t *testing.T) {
+	negative := -0.25
+	for _, tc := range []struct {
+		name       string
+		policy     string
+		wantStatus string
+		wantAction trading.Side
+		wantSide   string
+		wantIntent string
+	}{
+		{name: "ignore", policy: config.GammaNegativePolicyIgnore, wantStatus: "ignored"},
+		{name: "passthrough", policy: config.GammaNegativePolicyPassthrough, wantStatus: "accepted", wantAction: trading.ActionLong, wantSide: trading.PositionSideLong},
+		{name: "flip", policy: config.GammaNegativePolicyFlip, wantStatus: "accepted", wantAction: trading.ActionShort, wantSide: trading.PositionSideShort, wantIntent: "entry_short"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServer(t)
+			srv.SetGammaProvider(func(context.Context) GammaSnapshot { return GammaSnapshot{State: "ok", Value: &negative} })
+			cfg := srv.ConfigStore.Get()
+			cfg.Trading.GammaNegativePolicy = tc.policy
+			srv.ConfigStore = config.NewStore("", cfg)
+			signal := validSignal(t, srv)
+			body, err := json.Marshal(signal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rr := httptest.NewRecorder()
+			srv.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/tvorder", bytes.NewReader(body)))
+			if rr.Code != http.StatusAccepted {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+			resp := decodeTVOrderSignalResponse(t, rr.Body.Bytes())
+			if resp.Status != tc.wantStatus {
+				t.Fatalf("status=%q want %q body=%s", resp.Status, tc.wantStatus, rr.Body.String())
+			}
+			if tc.policy == config.GammaNegativePolicyIgnore {
+				if resp.Reason != "eth_gamma_negative" {
+					t.Fatalf("ignore reason=%q body=%s", resp.Reason, rr.Body.String())
+				}
+				select {
+				case got := <-srv.Executor.(fakeExecutor).calls:
+					t.Fatalf("ignored signal executed: %#v", got)
+				case <-time.After(50 * time.Millisecond):
+				}
+				return
+			}
+			select {
+			case got := <-srv.Executor.(fakeExecutor).calls:
+				if got.Action != tc.wantAction || got.PositionSide != tc.wantSide || got.PositionEffect != trading.PositionEffectOpen || got.OrderIntent != tc.wantIntent {
+					t.Fatalf("executed signal=%#v", got)
+				}
+				if got.SourceAction != trading.ActionLong {
+					t.Fatalf("original source action was not preserved: %#v", got)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("executor was not called")
+			}
+		})
+	}
+}
+
+func TestTVOrderNegativeETHGammaDoesNotFilterCloseSignals(t *testing.T) {
+	negative := -0.25
+	srv := newTestServer(t)
+	srv.SetGammaProvider(func(context.Context) GammaSnapshot { return GammaSnapshot{State: "ok", Value: &negative} })
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.GammaNegativePolicy = config.GammaNegativePolicyIgnore
+	srv.ConfigStore = config.NewStore("", cfg)
+	signal := validSignal(t, srv)
+	signal.Action = trading.ActionShort
+	signal.PositionEffect = trading.PositionEffectClose
+	signal.PositionSide = trading.PositionSideLong
+	signal.OrderIntent = "close_long"
+	signal.Normalize()
+	signal.Token = srv.Token.Generate(signal.CanonicalTokenPayload())
+	body, err := json.Marshal(signal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/tvorder", bytes.NewReader(body)))
+	if rr.Code != http.StatusAccepted || bytes.Contains(rr.Body.Bytes(), []byte(`"reason":"eth_gamma_negative"`)) || bytes.Contains(rr.Body.Bytes(), []byte(`"status":"ignored"`)) {
+		t.Fatalf("negative Gamma incorrectly filtered close: status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

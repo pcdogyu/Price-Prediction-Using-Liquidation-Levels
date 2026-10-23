@@ -29,6 +29,12 @@ func (s *Service) alertGamma(ctx context.Context) domain.AlertGamma {
 	return s.alertGammaForAnchor(ctx, alertGammaETHAnchor)
 }
 
+// CurrentETHGamma exposes the shared, freshness-checked ETHUSDT snapshot to
+// the embedded TVBot without coupling the trading package to the alert store.
+func (s *Service) CurrentETHGamma(ctx context.Context) domain.AlertGamma {
+	return s.alertGamma(ctx)
+}
+
 func (s *Service) alertGammaForSymbol(ctx context.Context, symbol string) domain.AlertGamma {
 	return s.alertGammaForAnchor(ctx, alertGammaAnchorForSymbol(symbol))
 }
@@ -82,5 +88,5 @@ func (rtm *alertRuntime) gammaIgnored(symbol string) bool {
 	if rtm == nil || rtm.service == nil {
 		return false
 	}
-	return rtm.service.alertGammaForSymbol(context.Background(), symbol).Ignored
+	return rtm.service.gammaPolicyForTenant(rtm.tenantID) == "ignore" && rtm.service.alertGamma(context.Background()).Ignored
 }

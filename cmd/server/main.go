@@ -73,6 +73,13 @@ func main() {
 		}
 		return target, true
 	})
+	svc.SetGammaPolicyResolver(func(username string) string {
+		return bridge.GammaNegativePolicyForUser(username)
+	})
+	bridge.Handler.SetGammaProvider(func(ctx context.Context) tvbotserver.GammaSnapshot {
+		gamma := svc.CurrentETHGamma(ctx)
+		return tvbotserver.GammaSnapshot{State: gamma.State, Value: gamma.Gamma}
+	})
 	bridge.Start(ctx)
 	srv, err := httpapi.New(cfg, svc, log, logStore, st)
 	if err != nil {

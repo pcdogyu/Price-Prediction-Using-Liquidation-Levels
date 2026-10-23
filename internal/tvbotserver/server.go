@@ -60,6 +60,7 @@ type Server struct {
 	RedirectUnifiedLogin   func(http.ResponseWriter, *http.Request)
 	LogoutUnified          func(http.ResponseWriter, *http.Request)
 	TopMenuProvider        func(*http.Request) []TopMenuItem
+	GammaProvider          GammaProvider
 	positionEntryCache     *positionEntryFillCache
 }
 
@@ -217,6 +218,19 @@ func (s *Server) handleTVOrder(w http.ResponseWriter, r *http.Request) {
 				"status":    "ignored",
 				"signal_id": record.SignalID,
 				"reason":    "adx_transition",
+			})
+			return
+		}
+		if s.applyTVOrderGammaPolicy(r.Context(), &signal, cfg) {
+			record, err := s.Orders.RecordIgnoredReason(signal, "eth_gamma_negative", "ETHUSDT Deribit Gamma is negative and the configured policy ignores opening signals", now)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"status":    "ignored",
+				"signal_id": record.SignalID,
+				"reason":    "eth_gamma_negative",
 			})
 			return
 		}
@@ -2872,6 +2886,7 @@ type tradingPatch struct {
 	DefaultMarginMode         *string                       `json:"default_margin_mode"`
 	PositionMode              *string                       `json:"position_mode"`
 	MarketTurnoverScope       *string                       `json:"market_turnover_scope"`
+	GammaNegativePolicy       *string                       `json:"gamma_negative_policy"`
 	SignalTTLSeconds          *int                          `json:"signal_ttl_seconds"`
 	IgnoredCoinpair           *string                       `json:"ignored_coinpair"`
 	IgnoredCoinpairs          *[]string                     `json:"ignored_coinpairs"`
@@ -2953,6 +2968,9 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 	}
 	if patch.Trading.MarketTurnoverScope != nil {
 		c.Trading.MarketTurnoverScope = *patch.Trading.MarketTurnoverScope
+	}
+	if patch.Trading.GammaNegativePolicy != nil {
+		c.Trading.GammaNegativePolicy = *patch.Trading.GammaNegativePolicy
 	}
 	if patch.Trading.SignalTTLSeconds != nil {
 		c.Trading.SignalTTLSeconds = *patch.Trading.SignalTTLSeconds

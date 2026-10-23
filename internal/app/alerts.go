@@ -408,10 +408,6 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if !rtm.submitPrecloseWebhook(signal) {
 		return
 	}
-	if signal.GammaIgnored || rtm.gammaIgnored(signal.Symbol) {
-		rtm.log.Info("opening signal suppressed by negative Deribit gamma", "kind", signal.Kind, "symbol", signal.Symbol)
-		return
-	}
 	if !rtm.orderSignalEnabled(signal.Kind) {
 		return
 	}
@@ -426,10 +422,10 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 }
 
 // submitAlertWebhook sends the initial threshold alert as a direction switch:
-// first close the opposite position, then queue the opening signal unless the
-// symbol's BTC/ETH Gamma anchor is negative. The two requests share the same FIFO
-// webhook worker so the receiver sees the preclose before the entry. The alert
-// page's manual trigger remains an explicit full open action.
+// first close the opposite position, then queue the opening signal. The two
+// requests share the same FIFO webhook worker so the receiver sees the preclose
+// before the entry. The TVBot /tvorder entry point applies the tenant's Gamma
+// policy consistently for this and every other webhook source.
 func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, allowNotify bool) {
 	if !allowNotify {
 		return
@@ -443,10 +439,6 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 		WindowMinutes: alertRow.WindowMinutes, FollowUps: alertRow.FollowUps,
 	}
 	if !rtm.submitPrecloseWebhook(signal) {
-		return
-	}
-	if signal.GammaIgnored || rtm.gammaIgnored(signal.Symbol) {
-		rtm.log.Info("opening signal suppressed by negative Deribit gamma", "kind", signal.Kind, "symbol", signal.Symbol)
 		return
 	}
 	if !rtm.orderSignalEnabled(signal.Kind) {

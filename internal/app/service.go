@@ -34,6 +34,7 @@ type WebhookTarget struct {
 }
 
 type WebhookTargetResolver func(tenantID string) (WebhookTarget, bool)
+type GammaPolicyResolver func(tenantID string) string
 
 type Service struct {
 	dashboard          *dashboardState
@@ -70,6 +71,8 @@ type Service struct {
 	volumeLiveReady    chan struct{}
 	webhookTargetMu    sync.RWMutex
 	webhookTarget      WebhookTargetResolver
+	gammaPolicyMu      sync.RWMutex
+	gammaPolicy        GammaPolicyResolver
 }
 
 func (s *Service) SetWebhookTargetResolver(resolver WebhookTargetResolver) {
@@ -79,6 +82,33 @@ func (s *Service) SetWebhookTargetResolver(resolver WebhookTargetResolver) {
 	s.webhookTargetMu.Lock()
 	s.webhookTarget = resolver
 	s.webhookTargetMu.Unlock()
+}
+
+func (s *Service) SetGammaPolicyResolver(resolver GammaPolicyResolver) {
+	if s == nil {
+		return
+	}
+	s.gammaPolicyMu.Lock()
+	s.gammaPolicy = resolver
+	s.gammaPolicyMu.Unlock()
+}
+
+func (s *Service) gammaPolicyForTenant(tenantID string) string {
+	if s == nil {
+		return "ignore"
+	}
+	s.gammaPolicyMu.RLock()
+	resolver := s.gammaPolicy
+	s.gammaPolicyMu.RUnlock()
+	if resolver == nil {
+		return "ignore"
+	}
+	switch policy := strings.ToLower(strings.TrimSpace(resolver(strings.TrimSpace(tenantID)))); policy {
+	case "ignore", "passthrough", "flip":
+		return policy
+	default:
+		return "ignore"
+	}
 }
 
 func (s *Service) webhookTargetForTenant(tenantID string) (WebhookTarget, bool) {

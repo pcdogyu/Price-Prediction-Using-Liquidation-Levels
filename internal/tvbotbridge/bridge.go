@@ -46,6 +46,32 @@ func (b *Bridge) TradeTargetForUser(username string) (string, string, string, bo
 	return b.Tenants.TradeTargetForUser(username)
 }
 
+// GammaNegativePolicyForUser exposes only the tenant's normalized policy to
+// the liquidation alert service. The Gamma snapshot itself remains shared.
+func (b *Bridge) GammaNegativePolicyForUser(username string) string {
+	if b == nil || b.Tenants == nil {
+		return tvbotconfig.GammaNegativePolicyIgnore
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		username = strings.TrimSpace(b.Tenants.legacyOwner)
+	}
+	if username == "" {
+		return tvbotconfig.GammaNegativePolicyIgnore
+	}
+	scope, err := b.Tenants.ForUserScope(username)
+	if err != nil || scope.ConfigStore == nil {
+		return tvbotconfig.GammaNegativePolicyIgnore
+	}
+	policy := strings.ToLower(strings.TrimSpace(scope.ConfigStore.Get().Trading.GammaNegativePolicy))
+	switch policy {
+	case tvbotconfig.GammaNegativePolicyIgnore, tvbotconfig.GammaNegativePolicyPassthrough, tvbotconfig.GammaNegativePolicyFlip:
+		return policy
+	default:
+		return tvbotconfig.GammaNegativePolicyIgnore
+	}
+}
+
 // WebhookTokenForUser generates the tenant-scoped token used by liquidation
 // alert webhooks. The alert service sends the authenticated username as its
 // tenant id, while TVBot templates use the encoded tenant id; the former is
