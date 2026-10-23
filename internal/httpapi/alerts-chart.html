@@ -39,17 +39,9 @@
     </div>
     <p id="kline-readout" class="kline-readout">等待 K 线数据</p>
     <div class="kline-wrap" id="kline-wrap">
-      <canvas id="kline-chart" role="img" aria-label="币对 K 线与下单信号"></canvas>
+      <canvas id="kline-chart" role="img" aria-label="币对 K 线、净多空与下单信号"></canvas>
       <div id="kline-tooltip" class="kline-tooltip" role="status" hidden></div>
     </div>
-    <p id="kline-status" class="muted kline-note" role="status">正在读取 K 线</p>
-    <section id="liquidation-delta-section" class="liquidation-delta-panel" aria-labelledby="liquidation-delta-heading">
-    <div class="liquidation-delta-head"><h2 id="liquidation-delta-heading"><span id="liquidation-delta-symbol-label">BTCUSDT</span> 净多空</h2><span id="liquidation-delta-status" class="muted" role="status">读取中</span></div>
-    <div class="liquidation-delta-legend"><span><i class="dot positive"></i>正值：空单爆仓 − 多单爆仓</span><span><i class="dot negative"></i>负值：多单爆仓 − 空单爆仓</span><span>10 分钟 · 回看 48 小时</span></div>
-    <p id="liquidation-delta-readout" class="liquidation-delta-readout muted">等待爆仓净额数据</p>
-    <div id="liquidation-delta-wrap" class="liquidation-delta-wrap"><canvas id="liquidation-delta-chart" role="img" aria-label="净多空 10 分钟柱状图"></canvas></div>
-    <p id="liquidation-delta-note" class="muted kline-note">正柱表示空单爆仓额较大，负柱表示多单爆仓额较大；无事件时保留为零柱。</p>
-    </section>
   </section>
   <section id="kline-signal-section" class="surface">
     <div class="section-head"><h2>该币对下单信号</h2><span id="kline-signal-status" class="muted">读取信号</span><span id="kline-alert-status" class="muted">读取预警</span></div>

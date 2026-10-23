@@ -32,18 +32,7 @@
 .kline-wrap.price-axis-hover:not(.dragging){cursor:ns-resize}
 #kline-chart{display:block;width:100%}
 .kline-tooltip{position:absolute;z-index:5;pointer-events:none;max-width:280px;padding:8px 10px;border:1px solid var(--strong-line);border-radius:10px;background:var(--tooltip-bg);color:var(--text);font-size:12px;line-height:1.5}
-.kline-note{margin-top:10px;overflow-wrap:anywhere}
 .kline-signal-table{min-width:660px}
-.liquidation-delta-panel{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
-.liquidation-delta-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding-bottom:3px}
-.liquidation-delta-head h2{margin:0;font-size:16px;line-height:1.3;font-variant-numeric:tabular-nums}
-.liquidation-delta-legend{display:flex;gap:6px 14px;flex-wrap:wrap;padding-bottom:6px;color:var(--muted);font-size:12px}
-.liquidation-delta-legend .dot{display:inline-block;width:9px;height:9px;margin-right:5px;border-radius:2px}
-.liquidation-delta-legend .positive{background:var(--buy)}
-.liquidation-delta-legend .negative{background:var(--sell)}
-.liquidation-delta-readout{min-height:18px;margin:0 0 6px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.liquidation-delta-wrap{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:10px;background:var(--chart-bg)}
-#liquidation-delta-chart{display:block;width:100%;height:260px;touch-action:none;cursor:crosshair}
 @media(max-width:900px){.kline-actions{margin-left:0;width:100%}}
 
 /* Position detail embeds use this page as a deliberately small chart surface.
@@ -59,8 +48,6 @@ html.position-chart-page:not(.position-chart-standalone) .kline-jump,
 html.position-chart-page:not(.position-chart-standalone) .kline-actions,
 html.position-chart-page:not(.position-chart-standalone) #kline-legend,
 html.position-chart-page:not(.position-chart-standalone) #kline-readout,
-html.position-chart-page:not(.position-chart-standalone) #kline-status,
-html.position-chart-page:not(.position-chart-standalone) #liquidation-delta-section,
 html.position-chart-page:not(.position-chart-standalone) #kline-signal-section,
 html.position-chart-page:not(.position-chart-standalone) .page-footer{display:none!important}
 html.position-chart-page:not(.position-chart-standalone) .workspace{max-width:none;padding:0}
@@ -76,8 +63,6 @@ html.position-chart-page.position-chart-standalone .kline-jump,
 html.position-chart-page.position-chart-standalone .kline-actions,
 html.position-chart-page.position-chart-standalone #kline-legend,
 html.position-chart-page.position-chart-standalone #kline-readout,
-html.position-chart-page.position-chart-standalone #kline-status,
-html.position-chart-page.position-chart-standalone #liquidation-delta-section,
 html.position-chart-page.position-chart-standalone #kline-signal-section{display:none!important}
 
 /* Standalone position charts are intended to be a browser-sized workspace,

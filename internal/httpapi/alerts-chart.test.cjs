@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const K = require('./alerts-chart.js');
 const chartApp = fs.readFileSync(require.resolve('./alerts-chart-app.js'), 'utf8');
+const chartHTML = fs.readFileSync(require.resolve('./alerts-chart.html'), 'utf8');
 
 const candle = (at, open = 1, high = 2, low = 0.5, close = 1.5, volume = 1000) => ({ t: at, open, high, low, close, volume });
 const signal = (id, at, kind = 'aggressive', side = 'long', price = 100) => ({ id, t: at, kind, side, reference_price: price });
@@ -19,12 +20,15 @@ test('price-axis gestures stay independent from time-axis gestures', () => {
   assert.match(chartApp, /event\.ctrlKey \|\| event\.shiftKey \|\| inPriceAxis\(at\)/);
 });
 
-test('the K-line uses the full price canvas and the lower panel is net long-short', () => {
-  assert.doesNotMatch(chartApp, /volumeTop/);
+test('the K-line canvas contains a lower net long-short band without volume', () => {
+  assert.match(chartApp, /deltaPlot/);
+  assert.match(chartApp, /drawLiquidationDeltaBand/);
   assert.doesNotMatch(chartApp, /volumeMax\(state\.candles/);
   assert.doesNotMatch(chartApp, /成交额/);
-  assert.match(chartApp, /bottom: positionMode \? 42 : 18/);
-  assert.match(chartApp, /净多空（空 − 多）/);
+  assert.doesNotMatch(chartApp, /deltaDims/);
+  assert.doesNotMatch(chartHTML, /liquidation-delta-(section|chart|status|legend|readout|note)/);
+  assert.doesNotMatch(chartHTML, /kline-status/);
+  assert.match(chartHTML, /币对 K 线、净多空与下单信号/);
 });
 
 test('the net long-short panel follows the K-line viewport with bounded debounced requests', () => {
@@ -34,7 +38,8 @@ test('the net long-short panel follows the K-line viewport with bounded debounce
   assert.match(chartApp, /&to=' \+ encodeURIComponent/);
   assert.match(chartApp, /new AbortController\(\)/);
   assert.match(chartApp, /requestId !== state\.liquidationDeltaRequestSequence/);
-  assert.match(chartApp, /left: 78, right: 82, top: 24, bottom: 38/);
+  assert.match(chartApp, /LIQUIDATION_DELTA_DEBOUNCE_MS = 250/);
+  assert.match(chartApp, /state\.liquidationDeltaError/);
 });
 
 test('position chart tooltip distinguishes merged closing fills', () => {

@@ -30,7 +30,7 @@
     candles: [], alerts: [], signals: [], liquidationDelta: [], tradeMarkers: [], hits: [],
     view: { start: 0, end: 0 }, yLow: 0, yHigh: 1, yManual: false,
     hasMore: true, nextBefore: '', newest: 0, atLatest: true, newData: false, keepSpan: 0,
-    loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false, loadingLiquidationDelta: false,
+    loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false, loadingLiquidationDelta: false, liquidationDeltaError: '',
     drag: null, hoverCandle: null, hoverMarker: null,
     radarConfig: { periodMinutes: 240, zScoreThreshold: .8, rangeMinutes: 1440, minDrawdown: .022, donchianFraction: .35 }, radarZone: null,
     liquidationDeltaHover: null, liquidationDeltaWindow: null, liquidationDeltaPending: false, liquidationDeltaRequestTimer: 0, liquidationDeltaRequestSequence: 0, liquidationDeltaAbortController: null,
@@ -39,7 +39,7 @@
   // The standalone alert chart must be useful when opened directly from a URL.
   // Relying only on the alert-page localStorage event made a fresh tab request
   // the short default window and hide the 48h signal replay entirely.
-  let dims = null, deltaDims = null, colors = {}, scales = null, signalReplayWindowHours = positionMode ? 0 : 48;
+  let dims = null, colors = {}, scales = null, signalReplayWindowHours = positionMode ? 0 : 48;
 
   const step = () => K.intervalMs(state.interval);
   const newestCandle = () => state.candles.length ? state.candles[state.candles.length - 1] : null;
@@ -103,21 +103,11 @@
 
   function showError(message) { $('kline-error').textContent = message; $('kline-error').hidden = false; }
   function clearError() { $('kline-error').hidden = true; $('kline-error').textContent = ''; }
-  function note(message) { $('kline-status').textContent = message; }
+  function note(message) { void message; }
 
   function deltaText(value) {
     if (!finite(value)) return '—';
     return (value > 0 ? '+' : '') + money(value);
-  }
-
-  function liquidationDeltaReadout() {
-    const point = state.liquidationDeltaHover || state.liquidationDelta[state.liquidationDelta.length - 1];
-    if (!point) {
-      $('liquidation-delta-readout').textContent = state.loadingLiquidationDelta || state.liquidationDeltaPending ? '正在读取爆仓净额' : '该 K 线视窗暂无爆仓数据';
-      return;
-    }
-    const bias = point.delta_usd > 0 ? '空单爆仓占优' : point.delta_usd < 0 ? '多单爆仓占优' : '多空相等';
-    $('liquidation-delta-readout').innerHTML = '<b>' + escape(clock(point.time)) + '</b> · 净多空（空 − 多） <span class="' + (point.delta_usd >= 0 ? 'buy' : 'sell') + '">' + escape(deltaText(point.delta_usd)) + '</span> · 空单 ' + escape(money(point.short_usd)) + ' · 多单 ' + escape(money(point.long_usd)) + ' · ' + bias + ' · ' + escape(String(point.count || 0)) + ' 笔';
   }
 
   function liquidationDeltaRange() {
@@ -132,10 +122,11 @@
     state.liquidationDeltaAbortController = null;
     state.loadingLiquidationDelta = false;
     state.liquidationDeltaPending = true;
+    state.liquidationDeltaError = '';
     state.liquidationDelta = [];
     state.liquidationDeltaWindow = null;
     state.liquidationDeltaHover = null;
-    drawLiquidationDelta();
+    draw();
     state.liquidationDeltaRequestTimer = window.setTimeout(() => {
       state.liquidationDeltaRequestTimer = 0;
       loadLiquidationDelta();
@@ -153,16 +144,17 @@
       state.loadingLiquidationDelta = false;
       state.liquidationDelta = [];
       state.liquidationDeltaWindow = null;
-      $('liquidation-delta-status').textContent = '10m · 当前 K 线视窗不在最近 48 小时数据范围内';
-      drawLiquidationDelta();
+      state.liquidationDeltaError = '';
+      draw();
       return;
     }
     const controller = new AbortController();
     state.liquidationDeltaAbortController = controller;
     state.loadingLiquidationDelta = true;
+    state.liquidationDeltaError = '';
     state.liquidationDelta = [];
     state.liquidationDeltaWindow = null;
-    drawLiquidationDelta();
+    draw();
     try {
       const path = 'api/v1/alerts/liquidation-delta?symbol=' + encodeURIComponent(state.symbol) + '&interval=10m&from=' + encodeURIComponent(new Date(requested.start).toISOString()) + '&to=' + encodeURIComponent(new Date(requested.end).toISOString());
       const packet = await json(path, { signal: controller.signal });
@@ -174,19 +166,16 @@
       state.liquidationDelta = K.visibleLiquidationDelta(K.normaliseLiquidationDelta(view.points), state.view, K.LIQUIDATION_DELTA_INTERVAL_MS);
       state.liquidationDeltaWindow = responseWindow;
       state.liquidationDeltaHover = null;
-      $('liquidation-delta-symbol-label').textContent = state.symbol;
-      $('liquidation-delta-status').textContent = '10m · 当前视窗 · ' + state.liquidationDelta.length + ' 个桶 · ' + clock(responseWindow.start) + ' 至 ' + clock(responseWindow.end);
-      $('liquidation-delta-note').textContent = '正柱表示空单爆仓额较大，负柱表示多单爆仓额较大；无事件时保留为零柱。来源：Binance 强平流，按名义 USD 汇总。';
+      state.liquidationDeltaError = '';
     } catch (error) {
       if (error && error.name === 'AbortError') return;
       if (requestId !== state.liquidationDeltaRequestSequence) return;
-      $('liquidation-delta-status').textContent = '读取失败：' + error.message;
-      $('liquidation-delta-readout').textContent = '爆仓净额暂不可用';
+      state.liquidationDeltaError = '读取失败：' + error.message;
     } finally {
       if (requestId === state.liquidationDeltaRequestSequence) {
         state.loadingLiquidationDelta = false;
         state.liquidationDeltaAbortController = null;
-        drawLiquidationDelta();
+        draw();
       }
     }
   }
@@ -423,26 +412,38 @@
     return value < 0 ? '-' + label : label;
   }
 
-  function drawLiquidationDelta() {
-    if (!deltaDims) return;
-    const canvas = $('liquidation-delta-chart'), ctx = canvas.getContext('2d');
-    const { width, height, ratio, plot } = deltaDims;
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    ctx.fillStyle = colors.bg;
-    ctx.fillRect(0, 0, width, height);
+  // The liquidation delta is painted in the same canvas as the K-line. This
+  // keeps the bar band on the exact same x scale while retaining the compact
+  // lower-band treatment that the old volume display used.
+  function drawLiquidationDeltaBand(ctx, plot) {
+    if (positionMode || !plot) return;
     const span = state.view.end - state.view.start;
+    const empty = message => {
+      ctx.fillStyle = colors.muted;
+      ctx.font = '12px system-ui, "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(message, plot.left + plot.width / 2, plot.top + plot.height / 2);
+    };
+    ctx.save();
+    ctx.fillStyle = colors.bg;
+    ctx.fillRect(plot.left, plot.top, plot.width, plot.height);
+    ctx.strokeStyle = colors.line;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(plot.left, plot.top - 9.5); ctx.lineTo(plot.right, plot.top - 9.5); ctx.stroke();
     if (!finite(state.view.start) || !finite(state.view.end) || span <= 0) {
-      notice(ctx, width, height, '等待 K 线视窗');
-      liquidationDeltaReadout();
+      empty('等待 K 线视窗');
+      ctx.restore();
       return;
     }
     const points = K.visibleLiquidationDelta(state.liquidationDelta, state.view, K.LIQUIDATION_DELTA_INTERVAL_MS);
     if (!points.length) {
       const message = state.loadingLiquidationDelta || state.liquidationDeltaPending
         ? '正在读取爆仓净额'
+        : state.liquidationDeltaError ? state.liquidationDeltaError
         : state.liquidationDeltaWindow ? '该窗口暂无爆仓数据' : '当前视窗超出最近 48 小时爆仓数据范围';
-      notice(ctx, width, height, message);
-      liquidationDeltaReadout();
+      empty(message);
+      ctx.restore();
       return;
     }
     const x = at => plot.left + (at - state.view.start) / span * plot.width;
@@ -481,65 +482,18 @@
       const top = Math.min(zeroY, y(value)), bottom = Math.max(zeroY, y(value));
       ctx.fillStyle = value >= 0 ? colors.buy : colors.sell;
       ctx.globalAlpha = state.liquidationDeltaHover === point ? .95 : .78;
-      const width = Math.max(1, Math.min(14, pointWidth * .78));
-      ctx.fillRect(cx - width / 2, top, width, Math.max(1, bottom - top));
+      const barWidth = Math.max(1, Math.min(14, pointWidth * .78));
+      ctx.fillRect(cx - barWidth / 2, top, barWidth, Math.max(1, bottom - top));
     }
     ctx.globalAlpha = 1;
-    if (state.liquidationDeltaHover) {
-      const point = state.liquidationDeltaHover;
-      if (points.includes(point)) {
-        const cx = x(point.t + K.LIQUIDATION_DELTA_INTERVAL_MS / 2);
-        ctx.strokeStyle = colors.muted;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath(); ctx.moveTo(cx, plot.top); ctx.lineTo(cx, plot.bottom); ctx.stroke();
-        ctx.setLineDash([]);
-      }
+    if (state.liquidationDeltaHover && points.includes(state.liquidationDeltaHover)) {
+      const cx = x(state.liquidationDeltaHover.t + K.LIQUIDATION_DELTA_INTERVAL_MS / 2);
+      ctx.strokeStyle = colors.muted;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(cx, plot.top); ctx.lineTo(cx, plot.bottom); ctx.stroke();
+      ctx.setLineDash([]);
     }
-    liquidationDeltaReadout();
-  }
-
-  function resizeLiquidationDelta() {
-    const wrap = $('liquidation-delta-wrap'), canvas = $('liquidation-delta-chart');
-    if (!wrap || !canvas) return;
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.max(320, wrap.clientWidth), height = 260;
-    canvas.style.width = width + 'px';
-    canvas.style.height = height + 'px';
-    canvas.width = Math.round(width * ratio);
-    canvas.height = Math.round(height * ratio);
-    const margins = { left: 78, right: 82, top: 24, bottom: 38 };
-    const plot = { left: margins.left, top: margins.top, width: Math.max(60, width - margins.left - margins.right), height: Math.max(80, height - margins.top - margins.bottom) };
-    plot.right = plot.left + plot.width;
-    plot.bottom = plot.top + plot.height;
-    deltaDims = { width, height, ratio, plot };
-    drawLiquidationDelta();
-  }
-
-  function bindLiquidationDelta() {
-    const canvas = $('liquidation-delta-chart');
-    canvas.addEventListener('pointermove', event => {
-      if (!deltaDims || !state.liquidationDelta.length || state.view.end <= state.view.start) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const points = K.visibleLiquidationDelta(state.liquidationDelta, state.view, K.LIQUIDATION_DELTA_INTERVAL_MS);
-      if (!points.length || x < deltaDims.plot.left || x > deltaDims.plot.right) {
-        state.liquidationDeltaHover = null;
-        canvas.title = '';
-        drawLiquidationDelta();
-        return;
-      }
-      const span = state.view.end - state.view.start;
-      const at = state.view.start + (x - deltaDims.plot.left) / deltaDims.plot.width * span;
-      let closest = points[0], distance = Infinity;
-      for (const point of points) {
-        const gap = Math.abs(point.t + K.LIQUIDATION_DELTA_INTERVAL_MS / 2 - at);
-        if (gap < distance) { closest = point; distance = gap; }
-      }
-      state.liquidationDeltaHover = closest;
-      canvas.title = state.liquidationDeltaHover ? clock(state.liquidationDeltaHover.time) + '\n空单爆仓 - 多单爆仓 ' + deltaText(state.liquidationDeltaHover.delta_usd) : '';
-      drawLiquidationDelta();
-    });
-    canvas.addEventListener('pointerleave', () => { state.liquidationDeltaHover = null; canvas.title = ''; drawLiquidationDelta(); });
+    ctx.restore();
   }
 
   // draw paints the price grid, candles, the newest price line and the signal
@@ -547,13 +501,14 @@
   function draw() {
     if (!dims) return;
     const ctx = $('kline-chart').getContext('2d');
-    const { width, height, ratio, plot, priceBottom } = dims;
+    const { width, height, ratio, plot, priceBottom, deltaPlot } = dims;
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.fillStyle = colors.bg;
     ctx.fillRect(0, 0, width, height);
     state.hits = [];
     if (!state.candles.length || !state.view.end) {
       notice(ctx, width, height, state.symbol ? '等待 K 线数据' : '缺少币对参数，请从报警页点击币对打开');
+      drawLiquidationDeltaBand(ctx, deltaPlot);
       renderReadout();
       return;
     }
@@ -611,6 +566,7 @@
     }
     drawLastPrice(ctx, y, plot, priceBottom);
     if (state.hoverCandle) drawCrosshair(ctx, x, plot, priceBottom);
+    drawLiquidationDeltaBand(ctx, deltaPlot);
     renderReadout();
   }
 
@@ -873,14 +829,21 @@
     ctx.restore();
   }
 
-  // layout gives the K-line the full canvas height; the net-long/short panel
-  // below owns the shared time labels instead of a volume band.
+  // layout keeps the price plot and the net-long/short band in one canvas. The
+  // delta band uses the same left/right plot bounds and the same view x scale.
   function layout(width, height) {
-    const margins = { left: 78, right: 82, top: 18, bottom: positionMode ? 42 : 18 };
+    const margins = { left: 78, right: 82, top: 18, bottom: 42 };
     const plot = { left: margins.left, top: margins.top, width: Math.max(60, width - margins.left - margins.right), height: Math.max(140, height - margins.top - margins.bottom) };
     plot.right = plot.left + plot.width;
     plot.bottom = plot.top + plot.height;
-    return { plot, priceBottom: plot.bottom };
+    if (positionMode) return { plot, priceBottom: plot.bottom, deltaPlot: null };
+    const deltaHeight = Math.max(62, Math.min(108, plot.height * .20));
+    const gap = 12;
+    const priceBottom = Math.max(plot.top + 140, plot.bottom - deltaHeight - gap);
+    const deltaPlot = { left: plot.left, top: priceBottom + gap, width: plot.width, height: Math.max(40, plot.bottom - priceBottom - gap) };
+    deltaPlot.right = deltaPlot.left + deltaPlot.width;
+    deltaPlot.bottom = deltaPlot.top + deltaPlot.height;
+    return { plot, priceBottom, deltaPlot };
   }
 
   // resize maps the drawing buffer to the device pixels so the candles stay crisp.
@@ -899,7 +862,6 @@
     canvas.height = Math.round(height * ratio);
     dims = Object.assign({ width, height, ratio }, layout(width, height));
     draw();
-    resizeLiquidationDelta();
   }
 
   function pointer(event) {
@@ -915,6 +877,33 @@
   // marker, so the readout and the tooltip answer what is pointed at.
   function hover(at) {
     if (!scales) return;
+    const canvas = $('kline-chart');
+    const deltaPlot = dims && dims.deltaPlot;
+    if (deltaPlot && at.x >= deltaPlot.left && at.x <= deltaPlot.right && at.y >= deltaPlot.top && at.y <= deltaPlot.bottom) {
+      const previous = state.liquidationDeltaHover;
+      const points = K.visibleLiquidationDelta(state.liquidationDelta, state.view, K.LIQUIDATION_DELTA_INTERVAL_MS);
+      state.hoverCandle = null;
+      state.hoverMarker = null;
+      $('kline-tooltip').hidden = true;
+      if (points.length && state.view.end > state.view.start) {
+        const span = state.view.end - state.view.start;
+        const atTime = state.view.start + (at.x - deltaPlot.left) / deltaPlot.width * span;
+        let closest = points[0], distance = Infinity;
+        for (const point of points) {
+          const gap = Math.abs(point.t + K.LIQUIDATION_DELTA_INTERVAL_MS / 2 - atTime);
+          if (gap < distance) { closest = point; distance = gap; }
+        }
+        state.liquidationDeltaHover = closest;
+        canvas.title = clock(closest.time) + '\n空单爆仓 - 多单爆仓 ' + deltaText(closest.delta_usd);
+      } else {
+        state.liquidationDeltaHover = null;
+        canvas.title = '';
+      }
+      if (previous !== state.liquidationDeltaHover) draw();
+      return;
+    }
+    state.liquidationDeltaHover = null;
+    canvas.title = '';
     const wasCandle = state.hoverCandle ? state.hoverCandle.t : 0, wasMarker = state.hoverMarker ? state.hoverMarker.bucket : 0;
     state.hoverY = at.y;
     state.hoverCandle = inPlot(at) && state.candles.length ? nearest(state.candles, scales.timeAt(at.x)) : null;
@@ -995,7 +984,9 @@
       wrap.classList.remove('price-axis-hover');
       state.hoverCandle = null;
       state.hoverMarker = null;
+      state.liquidationDeltaHover = null;
       state.hoverY = NaN;
+      canvas.title = '';
       $('kline-tooltip').hidden = true;
       draw();
     });
@@ -1150,11 +1141,8 @@
     if (!positionMode) setInterval(() => { if (!document.hidden && !state.drag) loadChartSignals(); }, SIGNAL_REFRESH_MS);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadCandles(); if (!positionMode) { scheduleLiquidationDelta(); loadChartSignals(); } } });
     window.addEventListener('resize', resize);
-    window.addEventListener('themechange', () => { palette(); draw(); drawLiquidationDelta(); });
+    window.addEventListener('themechange', () => { palette(); draw(); });
     if (window.ResizeObserver) new ResizeObserver(resize).observe($('kline-wrap'));
-    resizeLiquidationDelta();
-    bindLiquidationDelta();
-    if (window.ResizeObserver) new ResizeObserver(resizeLiquidationDelta).observe($('liquidation-delta-wrap'));
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
