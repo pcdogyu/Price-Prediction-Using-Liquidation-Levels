@@ -124,7 +124,7 @@ html.embedded-chart #chart-resize-handle {
     </div>
     <div id="classic-pivot-note" class="footer-note">以现价为中心，按 ATR(14) 倍数生成上下方价格和对应距离。</div>
   </section>
-  <section class="status-row"><div class="panel"><h3>实时状态</h3><div id="reason" class="warning">正在等待市场数据。</div><div id="model-info" class="footer-note">模型：尚未训练</div></div><div class="panel"><h3>价格口径</h3><div>Binance USDⓈ-M 永续合约单一数据源</div><div class="footer-note">纵轴按可见K线留10%余量，清算墙与成交量分布共用价格轴并裁剪。气泡展示本服务实际采集的Binance采样事件（每交易对每秒最近一笔），无金额门槛；成交价锚点多单向下、空单向上偏移6像素，图边保留绘制余量，重叠可悬停滚动查看。VAL/VAH 来自当前时段逐笔聚合成交的70%价值区域；空心箭头为K线形态，实心箭头为历史模型信号，均不是投资建议。</div></div></section>
+  <section class="status-row"><div class="panel"><h3>实时状态</h3><div id="reason" class="warning">正在等待市场数据。</div><div id="model-info" class="footer-note">模型：尚未训练</div></div><div class="panel"><h3>价格口径</h3><div>Binance USDⓈ-M 永续合约单一数据源</div><div class="footer-note">纵轴按可见K线留10%余量，清算墙与成交量分布共用价格轴并裁剪。气泡展示本服务实际采集的Binance采样事件（每交易对每秒最近一笔），无金额门槛；成交价锚点多单向上、空单向下偏移10像素，图边保留绘制余量，重叠可悬停滚动查看。VAL/VAH 来自当前时段逐笔聚合成交的70%价值区域；空心箭头为K线形态，实心箭头为历史模型信号，均不是投资建议。</div></div></section>
   <footer class="page-footer"><span class="page-footer-note">用于市场观察与研究</span><span class="page-version">{{VERSION}}</span></footer>
 </main>
 <div id="tooltip" class="tooltip"></div><div id="drawer-backdrop" class="drawer-backdrop hidden"></div>

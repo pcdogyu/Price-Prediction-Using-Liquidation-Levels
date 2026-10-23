@@ -83,7 +83,7 @@ const patternName = { doji: '十字星', hammer: '锤头', shooting_star: '流�
 const statusName = { unavailable: '不可用', reference: '参考', armed: '等待触发', approaching: '接近触发', triggered: '已触发', expired: '已过期' };
 const intervalName = { '1m': '1分钟', '2m': '2分钟', '3m': '3分钟', '5m': '5分钟', '10m': '10分钟', '15m': '15分钟', '30m': '30分钟', '1h': '1小时', '4h': '4小时', '8h': '8小时', '12h': '12小时', '24h': '24小时' };
 const intervalMilliseconds = { '1m': 60000, '2m': 120000, '3m': 180000, '5m': 300000, '10m': 600000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000, '8h': 28800000, '12h': 43200000, '24h': 86400000 };
-const liquidationPixelOffset = 6;
+const liquidationPixelOffset = 10;
 let bubbleHits = () => [];
 let tooltipHideTimer;
 let chartTipsBound = false;
@@ -592,7 +592,7 @@ function drawTimeGrid(svg, scale, top, plotBottom, labelY, left, right) {
 
 function bubbleTip(event) {
   const long = event.position_side === 'long';
-  return 'Binance ' + (long ? '多单爆仓' : '空单爆仓') + '\n时间 ' + when(event.event_time) + '\n成交价 ' + money(event.price) + ' · ' + (long ? '向下' : '向上') + '偏移6像素\n数量 ' + quantityFormat.format(event.quantity || 0) + ' · 金额 $' + compact(event.notional_usd);
+  return 'Binance ' + (long ? '多单爆仓' : '空单爆仓') + '\n时间 ' + when(event.event_time) + '\n成交价 ' + money(event.price) + ' · ' + (long ? '向上' : '向下') + '偏移10像素\n数量 ' + quantityFormat.format(event.quantity || 0) + ' · 金额 $' + compact(event.notional_usd);
 }
 
 function drawLiquidationBubbles(plot, events, range, scale, y, left, candleRight, top, plotBottom) {

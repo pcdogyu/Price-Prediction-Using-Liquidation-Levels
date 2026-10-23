@@ -200,7 +200,7 @@
     return Math.max(3, Math.min(18, 3 + Math.log10(Math.max(100, amount) / 100) * 2.5));
   }
 
-  function placements(events, range, bounds, x, y, offset = 6) {
+  function placements(events, range, bounds, x, y, offset = 10) {
     const points = [];
     let outside = 0;
     // Draw smaller circles last so they remain reachable; every event keeps its own circle.
@@ -209,7 +209,9 @@
       const r = radius(event.notional_usd);
       const margin = r + 1; // Include the stroke inside the common plot clip.
       const cx = Math.max(bounds.left + margin, Math.min(bounds.right - margin, x(Date.parse(event.event_time))));
-      const cy = Math.max(bounds.top + margin, Math.min(bounds.bottom - margin, y(event.price) + (event.position_side === 'long' ? offset : -offset)));
+      // SVG's y-axis grows downward: move long-liquidation bubbles up and
+      // short-liquidation bubbles down by the requested pixel offset.
+      const cy = Math.max(bounds.top + margin, Math.min(bounds.bottom - margin, y(event.price) + (event.position_side === 'long' ? -offset : offset)));
       points.push({ event, x: cx, y: cy, radius: r });
     }
     return { points, outside };

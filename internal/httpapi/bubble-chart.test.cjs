@@ -154,16 +154,16 @@ test('trade markers retain order and fill details for K-line tooltips', () => {
   assert.equal(markers[0].fee, '-0.0777');
 });
 
-test('timestamp placements need no candle bucket, offset in pixels, border circles and overlaps survive', () => {
+test('timestamp placements move long bubbles up and short bubbles down by 10 pixels', () => {
   const events = [event('long', 2000), event('short', 2000, 100, 'short'), event('edge', 0, 90), event('outside', 1000, 120), event('same', 2000)];
   const result = B.placements(events, [90, 110], { left: 0, right: 100, top: 0, bottom: 100 }, at => at / 40, price => (110 - price) * 5);
   assert.equal(result.points.length, 4);
   assert.equal(result.outside, 1);
-  assert.equal(result.points.find(p => p.event.id === 'long').y, 56);
-  assert.equal(result.points.find(p => p.event.id === 'short').y, 44);
+  assert.equal(result.points.find(p => p.event.id === 'long').y, 40);
+  assert.equal(result.points.find(p => p.event.id === 'short').y, 60);
   const edge = result.points.find(p => p.event.id === 'edge');
   assert.ok(edge.x - edge.radius >= 0 && edge.y + edge.radius <= 100);
-  assert.deepEqual(B.hitIndex(result.points)(50, 56).map(e => e.id).sort(), ['long', 'same']);
+  assert.deepEqual(B.hitIndex(result.points)(50, 40).map(e => e.id).sort(), ['long', 'same']);
 });
 
 test('capped snapshot supplements more than 5000 events with fixed cutoff, page duplicates dedupe and completed coverage is reused', async () => {
