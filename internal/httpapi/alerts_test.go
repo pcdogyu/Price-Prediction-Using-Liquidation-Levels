@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "下单信号类别", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "下单信号类别", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -277,15 +277,15 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 	if initial.Code != http.StatusOK || !strings.Contains(initial.Body.String(), `"window_minutes":3`) || !strings.Contains(initial.Body.String(), `"eth_usd":200000`) || !strings.Contains(initial.Body.String(), `"other_usd":100000`) {
 		t.Fatalf("default strategy settings status=%d body=%s", initial.Code, initial.Body.String())
 	}
-	saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":5,"btc_usd":300000,"eth_usd":200000,"other_usd":100000}`))
-	if saved.Code != http.StatusOK || !strings.Contains(saved.Body.String(), `"window_minutes":5`) {
+	saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":5,"btc_usd":300000,"eth_usd":200000,"other_usd":100000,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30}`))
+	if saved.Code != http.StatusOK || !strings.Contains(saved.Body.String(), `"window_minutes":5`) || !strings.Contains(saved.Body.String(), `"vwap_range_hours":18`) || !strings.Contains(saved.Body.String(), `"vwap_min_drawdown_pct":2.5`) || !strings.Contains(saved.Body.String(), `"vwap_donchian_pct":30`) {
 		t.Fatalf("saved strategy settings status=%d body=%s", saved.Code, saved.Body.String())
 	}
 	view, err := srv.svc.Alerts(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Thresholds.WindowMinutes != 5 || view.Thresholds.ETHUSD != 200000 || view.Thresholds.OtherUSD != 100000 {
+	if view.Thresholds.WindowMinutes != 5 || view.Thresholds.ETHUSD != 200000 || view.Thresholds.OtherUSD != 100000 || view.Thresholds.VWAPRangeHours != 18 || view.Thresholds.VWAPMinDrawdownPct != 2.5 || view.Thresholds.VWAPDonchianPct != 30 {
 		t.Fatalf("live strategy settings = %+v", view.Thresholds)
 	}
 	chart := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=BTCUSDT", nil)
@@ -565,7 +565,7 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 	}
 	for _, want := range []string{"币对 K 线", "kline-symbol-label", "当前币对", "左右两侧价格轴", "横轴北京时间", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
 		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "kline-zones", "显示预警", "显示下单信号", "VWAP 分区", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "价格轴上下拖动缩放垂直价格", "当前已保存的阈值和周期重新回放生成", "回到最新", "重置缩放", "kline-signal-rows",
-		"历史分区 · 高位开空", "历史分区 · 中间仅平仓", "历史分区 · 低位接多", "kline-chart-surface", "每根 K 线按当时滚动 VWAP 与 Z-Score 阈值", "勾选 VWAP 分区时，图中和下方表格只保留落在对应开仓区的多空信号", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
+		"历史分区 · 高位开空", "历史分区 · 中间仅平仓", "历史分区 · 低位接多", "kline-chart-surface", "每根 K 线按当时滚动 VWAP、配置窗口内 HH/LL、最小回撤和 Donchian 分位绘制历史三分区", "勾选 VWAP 分区时，图中和下方表格只保留落在对应开仓区的多空信号", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the K-line page must contain %q", want)
 		}
@@ -706,7 +706,7 @@ func TestAlertKlineQueryValidation(t *testing.T) {
 		{"symbol too long", url.Values{"symbol": []string{strings.Repeat("A", 33)}}},
 		{"period one day", url.Values{"symbol": []string{"BTCUSDT"}, "interval": []string{"1d"}}},
 		{"limit zero", url.Values{"symbol": []string{"BTCUSDT"}, "limit": []string{"0"}}},
-		{"limit past the page", url.Values{"symbol": []string{"BTCUSDT"}, "limit": []string{"1001"}}},
+		{"limit past the page", url.Values{"symbol": []string{"BTCUSDT"}, "limit": []string{"1501"}}},
 		{"limit not a number", url.Values{"symbol": []string{"BTCUSDT"}, "limit": []string{"many"}}},
 		{"before unparseable", url.Values{"symbol": []string{"BTCUSDT"}, "before": []string{"yesterday"}}},
 		{"before the future", url.Values{"symbol": []string{"BTCUSDT"}, "before": []string{time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)}}},

@@ -120,6 +120,23 @@ test('radarZone returns VWAP opening and close-only boundaries', () => {
   assert.ok(zone.upper_open_price > zone.vwap);
   assert.ok(zone.lower_open_price < zone.vwap);
   assert.ok(zone.current_z_score > 0);
+  assert.ok(zone.green_zone_upper < zone.red_zone_lower);
+});
+
+test('VWAP zone bounds apply the hard Donchian drawdown gates', () => {
+  const bounds = K.vwapZoneBounds(84000, 500, .8, 84800, 81300, .022, .35);
+  assert.equal(bounds.green_zone_upper, 82525);
+  assert.equal(bounds.red_zone_lower, 84400);
+  assert.equal(bounds.boundary_overlap, false);
+});
+
+test('VWAP signal filtering uses both effective opening boundaries', () => {
+  const zone = { green_zone_upper: 82525, red_zone_lower: 83575, boundary_overlap: false, current_price: 83000 };
+  assert.equal(K.vwapSignalAllowed(signal('green-high', 1000, 'aggressive', 'long', 83300), zone), false);
+  assert.equal(K.vwapSignalAllowed(signal('green-low', 1000, 'steady', 'long', 82050), zone), true);
+  assert.equal(K.vwapSignalAllowed(signal('red-low', 1000, 'aggressive', 'short', 83300), zone), false);
+  assert.equal(K.vwapSignalAllowed(signal('red-high', 1000, 'steady', 'short', 84144), zone), true);
+  assert.equal(K.vwapSignalAllowed(signal('overlap', 1000, 'steady', 'long', 82050), { ...zone, boundary_overlap: true }), false);
 });
 
 test('niceTicks stays inside the range and terminates', () => {

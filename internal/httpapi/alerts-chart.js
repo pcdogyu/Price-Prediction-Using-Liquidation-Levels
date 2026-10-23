@@ -87,20 +87,24 @@
     return peak;
   }
 
-  // radarZones calculates the historical VWAP Z-Score three-way split for each
-  // candle that has a complete rolling window: high-side open-short, middle
-  // close-only, and low-side open-long. The server's latest zone is still used
-  // by the app when available; these local values provide the historical bands.
-  function radarZones(candles, periodMinutes, zThreshold, intervalMinutes) {
+  // radarZones calculates the historical VWAP/Donchian three-way split for each
+  // candle that has complete rolling windows. The server's latest zone is still
+  // used by the app when available; these local values provide the historical
+  // bands and use the same hard boundaries as the live radar.
+  function radarZones(candles, periodMinutes, zThreshold, intervalMinutes, rangeMinutes, minDrawdown, donchianFraction) {
     const minutes = Number(intervalMinutes);
     const period = Number(periodMinutes);
     const threshold = Number(zThreshold);
-    if (!Array.isArray(candles) || !Number.isFinite(minutes) || minutes <= 0 || !Number.isFinite(period) || period <= 0 || !Number.isFinite(threshold) || threshold <= 0) return null;
-    const bars = Math.ceil(period / minutes);
-    if (bars < 2 || candles.length < bars) return null;
+    const range = Number(rangeMinutes) > 0 ? Number(rangeMinutes) : period;
+    const drawdown = Number(minDrawdown) > 0 ? Number(minDrawdown) : .022;
+    const fraction = Number(donchianFraction) > 0 ? Number(donchianFraction) : .35;
+    if (!Array.isArray(candles) || !Number.isFinite(minutes) || minutes <= 0 || !Number.isFinite(period) || period <= 0 || !Number.isFinite(threshold) || threshold <= 0 || !Number.isFinite(range) || range <= 0 || !Number.isFinite(drawdown) || drawdown <= 0 || !Number.isFinite(fraction) || fraction <= 0 || fraction >= .5) return null;
+    const bars = Math.ceil(period / minutes), rangeBars = Math.ceil(range / minutes), requiredBars = Math.max(bars, rangeBars);
+    if (bars < 2 || rangeBars < 2 || candles.length < requiredBars) return null;
     const zones = [];
-    for (let index = bars - 1; index < candles.length; index += 1) {
+    for (let index = requiredBars - 1; index < candles.length; index += 1) {
       const window = candles.slice(index - bars + 1, index + 1);
+      const rangeWindow = candles.slice(index - rangeBars + 1, index + 1);
       let weight = 0, vwap = 0, volumeWeighted = false;
       for (const candle of window) {
         if (!finite(candle.close) || candle.close <= 0) continue;
@@ -126,29 +130,47 @@
       const sigma = Math.sqrt(variance / weight);
       const price = candles[index].close;
       if (!finite(sigma) || sigma <= 0 || !finite(price) || price <= 0) continue;
-      zones.push({ t: candles[index].t, ready: true, period_minutes: period, z_score_threshold: threshold, vwap, sigma, current_price: price,
-        current_z_score: (price - vwap) / sigma, upper_open_price: vwap + threshold * sigma, lower_open_price: vwap - threshold * sigma });
+      let high = -Infinity, low = Infinity, validRange = true;
+      for (const candle of rangeWindow) {
+        if (!finite(candle.high) || !finite(candle.low) || candle.high <= 0 || candle.low <= 0 || candle.high < candle.low) { validRange = false; break; }
+        high = Math.max(high, candle.high);
+        low = Math.min(low, candle.low);
+      }
+      if (!validRange || !finite(high) || !finite(low) || high < low) continue;
+      const bounds = vwapZoneBounds(vwap, sigma, threshold, high, low, drawdown, fraction);
+      const greenZoneUpper = bounds.green_zone_upper, redZoneLower = bounds.red_zone_lower;
+      zones.push({ t: candles[index].t, ready: true, period_minutes: period, z_score_threshold: threshold,
+        range_hours: range / 60, min_drawdown_pct: drawdown * 100, donchian_pct: fraction * 100,
+        vwap, sigma, current_price: price, current_z_score: (price - vwap) / sigma,
+        donchian_high: high, donchian_low: low, green_zone_upper: greenZoneUpper, red_zone_lower: redZoneLower,
+        upper_open_price: redZoneLower, lower_open_price: greenZoneUpper, boundary_overlap: bounds.boundary_overlap });
     }
     return zones.length ? zones : null;
   }
 
-  // radarZone mirrors the server's latest 1m VWAP zone when the local candle
-  // cache is the only available source.
-  function radarZone(candles, periodMinutes, zThreshold, intervalMinutes) {
-    const zones = radarZones(candles, periodMinutes, zThreshold, intervalMinutes);
+  // radarZone mirrors the server's latest 1m VWAP/Donchian zone when the local
+  // candle cache is the only available source.
+  function radarZone(candles, periodMinutes, zThreshold, intervalMinutes, rangeMinutes, minDrawdown, donchianFraction) {
+    const zones = radarZones(candles, periodMinutes, zThreshold, intervalMinutes, rangeMinutes, minDrawdown, donchianFraction);
     return zones && zones.length ? zones[zones.length - 1] : null;
   }
 
+  function vwapZoneBounds(vwap, sigma, threshold, high, low, minDrawdown, donchianFraction) {
+    const greenZoneUpper = Math.min(vwap - threshold * sigma, high * (1 - minDrawdown), low + donchianFraction * (high - low));
+    const redZoneLower = Math.max(vwap + threshold * sigma, low * (1 + minDrawdown), high - donchianFraction * (high - low));
+    return { green_zone_upper: greenZoneUpper, red_zone_lower: redZoneLower, boundary_overlap: greenZoneUpper >= redZoneLower };
+  }
+
   // vwapSignalAllowed keeps only signals whose direction matches the opening
-  // side of the historical VWAP zone. Invalid or missing zone data is treated
-  // as unknown so the chart does not silently erase an existing signal.
+  // side of the historical VWAP/Donchian zone. Missing or overlapping opening
+  // boundaries fail closed because the chart must not suggest an unsafe entry.
   function vwapSignalAllowed(signal, zone) {
-    if (!signal || !zone || !finite(zone.upper_open_price) || !finite(zone.lower_open_price)) return true;
+    if (!signal || !zone || !finite(zone.red_zone_lower) || !finite(zone.green_zone_upper) || zone.boundary_overlap) return false;
     const price = finite(signal.reference_price) && signal.reference_price > 0 ? signal.reference_price : zone.current_price;
-    if (!finite(price) || price <= 0) return true;
-    if (signal.side === 'short') return price >= zone.upper_open_price;
-    if (signal.side === 'long') return price <= zone.lower_open_price;
-    return true;
+    if (!finite(price) || price <= 0) return false;
+    if (signal.side === 'short') return price >= zone.red_zone_lower;
+    if (signal.side === 'long') return price <= zone.green_zone_upper;
+    return false;
   }
 
   function niceTicks(low, high, target) {
@@ -262,7 +284,7 @@
   const exported = { INTERVALS, INTERVAL_MS, DEFAULT_VISIBLE, MIN_VISIBLE, MAX_VISIBLE, RIGHT_PAD, HISTORY_TRIGGER,
     intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles, priceRange, volumeMax,
     niceTicks, mergeCandles, normaliseCandles, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal,
-    radarZone, radarZones, vwapSignalAllowed, dragPriceRange, zoomPriceRange };
+    radarZone, radarZones, vwapZoneBounds, vwapSignalAllowed, dragPriceRange, zoomPriceRange };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.LiquidationKline = exported;
 })(typeof window === 'object' ? window : globalThis);

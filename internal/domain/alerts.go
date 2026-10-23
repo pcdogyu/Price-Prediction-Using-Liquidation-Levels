@@ -45,7 +45,7 @@ const (
 // AlertMonitorMethod describes the live monitor using the currently effective
 // strategy settings rather than hard-coding the default window.
 func AlertMonitorMethod(windowMinutes, refreshMinutes, topSymbols int) string {
-	return fmt.Sprintf("监控名单为 Binance USDⓈ-M 24 小时成交额前 %d 个 USDT 永续（每 %d 分钟刷新，BTCUSDT/ETHUSDT 恒含）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。超过阈值先进入 ARMED，等待 15~30 秒爆仓速率回落至峰值 40%% 以下且价格出现吸收后才 FIRED；VWAP Z-Score 决定开仓区/仅平仓区，深度配额、ATR 回撤、指数网格和最小获利间距继续拦截不合格信号。", topSymbols, refreshMinutes, windowMinutes)
+	return fmt.Sprintf("监控名单为 Binance USDⓈ-M 24 小时成交额前 %d 个 USDT 永续（每 %d 分钟刷新，BTCUSDT/ETHUSDT 恒含）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。超过阈值先进入 ARMED，等待 15~30 秒爆仓速率回落至峰值 40%% 以下且价格出现吸收后才 FIRED；VWAP Z-Score 加大周期 Donchian 双边边界决定开仓区/仅平仓区，深度配额、ATR 回撤、指数网格和最小获利间距继续拦截不合格信号。", topSymbols, refreshMinutes, windowMinutes)
 }
 
 // LiquidationAlert is one alert cycle for a symbol and the liquidated position
@@ -88,6 +88,10 @@ type LiquidationAlert struct {
 	CloseAllowed                 bool      `json:"close_allowed,omitempty"`
 	FilterReason                 string    `json:"filter_reason,omitempty"`
 	VWAPZScore                   float64   `json:"vwap_z_score,omitempty"`
+	DonchianHigh                 float64   `json:"donchian_high,omitempty"`
+	DonchianLow                  float64   `json:"donchian_low,omitempty"`
+	GreenZoneUpper               float64   `json:"green_zone_upper,omitempty"`
+	RedZoneLower                 float64   `json:"red_zone_lower,omitempty"`
 	PeakRateUSDPerSecond         float64   `json:"peak_rate_usd_per_second,omitempty"`
 	CurrentRateUSDPerSecond      float64   `json:"current_rate_usd_per_second,omitempty"`
 	PeakDecayRatio               float64   `json:"peak_decay_ratio,omitempty"`
@@ -136,6 +140,10 @@ type TradeSignal struct {
 	CloseAllowed                 bool      `json:"close_allowed,omitempty"`
 	FilterReason                 string    `json:"filter_reason,omitempty"`
 	VWAPZScore                   float64   `json:"vwap_z_score,omitempty"`
+	DonchianHigh                 float64   `json:"donchian_high,omitempty"`
+	DonchianLow                  float64   `json:"donchian_low,omitempty"`
+	GreenZoneUpper               float64   `json:"green_zone_upper,omitempty"`
+	RedZoneLower                 float64   `json:"red_zone_lower,omitempty"`
 	PeakRateUSDPerSecond         float64   `json:"peak_rate_usd_per_second,omitempty"`
 	CurrentRateUSDPerSecond      float64   `json:"current_rate_usd_per_second,omitempty"`
 	PeakDecayRatio               float64   `json:"peak_decay_ratio,omitempty"`
@@ -181,11 +189,14 @@ type AlertMonitor struct {
 // Quiet/confirmation periods remain deployment settings because changing them
 // alters the lifecycle of already-open alert cycles.
 type AlertStrategySettings struct {
-	WindowMinutes int       `json:"window_minutes"`
-	BTCUSD        float64   `json:"btc_usd"`
-	ETHUSD        float64   `json:"eth_usd"`
-	OtherUSD      float64   `json:"other_usd"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	WindowMinutes      int       `json:"window_minutes"`
+	BTCUSD             float64   `json:"btc_usd"`
+	ETHUSD             float64   `json:"eth_usd"`
+	OtherUSD           float64   `json:"other_usd"`
+	VWAPRangeHours     int       `json:"vwap_range_hours"`
+	VWAPMinDrawdownPct float64   `json:"vwap_min_drawdown_pct"`
+	VWAPDonchianPct    float64   `json:"vwap_donchian_pct"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // AlertThresholds describes the effective strategy parameters.
@@ -202,6 +213,9 @@ type AlertThresholds struct {
 	OppositeMinimumUSD  float64 `json:"opposite_minimum_usd"`
 	VWAPPeriodMinutes   int     `json:"vwap_period_minutes"`
 	VWAPZScore          float64 `json:"vwap_z_score_threshold"`
+	VWAPRangeHours      int     `json:"vwap_range_hours"`
+	VWAPMinDrawdownPct  float64 `json:"vwap_min_drawdown_pct"`
+	VWAPDonchianPct     float64 `json:"vwap_donchian_pct"`
 	PeakDecaySeconds    int     `json:"peak_decay_seconds"`
 	PeakDecayRatio      float64 `json:"peak_decay_ratio"`
 	AbsorptionWickRatio float64 `json:"absorption_wick_ratio"`
@@ -281,19 +295,28 @@ type AlertChartSignals struct {
 	GeneratedAt time.Time          `json:"generated_at"`
 }
 
-// AlertChartZone is the latest 1m VWAP zone used by the radar. Prices above
-// UpperOpenPrice are the high-side opening zone, prices below LowerOpenPrice
-// are the low-side opening zone, and the band between them is close-only.
+// AlertChartZone is the latest 1m VWAP/Donchian zone used by the radar. Prices
+// above RedZoneLower are the high-side opening zone, prices below
+// GreenZoneUpper are the low-side opening zone, and the band between them is
+// close-only. The legacy upper/lower fields mirror those effective boundaries.
 type AlertChartZone struct {
 	Ready           bool    `json:"ready"`
 	PeriodMinutes   int     `json:"period_minutes"`
 	ZScoreThreshold float64 `json:"z_score_threshold"`
+	RangeHours      int     `json:"range_hours"`
+	MinDrawdownPct  float64 `json:"min_drawdown_pct"`
+	DonchianPct     float64 `json:"donchian_pct"`
 	VWAP            float64 `json:"vwap"`
 	Sigma           float64 `json:"sigma"`
 	CurrentPrice    float64 `json:"current_price"`
 	CurrentZScore   float64 `json:"current_z_score"`
+	DonchianHigh    float64 `json:"donchian_high"`
+	DonchianLow     float64 `json:"donchian_low"`
+	GreenZoneUpper  float64 `json:"green_zone_upper"`
+	RedZoneLower    float64 `json:"red_zone_lower"`
 	UpperOpenPrice  float64 `json:"upper_open_price"`
 	LowerOpenPrice  float64 `json:"lower_open_price"`
+	BoundaryOverlap bool    `json:"boundary_overlap"`
 }
 
 // AlertSignalRecalculation is the result of an ephemeral signal replay. The

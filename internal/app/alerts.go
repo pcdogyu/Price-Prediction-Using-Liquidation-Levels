@@ -50,30 +50,33 @@ const alertNotifyCooldown = 5 * time.Minute
 
 func (s *Service) newAlertRuntime() *alertRuntime {
 	cfg := alert.Config{
-		Window:              s.cfg.AlertWindow,
-		Quiet:               s.cfg.AlertQuiet,
-		Confirm:             s.cfg.AlertConfirm,
-		Refresh:             s.cfg.AlertRefresh,
-		BTCUSD:              s.cfg.AlertThresholdBTCUSD,
-		ETHUSD:              s.cfg.AlertThresholdETHUSD,
-		OtherUSD:            s.cfg.AlertThresholdOtherUSD,
-		FollowUpMinimumUSD:  s.cfg.AlertFollowUpMinimumUSD,
-		OppositeMinimumUSD:  s.cfg.AlertOppositeMinimumUSD,
-		TopSymbols:          s.cfg.AlertTopSymbols,
-		VWAPPeriodMinutes:   s.cfg.AlertVWAPPeriodMinutes,
-		VWAPZScore:          s.cfg.AlertVWAPZScore,
-		PeakDecayWindow:     s.cfg.AlertPeakDecayWindow,
-		PeakDecayRatio:      s.cfg.AlertPeakDecayRatio,
-		AbsorptionWickRatio: s.cfg.AlertAbsorptionWickRatio,
-		DeepQuotaUSD:        s.cfg.AlertDeepQuotaUSD,
-		DeepQuotaMultiplier: s.cfg.AlertDeepQuotaMultiplier,
-		ATRPeriod:           s.cfg.AlertATRPeriod,
-		DeepDrawdownATR:     s.cfg.AlertDeepDrawdownATR,
-		MinProfitSpread:     s.cfg.AlertMinProfitSpread,
-		GridStep0Price:      s.cfg.AlertGridStep0Price,
-		GridStep0Pct:        s.cfg.AlertGridStep0Pct,
-		GridStepMultiplier:  s.cfg.AlertGridStepMultiplier,
-		GridThresholdSlope:  s.cfg.AlertGridThresholdSlope,
+		Window:               s.cfg.AlertWindow,
+		Quiet:                s.cfg.AlertQuiet,
+		Confirm:              s.cfg.AlertConfirm,
+		Refresh:              s.cfg.AlertRefresh,
+		BTCUSD:               s.cfg.AlertThresholdBTCUSD,
+		ETHUSD:               s.cfg.AlertThresholdETHUSD,
+		OtherUSD:             s.cfg.AlertThresholdOtherUSD,
+		FollowUpMinimumUSD:   s.cfg.AlertFollowUpMinimumUSD,
+		OppositeMinimumUSD:   s.cfg.AlertOppositeMinimumUSD,
+		TopSymbols:           s.cfg.AlertTopSymbols,
+		VWAPPeriodMinutes:    s.cfg.AlertVWAPPeriodMinutes,
+		VWAPZScore:           s.cfg.AlertVWAPZScore,
+		VWAPRangeMinutes:     s.cfg.AlertVWAPRangeHours * 60,
+		VWAPMinDrawdown:      s.cfg.AlertVWAPMinDrawdownPct / 100,
+		VWAPDonchianFraction: s.cfg.AlertVWAPDonchianPct / 100,
+		PeakDecayWindow:      s.cfg.AlertPeakDecayWindow,
+		PeakDecayRatio:       s.cfg.AlertPeakDecayRatio,
+		AbsorptionWickRatio:  s.cfg.AlertAbsorptionWickRatio,
+		DeepQuotaUSD:         s.cfg.AlertDeepQuotaUSD,
+		DeepQuotaMultiplier:  s.cfg.AlertDeepQuotaMultiplier,
+		ATRPeriod:            s.cfg.AlertATRPeriod,
+		DeepDrawdownATR:      s.cfg.AlertDeepDrawdownATR,
+		MinProfitSpread:      s.cfg.AlertMinProfitSpread,
+		GridStep0Price:       s.cfg.AlertGridStep0Price,
+		GridStep0Pct:         s.cfg.AlertGridStep0Pct,
+		GridStepMultiplier:   s.cfg.AlertGridStepMultiplier,
+		GridThresholdSlope:   s.cfg.AlertGridThresholdSlope,
 	}
 	rtm := &alertRuntime{
 		service: s,
@@ -138,6 +141,12 @@ const (
 	maxAlertWindowMinutes = 60
 	minAlertThresholdUSD  = 1
 	maxAlertThresholdUSD  = 1_000_000_000
+	minVWAPRangeHours     = 12
+	maxVWAPRangeHours     = 24
+	minVWAPMinDrawdownPct = 0.1
+	maxVWAPMinDrawdownPct = 20
+	minVWAPDonchianPct    = 1
+	maxVWAPDonchianPct    = 49
 )
 
 func validateAlertStrategySettings(in domain.AlertStrategySettings) error {
@@ -149,15 +158,40 @@ func validateAlertStrategySettings(in domain.AlertStrategySettings) error {
 			return fmt.Errorf("%s 阈值需在 %g 到 %g 美元之间", name, float64(minAlertThresholdUSD), float64(maxAlertThresholdUSD))
 		}
 	}
+	if in.VWAPRangeHours < minVWAPRangeHours || in.VWAPRangeHours > maxVWAPRangeHours {
+		return fmt.Errorf("VWAP Donchian 窗口需在 %d 到 %d 小时之间", minVWAPRangeHours, maxVWAPRangeHours)
+	}
+	if math.IsNaN(in.VWAPMinDrawdownPct) || math.IsInf(in.VWAPMinDrawdownPct, 0) || in.VWAPMinDrawdownPct < minVWAPMinDrawdownPct || in.VWAPMinDrawdownPct > maxVWAPMinDrawdownPct {
+		return fmt.Errorf("VWAP 最小回撤需在 %.1f%% 到 %.1f%% 之间", minVWAPMinDrawdownPct, float64(maxVWAPMinDrawdownPct))
+	}
+	if math.IsNaN(in.VWAPDonchianPct) || math.IsInf(in.VWAPDonchianPct, 0) || in.VWAPDonchianPct < minVWAPDonchianPct || in.VWAPDonchianPct > maxVWAPDonchianPct {
+		return fmt.Errorf("VWAP Donchian 分位需在 %d%% 到 %d%% 之间", minVWAPDonchianPct, maxVWAPDonchianPct)
+	}
 	return nil
+}
+
+func fillStrategyVWAPDefaults(in, current domain.AlertStrategySettings) domain.AlertStrategySettings {
+	if in.VWAPRangeHours == 0 {
+		in.VWAPRangeHours = current.VWAPRangeHours
+	}
+	if in.VWAPMinDrawdownPct == 0 {
+		in.VWAPMinDrawdownPct = current.VWAPMinDrawdownPct
+	}
+	if in.VWAPDonchianPct == 0 {
+		in.VWAPDonchianPct = current.VWAPDonchianPct
+	}
+	return in
 }
 
 func strategySettingsFromConfig(cfg alert.Config) domain.AlertStrategySettings {
 	return domain.AlertStrategySettings{
-		WindowMinutes: int(cfg.Window / time.Minute),
-		BTCUSD:        cfg.BTCUSD,
-		ETHUSD:        cfg.ETHUSD,
-		OtherUSD:      cfg.OtherUSD,
+		WindowMinutes:      int(cfg.Window / time.Minute),
+		BTCUSD:             cfg.BTCUSD,
+		ETHUSD:             cfg.ETHUSD,
+		OtherUSD:           cfg.OtherUSD,
+		VWAPRangeHours:     cfg.VWAPRangeMinutes / 60,
+		VWAPMinDrawdownPct: cfg.VWAPMinDrawdown * 100,
+		VWAPDonchianPct:    cfg.VWAPDonchianFraction * 100,
 	}
 }
 
@@ -173,12 +207,18 @@ func (rtm *alertRuntime) restoreStrategySettings(ctx context.Context) {
 		return
 	}
 	if err := validateAlertStrategySettings(stored); err != nil {
-		rtm.log.Warn("ignore invalid alert strategy settings", "error", err)
-		return
+		stored = fillStrategyVWAPDefaults(stored, rtm.snapshotStrategySettings())
+		if err = validateAlertStrategySettings(stored); err != nil {
+			rtm.log.Warn("ignore invalid alert strategy settings", "error", err)
+			return
+		}
 	}
 	cfg := rtm.engine.Config()
 	cfg.Window = time.Duration(stored.WindowMinutes) * time.Minute
 	cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = stored.BTCUSD, stored.ETHUSD, stored.OtherUSD
+	cfg.VWAPRangeMinutes = stored.VWAPRangeHours * 60
+	cfg.VWAPMinDrawdown = stored.VWAPMinDrawdownPct / 100
+	cfg.VWAPDonchianFraction = stored.VWAPDonchianPct / 100
 	rtm.engine.UpdateConfig(cfg)
 }
 
@@ -189,6 +229,7 @@ func (rtm *alertRuntime) snapshotStrategySettings() domain.AlertStrategySettings
 // updateStrategySettings persists validated values and applies them to the live
 // engine without dropping the current watch list or open cycles.
 func (rtm *alertRuntime) updateStrategySettings(ctx context.Context, in domain.AlertStrategySettings) (domain.AlertStrategySettings, error) {
+	in = fillStrategyVWAPDefaults(in, rtm.snapshotStrategySettings())
 	if err := validateAlertStrategySettings(in); err != nil {
 		return domain.AlertStrategySettings{}, err
 	}
@@ -199,6 +240,9 @@ func (rtm *alertRuntime) updateStrategySettings(ctx context.Context, in domain.A
 	cfg := rtm.engine.Config()
 	cfg.Window = time.Duration(in.WindowMinutes) * time.Minute
 	cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = in.BTCUSD, in.ETHUSD, in.OtherUSD
+	cfg.VWAPRangeMinutes = in.VWAPRangeHours * 60
+	cfg.VWAPMinDrawdown = in.VWAPMinDrawdownPct / 100
+	cfg.VWAPDonchianFraction = in.VWAPDonchianPct / 100
 	rtm.engine.UpdateConfig(cfg)
 	return rtm.snapshotStrategySettings(), nil
 }

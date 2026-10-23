@@ -32,6 +32,10 @@
     price_absorption_not_confirmed: '价格尚未止跌吸收',
     market_context_unavailable: '市场 K 线数据未就绪',
     vwap_zscore_unavailable: 'VWAP Z-Score 不可用',
+    donchian_range_unavailable_long_liquidation_close_only: 'Donchian 大周期数据不足：多单爆仓仅允许平仓',
+    donchian_range_unavailable_short_liquidation_close_only: 'Donchian 大周期数据不足：空单爆仓仅允许平仓',
+    vwap_donchian_zone_overlap_long_liquidation_close_only: 'VWAP/Donchian 区域重叠：多单爆仓仅允许平仓',
+    vwap_donchian_zone_overlap_short_liquidation_close_only: 'VWAP/Donchian 区域重叠：空单爆仓仅允许平仓',
     high_zscore_long_liquidation_close_only: '高位区：多单爆仓仅允许平空',
     low_zscore_long_liquidation_open_long: '低位区：允许接多',
     neutral_zscore_long_liquidation_close_only: '中性区：多单爆仓仅允许平空',
@@ -243,7 +247,7 @@
 
   function renderStrategySettings(settings) {
     if (!settings) return;
-    const fields = [['alerts-threshold-btc', settings.btc_usd], ['alerts-threshold-eth', settings.eth_usd], ['alerts-threshold-other', settings.other_usd], ['alerts-window-minutes', settings.window_minutes]];
+    const fields = [['alerts-threshold-btc', settings.btc_usd], ['alerts-threshold-eth', settings.eth_usd], ['alerts-threshold-other', settings.other_usd], ['alerts-window-minutes', settings.window_minutes], ['alerts-vwap-range-hours', settings.vwap_range_hours], ['alerts-vwap-min-drawdown', settings.vwap_min_drawdown_pct], ['alerts-vwap-donchian', settings.vwap_donchian_pct]];
     for (const [id, value] of fields) {
       const input = $(id);
       if (document.activeElement !== input && Number.isFinite(Number(value))) input.value = value;
@@ -340,7 +344,10 @@
       btc_usd: Number($('alerts-threshold-btc').value),
       eth_usd: Number($('alerts-threshold-eth').value),
       other_usd: Number($('alerts-threshold-other').value),
-      window_minutes: Number($('alerts-window-minutes').value)
+      window_minutes: Number($('alerts-window-minutes').value),
+      vwap_range_hours: Number($('alerts-vwap-range-hours').value),
+      vwap_min_drawdown_pct: Number($('alerts-vwap-min-drawdown').value),
+      vwap_donchian_pct: Number($('alerts-vwap-donchian').value)
     };
   }
 
@@ -530,7 +537,7 @@
   $('alerts-next').addEventListener('click', () => { if (!historyNextCursor) return; historyCursors[historyPage + 1] = historyNextCursor; loadHistory(historyNextCursor, historyPage + 1); });
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
-  ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
+  ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes', 'alerts-vwap-range-hours', 'alerts-vwap-min-drawdown', 'alerts-vwap-donchian'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
   $('alerts-signal-recalculate').addEventListener('click', recalculateSignals);
   $('alerts-order-signal-settings').addEventListener('submit', saveOrderSignalSettings);
   ['alerts-order-alert-close', 'alerts-order-alert', 'alerts-order-aggressive-close', 'alerts-order-aggressive', 'alerts-order-steady-close', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));

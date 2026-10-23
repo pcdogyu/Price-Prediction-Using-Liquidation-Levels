@@ -127,7 +127,7 @@ func TestBinanceKlinesGuards(t *testing.T) {
 	if len(candles) != 0 || hasMore {
 		t.Fatalf("an empty page must not claim older data: %v %v", candles, hasMore)
 	}
-	if got := seen.Get("limit"); got != "1000" {
+	if got := seen.Get("limit"); got != "1500" {
 		t.Fatalf("the limit must be clamped to the page limit: %s", got)
 	}
 	start, err := strconv.ParseInt(seen.Get("startTime"), 10, 64)
@@ -137,7 +137,7 @@ func TestBinanceKlinesGuards(t *testing.T) {
 	// The cursor is floored to the interval, so the window is measured from that
 	// boundary rather than from the submitted timestamp.
 	end := until.Truncate(4 * time.Hour).UnixMilli()
-	if span := end - start; span != int64(1000*4*time.Hour/time.Millisecond) {
+	if span := end - start; span != int64(1500*4*time.Hour/time.Millisecond) {
 		t.Fatalf("the window must hold exactly limit buckets, got %d ms", span)
 	}
 }

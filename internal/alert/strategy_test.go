@@ -257,7 +257,7 @@ func TestSeedReplayIsIdempotent(t *testing.T) {
 func TestZeroConfigKeepsProductionDefaults(t *testing.T) {
 	engine := testEngine(t, Config{}, "BTCUSDT")
 	got := engine.Config()
-	if got.Window != 3*time.Minute || got.Quiet != 10*time.Minute || got.Confirm != 30*time.Minute || got.BTCUSD != 300000 || got.ETHUSD != 200000 || got.OtherUSD != 100000 {
+	if got.Window != 3*time.Minute || got.Quiet != 10*time.Minute || got.Confirm != 30*time.Minute || got.BTCUSD != 300000 || got.ETHUSD != 200000 || got.OtherUSD != 100000 || got.VWAPRangeMinutes != 1440 || got.VWAPMinDrawdown != .022 || got.VWAPDonchianFraction != .35 {
 		t.Fatalf("zero values must fall back to the documented defaults: %+v", got)
 	}
 	thresholds := engine.Thresholds()
@@ -266,6 +266,20 @@ func TestZeroConfigKeepsProductionDefaults(t *testing.T) {
 	}
 	if got.ThresholdFor("ethusdt") != 200000 || got.ThresholdFor("SOLUSDT") != 100000 {
 		t.Fatalf("threshold lookup must normalize the symbol: %+v", got)
+	}
+}
+
+func TestVWAPZoneBoundsUseSymmetricDonchianGates(t *testing.T) {
+	cfg := Defaults()
+	green, red, overlap, ok := VWAPZoneBounds(cfg, 83000, 100, 84800, 81300)
+	if !ok || overlap {
+		t.Fatalf("valid separated bounds must be available: green=%v red=%v overlap=%v", green, red, overlap)
+	}
+	if green != 82525 || red != 83575 {
+		t.Fatalf("unexpected effective bounds: green=%v red=%v", green, red)
+	}
+	if _, _, ready := DonchianRange(radarCandles(100, 101), 3); ready {
+		t.Fatal("an incomplete Donchian window must fail closed")
 	}
 }
 
@@ -282,12 +296,14 @@ func radarCandles(closes ...float64) []domain.Candle {
 
 func radarContext(price float64, candles []domain.Candle) MarketContext {
 	current := domain.Candle{Time: testStart, Open: price - 1, High: price + 1, Low: price - 2, Close: price}
-	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current}
+	high, low, ready := DonchianRange(candles, len(candles))
+	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: ready}
 }
 
 func radarShortContext(price float64, candles []domain.Candle) MarketContext {
 	current := domain.Candle{Time: testStart, Open: price - 1, High: price + 2, Low: price - 1, Close: price}
-	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current}
+	high, low, ready := DonchianRange(candles, len(candles))
+	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: ready}
 }
 
 func TestRadarArmedPeakDecayAndHighZoneShortEntry(t *testing.T) {

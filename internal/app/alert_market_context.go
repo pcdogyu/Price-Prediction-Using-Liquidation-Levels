@@ -18,12 +18,13 @@ func (s *Service) liquidationMarketContext(ctx context.Context, event domain.Liq
 	if period <= 0 {
 		period = 240
 	}
+	historyMinutes := alertMarketHistoryMinutes(cfg)
 	at := event.EventTime.UTC()
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
 	event.EventTime = at
-	from := at.Add(-time.Duration(period+2) * time.Minute)
+	from := at.Add(-time.Duration(historyMinutes) * time.Minute)
 	to := at.Add(time.Minute)
 	rows, err := s.store.CandlesRange(ctx, strings.ToUpper(strings.TrimSpace(event.Symbol)), from, to)
 	if err != nil || len(rows) == 0 {
@@ -40,6 +41,7 @@ func buildLiquidationMarketContext(event domain.LiquidationEvent, cfg alert.Conf
 	if period <= 0 {
 		period = 240
 	}
+	historyMinutes := alertMarketHistoryMinutes(cfg)
 
 	price := event.Price
 	at := event.EventTime.UTC()
@@ -74,12 +76,29 @@ func buildLiquidationMarketContext(event domain.LiquidationEvent, cfg alert.Conf
 	} else if rows[last].Time.Before(bucket) {
 		rows = append(rows, domain.Candle{Exchange: "binance", Symbol: event.Symbol, Time: bucket, Open: price, High: price, Low: price, Close: price})
 	}
-	if len(rows) > period {
-		rows = rows[len(rows)-period:]
+	if len(rows) > historyMinutes {
+		rows = rows[len(rows)-historyMinutes:]
 	}
 	if len(rows) < period {
 		return alert.MarketContext{Price: price, Candles: rows}
 	}
 	current := rows[len(rows)-1]
-	return alert.MarketContext{Ready: true, Price: price, Candles: rows, CurrentCandle: current}
+	high, low, rangeReady := alert.DonchianRange(rows, cfg.VWAPRangeMinutes)
+	return alert.MarketContext{Ready: true, Price: price, Candles: rows, CurrentCandle: current,
+		DonchianHigh: high, DonchianLow: low, DonchianReady: rangeReady}
+}
+
+func alertMarketHistoryMinutes(cfg alert.Config) int {
+	period := cfg.VWAPPeriodMinutes
+	if period <= 0 {
+		period = 240
+	}
+	rangeMinutes := cfg.VWAPRangeMinutes
+	if rangeMinutes <= 0 {
+		rangeMinutes = 24 * 60
+	}
+	if rangeMinutes < period {
+		rangeMinutes = period
+	}
+	return rangeMinutes + 2
 }

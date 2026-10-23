@@ -52,49 +52,55 @@ type Config struct {
 
 	// Radar filters. A context-aware observation uses all four layers; the
 	// legacy Observe path stays available for replay/backward-compatible callers.
-	VWAPPeriodMinutes   int
-	VWAPZScore          float64
-	PeakDecayWindow     time.Duration
-	PeakDecayRatio      float64
-	AbsorptionWickRatio float64
-	DeepQuotaUSD        float64
-	DeepQuotaMultiplier float64
-	ATRPeriod           int
-	DeepDrawdownATR     float64
-	MinProfitSpread     float64
-	GridStep0Price      float64
-	GridStep0Pct        float64
-	GridStepMultiplier  float64
-	GridThresholdSlope  float64
+	VWAPPeriodMinutes    int
+	VWAPZScore           float64
+	VWAPRangeMinutes     int
+	VWAPMinDrawdown      float64
+	VWAPDonchianFraction float64
+	PeakDecayWindow      time.Duration
+	PeakDecayRatio       float64
+	AbsorptionWickRatio  float64
+	DeepQuotaUSD         float64
+	DeepQuotaMultiplier  float64
+	ATRPeriod            int
+	DeepDrawdownATR      float64
+	MinProfitSpread      float64
+	GridStep0Price       float64
+	GridStep0Pct         float64
+	GridStepMultiplier   float64
+	GridThresholdSlope   float64
 }
 
 // Defaults returns the production strategy configuration.
 func Defaults() Config {
 	return Config{
-		Window:              3 * time.Minute,
-		Quiet:               10 * time.Minute,
-		Confirm:             30 * time.Minute,
-		Refresh:             10 * time.Minute,
-		BTCUSD:              300000,
-		ETHUSD:              200000,
-		OtherUSD:            100000,
-		FollowUpMinimumUSD:  0,
-		OppositeMinimumUSD:  0,
-		TopSymbols:          domain.AlertTopSymbolsDefault,
-		VWAPPeriodMinutes:   240,
-		VWAPZScore:          0.8,
-		PeakDecayWindow:     30 * time.Second,
-		PeakDecayRatio:      0.4,
-		AbsorptionWickRatio: 0.35,
-		DeepQuotaUSD:        0,
-		DeepQuotaMultiplier: 2,
-		ATRPeriod:           60,
-		DeepDrawdownATR:     1.5,
-		MinProfitSpread:     0.007,
-		GridStep0Price:      0,
-		GridStep0Pct:        0.003,
-		GridStepMultiplier:  1.4,
-		GridThresholdSlope:  0.5,
+		Window:               3 * time.Minute,
+		Quiet:                10 * time.Minute,
+		Confirm:              30 * time.Minute,
+		Refresh:              10 * time.Minute,
+		BTCUSD:               300000,
+		ETHUSD:               200000,
+		OtherUSD:             100000,
+		FollowUpMinimumUSD:   0,
+		OppositeMinimumUSD:   0,
+		TopSymbols:           domain.AlertTopSymbolsDefault,
+		VWAPPeriodMinutes:    240,
+		VWAPZScore:           0.8,
+		VWAPRangeMinutes:     24 * 60,
+		VWAPMinDrawdown:      0.022,
+		VWAPDonchianFraction: 0.35,
+		PeakDecayWindow:      30 * time.Second,
+		PeakDecayRatio:       0.4,
+		AbsorptionWickRatio:  0.35,
+		DeepQuotaUSD:         0,
+		DeepQuotaMultiplier:  2,
+		ATRPeriod:            60,
+		DeepDrawdownATR:      1.5,
+		MinProfitSpread:      0.007,
+		GridStep0Price:       0,
+		GridStep0Pct:         0.003,
+		GridStepMultiplier:   1.4,
+		GridThresholdSlope:   0.5,
 	}
 }
 
@@ -135,6 +141,15 @@ func (c Config) withDefaults() Config {
 	}
 	if c.VWAPZScore <= 0 {
 		c.VWAPZScore = d.VWAPZScore
+	}
+	if c.VWAPRangeMinutes < 12*60 || c.VWAPRangeMinutes > 24*60 {
+		c.VWAPRangeMinutes = d.VWAPRangeMinutes
+	}
+	if c.VWAPMinDrawdown <= 0 || c.VWAPMinDrawdown >= 1 {
+		c.VWAPMinDrawdown = d.VWAPMinDrawdown
+	}
+	if c.VWAPDonchianFraction <= 0 || c.VWAPDonchianFraction >= .5 {
+		c.VWAPDonchianFraction = d.VWAPDonchianFraction
 	}
 	if c.PeakDecayWindow <= 0 {
 		c.PeakDecayWindow = d.PeakDecayWindow
@@ -203,6 +218,9 @@ func (c Config) Thresholds() domain.AlertThresholds {
 		OppositeMinimumUSD:  c.OppositeMinimumUSD,
 		VWAPPeriodMinutes:   c.VWAPPeriodMinutes,
 		VWAPZScore:          c.VWAPZScore,
+		VWAPRangeHours:      c.VWAPRangeMinutes / 60,
+		VWAPMinDrawdownPct:  c.VWAPMinDrawdown * 100,
+		VWAPDonchianPct:     c.VWAPDonchianFraction * 100,
 		PeakDecaySeconds:    int(c.PeakDecayWindow / time.Second),
 		PeakDecayRatio:      c.PeakDecayRatio,
 		AbsorptionWickRatio: c.AbsorptionWickRatio,
@@ -745,6 +763,10 @@ func applyDecisionToSignal(signal *domain.TradeSignal, decision FilterDecision) 
 	signal.CloseAllowed = decision.CloseAllowed
 	signal.FilterReason = decision.Reason
 	signal.VWAPZScore = decision.ZScore
+	signal.DonchianHigh = decision.DonchianHigh
+	signal.DonchianLow = decision.DonchianLow
+	signal.GreenZoneUpper = decision.GreenZoneUpper
+	signal.RedZoneLower = decision.RedZoneLower
 	signal.PeakRateUSDPerSecond = decision.PeakRateUSDPerSecond
 	signal.CurrentRateUSDPerSecond = decision.CurrentRateUSDPerSecond
 	signal.PeakDecayRatio = decision.PeakDecayRatio
@@ -826,6 +848,10 @@ func (c *cycle) view(cfg Config, symbol string) domain.LiquidationAlert {
 		out.CloseAllowed = c.decision.CloseAllowed
 		out.FilterReason = c.decision.Reason
 		out.VWAPZScore = c.decision.ZScore
+		out.DonchianHigh = c.decision.DonchianHigh
+		out.DonchianLow = c.decision.DonchianLow
+		out.GreenZoneUpper = c.decision.GreenZoneUpper
+		out.RedZoneLower = c.decision.RedZoneLower
 		out.PeakRateUSDPerSecond = c.decision.PeakRateUSDPerSecond
 		out.CurrentRateUSDPerSecond = c.decision.CurrentRateUSDPerSecond
 		out.PeakDecayRatio = c.decision.PeakDecayRatio

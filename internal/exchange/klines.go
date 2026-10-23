@@ -23,10 +23,9 @@ var KlineIntervals = []string{"1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", 
 // KlineIntervalMinutes maps those names to their length in minutes.
 var KlineIntervalMinutes = map[string]int{"1m": 1, "2m": 2, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "8h": 480, "12h": 720}
 
-// KlinePageLimit bounds one upstream request. Binance allows 1500 rows; one
-// thousand keeps a page small enough to stay fast while still covering roughly
-// seven hours of 1m candles and two years of 12h candles.
-const KlinePageLimit = 1000
+// KlinePageLimit bounds one upstream request. Binance allows 1500 rows; the
+// larger page lets the 1m alert chart cover a complete 24-hour Donchian window.
+const KlinePageLimit = 1500
 
 // BinanceKlines returns up to limit candles that opened strictly before until,
 // oldest first, and reports whether older candles are probably still available.

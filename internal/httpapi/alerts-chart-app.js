@@ -32,7 +32,7 @@
     hasMore: true, nextBefore: '', newest: 0, atLatest: true, newData: false, keepSpan: 0,
     loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false,
     drag: null, hoverCandle: null, hoverMarker: null,
-    radarConfig: { periodMinutes: 240, zScoreThreshold: .8 }, radarZone: null,
+    radarConfig: { periodMinutes: 240, zScoreThreshold: .8, rangeMinutes: 1440, minDrawdown: .022, donchianFraction: .35 }, radarZone: null,
     toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true), zones: stored(STORE_ZONES, true) }
   };
   // The standalone alert chart must be useful when opened directly from a URL.
@@ -53,16 +53,16 @@
   const rawShownSignals = () => state.toggles.signals ? K.filterSignals(state.signals, signalOptions()) : [];
   const currentRadarZone = () => state.radarZone && state.radarZone.ready
     ? state.radarZone
-    : K.radarZone(state.candles, state.radarConfig.periodMinutes, state.radarConfig.zScoreThreshold, step() / 60000);
+    : K.radarZone(state.candles, state.radarConfig.periodMinutes, state.radarConfig.zScoreThreshold, step() / 60000, state.radarConfig.rangeMinutes, state.radarConfig.minDrawdown, state.radarConfig.donchianFraction);
   let historicalZoneCacheKey = '', historicalZoneCache = [];
   const historicalRadarZones = () => {
     const first = state.candles.length ? state.candles[0].t : 0;
     const last = state.candles.length ? state.candles[state.candles.length - 1].t : 0;
     const latest = state.radarZone && state.radarZone.ready ? state.radarZone : {};
-    const key = state.candles.length + '|' + first + '|' + last + '|' + state.radarConfig.periodMinutes + '|' + state.radarConfig.zScoreThreshold + '|' +
-      [latest.current_price, latest.upper_open_price, latest.lower_open_price].map(value => finite(value) ? value : 0).join('|');
+    const key = state.candles.length + '|' + first + '|' + last + '|' + state.radarConfig.periodMinutes + '|' + state.radarConfig.zScoreThreshold + '|' + state.radarConfig.rangeMinutes + '|' + state.radarConfig.minDrawdown + '|' + state.radarConfig.donchianFraction + '|' +
+      [latest.current_price, latest.upper_open_price, latest.lower_open_price, latest.green_zone_upper, latest.red_zone_lower].map(value => finite(value) ? value : 0).join('|');
     if (key === historicalZoneCacheKey) return historicalZoneCache;
-    const zones = K.radarZones(state.candles, state.radarConfig.periodMinutes, state.radarConfig.zScoreThreshold, step() / 60000);
+    const zones = K.radarZones(state.candles, state.radarConfig.periodMinutes, state.radarConfig.zScoreThreshold, step() / 60000, state.radarConfig.rangeMinutes, state.radarConfig.minDrawdown, state.radarConfig.donchianFraction);
     historicalZoneCacheKey = key;
     historicalZoneCache = zones && zones.length ? zones : [];
     if (state.radarZone && state.radarZone.ready && historicalZoneCache.length) {
@@ -85,9 +85,9 @@
   const vwapAllowsSignal = signal => {
     if (!state.toggles.zones) return true;
     const zone = vwapZoneAt(signal.t);
-    // Keep a signal visible while the historical VWAP window is unavailable;
-    // absence of filter data must not silently erase an existing signal.
-    if (!zone || !finite(zone.upper_open_price) || !finite(zone.lower_open_price)) return true;
+    // Missing or overlapping boundaries fail closed while VWAP filtering is on;
+    // the chart must not suggest an opening signal without the 24h range gate.
+    if (!zone || !finite(zone.red_zone_lower) || !finite(zone.green_zone_upper) || zone.boundary_overlap) return false;
     return K.vwapSignalAllowed(signal, zone);
   };
   const shownSignals = () => rawShownSignals().filter(vwapAllowsSignal);
@@ -153,10 +153,10 @@
   // candleLimit sizes a request so the fetched page covers the window the chart
   // shows plus enough history to pan into without an immediate refetch.
   function candleLimit(mode) {
-    if (mode === 'history') return 1000;
+    if (mode === 'history') return 1500;
     const wanted = state.keepSpan > 0 ? state.keepSpan : K.DEFAULT_VISIBLE * step();
-    const warmup = Math.ceil((Number(state.radarConfig.periodMinutes) || 240) / Math.max(1, step() / 60000)) + 2;
-    return Math.max(120, Math.min(1000, Math.ceil(wanted / step()) + 80 + warmup));
+    const warmup = Math.ceil(Math.max(Number(state.radarConfig.periodMinutes) || 240, Number(state.radarConfig.rangeMinutes) || 1440) / Math.max(1, step() / 60000)) + 2;
+    return Math.max(120, Math.min(1500, Math.ceil(wanted / step()) + 80 + warmup));
   }
 
   function initialWindow() {
@@ -183,7 +183,7 @@
     parts.push(shownSignals().length + ' 个下单信号');
     const zone = currentRadarZone();
     if (!state.toggles.zones) parts.push('VWAP 开仓区与仅平仓区已隐藏');
-    else if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 · 历史三分区 ' + historicalRadarZones().length + ' 根 · 高于 ' + priceText(zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.lower_open_price) + ' 接多 · 中间仅平仓');
+    else if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 + Donchian ' + (zone.range_hours || state.radarConfig.rangeMinutes / 60) + ' 小时 · 历史三分区 ' + historicalRadarZones().length + ' 根 · 高于 ' + priceText(zone.red_zone_lower || zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.green_zone_upper || zone.lower_open_price) + ' 接多 · 中间仅平仓' + (zone.boundary_overlap ? ' · 边界重叠，禁止开仓' : ''));
     else parts.push('VWAP 开仓区计算中');
     parts.push(state.atLatest ? '每 5 秒自动刷新' : '已暂停跟随最新');
     return parts.join(' · ');
@@ -234,7 +234,7 @@
     if (state.view.start > state.candles[0].t + K.HISTORY_TRIGGER * step()) return;
     state.loadingHistory = true;
     note('正在读取更早的 K 线');
-    json('api/v1/alerts/klines?symbol=' + encodeURIComponent(state.symbol) + '&interval=' + encodeURIComponent(state.interval) + '&limit=1000&before=' + encodeURIComponent(state.nextBefore))
+    json('api/v1/alerts/klines?symbol=' + encodeURIComponent(state.symbol) + '&interval=' + encodeURIComponent(state.interval) + '&limit=1500&before=' + encodeURIComponent(state.nextBefore))
       .then(packet => {
         state.candles = K.mergeCandles(state.candles, K.normaliseCandles(packet.candles));
         state.hasMore = packet.has_more === true;
@@ -263,7 +263,13 @@
         liquidation_side: row.side, reference_price: row.reference_price, notional_usd: row.notional_usd,
         threshold_usd: row.threshold_usd, status: row.status })).filter(row => Number.isFinite(row.t));
       const thresholds = packet.thresholds || {};
-      state.radarConfig = { periodMinutes: Number(thresholds.vwap_period_minutes) || 240, zScoreThreshold: Number(thresholds.vwap_z_score_threshold) || .8 };
+      state.radarConfig = {
+        periodMinutes: Number(thresholds.vwap_period_minutes) || 240,
+        zScoreThreshold: Number(thresholds.vwap_z_score_threshold) || .8,
+        rangeMinutes: (Number(thresholds.vwap_range_hours) || 24) * 60,
+        minDrawdown: (Number(thresholds.vwap_min_drawdown_pct) || 2.2) / 100,
+        donchianFraction: (Number(thresholds.vwap_donchian_pct) || 35) / 100
+      };
       state.radarZone = packet.zone && packet.zone.ready ? packet.zone : null;
       const threshold = state.symbol === 'BTCUSDT' ? thresholds.btc_usd : state.symbol === 'ETHUSDT' ? thresholds.eth_usd : thresholds.other_usd;
       const parameterText = '当前参数：' + money(threshold) + ' · ' + (thresholds.window_minutes || '—') + ' 分钟周期';
@@ -413,9 +419,15 @@
       ctx.globalAlpha = 1;
     };
     const band = (zone, left, right) => {
-      if (!zone || !finite(zone.upper_open_price) || !finite(zone.lower_open_price) || zone.upper_open_price <= zone.lower_open_price) return;
-      const upper = Math.max(plot.top, Math.min(priceBottom, y(zone.upper_open_price)));
-      const lower = Math.max(plot.top, Math.min(priceBottom, y(zone.lower_open_price)));
+      const redLower = zone && (finite(zone.red_zone_lower) ? zone.red_zone_lower : zone.upper_open_price);
+      const greenUpper = zone && (finite(zone.green_zone_upper) ? zone.green_zone_upper : zone.lower_open_price);
+      if (!zone || !finite(redLower) || !finite(greenUpper)) return;
+      if (zone.boundary_overlap || redLower <= greenUpper) {
+        fill(left, right, plot.top, priceBottom, colors.warning, .09);
+        return;
+      }
+      const upper = Math.max(plot.top, Math.min(priceBottom, y(redLower)));
+      const lower = Math.max(plot.top, Math.min(priceBottom, y(greenUpper)));
       fill(left, right, plot.top, upper, colors.sell, .10);
       fill(left, right, upper, lower, colors.warning, .09);
       fill(left, right, lower, priceBottom, colors.buy, .10);
@@ -426,7 +438,7 @@
         const right = Math.max(plot.left, Math.min(plot.right, x(zone.t + intervalStep)));
         band(zone, left, right);
       }
-    } else if (fallback && finite(fallback.upper_open_price) && finite(fallback.lower_open_price) && fallback.upper_open_price > fallback.lower_open_price) {
+    } else if (fallback && (finite(fallback.red_zone_lower) || finite(fallback.upper_open_price)) && (finite(fallback.green_zone_upper) || finite(fallback.lower_open_price))) {
       band(fallback, plot.left, plot.right);
     } else {
       return;
@@ -448,12 +460,14 @@
       if (started) ctx.stroke();
       ctx.restore();
     };
-    historyLine('upper_open_price', colors.sell, [6, 4]);
-    historyLine('lower_open_price', colors.buy, [6, 4]);
+    historyLine('red_zone_lower', colors.sell, [6, 4]);
+    historyLine('green_zone_upper', colors.buy, [6, 4]);
     historyLine('vwap', colors.warning, [2, 4]);
     const zone = zones.length ? zones[zones.length - 1] : fallback;
-    const upper = Math.max(plot.top, Math.min(priceBottom, y(zone.upper_open_price)));
-    const lower = Math.max(plot.top, Math.min(priceBottom, y(zone.lower_open_price)));
+    const redLower = zone && (finite(zone.red_zone_lower) ? zone.red_zone_lower : zone.upper_open_price);
+    const greenUpper = zone && (finite(zone.green_zone_upper) ? zone.green_zone_upper : zone.lower_open_price);
+    const upper = Math.max(plot.top, Math.min(priceBottom, y(redLower)));
+    const lower = Math.max(plot.top, Math.min(priceBottom, y(greenUpper)));
     const label = (text, py, colour) => {
       if (py < plot.top + 10 || py > priceBottom - 10) return;
       ctx.save();
@@ -463,9 +477,12 @@
       ctx.fillText(text, plot.right - 8, py);
       ctx.restore();
     };
-    if (upper - plot.top > 20) label('开仓区 · 高位开空', plot.top + Math.min(18, (upper - plot.top) / 2), colors.sell);
-    if (lower - upper > 20) label('仅平仓区', upper + (lower - upper) / 2, colors.warning);
-    if (priceBottom - lower > 20) label('开仓区 · 低位接多', lower + Math.min(18, (priceBottom - lower) / 2), colors.buy);
+    if (!zone.boundary_overlap && upper - plot.top > 20) label('开仓区 · 高位开空', plot.top + Math.min(18, (upper - plot.top) / 2), colors.sell);
+    if (zone.boundary_overlap || lower <= upper) label('边界重叠 · 仅平仓', plot.top + 18, colors.warning);
+    else {
+      if (lower - upper > 20) label('仅平仓区', upper + (lower - upper) / 2, colors.warning);
+      if (priceBottom - lower > 20) label('开仓区 · 低位接多', lower + Math.min(18, (priceBottom - lower) / 2), colors.buy);
+    }
   }
 
   // drawAlerts paints warning diamonds below the signal layer. They use the

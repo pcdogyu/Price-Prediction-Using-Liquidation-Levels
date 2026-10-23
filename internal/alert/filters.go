@@ -3,6 +3,7 @@ package alert
 import (
 	"math"
 	"strings"
+	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
@@ -23,6 +24,9 @@ type MarketContext struct {
 	PositionDataAvailable bool
 	LastLongEntryPrice    float64
 	LastShortEntryPrice   float64
+	DonchianHigh          float64
+	DonchianLow           float64
+	DonchianReady         bool
 }
 
 // FilterDecision is persisted with every context-aware alert/signal so an
@@ -46,6 +50,12 @@ type FilterDecision struct {
 	RequiredGridStepPrice   float64
 	RequiredThresholdUSD    float64
 	MinProfitSpread         float64
+	DonchianHigh            float64
+	DonchianLow             float64
+	GreenZoneUpper          float64
+	RedZoneLower            float64
+	BoundaryOverlap         bool
+	DonchianReady           bool
 }
 
 // VWAPZScore returns the volume-weighted close mean, volume-weighted standard
@@ -107,6 +117,52 @@ func VWAPZScore(candles []domain.Candle, period int, price float64) (vwap, sigma
 	}
 	z = (price - vwap) / sigma
 	return vwap, sigma, z, !math.IsNaN(z) && !math.IsInf(z, 0)
+}
+
+// DonchianRange returns the high/low of the complete trailing 1m range. The
+// caller must provide enough candles to cover every minute in the configured
+// window; incomplete history is deliberately reported as unavailable so an
+// opening decision cannot silently fall back to the old VWAP-only boundary.
+func DonchianRange(candles []domain.Candle, rangeMinutes int) (high, low float64, ok bool) {
+	if rangeMinutes <= 0 || len(candles) == 0 {
+		return 0, 0, false
+	}
+	end := candles[len(candles)-1].Time
+	if end.IsZero() {
+		return 0, 0, false
+	}
+	start := end.Add(-time.Duration(rangeMinutes) * time.Minute)
+	count := 0
+	for _, candle := range candles {
+		if candle.Time.Before(start) || candle.Time.After(end) || candle.High <= 0 || candle.Low <= 0 || candle.High < candle.Low {
+			continue
+		}
+		if count == 0 || candle.High > high {
+			high = candle.High
+		}
+		if count == 0 || candle.Low < low {
+			low = candle.Low
+		}
+		count++
+	}
+	if count < rangeMinutes || high <= 0 || low <= 0 || high < low {
+		return 0, 0, false
+	}
+	return high, low, true
+}
+
+// VWAPZoneBounds combines the short VWAP band with the long Donchian range.
+// A true overlap means the requested opening zones have no safe separation;
+// callers must then keep the whole range close-only.
+func VWAPZoneBounds(cfg Config, vwap, sigma, high, low float64) (greenUpper, redLower float64, overlap, ok bool) {
+	if vwap <= 0 || sigma <= 0 || high <= 0 || low <= 0 || high < low || cfg.VWAPZScore <= 0 || cfg.VWAPMinDrawdown <= 0 || cfg.VWAPDonchianFraction <= 0 {
+		return 0, 0, false, false
+	}
+	greenUpper = math.Min(vwap-cfg.VWAPZScore*sigma, high*(1-cfg.VWAPMinDrawdown))
+	greenUpper = math.Min(greenUpper, low+cfg.VWAPDonchianFraction*(high-low))
+	redLower = math.Max(vwap+cfg.VWAPZScore*sigma, low*(1+cfg.VWAPMinDrawdown))
+	redLower = math.Max(redLower, high-cfg.VWAPDonchianFraction*(high-low))
+	return greenUpper, redLower, greenUpper >= redLower, true
 }
 
 // ATR returns the simple average true range over the latest period candles.
@@ -192,24 +248,40 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 	threshold := cfg.VWAPZScore
 	high := d.ZScore > threshold
 	low := d.ZScore < -threshold
+	rangeHigh, rangeLow, rangeReady := ctx.DonchianHigh, ctx.DonchianLow, ctx.DonchianReady
+	if !rangeReady {
+		rangeHigh, rangeLow, rangeReady = DonchianRange(ctx.Candles, cfg.VWAPRangeMinutes)
+	}
+	d.DonchianHigh, d.DonchianLow, d.DonchianReady = rangeHigh, rangeLow, rangeReady
+	if rangeReady {
+		d.GreenZoneUpper, d.RedZoneLower, d.BoundaryOverlap, _ = VWAPZoneBounds(cfg, d.VWAP, d.Sigma, rangeHigh, rangeLow)
+	}
 	// High: short-liquidation opens short; long-liquidation only closes short.
 	// Middle: neither side opens; the liquidation direction may close the
 	// profitable opposite position. Low is the mirror image for long entries.
 	side = strings.ToLower(strings.TrimSpace(side))
 	if side == "long" {
-		d.OpenAllowed = low
-		d.CloseAllowed = !low
-		if high {
-			d.Reason = "high_zscore_long_liquidation_close_only"
-		} else if low {
+		d.OpenAllowed = rangeReady && !d.BoundaryOverlap && price <= d.GreenZoneUpper
+		d.CloseAllowed = !d.OpenAllowed
+		if !rangeReady {
+			d.Reason = "donchian_range_unavailable_long_liquidation_close_only"
+		} else if d.BoundaryOverlap {
+			d.Reason = "vwap_donchian_zone_overlap_long_liquidation_close_only"
+		} else if d.OpenAllowed {
 			d.Reason = "low_zscore_long_liquidation_open_long"
+		} else if high {
+			d.Reason = "high_zscore_long_liquidation_close_only"
 		} else {
 			d.Reason = "neutral_zscore_long_liquidation_close_only"
 		}
 	} else if side == "short" {
-		d.OpenAllowed = high
-		d.CloseAllowed = !high
-		if high {
+		d.OpenAllowed = rangeReady && !d.BoundaryOverlap && price >= d.RedZoneLower
+		d.CloseAllowed = !d.OpenAllowed
+		if !rangeReady {
+			d.Reason = "donchian_range_unavailable_short_liquidation_close_only"
+		} else if d.BoundaryOverlap {
+			d.Reason = "vwap_donchian_zone_overlap_short_liquidation_close_only"
+		} else if d.OpenAllowed {
 			d.Reason = "high_zscore_short_liquidation_open_short"
 		} else if low {
 			d.Reason = "low_zscore_short_liquidation_close_only"

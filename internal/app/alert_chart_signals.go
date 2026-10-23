@@ -75,7 +75,7 @@ func (rtm *alertRuntime) alertChartSignalsWithConfigAt(ctx context.Context, symb
 	if period <= 0 {
 		period = 240
 	}
-	candles, err := source.CandlesRange(ctx, symbol, since.Add(-time.Duration(period+2)*time.Minute), generatedAt.Add(time.Minute))
+	candles, err := source.CandlesRange(ctx, symbol, since.Add(-time.Duration(alertMarketHistoryMinutes(cfg))*time.Minute), generatedAt.Add(time.Minute))
 	if err != nil {
 		return view, err
 	}
@@ -140,7 +140,8 @@ func (rtm *alertRuntime) alertChartZone(ctx context.Context, symbol string, cfg 
 	if threshold <= 0 {
 		threshold = 0.8
 	}
-	zone := domain.AlertChartZone{PeriodMinutes: period, ZScoreThreshold: threshold}
+	zone := domain.AlertChartZone{PeriodMinutes: period, ZScoreThreshold: threshold,
+		RangeHours: cfg.VWAPRangeMinutes / 60, MinDrawdownPct: cfg.VWAPMinDrawdown * 100, DonchianPct: cfg.VWAPDonchianFraction * 100}
 	source := rtm.sourceStore
 	if source == nil {
 		source = rtm.store
@@ -148,22 +149,30 @@ func (rtm *alertRuntime) alertChartZone(ctx context.Context, symbol string, cfg 
 	if source == nil {
 		return zone
 	}
-	rows, err := source.CandlesRange(ctx, symbol, generatedAt.Add(-time.Duration(period+2)*time.Minute), generatedAt.Add(time.Minute))
+	historyMinutes := alertMarketHistoryMinutes(cfg)
+	rows, err := source.CandlesRange(ctx, symbol, generatedAt.Add(-time.Duration(historyMinutes)*time.Minute), generatedAt.Add(time.Minute))
 	if err != nil || len(rows) < period {
 		return zone
 	}
-	if len(rows) > period {
-		rows = rows[len(rows)-period:]
+	if len(rows) > historyMinutes {
+		rows = rows[len(rows)-historyMinutes:]
 	}
 	price := rows[len(rows)-1].Close
 	vwap, sigma, z, ok := alert.VWAPZScore(rows, period, price)
 	if !ok {
 		return zone
 	}
+	high, low, rangeReady := alert.DonchianRange(rows, cfg.VWAPRangeMinutes)
+	greenUpper, redLower, overlap, boundsReady := alert.VWAPZoneBounds(cfg, vwap, sigma, high, low)
+	if !rangeReady || !boundsReady {
+		return zone
+	}
 	zone.Ready = true
 	zone.VWAP, zone.Sigma = vwap, sigma
 	zone.CurrentPrice, zone.CurrentZScore = price, z
-	zone.UpperOpenPrice = vwap + threshold*sigma
-	zone.LowerOpenPrice = vwap - threshold*sigma
+	zone.DonchianHigh, zone.DonchianLow = high, low
+	zone.GreenZoneUpper, zone.RedZoneLower = greenUpper, redLower
+	zone.UpperOpenPrice, zone.LowerOpenPrice = redLower, greenUpper
+	zone.BoundaryOverlap = overlap
 	return zone
 }

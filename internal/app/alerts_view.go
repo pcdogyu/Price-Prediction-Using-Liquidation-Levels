@@ -137,6 +137,9 @@ func (s *Service) AlertChartSignalsForContextWindow(ctx context.Context, symbol 
 		if found && validateAlertStrategySettings(strategy) == nil {
 			cfg.Window = time.Duration(strategy.WindowMinutes) * time.Minute
 			cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = strategy.BTCUSD, strategy.ETHUSD, strategy.OtherUSD
+			cfg.VWAPRangeMinutes = strategy.VWAPRangeHours * 60
+			cfg.VWAPMinDrawdown = strategy.VWAPMinDrawdownPct / 100
+			cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
 		}
 	}
 	return rtm.AlertChartSignalsWithConfigSince(ctx, symbol, cfg, time.Now().UTC().Add(-window))
@@ -163,6 +166,9 @@ func (s *Service) RecalculateAlertSignalsForContext(ctx context.Context) (domain
 		if found && validateAlertStrategySettings(strategy) == nil {
 			cfg.Window = time.Duration(strategy.WindowMinutes) * time.Minute
 			cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = strategy.BTCUSD, strategy.ETHUSD, strategy.OtherUSD
+			cfg.VWAPRangeMinutes = strategy.VWAPRangeHours * 60
+			cfg.VWAPMinDrawdown = strategy.VWAPMinDrawdownPct / 100
+			cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
 		}
 	}
 

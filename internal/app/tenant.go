@@ -103,6 +103,9 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 		cfg := rtm.engine.Config()
 		cfg.Window = time.Duration(strategy.WindowMinutes) * time.Minute
 		cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = strategy.BTCUSD, strategy.ETHUSD, strategy.OtherUSD
+		cfg.VWAPRangeMinutes = strategy.VWAPRangeHours * 60
+		cfg.VWAPMinDrawdown = strategy.VWAPMinDrawdownPct / 100
+		cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
 		rtm.engine.UpdateConfig(cfg)
 	} else if s.isLegacyAlertTenant(tenantID) {
 		legacy, legacyFound, legacyErr := s.store.AlertStrategySettings(ctx)
@@ -115,6 +118,9 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 			cfg := rtm.engine.Config()
 			cfg.Window = time.Duration(legacy.WindowMinutes) * time.Minute
 			cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = legacy.BTCUSD, legacy.ETHUSD, legacy.OtherUSD
+			cfg.VWAPRangeMinutes = legacy.VWAPRangeHours * 60
+			cfg.VWAPMinDrawdown = legacy.VWAPMinDrawdownPct / 100
+			cfg.VWAPDonchianFraction = legacy.VWAPDonchianPct / 100
 			rtm.engine.UpdateConfig(cfg)
 			if err := s.store.SaveAlertStrategySettingsForTenant(ctx, tenantID, legacy); err != nil {
 				_ = tenantStore.Close()
@@ -207,6 +213,9 @@ func (s *Service) AlertChartSignalsForContext(ctx context.Context, symbol string
 	if found && validateAlertStrategySettings(strategy) == nil {
 		cfg.Window = time.Duration(strategy.WindowMinutes) * time.Minute
 		cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = strategy.BTCUSD, strategy.ETHUSD, strategy.OtherUSD
+		cfg.VWAPRangeMinutes = strategy.VWAPRangeHours * 60
+		cfg.VWAPMinDrawdown = strategy.VWAPMinDrawdownPct / 100
+		cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
 	}
 	return s.alerts.AlertChartSignalsWithConfig(ctx, symbol, cfg)
 }
@@ -436,6 +445,7 @@ func (rtm *alertRuntime) updateOrderSignalSettingsForTenant(ctx context.Context,
 }
 
 func (rtm *alertRuntime) updateStrategySettingsForTenant(ctx context.Context, tenantID string, in domain.AlertStrategySettings) (domain.AlertStrategySettings, error) {
+	in = fillStrategyVWAPDefaults(in, rtm.snapshotStrategySettings())
 	if err := validateAlertStrategySettings(in); err != nil {
 		return domain.AlertStrategySettings{}, err
 	}
@@ -446,6 +456,9 @@ func (rtm *alertRuntime) updateStrategySettingsForTenant(ctx context.Context, te
 	cfg := rtm.engine.Config()
 	cfg.Window = time.Duration(in.WindowMinutes) * time.Minute
 	cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = in.BTCUSD, in.ETHUSD, in.OtherUSD
+	cfg.VWAPRangeMinutes = in.VWAPRangeHours * 60
+	cfg.VWAPMinDrawdown = in.VWAPMinDrawdownPct / 100
+	cfg.VWAPDonchianFraction = in.VWAPDonchianPct / 100
 	rtm.engine.UpdateConfig(cfg)
 	return in, nil
 }

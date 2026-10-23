@@ -47,10 +47,13 @@ type Config struct {
 	AlertFollowUpMinimumUSD, AlertOppositeMinimumUSD float64
 	AlertThresholdBTCUSD, AlertThresholdETHUSD       float64
 	AlertThresholdOtherUSD                           float64
-	// Liquidation radar filters. They are deployment settings rather than
-	// tenant-editable thresholds because they change order permissions.
+	// Liquidation radar filters. The initial values come from the environment;
+	// the alert page can persist the three VWAP/Donchian boundary settings per tenant.
 	AlertVWAPPeriodMinutes                           int
 	AlertVWAPZScore                                  float64
+	AlertVWAPRangeHours                              int
+	AlertVWAPMinDrawdownPct                          float64
+	AlertVWAPDonchianPct                             float64
 	AlertPeakDecayWindow                             time.Duration
 	AlertPeakDecayRatio                              float64
 	AlertAbsorptionWickRatio                         float64
@@ -103,6 +106,9 @@ func Load() Config {
 		AlertThresholdOtherUSD:   envFloat("APP_ALERT_THRESHOLD_OTHER_USD", 100000),
 		AlertVWAPPeriodMinutes:   envInt("APP_ALERT_VWAP_PERIOD_MINUTES", 240),
 		AlertVWAPZScore:          envFloat("APP_ALERT_VWAP_ZSCORE", 0.8),
+		AlertVWAPRangeHours:      envInt("APP_ALERT_VWAP_RANGE_HOURS", 24),
+		AlertVWAPMinDrawdownPct:  envFloat("APP_ALERT_VWAP_MIN_DRAWDOWN_PCT", 2.2),
+		AlertVWAPDonchianPct:     envFloat("APP_ALERT_VWAP_DONCHIAN_PCT", 35),
 		AlertPeakDecayWindow:     envDuration("APP_ALERT_PEAK_DECAY_WINDOW", 30*time.Second),
 		AlertPeakDecayRatio:      envFloat("APP_ALERT_PEAK_DECAY_RATIO", 0.4),
 		AlertAbsorptionWickRatio: envFloat("APP_ALERT_ABSORPTION_WICK_RATIO", 0.35),
