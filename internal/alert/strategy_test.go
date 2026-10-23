@@ -349,7 +349,7 @@ func TestHistoricalRecalculationSkipsPeakDecay(t *testing.T) {
 		t.Fatalf("historical recalculation should fire without peak-decay: %+v", result)
 	}
 	signal := result.Signals[0]
-	if signal.CreatedAt != testStart || signal.PeakDecayRatio != 0 || !signal.AbsorptionConfirmed {
+	if signal.CreatedAt != testStart || signal.QuietElapsedSeconds != 0 || signal.PeakDecayRatio != 0 || !signal.AbsorptionConfirmed {
 		t.Fatalf("historical signal should record skipped peak-decay gates: %+v", signal)
 	}
 	if strings.Contains(signal.FilterReason, "peak_decay") || strings.Contains(signal.FilterReason, "absorption") {

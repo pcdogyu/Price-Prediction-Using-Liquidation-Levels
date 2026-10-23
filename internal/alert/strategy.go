@@ -853,8 +853,12 @@ func (e *Engine) releaseIdle(st *symbolState, now time.Time) {
 // view renders the cycle as a persisted alert row.
 func (c *cycle) view(cfg Config, symbol string) domain.LiquidationAlert {
 	quiet := cfg.Quiet
-	if c.contextAware && !cfg.SkipPeakDecay {
-		quiet = cfg.PeakDecayWindow
+	if c.contextAware {
+		if cfg.SkipPeakDecay {
+			quiet = 0
+		} else {
+			quiet = cfg.PeakDecayWindow
+		}
 	}
 	out := domain.LiquidationAlert{
 		ID: c.id, Symbol: symbol, Side: c.side, TradeSide: c.side, WindowMinutes: int(cfg.Window / time.Minute),
