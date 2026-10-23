@@ -31,6 +31,14 @@ test('the K-line canvas contains a lower net long-short band without volume', ()
   assert.match(chartHTML, /币对 K 线、累计净多空与下单信号/);
 });
 
+test('the standard chart scales the price and cumulative delta sections independently', () => {
+  assert.match(chartApp, /KLINE_HEIGHT_SCALE = 1\.20/);
+  assert.match(chartApp, /LIQUIDATION_DELTA_HEIGHT_SCALE = 1\.15/);
+  assert.match(chartApp, /baselinePriceHeight \* KLINE_HEIGHT_SCALE/);
+  assert.match(chartApp, /baselineDeltaHeight \* LIQUIDATION_DELTA_HEIGHT_SCALE/);
+  assert.match(chartApp, /if \(!standalonePositionMode\)/);
+});
+
 test('the cumulative net long-short band uses a fixed 48-hour window with bounded requests', () => {
   assert.match(chartApp, /LIQUIDATION_DELTA_DEBOUNCE_MS = 250/);
   assert.match(chartApp, /liquidationDeltaCumulativeWindow\(Date\.now\(\)/);

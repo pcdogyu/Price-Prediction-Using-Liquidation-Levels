@@ -15,6 +15,8 @@
 
   const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_ZONES = 'liquidation.kline.zones', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000, LIQUIDATION_DELTA_REFRESH_MS = 15000, LIQUIDATION_DELTA_DEBOUNCE_MS = 250;
+  const KLINE_HEIGHT_SCALE = 1.20, LIQUIDATION_DELTA_HEIGHT_SCALE = 1.15;
+  const CHART_MARGIN_TOP = 18, CHART_MARGIN_BOTTOM = 42, CHART_SECTION_GAP = 12;
   const params = new URLSearchParams(location.search);
   const positionMode = params.get('position') === '1';
   const standalonePositionMode = params.get('standalone') === '1';
@@ -844,14 +846,16 @@
 
   // layout keeps the price plot and the net-long/short band in one canvas. The
   // delta band uses the same left/right plot bounds and the same view x scale.
-  function layout(width, height) {
-    const margins = { left: 78, right: 82, top: 18, bottom: 42 };
+  function layout(width, height, requestedDeltaHeight) {
+    const margins = { left: 78, right: 82, top: CHART_MARGIN_TOP, bottom: CHART_MARGIN_BOTTOM };
     const plot = { left: margins.left, top: margins.top, width: Math.max(60, width - margins.left - margins.right), height: Math.max(140, height - margins.top - margins.bottom) };
     plot.right = plot.left + plot.width;
     plot.bottom = plot.top + plot.height;
     if (positionMode) return { plot, priceBottom: plot.bottom, deltaPlot: null };
-    const deltaHeight = Math.max(62, Math.min(108, plot.height * .20));
-    const gap = 12;
+    const deltaHeight = finite(requestedDeltaHeight)
+      ? Math.max(40, Math.min(requestedDeltaHeight, plot.height - 140 - CHART_SECTION_GAP))
+      : Math.max(62, Math.min(108, plot.height * .20));
+    const gap = CHART_SECTION_GAP;
     const priceBottom = Math.max(plot.top + 140, plot.bottom - deltaHeight - gap);
     const deltaPlot = { left: plot.left, top: priceBottom + gap, width: plot.width, height: Math.max(40, plot.bottom - priceBottom - gap) };
     deltaPlot.right = deltaPlot.left + deltaPlot.width;
@@ -868,12 +872,24 @@
     const baseHeight = standalonePositionMode
       ? Math.max(240, standaloneHeight)
       : Math.max(360, Math.min(660, Math.round(window.innerHeight * .58)));
-    const height = standalonePositionMode ? baseHeight : Math.round(baseHeight * 1.1);
+    let height = baseHeight;
+    let deltaHeight = NaN;
+    if (!standalonePositionMode) {
+      // Scale the two visible sections from the previous layout independently:
+      // the upper price plot grows 20%, while the cumulative delta band grows 15%.
+      const baselineHeight = Math.round(baseHeight * 1.1);
+      const baselinePlotHeight = Math.max(140, baselineHeight - CHART_MARGIN_TOP - CHART_MARGIN_BOTTOM);
+      const baselineDeltaHeight = Math.max(62, Math.min(108, baselinePlotHeight * .20));
+      const baselinePriceHeight = Math.max(140, baselinePlotHeight - baselineDeltaHeight - CHART_SECTION_GAP);
+      const priceHeight = Math.round(baselinePriceHeight * KLINE_HEIGHT_SCALE);
+      deltaHeight = Math.round(baselineDeltaHeight * LIQUIDATION_DELTA_HEIGHT_SCALE);
+      height = CHART_MARGIN_TOP + CHART_MARGIN_BOTTOM + priceHeight + CHART_SECTION_GAP + deltaHeight;
+    }
     canvas.style.width = width + 'px';
     canvas.style.height = height + 'px';
     canvas.width = Math.round(width * ratio);
     canvas.height = Math.round(height * ratio);
-    dims = Object.assign({ width, height, ratio }, layout(width, height));
+    dims = Object.assign({ width, height, ratio }, layout(width, height, deltaHeight));
     draw();
   }
 
