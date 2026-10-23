@@ -87,45 +87,56 @@
     return peak;
   }
 
-  // radarZone mirrors the server's 1m VWAP zone calculation when the local
-  // candle cache is the only available source. The server normally supplies a
-  // more precise 1m result; this fallback keeps the chart informative while
-  // the local candle window is still warming up.
-  function radarZone(candles, periodMinutes, zThreshold, intervalMinutes) {
+  // radarZones calculates the historical VWAP Z-Score three-way split for each
+  // candle that has a complete rolling window: high-side open-short, middle
+  // close-only, and low-side open-long. The server's latest zone is still used
+  // by the app when available; these local values provide the historical bands.
+  function radarZones(candles, periodMinutes, zThreshold, intervalMinutes) {
     const minutes = Number(intervalMinutes);
     const period = Number(periodMinutes);
     const threshold = Number(zThreshold);
     if (!Array.isArray(candles) || !Number.isFinite(minutes) || minutes <= 0 || !Number.isFinite(period) || period <= 0 || !Number.isFinite(threshold) || threshold <= 0) return null;
     const bars = Math.ceil(period / minutes);
     if (bars < 2 || candles.length < bars) return null;
-    const window = candles.slice(-bars);
-    let weight = 0, vwap = 0, volumeWeighted = false;
-    for (const candle of window) {
-      if (!finite(candle.close) || candle.close <= 0) continue;
-      const volume = finite(candle.volume) && candle.volume > 0 ? candle.volume : 0;
-      weight += volume;
-      vwap += candle.close * volume;
-    }
-    volumeWeighted = weight > 0;
-    if (!volumeWeighted) {
+    const zones = [];
+    for (let index = bars - 1; index < candles.length; index += 1) {
+      const window = candles.slice(index - bars + 1, index + 1);
+      let weight = 0, vwap = 0, volumeWeighted = false;
       for (const candle of window) {
-        if (finite(candle.close) && candle.close > 0) { vwap += candle.close; weight += 1; }
+        if (!finite(candle.close) || candle.close <= 0) continue;
+        const volume = finite(candle.volume) && candle.volume > 0 ? candle.volume : 0;
+        weight += volume;
+        vwap += candle.close * volume;
       }
+      volumeWeighted = weight > 0;
+      if (!volumeWeighted) {
+        for (const candle of window) {
+          if (finite(candle.close) && candle.close > 0) { vwap += candle.close; weight += 1; }
+        }
+      }
+      if (weight <= 0) continue;
+      vwap /= weight;
+      let variance = 0;
+      for (const candle of window) {
+        if (!finite(candle.close) || candle.close <= 0) continue;
+        const rawVolume = finite(candle.volume) && candle.volume > 0 ? candle.volume : 0;
+        const volume = volumeWeighted ? rawVolume : 1;
+        variance += volume * (candle.close - vwap) * (candle.close - vwap);
+      }
+      const sigma = Math.sqrt(variance / weight);
+      const price = candles[index].close;
+      if (!finite(sigma) || sigma <= 0 || !finite(price) || price <= 0) continue;
+      zones.push({ t: candles[index].t, ready: true, period_minutes: period, z_score_threshold: threshold, vwap, sigma, current_price: price,
+        current_z_score: (price - vwap) / sigma, upper_open_price: vwap + threshold * sigma, lower_open_price: vwap - threshold * sigma });
     }
-    if (weight <= 0) return null;
-    vwap /= weight;
-    let variance = 0;
-    for (const candle of window) {
-      if (!finite(candle.close) || candle.close <= 0) continue;
-      const rawVolume = finite(candle.volume) && candle.volume > 0 ? candle.volume : 0;
-      const volume = volumeWeighted ? rawVolume : 1;
-      variance += volume * (candle.close - vwap) * (candle.close - vwap);
-    }
-    const sigma = Math.sqrt(variance / weight);
-    const price = window[window.length - 1].close;
-    if (!finite(sigma) || sigma <= 0 || !finite(price) || price <= 0) return null;
-    return { ready: true, period_minutes: period, z_score_threshold: threshold, vwap, sigma, current_price: price,
-      current_z_score: (price - vwap) / sigma, upper_open_price: vwap + threshold * sigma, lower_open_price: vwap - threshold * sigma };
+    return zones.length ? zones : null;
+  }
+
+  // radarZone mirrors the server's latest 1m VWAP zone when the local candle
+  // cache is the only available source.
+  function radarZone(candles, periodMinutes, zThreshold, intervalMinutes) {
+    const zones = radarZones(candles, periodMinutes, zThreshold, intervalMinutes);
+    return zones && zones.length ? zones[zones.length - 1] : null;
   }
 
   function niceTicks(low, high, target) {
@@ -239,7 +250,7 @@
   const exported = { INTERVALS, INTERVAL_MS, DEFAULT_VISIBLE, MIN_VISIBLE, MAX_VISIBLE, RIGHT_PAD, HISTORY_TRIGGER,
     intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles, priceRange, volumeMax,
     niceTicks, mergeCandles, normaliseCandles, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal,
-    radarZone, dragPriceRange, zoomPriceRange };
+    radarZone, radarZones, dragPriceRange, zoomPriceRange };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.LiquidationKline = exported;
 })(typeof window === 'object' ? window : globalThis);

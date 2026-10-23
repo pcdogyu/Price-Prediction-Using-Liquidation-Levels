@@ -54,6 +54,12 @@
   const currentRadarZone = () => state.radarZone && state.radarZone.ready
     ? state.radarZone
     : K.radarZone(state.candles, state.radarConfig.periodMinutes, state.radarConfig.zScoreThreshold, step() / 60000);
+  const historicalRadarZones = () => {
+    const zones = K.radarZones(state.candles, state.radarConfig.periodMinutes, state.radarConfig.zScoreThreshold, step() / 60000);
+    if (!zones || !zones.length) return [];
+    if (state.radarZone && state.radarZone.ready) zones[zones.length - 1] = Object.assign({}, zones[zones.length - 1], state.radarZone);
+    return zones;
+  };
 
   async function json(path) {
     const response = await fetch(base + path, { cache: 'no-store', credentials: 'same-origin' });
@@ -118,7 +124,8 @@
   function candleLimit(mode) {
     if (mode === 'history') return 1000;
     const wanted = state.keepSpan > 0 ? state.keepSpan : K.DEFAULT_VISIBLE * step();
-    return Math.max(120, Math.min(1000, Math.ceil(wanted / step()) + 80));
+    const warmup = Math.ceil((Number(state.radarConfig.periodMinutes) || 240) / Math.max(1, step() / 60000)) + 2;
+    return Math.max(120, Math.min(1000, Math.ceil(wanted / step()) + 80 + warmup));
   }
 
   function initialWindow() {
@@ -145,7 +152,7 @@
     parts.push(shownSignals().length + ' 个下单信号');
     const zone = currentRadarZone();
     if (!state.toggles.zones) parts.push('VWAP 开仓区与仅平仓区已隐藏');
-    else if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 · 高于 ' + priceText(zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.lower_open_price) + ' 接多 · 中间仅平仓');
+    else if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 · 历史三分区 ' + historicalRadarZones().length + ' 根 · 高于 ' + priceText(zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.lower_open_price) + ' 接多 · 中间仅平仓');
     else parts.push('VWAP 开仓区计算中');
     parts.push(state.atLatest ? '每 5 秒自动刷新' : '已暂停跟随最新');
     return parts.join(' · ');
@@ -331,7 +338,7 @@
       ctx.fillStyle = colors.muted;
       ctx.fillText(clock(at), px, plot.bottom + 16);
     }
-    drawRadarZones(ctx, y, plot, priceBottom);
+    drawRadarZones(ctx, x, y, plot, priceBottom, intervalStep);
     const shown = K.visibleCandles(state.candles, state.view, intervalStep);
     const slot = plot.width / Math.max(1, span / intervalStep), body = Math.max(1, Math.min(18, slot * .68));
     const peak = positionMode ? 0 : K.volumeMax(state.candles, state.view, intervalStep);
@@ -362,37 +369,59 @@
     renderReadout();
   }
 
-  function drawRadarZones(ctx, y, plot, priceBottom) {
+  function drawRadarZones(ctx, x, y, plot, priceBottom, intervalStep) {
     if (!state.toggles.zones) return;
-    const zone = currentRadarZone();
-    if (!zone || !finite(zone.upper_open_price) || !finite(zone.lower_open_price) || zone.upper_open_price <= zone.lower_open_price) return;
-    const upperRaw = y(zone.upper_open_price), lowerRaw = y(zone.lower_open_price);
-    const upper = Math.max(plot.top, Math.min(priceBottom, upperRaw));
-    const lower = Math.max(plot.top, Math.min(priceBottom, lowerRaw));
-    const width = plot.right - plot.left;
-    const fill = (top, bottom, colour, alpha) => {
-      if (bottom <= top) return;
+    const zones = historicalRadarZones();
+    const fallback = currentRadarZone();
+    const fill = (left, right, top, bottom, colour, alpha) => {
+      if (right <= left || bottom <= top) return;
       ctx.globalAlpha = alpha;
       ctx.fillStyle = colour;
-      ctx.fillRect(plot.left, top, width, bottom - top);
+      ctx.fillRect(left, top, right - left, bottom - top);
       ctx.globalAlpha = 1;
     };
-    fill(plot.top, upper, colors.sell, .10);
-    fill(upper, lower, colors.warning, .09);
-    fill(lower, priceBottom, colors.buy, .10);
-    const line = (value, colour, dash) => {
-      const py = y(value);
-      if (py < plot.top || py > priceBottom) return;
+    const band = (zone, left, right) => {
+      if (!zone || !finite(zone.upper_open_price) || !finite(zone.lower_open_price) || zone.upper_open_price <= zone.lower_open_price) return;
+      const upper = Math.max(plot.top, Math.min(priceBottom, y(zone.upper_open_price)));
+      const lower = Math.max(plot.top, Math.min(priceBottom, y(zone.lower_open_price)));
+      fill(left, right, plot.top, upper, colors.sell, .10);
+      fill(left, right, upper, lower, colors.warning, .09);
+      fill(left, right, lower, priceBottom, colors.buy, .10);
+    };
+    if (zones.length) {
+      for (const zone of zones) {
+        const left = Math.max(plot.left, Math.min(plot.right, x(zone.t)));
+        const right = Math.max(plot.left, Math.min(plot.right, x(zone.t + intervalStep)));
+        band(zone, left, right);
+      }
+    } else if (fallback && finite(fallback.upper_open_price) && finite(fallback.lower_open_price) && fallback.upper_open_price > fallback.lower_open_price) {
+      band(fallback, plot.left, plot.right);
+    } else {
+      return;
+    }
+    const historyLine = (field, colour, dash) => {
+      const rows = zones.length ? zones : [fallback];
       ctx.save();
       ctx.globalAlpha = .78;
       ctx.setLineDash(dash);
       ctx.strokeStyle = colour;
-      ctx.beginPath(); ctx.moveTo(plot.left, py); ctx.lineTo(plot.right, py); ctx.stroke();
+      ctx.beginPath();
+      let started = false;
+      for (const zone of rows) {
+        if (!zone || !finite(zone[field])) continue;
+        const px = zones.length ? x(zone.t + intervalStep / 2) : plot.left;
+        const py = y(zone[field]);
+        if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
+      }
+      if (started) ctx.stroke();
       ctx.restore();
     };
-    line(zone.upper_open_price, colors.sell, [6, 4]);
-    line(zone.lower_open_price, colors.buy, [6, 4]);
-    line(zone.vwap, colors.warning, [2, 4]);
+    historyLine('upper_open_price', colors.sell, [6, 4]);
+    historyLine('lower_open_price', colors.buy, [6, 4]);
+    historyLine('vwap', colors.warning, [2, 4]);
+    const zone = zones.length ? zones[zones.length - 1] : fallback;
+    const upper = Math.max(plot.top, Math.min(priceBottom, y(zone.upper_open_price)));
+    const lower = Math.max(plot.top, Math.min(priceBottom, y(zone.lower_open_price)));
     const label = (text, py, colour) => {
       if (py < plot.top + 10 || py > priceBottom - 10) return;
       ctx.save();
