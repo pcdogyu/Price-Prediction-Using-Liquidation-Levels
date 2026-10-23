@@ -31,7 +31,7 @@ test('the K-line canvas contains a lower net long-short band without volume', ()
   assert.match(chartHTML, /币对 K 线、累计净多空与下单信号/);
 });
 
-test('the cumulative net long-short band uses a fixed 72-hour window with bounded requests', () => {
+test('the cumulative net long-short band uses a fixed 48-hour window with bounded requests', () => {
   assert.match(chartApp, /LIQUIDATION_DELTA_DEBOUNCE_MS = 250/);
   assert.match(chartApp, /liquidationDeltaCumulativeWindow\(Date\.now\(\)/);
   assert.match(chartApp, /K\.LIQUIDATION_DELTA_CUMULATIVE_HOURS/);
@@ -42,7 +42,7 @@ test('the cumulative net long-short band uses a fixed 72-hour window with bounde
   assert.match(chartApp, /LIQUIDATION_DELTA_DEBOUNCE_MS = 250/);
   assert.match(chartApp, /state\.liquidationDeltaError/);
   assert.match(chartApp, /cumulative_delta_usd/);
-  assert.match(chartApp, /当前视窗不在最近72小时累计范围内/);
+  assert.match(chartApp, /当前视窗不在最近48小时累计范围内/);
 });
 
 test('position chart tooltip distinguishes merged closing fills', () => {
@@ -213,12 +213,12 @@ test('normaliseLiquidationDelta preserves server cumulative values and carries z
   assert.deepEqual(points.map(point => point.cumulative_delta_usd), [150, 275, 225]);
 });
 
-test('liquidationDeltaCumulativeWindow always returns the latest aligned 72 hours', () => {
+test('liquidationDeltaCumulativeWindow always returns the latest aligned 48 hours', () => {
   const interval = 10 * 60 * 1000;
   const now = Date.parse('2026-10-23T04:07:00.000Z');
-  assert.equal(K.LIQUIDATION_DELTA_CUMULATIVE_HOURS, 72);
+  assert.equal(K.LIQUIDATION_DELTA_CUMULATIVE_HOURS, 48);
   assert.deepEqual(K.liquidationDeltaCumulativeWindow(now, interval), {
-    start: Date.parse('2026-10-20T04:10:00.000Z'),
+    start: Date.parse('2026-10-21T04:10:00.000Z'),
     end: Date.parse('2026-10-23T04:10:00.000Z')
   });
 });

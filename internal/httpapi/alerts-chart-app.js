@@ -454,7 +454,7 @@
       const message = state.loadingLiquidationDelta || state.liquidationDeltaPending
         ? '正在读取爆仓净额'
         : state.liquidationDeltaError ? state.liquidationDeltaError
-        : state.liquidationDeltaWindow ? '当前视窗不在最近72小时累计范围内' : '等待最近72小时累计爆仓数据';
+        : state.liquidationDeltaWindow ? '当前视窗不在最近48小时累计范围内' : '等待最近48小时累计爆仓数据';
       empty(message);
       ctx.restore();
       return;
