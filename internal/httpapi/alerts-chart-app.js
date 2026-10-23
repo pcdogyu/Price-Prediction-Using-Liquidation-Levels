@@ -219,8 +219,15 @@
       const query = new URLSearchParams({ symbol: state.symbol });
       if (signalReplayWindowHours > 0) query.set('window_hours', String(signalReplayWindowHours));
       const packet = await json('api/v1/alerts/chart-signals?' + query.toString());
-      state.signals = (packet.signals || []).map(row => ({ id: row.id, t: Date.parse(row.created_at), kind: row.kind, side: row.side,
-        reference_price: row.reference_price, alert_notional_usd: row.alert_notional_usd, notify_status: 'replayed' })).filter(row => Number.isFinite(row.t));
+      state.signals = (packet.signals || []).map(row => {
+        const phase = String(row.phase || '').toUpperCase();
+        return { id: row.id, t: Date.parse(row.created_at), kind: row.kind, side: row.side,
+          phase, filterApplied: row.filter_applied === true,
+          peakDecay: row.filter_applied === true && phase === 'FIRED',
+          absorptionConfirmed: row.absorption_confirmed === true,
+          peakDecayRatio: row.peak_decay_ratio, reference_price: row.reference_price,
+          alert_notional_usd: row.alert_notional_usd, notify_status: 'replayed' };
+      }).filter(row => Number.isFinite(row.t));
       state.alerts = (packet.alerts || []).map(row => ({ id: row.id, t: Date.parse(row.triggered_at), side: row.trade_side || row.side,
         liquidation_side: row.side, reference_price: row.reference_price, notional_usd: row.notional_usd,
         threshold_usd: row.threshold_usd, status: row.status })).filter(row => Number.isFinite(row.t));
@@ -254,7 +261,7 @@
     }
     $('kline-signal-rows').innerHTML = rows.map(row => '<tr>' +
       '<td>' + escape(clock(row.t)) + '</td>' +
-      '<td class="' + (row.kind === 'steady' ? 'buy' : 'warning') + '">' + (row.kind === 'steady' ? '稳健' : '激进') + '</td>' +
+      '<td class="' + (row.kind === 'steady' ? 'buy' : 'warning') + '">' + (row.peakDecay ? '<span class="kline-peak-decay-label">peak-decay</span> · ' : '') + (row.kind === 'steady' ? '稳健' : '激进') + '</td>' +
       '<td class="' + (row.side === 'short' ? 'sell' : 'buy') + '">' + (row.side === 'short' ? '做空' : '做多') + '</td>' +
       '<td>' + escape(priceText(row.reference_price)) + '</td>' +
       '<td>' + escape(money(row.alert_notional_usd)) + '</td>' +
@@ -267,7 +274,7 @@
     const change = candle.open > 0 ? (candle.close / candle.open - 1) * 100 : 0;
     const markerText = state.hoverMarker ? (state.hoverMarker.type === 'alert'
       ? ' · 悬停预警：' + (state.hoverMarker.side === 'short' ? '做空' : '做多') + ' ×' + state.hoverMarker.count
-      : ' · 悬停信号：' + escape(state.hoverMarker.kind === 'steady' ? '稳健' : '激进') +
+      : ' · 悬停信号：' + escape(state.hoverMarker.peakDecay ? 'peak-decay' : state.hoverMarker.kind === 'steady' ? '稳健' : '激进') +
         (state.hoverMarker.side === 'short' ? '做空' : '做多') + ' ×' + state.hoverMarker.count) : '';
     $('kline-readout').innerHTML = '<b>' + escape(state.symbol) + ' · ' + escape(state.interval) + '</b> ' + escape(clock(candle.t)) +
       ' 开 ' + escape(priceText(candle.open)) + ' 高 ' + escape(priceText(candle.high)) + ' 低 ' + escape(priceText(candle.low)) +
@@ -453,6 +460,7 @@
       const long = group.side !== 'short';
       const py = Math.max(plot.top + 10, Math.min(priceBottom - 10, y(price) + (long ? 16 : -16)));
       triangle(ctx, cx, py, long, group.kind === 'steady', long ? colors.buy : colors.sell);
+      if (group.peakDecay) drawPeakDecayLabel(ctx, cx, py, long, plot, priceBottom, long ? colors.buy : colors.sell);
       if (group.count > 1) {
         ctx.fillStyle = colors.text;
         ctx.textAlign = 'left';
@@ -460,6 +468,33 @@
       }
       state.hits.push({ x: cx, y: py, group: Object.assign({ type: 'signal' }, group) });
     }
+  }
+
+  function drawPeakDecayLabel(ctx, cx, py, long, plot, priceBottom, colour) {
+    const text = 'peak-decay';
+    ctx.save();
+    ctx.font = '600 10px system-ui, "Segoe UI", sans-serif';
+    const width = ctx.measureText(text).width + 10;
+    const labelY = Math.max(plot.top + 9, Math.min(priceBottom - 9, py + (long ? 22 : -22)));
+    const left = Math.max(plot.left + 2, Math.min(plot.right - width - 2, cx - width / 2));
+    const top = labelY - 8;
+    ctx.fillStyle = colors.bg;
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1;
+    if (typeof ctx.roundRect === 'function') {
+      ctx.beginPath();
+      ctx.roundRect(left, top, width, 16, 4);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillRect(left, top, width, 16);
+      ctx.strokeRect(left, top, width, 16);
+    }
+    ctx.fillStyle = colour;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, left + width / 2, labelY);
+    ctx.restore();
   }
 
   // Position detail mode draws the actual order/fill rows supplied by the
@@ -664,9 +699,9 @@
         escape(marker.liquidationSide === 'short' ? '空单爆仓' : '多单爆仓') + '<br>参考价 ' + escape(priceText(marker.price)) +
         '<br>预警爆仓额 ' + escape(money(marker.notionalUSD));
     } else {
-      tooltip.innerHTML = '<b>' + escape(marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +
+      tooltip.innerHTML = '<b>' + escape(marker.peakDecay ? 'peak-decay' : marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>参考价 ' + escape(priceText(marker.price)) +
-        '<br>预警爆仓额 ' + escape(money(marker.notionalUSD));
+        '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + (marker.peakDecay ? '<br>山峰后衰竭 · 价格吸收确认' : '');
     }
     tooltip.hidden = false;
     tooltip.style.left = Math.max(6, Math.min(wrap.clientWidth - tooltip.offsetWidth - 6, at.x + 14)) + 'px';
