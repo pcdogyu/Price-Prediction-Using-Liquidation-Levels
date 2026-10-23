@@ -111,6 +111,51 @@ func TestLiquidationCursorStableUnderNewEvents(t *testing.T) {
 		t.Fatal(p, err)
 	}
 }
+
+func TestLiquidationDeltaReturnsTenMinuteBucketsAndZeroFills(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "delta.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	from := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
+	to := from.Add(40 * time.Minute)
+	rows := []domain.LiquidationEvent{
+		{ID: "long-1", Exchange: "binance", Symbol: "BTCUSDT", PositionSide: "long", EventTime: from.Add(11 * time.Minute), ReceivedAt: from, NotionalUSD: 125},
+		{ID: "short-1", Exchange: "binance", Symbol: "BTCUSDT", PositionSide: "short", EventTime: from.Add(19 * time.Minute), ReceivedAt: from, NotionalUSD: 400},
+		{ID: "long-2", Exchange: "binance", Symbol: "BTCUSDT", PositionSide: "long", EventTime: from.Add(31 * time.Minute), ReceivedAt: from, NotionalUSD: 50},
+		{ID: "other-symbol", Exchange: "binance", Symbol: "ETHUSDT", PositionSide: "short", EventTime: from.Add(11 * time.Minute), ReceivedAt: from, NotionalUSD: 9999},
+		{ID: "other-exchange", Exchange: "okx", Symbol: "BTCUSDT", PositionSide: "short", EventTime: from.Add(11 * time.Minute), ReceivedAt: from, NotionalUSD: 9999},
+	}
+	for _, row := range rows {
+		if err := s.InsertLiquidation(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	points, err := s.LiquidationDelta(ctx, "BTCUSDT", from, to, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 4 {
+		t.Fatalf("points=%d want 4: %+v", len(points), points)
+	}
+	want := []struct {
+		long, short, delta float64
+		count              int
+	}{
+		{0, 0, 0, 0},
+		{125, 400, 275, 2},
+		{0, 0, 0, 0},
+		{50, 0, -50, 1},
+	}
+	for i, point := range points {
+		if point.Time.Equal(from.Add(time.Duration(i)*10*time.Minute)) == false || point.LongUSD != want[i].long || point.ShortUSD != want[i].short || point.DeltaUSD != want[i].delta || point.Count != want[i].count {
+			t.Fatalf("point[%d]=%+v want=%+v", i, point, want[i])
+		}
+	}
+}
+
 func TestDashboardPersistenceMergeRestartAndRetention(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	s, err := Open(path)

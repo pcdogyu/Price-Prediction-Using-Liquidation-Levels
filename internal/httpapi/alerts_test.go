@@ -565,7 +565,7 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 	}
 	for _, want := range []string{"币对 K 线", "kline-symbol-label", "当前币对", "左右两侧价格轴", "横轴北京时间", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
 		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "kline-zones", "显示预警", "显示下单信号", "VWAP 分区", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "价格轴上下拖动缩放垂直价格", "当前已保存的阈值和周期重新回放生成", "回到最新", "重置缩放", "kline-signal-rows",
-		"历史分区 · 高位开空", "历史分区 · 中间仅平仓", "历史分区 · 低位接多", "kline-chart-surface", "每根 K 线按当时滚动 VWAP、配置窗口内 HH/LL、最小回撤和 Donchian 分位绘制历史三分区", "勾选 VWAP 分区时，图中和下方表格只保留落在对应开仓区的多空信号", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
+		"历史分区 · 高位开空", "历史分区 · 中间仅平仓", "历史分区 · 低位接多", "kline-chart-surface", "每根 K 线按当时滚动 VWAP、配置窗口内 HH/LL、最小回撤和 Donchian 分位绘制历史三分区", "勾选 VWAP 分区时，图中和下方表格只保留落在对应开仓区的多空信号", "爆仓净额", "liquidation-delta-chart", "空单爆仓 − 多单爆仓", "固定 10 分钟 · 回看 48 小时", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the K-line page must contain %q", want)
 		}
@@ -612,6 +612,55 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 	}
 	if post := serveAlert(srv, http.MethodPost, "/alerts/chart", nil); post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /alerts/chart status=%d", post.Code)
+	}
+}
+
+func TestAlertLiquidationDeltaEndpointAggregatesConfiguredWindow(t *testing.T) {
+	srv, st := alertTestServer(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	bucket := now.Truncate(10 * time.Minute)
+	for _, event := range []domain.LiquidationEvent{
+		{ID: "delta-long", Exchange: "binance", Symbol: "BTCUSDT", PositionSide: "long", EventTime: bucket.Add(-8 * time.Minute), ReceivedAt: now, NotionalUSD: 100},
+		{ID: "delta-short", Exchange: "binance", Symbol: "BTCUSDT", PositionSide: "short", EventTime: bucket.Add(time.Minute), ReceivedAt: now, NotionalUSD: 350},
+		{ID: "delta-eth", Exchange: "binance", Symbol: "ETHUSDT", PositionSide: "short", EventTime: bucket.Add(time.Minute), ReceivedAt: now, NotionalUSD: 900},
+	} {
+		if err := st.InsertLiquidation(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := serveAlert(srv, http.MethodGet, "/api/v1/alerts/liquidation-delta?symbol=BTCUSDT", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delta status=%d body=%s", w.Code, w.Body.String())
+	}
+	var view domain.LiquidationDeltaView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.Symbol != "BTCUSDT" || view.Interval != "10m" || view.Hours != 48 || len(view.Points) != 288 {
+		t.Fatalf("delta view=%+v", view)
+	}
+	var current, previous *domain.LiquidationDeltaPoint
+	for i := range view.Points {
+		point := &view.Points[i]
+		if point.Time.Equal(bucket) {
+			current = point
+		}
+		if point.Time.Equal(bucket.Add(-10 * time.Minute)) {
+			previous = point
+		}
+	}
+	if current == nil || current.ShortUSD != 350 || current.LongUSD != 0 || current.DeltaUSD != 350 || current.Count != 1 || previous == nil || previous.DeltaUSD != -100 {
+		t.Fatalf("current=%+v previous=%+v", current, previous)
+	}
+	for _, path := range []string{
+		"/api/v1/alerts/liquidation-delta",
+		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&interval=5m",
+		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&hours=24",
+	} {
+		if got := serveAlert(srv, http.MethodGet, path, nil).Code; got != http.StatusBadRequest {
+			t.Fatalf("%s status=%d want 400", path, got)
+		}
 	}
 }
 

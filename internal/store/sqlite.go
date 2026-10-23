@@ -493,6 +493,63 @@ func (s *Store) LiquidationTotals(ctx context.Context, symbol string, since time
 	return longUSD, shortUSD, rows.Err()
 }
 
+// LiquidationDelta returns a complete, chronologically ordered series of
+// fixed-width liquidation buckets. Empty buckets are included so a chart can
+// keep a stable time axis even when no liquidation was observed.
+func (s *Store) LiquidationDelta(ctx context.Context, symbol string, from, to time.Time, interval time.Duration) ([]domain.LiquidationDeltaPoint, error) {
+	if symbol == "" || !from.Before(to) || interval <= 0 {
+		return []domain.LiquidationDeltaPoint{}, nil
+	}
+	intervalMS := interval.Milliseconds()
+	if intervalMS <= 0 {
+		return []domain.LiquidationDeltaPoint{}, nil
+	}
+	points := make([]domain.LiquidationDeltaPoint, 0, int(to.Sub(from)/interval))
+	for at := from.UTC(); at.Before(to.UTC()); at = at.Add(interval) {
+		points = append(points, domain.LiquidationDeltaPoint{Time: at})
+	}
+	if len(points) == 0 {
+		return points, nil
+	}
+	index := make(map[int64]int, len(points))
+	for i, point := range points {
+		index[point.Time.UnixMilli()] = i
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT CAST(event_ts / ? AS INTEGER) * ?,
+			COALESCE(SUM(CASE WHEN position_side='long' THEN notional_usd ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN position_side='short' THEN notional_usd ELSE 0 END),0),
+			COUNT(*)
+		FROM liquidations
+		WHERE exchange='binance' AND symbol=? AND event_ts>=? AND event_ts<?
+		GROUP BY CAST(event_ts / ? AS INTEGER) * ?
+		ORDER BY 1`, intervalMS, intervalMS, symbol, from.UTC().UnixMilli(), to.UTC().UnixMilli(), intervalMS, intervalMS)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var bucketMS int64
+		var longUSD, shortUSD float64
+		var count int
+		if err = rows.Scan(&bucketMS, &longUSD, &shortUSD, &count); err != nil {
+			return nil, err
+		}
+		position, ok := index[bucketMS]
+		if !ok {
+			continue
+		}
+		points[position].LongUSD = longUSD
+		points[position].ShortUSD = shortUSD
+		points[position].DeltaUSD = shortUSD - longUSD
+		points[position].Count = count
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return points, nil
+}
+
 func (s *Store) Liquidations(ctx context.Context, symbol string, from, before time.Time, limit int, minimumUSD float64) ([]domain.LiquidationEvent, bool, error) {
 	if limit < 1 || limit > 5000 {
 		limit = 5000

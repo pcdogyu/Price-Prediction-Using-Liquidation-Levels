@@ -166,6 +166,18 @@ test('normaliseCandles converts API rows and drops unusable ones', () => {
   assert.deepEqual(K.normaliseCandles(null), []);
 });
 
+test('normaliseLiquidationDelta keeps signed short-minus-long buckets ordered', () => {
+  const rows = [
+    { time: new Date(120000).toISOString(), long_usd: 800, short_usd: 300, delta_usd: -500, count: 4 },
+    { time: new Date(0).toISOString(), long_usd: 100, short_usd: 250, count: 2 },
+    { time: 'bad', long_usd: 1, short_usd: 1 },
+    { time: new Date(180000).toISOString(), long_usd: -1, short_usd: 1 }
+  ];
+  const points = K.normaliseLiquidationDelta(rows);
+  assert.deepEqual(points.map(point => [point.t, point.delta_usd, point.count]), [[0, 150, 2], [120000, -500, 4]]);
+  assert.deepEqual(K.normaliseLiquidationDelta(null), []);
+});
+
 test('filterSignals dedupes and honours the kind toggles', () => {
   const all = [signal('a', 1000), signal('a', 1000), signal('s', 2000, 'steady', 'short'), { id: 'bad', t: NaN }];
   assert.deepEqual(K.filterSignals(all, { aggressive: true, steady: true }).map(s => s.id), ['a', 's']);

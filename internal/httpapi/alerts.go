@@ -94,6 +94,7 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/chart-signals", getOnly(s.alertChartSignals))
 	mux.HandleFunc("/api/v1/alerts/recalculate", postOnly(s.alertRecalculate))
 	mux.HandleFunc("/api/v1/alerts/klines", getOnly(s.alertKlines))
+	mux.HandleFunc("/api/v1/alerts/liquidation-delta", getOnly(s.alertLiquidationDelta))
 	mux.HandleFunc("/api/v1/alerts/settings", s.alertSettings)
 	mux.HandleFunc("/api/v1/alerts/order-settings", s.alertOrderSettings)
 	mux.HandleFunc("/api/v1/alerts/strategy-settings", s.alertStrategySettings)
@@ -336,6 +337,43 @@ func (s *Server) alertChartSignals(w http.ResponseWriter, r *http.Request) {
 	} else {
 		view, err = s.svc.AlertChartSignalsForContext(s.alertContext(r), symbol)
 	}
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, view)
+}
+
+// alertLiquidationDelta serves the compact 10-minute, 48-hour liquidation
+// imbalance shown below the symbol K-line. Keeping this aggregate server-side
+// avoids sending thousands of sampled liquidation events to the browser.
+func (s *Server) alertLiquidationDelta(w http.ResponseWriter, r *http.Request) {
+	symbol, _, err := alertFilters(r.URL.Query().Get("symbol"), "")
+	if err != nil || !alertSymbolPattern.MatchString(symbol) {
+		if err == nil {
+			err = fmt.Errorf("symbol must be 2 to 32 letters or digits")
+		}
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	interval := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("interval")))
+	if interval == "" {
+		interval = "10m"
+	}
+	if interval != "10m" {
+		problem(w, http.StatusBadRequest, fmt.Errorf("interval must be 10m"))
+		return
+	}
+	hours := 48
+	if raw := strings.TrimSpace(r.URL.Query().Get("hours")); raw != "" {
+		hours, err = strconv.Atoi(raw)
+		if err != nil || hours != 48 {
+			problem(w, http.StatusBadRequest, fmt.Errorf("hours must be 48"))
+			return
+		}
+	}
+	view, err := s.svc.AlertLiquidationDelta(r.Context(), symbol)
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
 		return

@@ -22,6 +22,30 @@ type LiquidationPage struct {
 	Periods       []LiquidationPeriod `json:"periods"`
 	Coverage      string              `json:"coverage"`
 }
+
+// LiquidationDeltaPoint is one fixed-width bucket of liquidation notional.
+// A positive DeltaUSD means short liquidations were larger than long
+// liquidations; a negative value means the opposite.
+type LiquidationDeltaPoint struct {
+	Time     time.Time `json:"time"`
+	LongUSD  float64   `json:"long_usd"`
+	ShortUSD float64   `json:"short_usd"`
+	DeltaUSD float64   `json:"delta_usd"`
+	Count    int       `json:"count"`
+}
+
+type LiquidationDeltaView struct {
+	Symbol      string                  `json:"symbol"`
+	Interval    string                  `json:"interval"`
+	IntervalMS  int64                   `json:"interval_ms"`
+	Hours       int                     `json:"hours"`
+	From        time.Time               `json:"from"`
+	To          time.Time               `json:"to"`
+	Points      []LiquidationDeltaPoint `json:"points"`
+	Source      string                  `json:"source"`
+	GeneratedAt time.Time               `json:"generated_at"`
+}
+
 type DepthLevel struct {
 	Price       float64 `json:"price"`
 	Quantity    float64 `json:"quantity"`

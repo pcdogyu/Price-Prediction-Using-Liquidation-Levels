@@ -201,6 +201,23 @@
     return values;
   }
 
+  // normaliseLiquidationDelta keeps the chart tolerant of a partial response
+  // while preserving the signed short-minus-long value used by the bars.
+  function normaliseLiquidationDelta(rows) {
+    const values = [];
+    for (const row of rows || []) {
+      const at = Date.parse(row && row.time);
+      const longUSD = row && row.long_usd;
+      const shortUSD = row && row.short_usd;
+      if (!Number.isFinite(at) || !finite(longUSD) || longUSD < 0 || !finite(shortUSD) || shortUSD < 0) continue;
+      const deltaUSD = finite(row.delta_usd) ? row.delta_usd : shortUSD - longUSD;
+      if (!finite(deltaUSD)) continue;
+      values.push({ time: new Date(at).toISOString(), t: at, long_usd: longUSD, short_usd: shortUSD, delta_usd: deltaUSD,
+        count: Number.isInteger(row.count) && row.count >= 0 ? row.count : 0 });
+    }
+    return values.sort((a, b) => a.t - b.t);
+  }
+
   // filterSignals keeps one entry per signal id and applies the kind toggles.
   function filterSignals(signals, options) {
     const byId = new Map();
@@ -283,7 +300,7 @@
 
   const exported = { INTERVALS, INTERVAL_MS, DEFAULT_VISIBLE, MIN_VISIBLE, MAX_VISIBLE, RIGHT_PAD, HISTORY_TRIGGER,
     intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles, priceRange, volumeMax,
-    niceTicks, mergeCandles, normaliseCandles, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal,
+    niceTicks, mergeCandles, normaliseCandles, normaliseLiquidationDelta, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal,
     radarZone, radarZones, vwapZoneBounds, vwapSignalAllowed, dragPriceRange, zoomPriceRange };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.LiquidationKline = exported;
