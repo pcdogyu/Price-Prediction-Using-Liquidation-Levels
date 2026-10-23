@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "信号重算", "下单信号类别", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "下单信号类别", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -98,7 +98,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "api/v1/alerts/order-settings") || !strings.Contains(script, "保存下单信号设置") {
 		t.Fatal("the alerts script must expose order signal category settings")
 	}
-	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "过去 48 小时") || !strings.Contains(script, "signal-recalculate") {
+	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "过去 48 小时") || !strings.Contains(script, "signal-recalculate") || !strings.Contains(script, "startSignalProgress") || !strings.Contains(script, "finishSignalProgress") || !strings.Contains(script, "Math.min(99") || !strings.Contains(script, "setSignalProgress(100") {
 		t.Fatal("the alerts script must expose the 48h signal recalculation")
 	}
 	if strings.Contains(body, `id="alerts-order-alerts"`) || strings.Contains(script, "alerts-order-alerts") {

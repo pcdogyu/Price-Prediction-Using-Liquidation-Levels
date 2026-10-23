@@ -28,6 +28,10 @@
       <label for="alerts-threshold-other">其他币对阈值（USD）<input id="alerts-threshold-other" type="number" min="1000" max="1000000000" step="1000" inputmode="decimal"></label>
       <label for="alerts-window-minutes">周期（分钟）<input id="alerts-window-minutes" type="number" min="1" max="60" step="1" inputmode="numeric"></label>
       <div class="alerts-settings-actions"><button id="alerts-strategy-save" type="submit">保存报警参数</button><button id="alerts-signal-recalculate" type="button">信号重算</button></div>
+      <div id="alerts-signal-progress" class="alerts-signal-progress" hidden aria-live="polite">
+        <div class="alerts-signal-progress-head"><span id="alerts-signal-progress-label">过去 48 小时信号重算进度</span><output id="alerts-signal-progress-value">1%</output></div>
+        <div id="alerts-signal-progress-track" class="alerts-signal-progress-track" role="progressbar" aria-label="过去 48 小时信号重算进度" aria-valuemin="1" aria-valuemax="100" aria-valuenow="1"><span id="alerts-signal-progress-fill"></span></div>
+      </div>
       <p class="muted">修改任一参数并切换焦点后自动保存并立即用于实时监控；也可点击保存按钮。点击“信号重算”会按当前参数回放过去 48 小时，并通知已打开的币对图表刷新；历史预警和信号保留产生时的阈值与周期。</p>
     </form>
   </section>

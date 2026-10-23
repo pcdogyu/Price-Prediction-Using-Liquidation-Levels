@@ -68,11 +68,61 @@
   };
 
   const SIGNAL_RECALCULATE_STORAGE = 'liquidation.alerts.signal-recalculate';
-  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false;
+  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false, signalProgressTimer = 0, signalProgressValue = 1;
 
   function error(message) { const node = $('alerts-error'); node.classList.remove('success'); node.textContent = message; node.hidden = false; }
   function success(message) { const node = $('alerts-error'); node.classList.add('success'); node.innerHTML = message; node.hidden = false; }
   function clearError() { const node = $('alerts-error'); node.classList.remove('success'); node.hidden = true; }
+
+  // The recalculation endpoint currently returns one response after all pairs
+  // finish. Animate the client-side waiting state to 99%, then reserve 100%
+  // for the confirmed successful response.
+  function setSignalProgress(value, label) {
+    signalProgressValue = Math.max(1, Math.min(100, Math.round(value)));
+    const panel = $('alerts-signal-progress');
+    const fill = $('alerts-signal-progress-fill');
+    const output = $('alerts-signal-progress-value');
+    const track = $('alerts-signal-progress-track');
+    const button = $('alerts-signal-recalculate');
+    panel.hidden = false;
+    panel.classList.toggle('is-complete', signalProgressValue === 100);
+    panel.classList.toggle('is-error', false);
+    fill.style.width = signalProgressValue + '%';
+    output.textContent = signalProgressValue + '%';
+    track.setAttribute('aria-valuenow', String(signalProgressValue));
+    if (label) $('alerts-signal-progress-label').textContent = label;
+    if (signalRecalculateBusy) button.textContent = '重算中 ' + signalProgressValue + '%';
+  }
+
+  function startSignalProgress() {
+    if (signalProgressTimer) window.clearInterval(signalProgressTimer);
+    const startedAt = performance.now();
+    setSignalProgress(1, '正在准备过去 48 小时信号…');
+    signalProgressTimer = window.setInterval(() => {
+      const elapsed = performance.now() - startedAt;
+      const progress = Math.min(99, 1 + Math.floor(98 * (1 - Math.exp(-elapsed / 9000))));
+      const label = progress < 35 ? '正在读取爆仓脉冲…' : progress < 75 ? '正在回放 Peak-Decay…' : '正在确认衰竭与吸收…';
+      setSignalProgress(progress, label);
+      if (progress >= 99) {
+        window.clearInterval(signalProgressTimer);
+        signalProgressTimer = 0;
+      }
+    }, 180);
+  }
+
+  function finishSignalProgress(successful) {
+    if (signalProgressTimer) window.clearInterval(signalProgressTimer);
+    signalProgressTimer = 0;
+    if (successful) {
+      setSignalProgress(100, '过去 48 小时信号重算完成');
+      return;
+    }
+    const panel = $('alerts-signal-progress');
+    panel.hidden = false;
+    panel.classList.remove('is-complete');
+    panel.classList.add('is-error');
+    $('alerts-signal-progress-label').textContent = '信号重算失败';
+  }
 
   function metrics(data) {
     const cells = [
@@ -352,7 +402,7 @@
     const button = $('alerts-signal-recalculate');
     signalRecalculateBusy = true;
     button.disabled = true;
-    button.textContent = '重算中…';
+    startSignalProgress();
     $('alerts-strategy-status').textContent = '正在重算过去 48 小时信号…';
     try {
       const response = await fetch(base + 'api/v1/alerts/recalculate', { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
@@ -364,10 +414,12 @@
       const alerts = Number(packet.alert_count) || 0;
       const signals = Number(packet.signal_count) || 0;
       $('alerts-strategy-status').textContent = '过去 48 小时已重算 · ' + symbols + ' 个币对 · 预警 ' + alerts + ' · 信号 ' + signals;
+      finishSignalProgress(true);
       clearError();
       loadOverview();
     } catch (caught) {
       error('信号重算失败：' + caught.message);
+      finishSignalProgress(false);
       $('alerts-strategy-status').textContent = '信号重算失败';
     } finally {
       signalRecalculateBusy = false;
