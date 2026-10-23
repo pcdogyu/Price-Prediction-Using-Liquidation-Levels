@@ -94,32 +94,31 @@
     return markers.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
   }
 
-  // A single candle can contain several fills for the same opening action.
-  // Keep one marker per direction in that candle so the chart describes the
-  // action without covering the candles with repeated labels. Exit markers
-  // are intentionally left untouched because close/TP/SL are distinct actions.
+  // A single candle can contain several fills for the same opening or closing
+  // action. Keep one marker per phase and direction in that candle so the chart
+  // describes the action without covering the candle with repeated labels.
   function collapseTradeMarkers(markers, intervalMs) {
     const step = Number(intervalMs);
     if (!Array.isArray(markers) || !Number.isFinite(step) || step <= 0) return Array.isArray(markers) ? markers.slice() : [];
-    const result = [];
-    const entries = new Map();
+    const result = [], groups = new Map();
     for (const marker of markers) {
-      if (!marker || marker.phase !== 'entry' || !Number.isFinite(marker.time) || (marker.side !== 'long' && marker.side !== 'short')) {
+      if (!marker || (marker.phase !== 'entry' && marker.phase !== 'exit') || !Number.isFinite(marker.time) || (marker.side !== 'long' && marker.side !== 'short')) {
         result.push(marker);
         continue;
       }
       const bucket = Math.floor(marker.time / step) * step;
-      const key = bucket + ':' + marker.side;
-      const existing = entries.get(key);
+      const key = bucket + ':' + marker.phase + ':' + marker.side;
+      const existing = groups.get(key);
       if (!existing) {
         const copy = Object.assign({}, marker, { collapsed_count: 1 });
-        entries.set(key, copy);
+        groups.set(key, copy);
         result.push(copy);
         continue;
       }
       existing.collapsed_count += 1;
       existing.selected = existing.selected || marker.selected === true;
       if (existing.operation_source !== marker.operation_source) existing.operation_source = '';
+      if (existing.phase === 'exit' && existing.operation !== marker.operation) existing.operation = 'close';
     }
     return result.sort((a, b) => a.time - b.time || String(a.id || '').localeCompare(String(b.id || '')));
   }
@@ -146,7 +145,8 @@
       // Opening markers use the compact trading-chart convention requested by
       // the position view: B for long below the candle, S for short above it.
       // Keep close/TP/SL labels descriptive so their operation remains clear.
-      const labelText = closing ? label + operationLabel + (sourceLabel ? '·' + sourceLabel : '') : (long ? 'B' : 'S');
+      const collapsedLabel = closing && marker.collapsed_count > 1 ? '×' + marker.collapsed_count : '';
+      const labelText = closing ? label + operationLabel + collapsedLabel + (sourceLabel ? '·' + sourceLabel : '') : (long ? 'B' : 'S');
       const labelWidth = labelText.length * 11 + 12;
       const labelBelow = closing ? !long : long;
       const direction = labelBelow ? 1 : -1;

@@ -53,22 +53,28 @@ test('trade markers preserve take-profit, stop-loss and manual/automatic labels'
   assert.equal(layout.markers[1].labelText, '空单止损·手动');
 });
 
-test('collapseTradeMarkers shows one opening action per direction and candle', () => {
+test('collapseTradeMarkers shows one opening or closing action per direction and candle', () => {
   const markers = B.normalizeTradeMarkers([
     { row_key: 'long-1', inst_id: 'ETHUSDT', side: 'long', operation_source: 'auto', entry_time: '2026-01-01T00:01:00Z', entry_px: 2000 },
     { row_key: 'long-2', inst_id: 'ETHUSDT', side: 'long', operation_source: 'auto', entry_time: '2026-01-01T00:04:00Z', entry_px: 2002 },
     { row_key: 'short-1', inst_id: 'ETHUSDT', side: 'short', operation_source: 'manual', entry_time: '2026-01-01T00:04:30Z', entry_px: 2001 },
     { row_key: 'long-3', inst_id: 'ETHUSDT', side: 'long', operation_source: 'auto', entry_time: '2026-01-01T00:06:00Z', entry_px: 2003 },
-    { row_key: 'long-exit', inst_id: 'ETHUSDT', side: 'long', operation: 'take_profit', operation_source: 'auto', exit_time: '2026-01-01T00:04:00Z', exit_px: 2010 }
+    { row_key: 'long-exit', inst_id: 'ETHUSDT', side: 'long', operation: 'take_profit', operation_source: 'auto', exit_time: '2026-01-01T00:04:00Z', exit_px: 2010 },
+    { row_key: 'long-exit-2', inst_id: 'ETHUSDT', side: 'long', operation: 'close', operation_source: 'exchange', exit_time: '2026-01-01T00:04:30Z', exit_px: 2011 },
+    { row_key: 'long-exit-3', inst_id: 'ETHUSDT', side: 'long', operation: 'stop_loss', operation_source: 'exchange', exit_time: '2026-01-01T00:04:45Z', exit_px: 2009 }
   ], 'ETHUSDT', 'long-2');
   const collapsed = B.collapseTradeMarkers(markers, 5 * 60 * 1000);
   assert.deepEqual(collapsed.map(item => [item.row_key, item.phase, item.side, item.collapsed_count]), [
     ['long-1', 'entry', 'long', 2],
-    ['long-exit', 'exit', 'long', undefined],
+    ['long-exit', 'exit', 'long', 3],
     ['short-1', 'entry', 'short', 1],
     ['long-3', 'entry', 'long', 1]
   ]);
   assert.equal(collapsed[0].selected, true);
+  assert.equal(collapsed[1].operation, 'close');
+  assert.equal(collapsed[1].operation_source, '');
+  const layout = B.tradeMarkerPlacements([collapsed[1]], [1900, 2300], { start: 0, end: Date.parse('2026-01-01T01:00:00Z'), x: () => 150 }, () => 100, { left: 0, right: 300, top: 0, bottom: 300 });
+  assert.equal(layout.markers[0].labelText, '多单平仓×3');
 });
 
 test('opening markers use B below long candles and S above short candles', () => {

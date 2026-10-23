@@ -17,7 +17,7 @@
 - JSON API、SSE、Prometheus 文本指标、健康检查和内嵌网页仪表盘。
 - 报警页：成交额前 100 币对的 3 分钟爆仓窗口监控、激进/稳健下单信号、180 天预警与信号留存及 Telegram 推送。
 - 自动下单 webhook：预警、激进信号和稳健信号落库后异步发送 TradingView 风格 JSON 到 `APP_STEADY_WEBHOOK_URL`；默认目标为 `https://tvbot.lmitis.com/tvorder`，默认使用 Binance demo 市场，API ID 留空时由 tvbot 使用当前激活的 Binance API。三类实时信号都可在报警页分别配置平仓和开仓开关；开启的动作才会自动发送，关闭动作不影响历史记录、Telegram 通知或手动触发下单。只配置 `APP_STEADY_WEBHOOK_TOKEN_NONCE` 与 `APP_STEADY_WEBHOOK_TOKEN` 后启用，凭据不写入数据库或日志；每个币对和信号类型保留 5 分钟发送抑制。
-- 币对 K 线页：报警页币对名点击后在新标签页打开该币对 K 线，九档周期、拖动平移、滚轮缩放并叠加下单信号标记。
+- 币对 K 线页：报警页币对名点击后在新标签页打开该币对 K 线，九档周期、拖动平移、滚轮缩放并叠加下单信号标记；持仓详情中同一根 K 线、同一方向的多个开仓或平仓会合并为一个标记，合并的平仓标记显示次数。
 
 历史交易所 API 不提供完整的逐笔强平回放，因此回测中的真实强平特征为缺失/零值；实时强平只从服务启动后积累。成交量价值区使用 Binance 官方 USD-M `aggTrades` 日归档重建。连续30天归档完成并重新训练前，预测严格返回 `data_insufficient`。
 

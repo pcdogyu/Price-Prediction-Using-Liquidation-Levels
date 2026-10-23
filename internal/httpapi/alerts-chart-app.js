@@ -403,9 +403,8 @@
   // parent TVBot page. Open markers use long/short colours; every close uses
   // yellow, while the label retains the operation and manual/automatic source.
   // BubbleChart supplies the same candle-anchored, vertically collision-aware
-  // placement used by the full analysis chart; repeated same-direction
-  // openings are collapsed per candle before placement, while different
-  // actions remain separate.
+  // placement used by the full analysis chart; openings and closes are
+  // collapsed per candle and direction before placement, while phases remain separate.
   function drawTradeMarkers(ctx, x, y, plot, intervalStep) {
     if (!state.tradeMarkers.length || !BubbleChart || typeof BubbleChart.tradeMarkerPlacements !== 'function') return;
     const markers = typeof BubbleChart.collapseTradeMarkers === 'function'
@@ -588,7 +587,7 @@
       const source = sourceLabels[marker.operation_source] || '';
       tooltip.innerHTML = '<b>' + escape(side + operation + (source ? '·' + source : '')) + '</b><br>' +
         escape(clock(marker.time)) + '<br>成交价 ' + escape(priceText(marker.price)) +
-        (marker.collapsed_count > 1 ? '<br>同一根K线合并 ' + escape(String(marker.collapsed_count)) + ' 次开仓' : '') +
+        (marker.collapsed_count > 1 ? '<br>同一根K线合并 ' + escape(String(marker.collapsed_count)) + ' 次' + (marker.phase === 'exit' ? '平仓' : '开仓') : '') +
         (marker.quantity ? '<br>数量 ' + escape(marker.quantity) : '') +
          (marker.notional_usdt ? '<br>名义USDT金额 ' + escape(marker.notional_usdt) : '') +
          (marker.margin_usdt ? '<br>保证金USDT金额 ' + escape(marker.margin_usdt) : '') +
