@@ -1,19 +1,17 @@
 // Package alert implements the liquidation alert strategy: it watches the top
-// Binance USDT perpetual pairs by 24 hour volume, raises an alert when a 3 minute
-// sliding window of liquidations on one position side exceeds the configured
-// notional threshold, and derives two kinds of order signal from that alert.
+// Binance USDT perpetual pairs by 24 hour volume, raises an alert when a sliding
+// window of liquidations on one position side exceeds the configured notional
+// threshold, and derives filtered order signals from that alert.
 //
 // The rules, in the order the strategy applies them:
 //
-//  1. Long liquidations above the threshold inside the window raise a
-//     "多单爆仓预警"; short liquidations raise the symmetric "空单爆仓预警".
-//  2. While the alert is in its quiet observation period, another liquidation on
-//     the same side extends the period instead of producing a signal.
-//  3. Once the quiet period elapses without a same side liquidation, an
-//     aggressive signal is emitted in the direction of the liquidated side: a
-//     long liquidation alert becomes a long order, a short alert a short order.
-//  4. If an opposite side liquidation then arrives inside the confirmation
-//     window, a steady signal is emitted in the original alert direction.
+//  1. A context-aware threshold breach enters ARMED; the legacy Observe path
+//     remains available for replay and callers without market candles.
+//  2. ARMED becomes FIRED only after peak-decay and price-absorption confirm
+//     the cascade has exhausted, then VWAP zone, quota/ATR, and grid filters
+//     decide whether to open or only close the opposite position.
+//  3. A FIRED cycle can still emit its steady confirmation signal when the
+//     opposite liquidation arrives inside the confirmation window.
 //
 // The engine is a pure state machine over LiquidationEvent values with an
 // injectable clock, so every transition is unit testable without SQLite or a
@@ -51,21 +49,52 @@ type Config struct {
 	// that confirms an aggressive signal. Zero counts every liquidation.
 	OppositeMinimumUSD float64
 	TopSymbols         int
+
+	// Radar filters. A context-aware observation uses all four layers; the
+	// legacy Observe path stays available for replay/backward-compatible callers.
+	VWAPPeriodMinutes   int
+	VWAPZScore          float64
+	PeakDecayWindow     time.Duration
+	PeakDecayRatio      float64
+	AbsorptionWickRatio float64
+	DeepQuotaUSD        float64
+	DeepQuotaMultiplier float64
+	ATRPeriod           int
+	DeepDrawdownATR     float64
+	MinProfitSpread     float64
+	GridStep0Price      float64
+	GridStep0Pct        float64
+	GridStepMultiplier  float64
+	GridThresholdSlope  float64
 }
 
 // Defaults returns the production strategy configuration.
 func Defaults() Config {
 	return Config{
-		Window:             3 * time.Minute,
-		Quiet:              10 * time.Minute,
-		Confirm:            30 * time.Minute,
-		Refresh:            10 * time.Minute,
-		BTCUSD:             300000,
-		ETHUSD:             200000,
-		OtherUSD:           100000,
-		FollowUpMinimumUSD: 0,
-		OppositeMinimumUSD: 0,
-		TopSymbols:         domain.AlertTopSymbolsDefault,
+		Window:              3 * time.Minute,
+		Quiet:               10 * time.Minute,
+		Confirm:             30 * time.Minute,
+		Refresh:             10 * time.Minute,
+		BTCUSD:              300000,
+		ETHUSD:              200000,
+		OtherUSD:            100000,
+		FollowUpMinimumUSD:  0,
+		OppositeMinimumUSD:  0,
+		TopSymbols:          domain.AlertTopSymbolsDefault,
+		VWAPPeriodMinutes:   240,
+		VWAPZScore:          0.8,
+		PeakDecayWindow:     30 * time.Second,
+		PeakDecayRatio:      0.4,
+		AbsorptionWickRatio: 0.35,
+		DeepQuotaUSD:        0,
+		DeepQuotaMultiplier: 2,
+		ATRPeriod:           60,
+		DeepDrawdownATR:     1.5,
+		MinProfitSpread:     0.007,
+		GridStep0Price:      0,
+		GridStep0Pct:        0.003,
+		GridStepMultiplier:  1.4,
+		GridThresholdSlope:  0.5,
 	}
 }
 
@@ -101,6 +130,48 @@ func (c Config) withDefaults() Config {
 	if c.TopSymbols <= 0 {
 		c.TopSymbols = d.TopSymbols
 	}
+	if c.VWAPPeriodMinutes <= 0 {
+		c.VWAPPeriodMinutes = d.VWAPPeriodMinutes
+	}
+	if c.VWAPZScore <= 0 {
+		c.VWAPZScore = d.VWAPZScore
+	}
+	if c.PeakDecayWindow <= 0 {
+		c.PeakDecayWindow = d.PeakDecayWindow
+	}
+	if c.PeakDecayRatio <= 0 || c.PeakDecayRatio >= 1 {
+		c.PeakDecayRatio = d.PeakDecayRatio
+	}
+	if c.AbsorptionWickRatio <= 0 || c.AbsorptionWickRatio >= 1 {
+		c.AbsorptionWickRatio = d.AbsorptionWickRatio
+	}
+	if c.DeepQuotaUSD < 0 {
+		c.DeepQuotaUSD = d.DeepQuotaUSD
+	}
+	if c.DeepQuotaMultiplier <= 0 {
+		c.DeepQuotaMultiplier = d.DeepQuotaMultiplier
+	}
+	if c.ATRPeriod <= 0 {
+		c.ATRPeriod = d.ATRPeriod
+	}
+	if c.DeepDrawdownATR <= 0 {
+		c.DeepDrawdownATR = d.DeepDrawdownATR
+	}
+	if c.MinProfitSpread <= 0 || c.MinProfitSpread >= 1 {
+		c.MinProfitSpread = d.MinProfitSpread
+	}
+	if c.GridStep0Price < 0 {
+		c.GridStep0Price = d.GridStep0Price
+	}
+	if c.GridStep0Pct <= 0 {
+		c.GridStep0Pct = d.GridStep0Pct
+	}
+	if c.GridStepMultiplier <= 1 {
+		c.GridStepMultiplier = d.GridStepMultiplier
+	}
+	if c.GridThresholdSlope <= 0 {
+		c.GridThresholdSlope = d.GridThresholdSlope
+	}
 	return c
 }
 
@@ -120,16 +191,30 @@ func (c Config) ThresholdFor(symbol string) float64 {
 // Thresholds publishes the effective parameters for the alert page.
 func (c Config) Thresholds() domain.AlertThresholds {
 	return domain.AlertThresholds{
-		WindowMinutes:      int(c.Window / time.Minute),
-		QuietMinutes:       int(c.Quiet / time.Minute),
-		ConfirmMinutes:     int(c.Confirm / time.Minute),
-		RefreshMinutes:     int(c.Refresh / time.Minute),
-		TopSymbols:         c.TopSymbols,
-		BTCUSD:             c.BTCUSD,
-		ETHUSD:             c.ETHUSD,
-		OtherUSD:           c.OtherUSD,
-		FollowUpMinimumUSD: c.FollowUpMinimumUSD,
-		OppositeMinimumUSD: c.OppositeMinimumUSD,
+		WindowMinutes:       int(c.Window / time.Minute),
+		QuietMinutes:        int(c.Quiet / time.Minute),
+		ConfirmMinutes:      int(c.Confirm / time.Minute),
+		RefreshMinutes:      int(c.Refresh / time.Minute),
+		TopSymbols:          c.TopSymbols,
+		BTCUSD:              c.BTCUSD,
+		ETHUSD:              c.ETHUSD,
+		OtherUSD:            c.OtherUSD,
+		FollowUpMinimumUSD:  c.FollowUpMinimumUSD,
+		OppositeMinimumUSD:  c.OppositeMinimumUSD,
+		VWAPPeriodMinutes:   c.VWAPPeriodMinutes,
+		VWAPZScore:          c.VWAPZScore,
+		PeakDecaySeconds:    int(c.PeakDecayWindow / time.Second),
+		PeakDecayRatio:      c.PeakDecayRatio,
+		AbsorptionWickRatio: c.AbsorptionWickRatio,
+		DeepQuotaUSD:        c.DeepQuotaUSD,
+		DeepQuotaMultiplier: c.DeepQuotaMultiplier,
+		ATRPeriod:           c.ATRPeriod,
+		DeepDrawdownATR:     c.DeepDrawdownATR,
+		MinProfitSpread:     c.MinProfitSpread,
+		GridStep0Price:      c.GridStep0Price,
+		GridStep0Pct:        c.GridStep0Pct,
+		GridStepMultiplier:  c.GridStepMultiplier,
+		GridThresholdSlope:  c.GridThresholdSlope,
 	}
 }
 
@@ -164,33 +249,45 @@ type sample struct {
 // aggressive cycles stay tracked; steady and expired cycles are terminal and get
 // dropped after their final status update is reported.
 type cycle struct {
-	id             string
-	side           string
-	status         string
-	threshold      float64
-	windowStart    time.Time
-	triggeredAt    time.Time
-	total          float64
-	peak           float64
-	count          int
-	followUps      int
-	lastSameSideAt time.Time
-	lastPrice      float64
-	quietUntil     time.Time
-	aggressiveAt   time.Time
-	aggressiveID   string
-	steadyAt       time.Time
-	steadyID       string
-	oppositeUSD    float64
-	oppositeCount  int
+	id                   string
+	side                 string
+	status               string
+	threshold            float64
+	windowStart          time.Time
+	triggeredAt          time.Time
+	total                float64
+	peak                 float64
+	count                int
+	followUps            int
+	lastSameSideAt       time.Time
+	lastPrice            float64
+	quietUntil           time.Time
+	aggressiveAt         time.Time
+	aggressiveID         string
+	steadyAt             time.Time
+	steadyID             string
+	oppositeUSD          float64
+	oppositeCount        int
+	filterApplied        bool
+	decision             FilterDecision
+	lastContext          MarketContext
+	contextAware         bool
+	lowestPrice          float64
+	peakRateUSDPerSecond float64
 }
 
 type symbolState struct {
-	rank    int
-	volume  float64
-	windows map[string][]sample
-	cycles  map[string]*cycle
-	lastAt  map[string]time.Time
+	rank                int
+	volume              float64
+	windows             map[string][]sample
+	cycles              map[string]*cycle
+	lastAt              map[string]time.Time
+	highWaterPrice      float64
+	longLiqCumulative   float64
+	lastLongEntryPrice  float64
+	lastShortEntryPrice float64
+	longEntryCount      int
+	shortEntryCount     int
 }
 
 // Engine tracks the rolling windows and alert cycles of the watch list.
@@ -266,10 +363,21 @@ func (e *Engine) WatchCount() int {
 	return len(e.watch)
 }
 
-// Observe feeds one liquidation event into the engine and returns the alerts and
-// signals the event produced. Events for symbols outside the watch list, and
-// events without a usable notional, are ignored.
+// Observe feeds one liquidation event into the legacy strategy path. Callers that
+// have current candles should use ObserveWithContext so the radar filters are
+// applied.
 func (e *Engine) Observe(event domain.LiquidationEvent) Result {
+	return e.observe(event, MarketContext{})
+}
+
+// ObserveWithContext feeds one liquidation event through the four-layer radar.
+// The context is captured on the cycle, allowing Tick to confirm a decayed pulse
+// without requiring a second liquidation event.
+func (e *Engine) ObserveWithContext(event domain.LiquidationEvent, ctx MarketContext) Result {
+	return e.observe(event, ctx)
+}
+
+func (e *Engine) observe(event domain.LiquidationEvent, ctx MarketContext) Result {
 	var res Result
 	side := strings.ToLower(strings.TrimSpace(event.PositionSide))
 	if side != "long" && side != "short" {
@@ -286,6 +394,14 @@ func (e *Engine) Observe(event domain.LiquidationEvent) Result {
 	if at.IsZero() {
 		at = e.clock()
 	}
+	if ctx.Price <= 0 {
+		ctx.Price = event.Price
+	}
+	if !ctx.Ready && len(ctx.Candles) >= e.cfg.VWAPPeriodMinutes {
+		ctx.Ready = true
+	}
+	contextAware := ctx.Ready || len(ctx.Candles) > 0
+	e.updateMarketState(st, side, event.NotionalUSD, ctx)
 	opposite := "short"
 	if side == "short" {
 		opposite = "long"
@@ -294,6 +410,7 @@ func (e *Engine) Observe(event domain.LiquidationEvent) Result {
 	st.windows[opposite] = pruneSamples(st.windows[opposite], at, e.cfg.Window)
 	st.lastAt[side] = at
 	total, count, windowStart := windowTotal(st.windows[side], at, e.cfg.Window)
+	currentRate := liquidationRate(st.windows[side], at, e.cfg.PeakDecayWindow)
 
 	// Rule 4 first: an opposite liquidation confirms an aggressive signal that is
 	// still inside its confirmation window.
@@ -303,15 +420,33 @@ func (e *Engine) Observe(event domain.LiquidationEvent) Result {
 	// Rule 2: an open cycle in this direction is refreshed and its quiet period
 	// extended, so a continuing burst never produces a signal.
 	if c := st.cycles[side]; c != nil {
-		e.refreshCycle(symbol, c, at, total, count, event.NotionalUSD, event.Price, &res)
+		if currentRate > c.peakRateUSDPerSecond {
+			c.peakRateUSDPerSecond = currentRate
+		}
+		e.refreshCycle(symbol, c, at, total, count, event.NotionalUSD, event.Price, ctx, &res)
 		return res
 	}
 	// Rule 1: raise a new alert when the window total exceeds the threshold.
 	threshold := e.cfg.ThresholdFor(symbol)
+	if contextAware && side == "long" {
+		layers := st.longEntryCount
+		if ctx.PositionDataAvailable && ctx.LongPositionCount > layers {
+			layers = ctx.LongPositionCount
+		}
+		threshold = scaledThreshold(threshold, layers, e.cfg.GridThresholdSlope)
+	}
 	if total <= threshold {
 		return res
 	}
-	c := &cycle{id: AlertID(symbol, side, at), side: side, status: domain.AlertStateWatching, threshold: threshold, windowStart: windowStart, triggeredAt: at, total: total, peak: total, count: count, lastSameSideAt: at, lastPrice: event.Price, quietUntil: at.Add(e.cfg.Quiet)}
+	c := &cycle{id: AlertID(symbol, side, at), side: side, status: domain.AlertStateWatching, threshold: threshold, windowStart: windowStart, triggeredAt: at, total: total, peak: total, count: count, lastSameSideAt: at, lastPrice: event.Price, quietUntil: at.Add(e.cfg.Quiet), contextAware: contextAware, filterApplied: contextAware, lastContext: ctx, lowestPrice: ctx.Price, peakRateUSDPerSecond: currentRate}
+	if contextAware {
+		c.quietUntil = at.Add(e.cfg.PeakDecayWindow)
+		c.decision = filterDecision(e.cfg, side, ctx, *st, e.cfg.ThresholdFor(symbol))
+		c.decision.OpenAllowed = false
+		c.decision.CloseAllowed = false
+		c.decision.Ready = false
+		c.decision.Reason = "peak_decay_armed;" + c.decision.Reason
+	}
 	st.cycles[side] = c
 	res.addAlert(c.view(e.cfg, symbol))
 	return res
@@ -334,7 +469,7 @@ func (e *Engine) Seed(events []domain.LiquidationEvent) Result {
 // refreshCycle applies rule 2. The window totals always follow the live window so
 // the page shows the ongoing burst; the quiet deadline only moves for a same side
 // liquidation that reaches FollowUpMinimumUSD, which defaults to every event.
-func (e *Engine) refreshCycle(symbol string, c *cycle, at time.Time, total float64, count int, notional, price float64, res *Result) {
+func (e *Engine) refreshCycle(symbol string, c *cycle, at time.Time, total float64, count int, notional, price float64, ctx MarketContext, res *Result) {
 	if c.status != domain.AlertStateWatching && c.status != domain.AlertStateAggressive {
 		return
 	}
@@ -351,12 +486,22 @@ func (e *Engine) refreshCycle(symbol string, c *cycle, at time.Time, total float
 		c.count = count
 		changed = true
 	}
+	if c.contextAware && ctx.Price > 0 {
+		c.lastContext = ctx
+		if c.lowestPrice <= 0 || ctx.Price < c.lowestPrice {
+			c.lowestPrice = ctx.Price
+		}
+	}
 	// Rule 2 needs FollowUpMinimumUSD, which is zero by default so every
 	// liquidation extends the quiet period.
 	if c.status == domain.AlertStateWatching && notional >= e.cfg.FollowUpMinimumUSD && at.After(c.lastSameSideAt) {
 		c.followUps++
 		c.lastSameSideAt = at
-		c.quietUntil = at.Add(e.cfg.Quiet)
+		if c.contextAware {
+			c.quietUntil = at.Add(e.cfg.PeakDecayWindow)
+		} else {
+			c.quietUntil = at.Add(e.cfg.Quiet)
+		}
 		if price > 0 {
 			c.lastPrice = price
 		}
@@ -380,13 +525,15 @@ func (e *Engine) confirmOpposite(symbol string, st *symbolState, c *cycle, at ti
 	c.status = domain.AlertStateSteady
 	c.steadyAt = at
 	c.steadyID = SteadySignalID(symbol, c.side, at)
-	res.addSignal(domain.TradeSignal{
+	signal := domain.TradeSignal{
 		ID: c.steadyID, AlertID: c.id, Symbol: symbol, Kind: domain.SignalSteady,
 		Side: c.side, LiquidationSide: c.side, CreatedAt: at, ReferencePrice: price,
 		AlertNotionalUSD: c.total, ThresholdUSD: c.threshold, WindowMinutes: int(e.cfg.Window / time.Minute),
 		FollowUps: c.followUps, OppositeUSD: c.oppositeUSD, OppositeCount: c.oppositeCount,
 		OppositeSeconds: int64(at.Sub(c.aggressiveAt).Seconds()), ConfirmLimitSecs: int64(e.cfg.Confirm / time.Second),
-	})
+	}
+	applyDecisionToSignal(&signal, c.decision)
+	res.addSignal(signal)
 	res.addAlert(c.view(e.cfg, symbol))
 	// The cycle is terminal, so the next breach of this direction can raise a
 	// fresh alert.
@@ -409,6 +556,12 @@ func (e *Engine) Tick(now time.Time) Result {
 			switch c.status {
 			case domain.AlertStateWatching:
 				if now.Before(c.quietUntil) {
+					continue
+				}
+				if c.contextAware {
+					if !e.tryFireRadar(symbol, st, c, now, &res) {
+						continue
+					}
 					continue
 				}
 				// Rule 3: the quiet period elapsed, so the aggressive signal is
@@ -440,6 +593,129 @@ func (e *Engine) Tick(now time.Time) Result {
 	return res
 }
 
+// tryFireRadar implements ARMED -> FIRED. A threshold breach alone never emits
+// an opening signal on the context-aware path: the latest decay window must be
+// below the configured fraction of the pulse peak and price must show absorption.
+func (e *Engine) tryFireRadar(symbol string, st *symbolState, c *cycle, now time.Time, res *Result) bool {
+	currentRate := liquidationRate(st.windows[c.side], now, e.cfg.PeakDecayWindow)
+	if currentRate > c.peakRateUSDPerSecond {
+		c.peakRateUSDPerSecond = currentRate
+	}
+	decayRatio := 1.0
+	if c.peakRateUSDPerSecond > 0 {
+		decayRatio = currentRate / c.peakRateUSDPerSecond
+	}
+	ctx := c.lastContext
+	absorbed := false
+	if ctx.CurrentCandle.Close > 0 || ctx.CurrentCandle.Low > 0 {
+		absorbed = candleAbsorbed(ctx.CurrentCandle, ctx.Price, e.cfg.AbsorptionWickRatio)
+	} else if ctx.Price > 0 && c.lowestPrice > 0 {
+		absorbed = ctx.Price >= c.lowestPrice
+	}
+	d := filterDecision(e.cfg, c.side, ctx, *st, e.cfg.ThresholdFor(symbol))
+	d.PeakRateUSDPerSecond = c.peakRateUSDPerSecond
+	d.CurrentRateUSDPerSecond = currentRate
+	d.PeakDecayRatio = decayRatio
+	d.AbsorptionConfirmed = absorbed
+	if decayRatio >= e.cfg.PeakDecayRatio || !absorbed {
+		if decayRatio >= e.cfg.PeakDecayRatio {
+			d.Reason += ";peak_decay_not_confirmed"
+		}
+		if !absorbed {
+			d.Reason += ";price_absorption_not_confirmed"
+		}
+		c.decision = d
+		return false
+	}
+	if !d.Ready {
+		c.decision = d
+		return false
+	}
+
+	c.decision = d
+	c.status = domain.AlertStateAggressive
+	c.aggressiveAt = now
+	c.aggressiveID = AggressiveSignalID(symbol, c.side, c.aggressiveAt)
+	signal := domain.TradeSignal{
+		ID: c.aggressiveID, AlertID: c.id, Symbol: symbol, Kind: domain.SignalAggressive,
+		Side: c.side, LiquidationSide: c.side, CreatedAt: c.aggressiveAt, ReferencePrice: c.lastPrice,
+		AlertNotionalUSD: c.total, ThresholdUSD: c.threshold, WindowMinutes: int(e.cfg.Window / time.Minute),
+		QuietElapsedSeconds: int64(c.aggressiveAt.Sub(c.lastSameSideAt).Seconds()), FollowUps: c.followUps,
+		ConfirmLimitSecs: int64(e.cfg.Confirm / time.Second),
+	}
+	applyDecisionToSignal(&signal, d)
+	res.addSignal(signal)
+	res.addAlert(c.view(e.cfg, symbol))
+	if d.OpenAllowed {
+		if c.side == "long" {
+			st.longEntryCount++
+			st.lastLongEntryPrice = c.lastPrice
+		} else {
+			st.shortEntryCount++
+			st.lastShortEntryPrice = c.lastPrice
+		}
+	}
+	return true
+}
+
+func applyDecisionToSignal(signal *domain.TradeSignal, decision FilterDecision) {
+	if signal == nil || !decision.Applied {
+		return
+	}
+	signal.Phase = domain.AlertPhaseFired
+	signal.FilterApplied = true
+	signal.OpenAllowed = decision.OpenAllowed
+	signal.CloseAllowed = decision.CloseAllowed
+	signal.FilterReason = decision.Reason
+	signal.VWAPZScore = decision.ZScore
+	signal.PeakRateUSDPerSecond = decision.PeakRateUSDPerSecond
+	signal.CurrentRateUSDPerSecond = decision.CurrentRateUSDPerSecond
+	signal.PeakDecayRatio = decision.PeakDecayRatio
+	signal.AbsorptionConfirmed = decision.AbsorptionConfirmed
+	signal.CumulativeLongLiquidationUSD = decision.CumulativeLongUSD
+	signal.DeepQuotaUSD = decision.DeepQuotaUSD
+	signal.DrawdownATR = decision.DrawdownATR
+	signal.RequiredGridStepPrice = decision.RequiredGridStepPrice
+	signal.RequiredThresholdUSD = decision.RequiredThresholdUSD
+	signal.MinProfitSpread = decision.MinProfitSpread
+}
+
+func (e *Engine) updateMarketState(st *symbolState, side string, notional float64, ctx MarketContext) {
+	price := ctx.Price
+	if price <= 0 {
+		price = ctx.CurrentCandle.Close
+	}
+	if price <= 0 {
+		return
+	}
+	if st.highWaterPrice <= 0 {
+		st.highWaterPrice = price
+		for _, candle := range ctx.Candles {
+			if candle.High > st.highWaterPrice {
+				st.highWaterPrice = candle.High
+			}
+		}
+		if side == "long" && price < st.highWaterPrice {
+			st.longLiqCumulative += notional
+		}
+		return
+	}
+	if price > st.highWaterPrice {
+		st.highWaterPrice = price
+		st.longLiqCumulative = 0
+	} else if side == "long" && price < st.highWaterPrice {
+		st.longLiqCumulative += notional
+	}
+}
+
+func liquidationRate(samples []sample, now time.Time, window time.Duration) float64 {
+	if window <= 0 {
+		return 0
+	}
+	total, _, _ := windowTotal(samples, now, window)
+	return total / window.Seconds()
+}
+
 // releaseIdle frees window samples that left the rolling window. Cycle state is
 // kept until it reaches a terminal status.
 func (e *Engine) releaseIdle(st *symbolState, now time.Time) {
@@ -450,13 +726,39 @@ func (e *Engine) releaseIdle(st *symbolState, now time.Time) {
 
 // view renders the cycle as a persisted alert row.
 func (c *cycle) view(cfg Config, symbol string) domain.LiquidationAlert {
+	quiet := cfg.Quiet
+	if c.contextAware {
+		quiet = cfg.PeakDecayWindow
+	}
 	out := domain.LiquidationAlert{
 		ID: c.id, Symbol: symbol, Side: c.side, TradeSide: c.side, WindowMinutes: int(cfg.Window / time.Minute),
 		NotionalUSD: c.total, PeakUSD: c.peak, ThresholdUSD: c.threshold, EventCount: c.count,
-		WindowStart: c.windowStart, TriggeredAt: c.triggeredAt, QuietSeconds: int64(cfg.Quiet / time.Second),
+		WindowStart: c.windowStart, TriggeredAt: c.triggeredAt, QuietSeconds: int64(quiet / time.Second),
 		QuietUntil: c.quietUntil, FollowUps: c.followUps, Status: c.status, ReferencePrice: c.lastPrice,
 		AggressiveID: c.aggressiveID, AggressiveAt: timePtr(c.aggressiveAt), SteadyID: c.steadyID,
 		SteadyAt: timePtr(c.steadyAt), OppositeUSD: c.oppositeUSD, UpdatedAt: time.Now().UTC(),
+	}
+	if c.filterApplied {
+		if c.status == domain.AlertStateWatching {
+			out.Phase = domain.AlertPhaseArmed
+		} else if c.status == domain.AlertStateAggressive || c.status == domain.AlertStateSteady {
+			out.Phase = domain.AlertPhaseFired
+		}
+		out.FilterApplied = true
+		out.OpenAllowed = c.decision.OpenAllowed
+		out.CloseAllowed = c.decision.CloseAllowed
+		out.FilterReason = c.decision.Reason
+		out.VWAPZScore = c.decision.ZScore
+		out.PeakRateUSDPerSecond = c.decision.PeakRateUSDPerSecond
+		out.CurrentRateUSDPerSecond = c.decision.CurrentRateUSDPerSecond
+		out.PeakDecayRatio = c.decision.PeakDecayRatio
+		out.AbsorptionConfirmed = c.decision.AbsorptionConfirmed
+		out.CumulativeLongLiquidationUSD = c.decision.CumulativeLongUSD
+		out.DeepQuotaUSD = c.decision.DeepQuotaUSD
+		out.DrawdownATR = c.decision.DrawdownATR
+		out.RequiredGridStepPrice = c.decision.RequiredGridStepPrice
+		out.RequiredThresholdUSD = c.decision.RequiredThresholdUSD
+		out.MinProfitSpread = c.decision.MinProfitSpread
 	}
 	if !c.lastSameSideAt.IsZero() {
 		out.LastSameSideAt = timePtr(c.lastSameSideAt)

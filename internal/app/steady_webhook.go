@@ -11,25 +11,26 @@ import (
 )
 
 type steadyWebhookPayload struct {
-	SentAt         string `json:"sent_at"`
-	TenantID       string `json:"tenant_id,omitempty"`
-	APIID          string `json:"api_id"`
-	TargetExchange string `json:"target_exchange"`
-	TradeEnv       string `json:"trade_env"`
-	Action         string `json:"action"`
-	PositionEffect string `json:"position_effect"`
-	PositionSide   string `json:"position_side"`
-	Ticker         string `json:"ticker"`
-	Coinpair       string `json:"coinpair"`
-	Price          string `json:"price"`
-	Exchange       string `json:"exchange"`
-	Interval       string `json:"interval"`
-	Condition      string `json:"condition"`
-	Text           string `json:"text"`
-	OrderIntent    string `json:"order_intent"`
-	Source         string `json:"source"`
-	TokenNonce     string `json:"token_nonce"`
-	Token          string `json:"token"`
+	SentAt          string  `json:"sent_at"`
+	TenantID        string  `json:"tenant_id,omitempty"`
+	APIID           string  `json:"api_id"`
+	TargetExchange  string  `json:"target_exchange"`
+	TradeEnv        string  `json:"trade_env"`
+	Action          string  `json:"action"`
+	PositionEffect  string  `json:"position_effect"`
+	PositionSide    string  `json:"position_side"`
+	Ticker          string  `json:"ticker"`
+	Coinpair        string  `json:"coinpair"`
+	Price           string  `json:"price"`
+	Exchange        string  `json:"exchange"`
+	Interval        string  `json:"interval"`
+	Condition       string  `json:"condition"`
+	Text            string  `json:"text"`
+	OrderIntent     string  `json:"order_intent"`
+	MinProfitSpread float64 `json:"min_profit_spread,omitempty"`
+	Source          string  `json:"source"`
+	TokenNonce      string  `json:"token_nonce"`
+	Token           string  `json:"token"`
 }
 
 func buildSteadyWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
@@ -96,7 +97,8 @@ func buildPositionWebhookPayload(signal domain.TradeSignal, cfg config.Config, c
 		Exchange: cfg.SteadyWebhookExchange, Interval: interval,
 		Condition: condition, Text: intent,
 		OrderIntent: intent, Source: source,
-		TokenNonce: cfg.SteadyWebhookTokenNonce, Token: cfg.SteadyWebhookToken,
+		MinProfitSpread: signal.MinProfitSpread,
+		TokenNonce:      cfg.SteadyWebhookTokenNonce, Token: cfg.SteadyWebhookToken,
 	}
 	return json.Marshal(payload)
 }

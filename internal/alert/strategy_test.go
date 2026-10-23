@@ -263,3 +263,98 @@ func TestZeroConfigKeepsProductionDefaults(t *testing.T) {
 		t.Fatalf("threshold lookup must normalize the symbol: %+v", got)
 	}
 }
+
+func radarCandles(closes ...float64) []domain.Candle {
+	out := make([]domain.Candle, 0, len(closes))
+	for i, close := range closes {
+		out = append(out, domain.Candle{
+			Time: testStart.Add(time.Duration(i) * time.Minute),
+			Open: close - .25, High: close + .5, Low: close - .5, Close: close, VolumeUSD: 1,
+		})
+	}
+	return out
+}
+
+func radarContext(price float64, candles []domain.Candle) MarketContext {
+	current := domain.Candle{Time: testStart, Open: price - 1, High: price + 1, Low: price - 2, Close: price}
+	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current}
+}
+
+func TestRadarArmedPeakDecayAndHighZoneShortEntry(t *testing.T) {
+	cfg := Defaults()
+	cfg.Window = 3 * time.Minute
+	cfg.OtherUSD = 100
+	cfg.VWAPPeriodMinutes = 3
+	cfg.ATRPeriod = 2
+	cfg.PeakDecayWindow = 30 * time.Second
+	engine := testEngine(t, cfg, "SOLUSDT")
+	candles := radarCandles(100, 101, 102)
+	ctx := radarContext(103, candles)
+	first := testEvent("SOLUSDT", "short", testStart, 150)
+	first.Price = 103
+	armed := engine.ObserveWithContext(first, ctx)
+	if len(armed.Signals) != 0 || len(armed.Alerts) != 1 || !armed.Alerts[0].FilterApplied {
+		t.Fatalf("threshold breach must only arm the radar: %+v", armed)
+	}
+	if got := engine.Tick(testStart.Add(20 * time.Second)); len(got.Signals) != 0 {
+		t.Fatalf("radar fired before the decay window: %+v", got.Signals)
+	}
+	fired := engine.Tick(testStart.Add(31 * time.Second))
+	if len(fired.Signals) != 1 || fired.Signals[0].Side != "short" || !fired.Signals[0].OpenAllowed || fired.Signals[0].PeakDecayRatio >= .4 {
+		t.Fatalf("decayed high-zone short signal=%+v", fired.Signals)
+	}
+}
+
+func TestRadarDeepQuotaBlocksEarlyLongThenUnlocks(t *testing.T) {
+	cfg := Defaults()
+	cfg.Window = 3 * time.Minute
+	cfg.OtherUSD = 100
+	cfg.VWAPPeriodMinutes = 3
+	cfg.ATRPeriod = 2
+	cfg.PeakDecayWindow = 30 * time.Second
+	cfg.DeepQuotaMultiplier = 2
+	engine := testEngine(t, cfg, "SOLUSDT")
+	candles := radarCandles(100, 100.5, 101)
+	ctx := radarContext(99, candles)
+	first := testEvent("SOLUSDT", "long", testStart, 120)
+	first.Price = 99
+	armed := engine.ObserveWithContext(first, ctx)
+	if len(armed.Signals) != 0 {
+		t.Fatalf("the shallow liquidation must not open: %+v", armed.Signals)
+	}
+	if got := engine.Tick(testStart.Add(31 * time.Second)); len(got.Signals) != 0 {
+		t.Fatalf("quota should keep the first long cycle armed: %+v", got.Signals)
+	}
+	second := testEvent("SOLUSDT", "long", testStart.Add(31*time.Second), 120)
+	second.Price = 99
+	engine.ObserveWithContext(second, ctx)
+	fired := engine.Tick(testStart.Add(62 * time.Second))
+	if len(fired.Signals) != 1 || !fired.Signals[0].OpenAllowed || fired.Signals[0].CumulativeLongLiquidationUSD < 240 {
+		t.Fatalf("deep quota should unlock the long signal: %+v", fired.Signals)
+	}
+}
+
+func TestRadarNeutralZoneAndMinProfitSpread(t *testing.T) {
+	cfg := Defaults()
+	cfg.VWAPPeriodMinutes = 3
+	cfg.ATRPeriod = 2
+	candles := radarCandles(98, 100, 102)
+	ctx := radarContext(100, candles)
+	ctx.PositionDataAvailable = true
+	ctx.ShortPositionCount = 1
+	ctx.ShortAvgPrice = 100
+	d := filterDecision(cfg, "long", ctx, symbolState{}, 100)
+	if d.OpenAllowed || d.CloseAllowed {
+		t.Fatalf("neutral zone must not open or close without the profit spread: %+v", d)
+	}
+	ctx.Price = 99.4
+	d = filterDecision(cfg, "long", ctx, symbolState{}, 100)
+	if d.OpenAllowed || d.CloseAllowed {
+		t.Fatalf("0.6%% short profit is below the configured 0.7%% gate at this price: %+v", d)
+	}
+	ctx.Price = 99.2
+	d = filterDecision(cfg, "long", ctx, symbolState{}, 100)
+	if d.OpenAllowed || !d.CloseAllowed {
+		t.Fatalf("the short close should unlock only after the minimum spread: %+v", d)
+	}
+}

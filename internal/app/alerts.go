@@ -50,16 +50,30 @@ const alertNotifyCooldown = 5 * time.Minute
 
 func (s *Service) newAlertRuntime() *alertRuntime {
 	cfg := alert.Config{
-		Window:             s.cfg.AlertWindow,
-		Quiet:              s.cfg.AlertQuiet,
-		Confirm:            s.cfg.AlertConfirm,
-		Refresh:            s.cfg.AlertRefresh,
-		BTCUSD:             s.cfg.AlertThresholdBTCUSD,
-		ETHUSD:             s.cfg.AlertThresholdETHUSD,
-		OtherUSD:           s.cfg.AlertThresholdOtherUSD,
-		FollowUpMinimumUSD: s.cfg.AlertFollowUpMinimumUSD,
-		OppositeMinimumUSD: s.cfg.AlertOppositeMinimumUSD,
-		TopSymbols:         s.cfg.AlertTopSymbols,
+		Window:              s.cfg.AlertWindow,
+		Quiet:               s.cfg.AlertQuiet,
+		Confirm:             s.cfg.AlertConfirm,
+		Refresh:             s.cfg.AlertRefresh,
+		BTCUSD:              s.cfg.AlertThresholdBTCUSD,
+		ETHUSD:              s.cfg.AlertThresholdETHUSD,
+		OtherUSD:            s.cfg.AlertThresholdOtherUSD,
+		FollowUpMinimumUSD:  s.cfg.AlertFollowUpMinimumUSD,
+		OppositeMinimumUSD:  s.cfg.AlertOppositeMinimumUSD,
+		TopSymbols:          s.cfg.AlertTopSymbols,
+		VWAPPeriodMinutes:   s.cfg.AlertVWAPPeriodMinutes,
+		VWAPZScore:          s.cfg.AlertVWAPZScore,
+		PeakDecayWindow:     s.cfg.AlertPeakDecayWindow,
+		PeakDecayRatio:      s.cfg.AlertPeakDecayRatio,
+		AbsorptionWickRatio: s.cfg.AlertAbsorptionWickRatio,
+		DeepQuotaUSD:        s.cfg.AlertDeepQuotaUSD,
+		DeepQuotaMultiplier: s.cfg.AlertDeepQuotaMultiplier,
+		ATRPeriod:           s.cfg.AlertATRPeriod,
+		DeepDrawdownATR:     s.cfg.AlertDeepDrawdownATR,
+		MinProfitSpread:     s.cfg.AlertMinProfitSpread,
+		GridStep0Price:      s.cfg.AlertGridStep0Price,
+		GridStep0Pct:        s.cfg.AlertGridStep0Pct,
+		GridStepMultiplier:  s.cfg.AlertGridStepMultiplier,
+		GridThresholdSlope:  s.cfg.AlertGridThresholdSlope,
 	}
 	rtm := &alertRuntime{
 		service: s,
@@ -348,6 +362,16 @@ func topSymbolEntries(rows []exchange.TopSymbol) []alert.WatchEntry {
 
 // observe feeds one recorded liquidation into the engine and handles the result.
 func (rtm *alertRuntime) observe(ctx context.Context, event domain.LiquidationEvent) {
+	if rtm.service != nil {
+		market := rtm.service.liquidationMarketContext(ctx, event, rtm.engine.Config())
+		if market.Ready {
+			rtm.persist(ctx, rtm.engine.ObserveWithContext(event, market), true)
+			return
+		}
+	}
+	// A missing candle window is a data-readiness problem, not a reason to
+	// rewrite legacy alert history or make a false filter decision. Once the
+	// 240-minute window is available, new events use the radar path above.
 	rtm.persist(ctx, rtm.engine.Observe(event), true)
 }
 
@@ -405,7 +429,10 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if !allowNotify || (signal.Kind != domain.SignalAggressive && signal.Kind != domain.SignalSteady) {
 		return
 	}
-	if !rtm.submitPrecloseWebhook(signal) {
+	if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(signal) {
+		return
+	}
+	if signal.FilterApplied && !signal.OpenAllowed {
 		return
 	}
 	if !rtm.orderSignalEnabled(signal.Kind) {
@@ -438,7 +465,20 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 		AlertNotionalUSD: alertRow.NotionalUSD, ThresholdUSD: alertRow.ThresholdUSD,
 		WindowMinutes: alertRow.WindowMinutes, FollowUps: alertRow.FollowUps,
 	}
-	if !rtm.submitPrecloseWebhook(signal) {
+	if alertRow.FilterApplied {
+		signal.FilterApplied = true
+		signal.OpenAllowed = alertRow.OpenAllowed
+		signal.CloseAllowed = alertRow.CloseAllowed
+		signal.FilterReason = alertRow.FilterReason
+		signal.MinProfitSpread = alertRow.MinProfitSpread
+		if !alertRow.CloseAllowed && !alertRow.OpenAllowed {
+			return
+		}
+	}
+	if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(signal) {
+		return
+	}
+	if signal.FilterApplied && !signal.OpenAllowed {
 		return
 	}
 	if !rtm.orderSignalEnabled(signal.Kind) {

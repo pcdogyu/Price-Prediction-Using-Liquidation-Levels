@@ -21,6 +21,39 @@ type tvOrderPositionSemantics struct {
 	side   string
 }
 
+var errMinProfitSpreadNotReached = errors.New("minimum profit spread has not been reached")
+
+// enforceMinProfitSpread is the execution-side backstop for liquidation
+// preclose requests. The alert engine supplies the threshold, while TVBot reads
+// the authoritative live average price immediately before submitting the close.
+func enforceMinProfitSpread(signal trading.Signal, averagePrice string) error {
+	spread := signal.MinProfitSpread
+	if spread <= 0 {
+		return nil
+	}
+	if !signal.Price.Set || signal.Price.Value <= 0 {
+		return fmt.Errorf("%w: liquidation reference price is unavailable", errMinProfitSpreadNotReached)
+	}
+	avg, err := strconv.ParseFloat(strings.TrimSpace(averagePrice), 64)
+	if err != nil || avg <= 0 || math.IsNaN(avg) || math.IsInf(avg, 0) {
+		return fmt.Errorf("%w: position average price is unavailable", errMinProfitSpreadNotReached)
+	}
+	price := signal.Price.Value
+	switch strings.ToLower(strings.TrimSpace(signal.PositionSide)) {
+	case trading.PositionSideShort:
+		if price <= avg*(1-spread) {
+			return nil
+		}
+	case trading.PositionSideLong:
+		if price >= avg*(1+spread) {
+			return nil
+		}
+	default:
+		return fmt.Errorf("%w: unsupported position side %q", errMinProfitSpreadNotReached, signal.PositionSide)
+	}
+	return fmt.Errorf("%w: price %.12g average %.12g spread %.6g", errMinProfitSpreadNotReached, price, avg, spread)
+}
+
 func applyTVOrderPositionSemantics(signal *trading.Signal) error {
 	signal.Normalize()
 	explicitEffect := signal.PositionEffect
@@ -214,6 +247,8 @@ func (s *Server) executePositionCloseSignal(signalID string, signal trading.Sign
 		code := "position_close_failed"
 		if errors.Is(err, errPositionNotOpen) {
 			code = "position_not_open"
+		} else if errors.Is(err, errMinProfitSpreadNotReached) {
+			code = "position_profit_gate"
 		}
 		_ = s.Orders.MarkFailedCode(signalID, code, err, s.now())
 		if s.Logger != nil {
@@ -305,6 +340,9 @@ func (s *Server) closeGatePositionFromSignal(ctx context.Context, signal trading
 	if strings.TrimSpace(found.Contract) == "" {
 		return trading.OrderResult{}, fmt.Errorf("%w: %s %s", errPositionNotOpen, contract, want)
 	}
+	if err := enforceMinProfitSpread(signal, found.EntryPrice); err != nil {
+		return trading.OrderResult{}, err
+	}
 	marginMode := strings.ToLower(strings.TrimSpace(cfg.MarginMode()))
 	if marginMode != "cross" {
 		marginMode = "isolated"
@@ -335,6 +373,9 @@ func (s *Server) closeOKXPositionFromSignal(ctx context.Context, signal trading.
 	}
 	position, err := currentOpenPositionByDirection(ctx, client, instID, signal.PositionSide)
 	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	if err := enforceMinProfitSpread(signal, position.AvgPx); err != nil {
 		return trading.OrderResult{}, err
 	}
 	order, started, err := s.startLimitPositionClose(ctx, apiID, cfg, client, position, "")
@@ -387,6 +428,9 @@ func (s *Server) closeBinancePositionFromSignal(ctx context.Context, signal trad
 	}
 	position, err := currentBinanceOpenPositionByDirection(ctx, client, symbol, signal.PositionSide)
 	if err != nil {
+		return trading.OrderResult{}, err
+	}
+	if err := enforceMinProfitSpread(signal, position.AvgPx); err != nil {
 		return trading.OrderResult{}, err
 	}
 	order, started, err := s.startBinanceLimitPositionClose(ctx, apiID, client, position, "")

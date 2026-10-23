@@ -16,6 +16,21 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
+func TestEnforceMinProfitSpreadUsesPositionSideAndReferencePrice(t *testing.T) {
+	short := trading.Signal{PositionSide: trading.PositionSideShort, Price: trading.NewFlexibleFloat(99.2), MinProfitSpread: .007}
+	if err := enforceMinProfitSpread(short, "100"); err != nil {
+		t.Fatalf("0.8%% short profit should pass: %v", err)
+	}
+	short.Price = trading.NewFlexibleFloat(99.4)
+	if err := enforceMinProfitSpread(short, "100"); err == nil {
+		t.Fatal("0.6%% short profit must remain blocked")
+	}
+	long := trading.Signal{PositionSide: trading.PositionSideLong, Price: trading.NewFlexibleFloat(100.8), MinProfitSpread: .007}
+	if err := enforceMinProfitSpread(long, "100"); err != nil {
+		t.Fatalf("0.8%% long profit should pass: %v", err)
+	}
+}
+
 func TestTVOrderTPSLSignalExecutesBinanceLimitClose(t *testing.T) {
 	cases := []struct {
 		name           string

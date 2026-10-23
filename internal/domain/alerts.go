@@ -23,6 +23,16 @@ const (
 	AlertStateExpired    = "expired"
 )
 
+// The persisted status names above remain backward compatible with existing
+// history/UI clients. In the radar state machine they correspond to ARMED and
+// FIRED respectively.
+const (
+	AlertStateArmed = AlertStateWatching
+	AlertStateFired = AlertStateAggressive
+	AlertPhaseArmed = "ARMED"
+	AlertPhaseFired = "FIRED"
+)
+
 const (
 	// AlertTopSymbolsDefault is how many Binance USDM pairs by 24h quote volume
 	// the alert strategy watches.
@@ -34,7 +44,7 @@ const (
 // AlertMonitorMethod describes the live monitor using the currently effective
 // strategy settings rather than hard-coding the default window.
 func AlertMonitorMethod(windowMinutes, refreshMinutes, topSymbols int) string {
-	return fmt.Sprintf("监控名单为 Binance USDⓈ-M 24 小时成交额前 %d 个 USDT 永续（每 %d 分钟刷新，BTCUSDT/ETHUSDT 恒含）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。预警方向为被爆仓的一侧：多单爆仓预警后按做多下单，空单爆仓后按做空下单。", topSymbols, refreshMinutes, windowMinutes)
+	return fmt.Sprintf("监控名单为 Binance USDⓈ-M 24 小时成交额前 %d 个 USDT 永续（每 %d 分钟刷新，BTCUSDT/ETHUSDT 恒含）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。超过阈值先进入 ARMED，等待 15~30 秒爆仓速率回落至峰值 40%% 以下且价格出现吸收后才 FIRED；VWAP Z-Score 决定开仓区/仅平仓区，深度配额、ATR 回撤、指数网格和最小获利间距继续拦截不合格信号。", topSymbols, refreshMinutes, windowMinutes)
 }
 
 // LiquidationAlert is one alert cycle for a symbol and the liquidated position
@@ -60,6 +70,7 @@ type LiquidationAlert struct {
 	FollowUps      int        `json:"follow_ups"`
 	Status         string     `json:"status"`
 	ReferencePrice float64    `json:"reference_price,omitempty"`
+	Phase          string     `json:"phase,omitempty"`
 	// GammaIgnored records whether the opening side was suppressed by the
 	// negative anchor Gamma gate when this alert was created. It is immutable
 	// for history display even though the alert row is refreshed later.
@@ -69,7 +80,24 @@ type LiquidationAlert struct {
 	SteadyID     string     `json:"steady_id,omitempty"`
 	SteadyAt     *time.Time `json:"steady_at,omitempty"`
 	OppositeUSD  float64    `json:"opposite_usd,omitempty"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	// FilterApplied distinguishes a radar decision from legacy/manual rows. The
+	// latter retain the historical open-and-preclose behavior.
+	FilterApplied                bool      `json:"filter_applied,omitempty"`
+	OpenAllowed                  bool      `json:"open_allowed,omitempty"`
+	CloseAllowed                 bool      `json:"close_allowed,omitempty"`
+	FilterReason                 string    `json:"filter_reason,omitempty"`
+	VWAPZScore                   float64   `json:"vwap_z_score,omitempty"`
+	PeakRateUSDPerSecond         float64   `json:"peak_rate_usd_per_second,omitempty"`
+	CurrentRateUSDPerSecond      float64   `json:"current_rate_usd_per_second,omitempty"`
+	PeakDecayRatio               float64   `json:"peak_decay_ratio,omitempty"`
+	AbsorptionConfirmed          bool      `json:"absorption_confirmed,omitempty"`
+	CumulativeLongLiquidationUSD float64   `json:"cumulative_long_liquidation_usd,omitempty"`
+	DeepQuotaUSD                 float64   `json:"deep_quota_usd,omitempty"`
+	DrawdownATR                  float64   `json:"drawdown_atr,omitempty"`
+	RequiredGridStepPrice        float64   `json:"required_grid_step_price,omitempty"`
+	RequiredThresholdUSD         float64   `json:"required_threshold_usd,omitempty"`
+	MinProfitSpread              float64   `json:"min_profit_spread,omitempty"`
+	UpdatedAt                    time.Time `json:"updated_at"`
 }
 
 // TradeSignal is one order recommendation. Kind distinguishes the aggressive
@@ -85,6 +113,7 @@ type TradeSignal struct {
 	LiquidationSide  string    `json:"liquidation_side"`
 	CreatedAt        time.Time `json:"created_at"`
 	ReferencePrice   float64   `json:"reference_price,omitempty"`
+	Phase            string    `json:"phase,omitempty"`
 	AlertNotionalUSD float64   `json:"alert_notional_usd"`
 	ThresholdUSD     float64   `json:"threshold_usd"`
 	WindowMinutes    int       `json:"window_minutes"`
@@ -97,13 +126,28 @@ type TradeSignal struct {
 	FollowUps           int   `json:"follow_ups"`
 	// OppositeUSD, OppositeCount and OppositeSeconds describe the confirming
 	// liquidation and only apply to the steady signal.
-	OppositeUSD      float64   `json:"opposite_usd,omitempty"`
-	OppositeCount    int       `json:"opposite_count,omitempty"`
-	OppositeSeconds  int64     `json:"opposite_elapsed_seconds,omitempty"`
-	ConfirmLimitSecs int64     `json:"confirm_limit_seconds,omitempty"`
-	NotifyStatus     string    `json:"notify_status,omitempty"`
-	NotifyError      string    `json:"notify_error,omitempty"`
-	NotifiedAt       time.Time `json:"notified_at,omitempty"`
+	OppositeUSD                  float64   `json:"opposite_usd,omitempty"`
+	OppositeCount                int       `json:"opposite_count,omitempty"`
+	OppositeSeconds              int64     `json:"opposite_elapsed_seconds,omitempty"`
+	ConfirmLimitSecs             int64     `json:"confirm_limit_seconds,omitempty"`
+	FilterApplied                bool      `json:"filter_applied,omitempty"`
+	OpenAllowed                  bool      `json:"open_allowed,omitempty"`
+	CloseAllowed                 bool      `json:"close_allowed,omitempty"`
+	FilterReason                 string    `json:"filter_reason,omitempty"`
+	VWAPZScore                   float64   `json:"vwap_z_score,omitempty"`
+	PeakRateUSDPerSecond         float64   `json:"peak_rate_usd_per_second,omitempty"`
+	CurrentRateUSDPerSecond      float64   `json:"current_rate_usd_per_second,omitempty"`
+	PeakDecayRatio               float64   `json:"peak_decay_ratio,omitempty"`
+	AbsorptionConfirmed          bool      `json:"absorption_confirmed,omitempty"`
+	CumulativeLongLiquidationUSD float64   `json:"cumulative_long_liquidation_usd,omitempty"`
+	DeepQuotaUSD                 float64   `json:"deep_quota_usd,omitempty"`
+	DrawdownATR                  float64   `json:"drawdown_atr,omitempty"`
+	RequiredGridStepPrice        float64   `json:"required_grid_step_price,omitempty"`
+	RequiredThresholdUSD         float64   `json:"required_threshold_usd,omitempty"`
+	MinProfitSpread              float64   `json:"min_profit_spread,omitempty"`
+	NotifyStatus                 string    `json:"notify_status,omitempty"`
+	NotifyError                  string    `json:"notify_error,omitempty"`
+	NotifiedAt                   time.Time `json:"notified_at,omitempty"`
 }
 
 // WatchSymbol is one entry of the dynamic top volume watch list.
@@ -145,16 +189,30 @@ type AlertStrategySettings struct {
 
 // AlertThresholds describes the effective strategy parameters.
 type AlertThresholds struct {
-	WindowMinutes      int     `json:"window_minutes"`
-	QuietMinutes       int     `json:"quiet_minutes"`
-	ConfirmMinutes     int     `json:"confirm_minutes"`
-	RefreshMinutes     int     `json:"refresh_minutes"`
-	TopSymbols         int     `json:"top_symbols"`
-	BTCUSD             float64 `json:"btc_usd"`
-	ETHUSD             float64 `json:"eth_usd"`
-	OtherUSD           float64 `json:"other_usd"`
-	FollowUpMinimumUSD float64 `json:"follow_up_minimum_usd"`
-	OppositeMinimumUSD float64 `json:"opposite_minimum_usd"`
+	WindowMinutes       int     `json:"window_minutes"`
+	QuietMinutes        int     `json:"quiet_minutes"`
+	ConfirmMinutes      int     `json:"confirm_minutes"`
+	RefreshMinutes      int     `json:"refresh_minutes"`
+	TopSymbols          int     `json:"top_symbols"`
+	BTCUSD              float64 `json:"btc_usd"`
+	ETHUSD              float64 `json:"eth_usd"`
+	OtherUSD            float64 `json:"other_usd"`
+	FollowUpMinimumUSD  float64 `json:"follow_up_minimum_usd"`
+	OppositeMinimumUSD  float64 `json:"opposite_minimum_usd"`
+	VWAPPeriodMinutes   int     `json:"vwap_period_minutes"`
+	VWAPZScore          float64 `json:"vwap_z_score_threshold"`
+	PeakDecaySeconds    int     `json:"peak_decay_seconds"`
+	PeakDecayRatio      float64 `json:"peak_decay_ratio"`
+	AbsorptionWickRatio float64 `json:"absorption_wick_ratio"`
+	DeepQuotaUSD        float64 `json:"deep_quota_usd"`
+	DeepQuotaMultiplier float64 `json:"deep_quota_multiplier"`
+	ATRPeriod           int     `json:"atr_period"`
+	DeepDrawdownATR     float64 `json:"deep_drawdown_atr"`
+	MinProfitSpread     float64 `json:"min_profit_spread"`
+	GridStep0Price      float64 `json:"grid_step0_price"`
+	GridStep0Pct        float64 `json:"grid_step0_pct"`
+	GridStepMultiplier  float64 `json:"grid_step_multiplier"`
+	GridThresholdSlope  float64 `json:"grid_threshold_slope"`
 }
 
 // AlertPage and SignalPage are cursor paginated history pages.
