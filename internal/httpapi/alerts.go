@@ -347,7 +347,8 @@ func (s *Server) alertChartSignals(w http.ResponseWriter, r *http.Request) {
 
 // alertLiquidationDelta serves the compact 10-minute liquidation imbalance
 // shown below the symbol K-line. Without a range it returns the compatible
-// 48-hour view; from/to lets the browser request only the shared K-line window.
+// 48-hour view; hours or from/to lets the browser request older shared K-line
+// windows, up to the configured liquidation retention horizon.
 func (s *Server) alertLiquidationDelta(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	symbol, _, err := alertFilters(query.Get("symbol"), "")
@@ -366,11 +367,13 @@ func (s *Server) alertLiquidationDelta(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, fmt.Errorf("interval must be 10m"))
 		return
 	}
-	hours := 48
+	hours := app.AlertLiquidationDeltaHours
+	hoursProvided := false
 	if raw := strings.TrimSpace(query.Get("hours")); raw != "" {
+		hoursProvided = true
 		hours, err = strconv.Atoi(raw)
-		if err != nil || hours != 48 {
-			problem(w, http.StatusBadRequest, fmt.Errorf("hours must be 48"))
+		if err != nil || hours < 1 || hours > app.AlertLiquidationDeltaMaxHours {
+			problem(w, http.StatusBadRequest, fmt.Errorf("hours must be between 1 and %d", app.AlertLiquidationDeltaMaxHours))
 			return
 		}
 	}
@@ -381,7 +384,12 @@ func (s *Server) alertLiquidationDelta(w http.ResponseWriter, r *http.Request) {
 	}
 	var view domain.LiquidationDeltaView
 	if fromText == "" {
-		view, err = s.svc.AlertLiquidationDelta(r.Context(), symbol)
+		if !hoursProvided {
+			view, err = s.svc.AlertLiquidationDelta(r.Context(), symbol)
+		} else {
+			to := time.Now().UTC().Truncate(app.AlertLiquidationDeltaInterval).Add(app.AlertLiquidationDeltaInterval)
+			view, err = s.svc.AlertLiquidationDeltaWindow(r.Context(), symbol, to.Add(-time.Duration(hours)*time.Hour), to)
+		}
 	} else {
 		from, fromErr := time.Parse(time.RFC3339Nano, fromText)
 		to, toErr := time.Parse(time.RFC3339Nano, toText)
@@ -393,8 +401,8 @@ func (s *Server) alertLiquidationDelta(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusBadRequest, fmt.Errorf("from must be before to"))
 			return
 		}
-		if to.Sub(from) > app.AlertLiquidationDeltaHours*time.Hour {
-			problem(w, http.StatusBadRequest, fmt.Errorf("liquidation window must not exceed %d hours", app.AlertLiquidationDeltaHours))
+		if to.Sub(from) > app.AlertLiquidationDeltaMaxHours*time.Hour {
+			problem(w, http.StatusBadRequest, fmt.Errorf("liquidation window must not exceed %d hours", app.AlertLiquidationDeltaMaxHours))
 			return
 		}
 		view, err = s.svc.AlertLiquidationDeltaWindow(r.Context(), symbol, from, to)

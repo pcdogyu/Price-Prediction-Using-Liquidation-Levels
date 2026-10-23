@@ -9,7 +9,7 @@
   const INTERVAL_MS = { '1m': 6e4, '2m': 12e4, '3m': 18e4, '5m': 3e5, '15m': 9e5, '30m': 18e5, '1h': 36e5, '4h': 144e5, '8h': 288e5, '12h': 432e5 };
   const DEFAULT_VISIBLE = 150, MIN_VISIBLE = 12, MAX_VISIBLE = 800, RIGHT_PAD = 2;
   const HISTORY_TRIGGER = 25, CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000, SIGNAL_PAGES = 3;
-  const LIQUIDATION_DELTA_INTERVAL_MS = 10 * 60 * 1000, LIQUIDATION_DELTA_MAX_MS = 48 * 60 * 60 * 1000;
+  const LIQUIDATION_DELTA_INTERVAL_MS = 10 * 60 * 1000, LIQUIDATION_DELTA_MAX_MS = 180 * 24 * 60 * 60 * 1000;
   const STORE_INTERVAL = 'liquidation.kline.interval', STORE_SIGNALS = 'liquidation.kline.signals';
 
   const intervalMs = name => INTERVAL_MS[name] || 0;
@@ -49,8 +49,9 @@
   }
 
   // liquidationDeltaWindow converts the K-line viewport into the bounded
-  // server request used by the lower chart. It keeps only the latest 48 hours
-  // and aligns both edges to complete 10-minute buckets.
+  // server request used by the lower chart. It follows the available 180-day
+  // liquidation retention horizon and aligns both edges to complete 10-minute
+  // buckets.
   function liquidationDeltaWindow(range, now, interval = LIQUIDATION_DELTA_INTERVAL_MS, maxRange = LIQUIDATION_DELTA_MAX_MS) {
     if (!range || !finite(range.start) || !finite(range.end) || range.end <= range.start || !finite(now) || interval <= 0 || maxRange <= 0) return null;
     const latest = bucketStart(now, interval) + interval;

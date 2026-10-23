@@ -679,15 +679,45 @@ func TestAlertLiquidationDeltaEndpointAggregatesConfiguredWindow(t *testing.T) {
 	if rangedView.Points[0].DeltaUSD != 0 || rangedView.Points[1].DeltaUSD != -100 || rangedView.Points[2].DeltaUSD != 350 {
 		t.Fatalf("ranged delta points=%+v", rangedView.Points)
 	}
+	longFrom := bucket.Add(-72 * time.Hour)
+	longTo := bucket
+	longPath := "/api/v1/alerts/liquidation-delta?" + url.Values{
+		"symbol": []string{"BTCUSDT"},
+		"from":   []string{longFrom.Format(time.RFC3339Nano)},
+		"to":     []string{longTo.Format(time.RFC3339Nano)},
+	}.Encode()
+	longRange := serveAlert(srv, http.MethodGet, longPath, nil)
+	if longRange.Code != http.StatusOK {
+		t.Fatalf("long ranged delta status=%d body=%s", longRange.Code, longRange.Body.String())
+	}
+	var longView domain.LiquidationDeltaView
+	if err := json.Unmarshal(longRange.Body.Bytes(), &longView); err != nil {
+		t.Fatal(err)
+	}
+	if longView.Hours != 72 || !longView.From.Equal(longFrom) || !longView.To.Equal(longTo) || len(longView.Points) != 72*6 {
+		t.Fatalf("long ranged delta view=%+v", longView)
+	}
+	hoursRange := serveAlert(srv, http.MethodGet, "/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&hours=72", nil)
+	if hoursRange.Code != http.StatusOK {
+		t.Fatalf("hours delta status=%d body=%s", hoursRange.Code, hoursRange.Body.String())
+	}
+	var hoursView domain.LiquidationDeltaView
+	if err := json.Unmarshal(hoursRange.Body.Bytes(), &hoursView); err != nil {
+		t.Fatal(err)
+	}
+	if hoursView.Hours != 72 || len(hoursView.Points) != 72*6 {
+		t.Fatalf("hours delta view=%+v", hoursView)
+	}
 	for _, path := range []string{
 		"/api/v1/alerts/liquidation-delta",
 		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&interval=5m",
-		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&hours=24",
+		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&hours=0",
+		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&hours=4321",
 		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&from=2026-10-23T00:00:00Z",
 		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&to=2026-10-23T01:00:00Z",
 		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&from=bad&to=2026-10-23T01:00:00Z",
 		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&from=2026-10-23T02:00:00Z&to=2026-10-23T01:00:00Z",
-		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&from=2026-10-21T00:00:00Z&to=2026-10-23T01:00:00Z",
+		"/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&from=2025-10-23T00:00:00Z&to=2026-10-23T01:00:00Z",
 	} {
 		if got := serveAlert(srv, http.MethodGet, path, nil).Code; got != http.StatusBadRequest {
 			t.Fatalf("%s status=%d want 400", path, got)

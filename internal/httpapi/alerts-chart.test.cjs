@@ -201,12 +201,14 @@ test('normaliseLiquidationDelta keeps signed short-minus-long buckets ordered', 
   assert.deepEqual(K.normaliseLiquidationDelta(null), []);
 });
 
-test('liquidationDeltaWindow clips the K-line view to the latest 48 hours and 10m buckets', () => {
+test('liquidationDeltaWindow follows the extended history horizon and 10m buckets', () => {
   const interval = 10 * 60 * 1000;
   const now = Date.parse('2026-10-23T04:07:00.000Z');
   const window = K.liquidationDeltaWindow({ start: now - 60 * 60 * 60 * 1000, end: now + 60 * 60 * 1000 }, now, interval, 48 * 60 * 60 * 1000);
   assert.deepEqual(window, { start: Date.parse('2026-10-21T04:10:00.000Z'), end: Date.parse('2026-10-23T04:10:00.000Z') });
   assert.equal(K.liquidationDeltaWindow({ start: now - 60 * 60 * 1000, end: now - 50 * 60 * 60 * 1000 }, now, interval, 48 * 60 * 60 * 1000), null);
+  assert.equal(K.LIQUIDATION_DELTA_MAX_MS, 180 * 24 * 60 * 60 * 1000);
+  assert.equal(K.liquidationDeltaWindow({ start: now - 72 * 60 * 60 * 1000, end: now }, now, interval).start, Date.parse('2026-10-20T04:00:00.000Z'));
 });
 
 test('visibleLiquidationDelta keeps only buckets overlapping the shared K-line view', () => {

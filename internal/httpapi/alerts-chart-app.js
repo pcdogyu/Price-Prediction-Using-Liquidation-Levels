@@ -114,6 +114,14 @@
     return K.liquidationDeltaWindow(state.view, Date.now(), K.LIQUIDATION_DELTA_INTERVAL_MS, K.LIQUIDATION_DELTA_MAX_MS);
   }
 
+  function mergeLiquidationDelta(points) {
+    const merged = new Map((state.liquidationDelta || []).filter(point => point && finite(point.t)).map(point => [point.t, point]));
+    for (const point of points || []) {
+      if (point && finite(point.t)) merged.set(point.t, point);
+    }
+    return Array.from(merged.values()).sort((a, b) => a.t - b.t);
+  }
+
   function scheduleLiquidationDelta() {
     if (positionMode || !state.symbol) return;
     if (state.liquidationDeltaRequestTimer) clearTimeout(state.liquidationDeltaRequestTimer);
@@ -123,7 +131,6 @@
     state.loadingLiquidationDelta = false;
     state.liquidationDeltaPending = true;
     state.liquidationDeltaError = '';
-    state.liquidationDelta = [];
     state.liquidationDeltaWindow = null;
     state.liquidationDeltaHover = null;
     draw();
@@ -142,7 +149,6 @@
     state.liquidationDeltaPending = false;
     if (!requested) {
       state.loadingLiquidationDelta = false;
-      state.liquidationDelta = [];
       state.liquidationDeltaWindow = null;
       state.liquidationDeltaError = '';
       draw();
@@ -152,8 +158,6 @@
     state.liquidationDeltaAbortController = controller;
     state.loadingLiquidationDelta = true;
     state.liquidationDeltaError = '';
-    state.liquidationDelta = [];
-    state.liquidationDeltaWindow = null;
     draw();
     try {
       const path = 'api/v1/alerts/liquidation-delta?symbol=' + encodeURIComponent(state.symbol) + '&interval=10m&from=' + encodeURIComponent(new Date(requested.start).toISOString()) + '&to=' + encodeURIComponent(new Date(requested.end).toISOString());
@@ -163,7 +167,7 @@
       const responseFrom = Date.parse(view.from);
       const responseTo = Date.parse(view.to);
       const responseWindow = finite(responseFrom) && finite(responseTo) ? { start: responseFrom, end: responseTo } : requested;
-      state.liquidationDelta = K.visibleLiquidationDelta(K.normaliseLiquidationDelta(view.points), state.view, K.LIQUIDATION_DELTA_INTERVAL_MS);
+      state.liquidationDelta = mergeLiquidationDelta(K.normaliseLiquidationDelta(view.points));
       state.liquidationDeltaWindow = responseWindow;
       state.liquidationDeltaHover = null;
       state.liquidationDeltaError = '';
@@ -441,7 +445,7 @@
       const message = state.loadingLiquidationDelta || state.liquidationDeltaPending
         ? '正在读取爆仓净额'
         : state.liquidationDeltaError ? state.liquidationDeltaError
-        : state.liquidationDeltaWindow ? '该窗口暂无爆仓数据' : '当前视窗超出最近 48 小时爆仓数据范围';
+        : state.liquidationDeltaWindow ? '该窗口暂无爆仓数据' : '当前视窗超出可读取的历史爆仓数据范围';
       empty(message);
       ctx.restore();
       return;
