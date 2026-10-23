@@ -18,6 +18,10 @@
 .kline-mark.buy{color:var(--buy)}
 .kline-mark.sell{color:var(--sell)}
 .kline-mark.hollow{font-weight:400}
+.zone-swatch{display:inline-block;width:14px;height:8px;margin-right:5px;border:1px solid var(--line);border-radius:2px;vertical-align:middle}
+.zone-open-high{background:var(--sell);opacity:.7}
+.zone-close-only{background:var(--warning);opacity:.7}
+.zone-open-low{background:var(--buy);opacity:.7}
 .kline-warning{color:var(--warning);font-weight:700}
 .kline-symbol-label{display:inline-block;margin-left:8px;padding:3px 9px;border:1px solid var(--strong-line);border-radius:999px;color:var(--link);font-size:.58em;line-height:1;vertical-align:middle;font-variant-numeric:tabular-nums}
 .kline-axis-note{color:var(--text);font-weight:600}

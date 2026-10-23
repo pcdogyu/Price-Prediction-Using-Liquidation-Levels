@@ -102,6 +102,16 @@ test('volumeMax only looks at the visible candles', () => {
   assert.equal(K.volumeMax([candle(0, 1, 2, 1, 2, NaN)], { start: 0, end: 1000 }, 1000), 0);
 });
 
+test('radarZone returns VWAP opening and close-only boundaries', () => {
+  const candles = Array.from({ length: 4 }, (_, index) => candle(index * 60000, 100 + index, 101 + index, 99 + index, 100 + index, 1000));
+  const zone = K.radarZone(candles, 4, .8, 1);
+  assert.equal(zone.ready, true);
+  assert.equal(zone.period_minutes, 4);
+  assert.ok(zone.upper_open_price > zone.vwap);
+  assert.ok(zone.lower_open_price < zone.vwap);
+  assert.ok(zone.current_z_score > 0);
+});
+
 test('niceTicks stays inside the range and terminates', () => {
   assert.deepEqual(K.niceTicks(0, 10, 5), [0, 2, 4, 6, 8, 10]);
   assert.deepEqual(K.niceTicks(5, 5, 5), []);

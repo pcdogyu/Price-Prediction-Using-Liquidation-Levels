@@ -57,6 +57,7 @@ func (rtm *alertRuntime) alertChartSignalsWithConfigAt(ctx context.Context, symb
 	view := domain.AlertChartSignals{
 		Symbol:      symbol,
 		Thresholds:  cfg.Thresholds(),
+		Zone:        rtm.alertChartZone(ctx, symbol, cfg, generatedAt),
 		Alerts:      []domain.LiquidationAlert{},
 		Signals:     []domain.TradeSignal{},
 		ReplayHours: replayHours,
@@ -113,4 +114,44 @@ func (rtm *alertRuntime) alertChartSignalsWithConfigAt(ctx context.Context, symb
 		return view.Signals[i].CreatedAt.After(view.Signals[j].CreatedAt)
 	})
 	return view, nil
+}
+
+// alertChartZone calculates the same latest 1m VWAP boundaries used by the
+// live radar. A missing candle window leaves the chart usable while allowing
+// the browser to fall back to its selected-interval candles.
+func (rtm *alertRuntime) alertChartZone(ctx context.Context, symbol string, cfg alert.Config, generatedAt time.Time) domain.AlertChartZone {
+	period := cfg.VWAPPeriodMinutes
+	if period <= 0 {
+		period = 240
+	}
+	threshold := cfg.VWAPZScore
+	if threshold <= 0 {
+		threshold = 0.8
+	}
+	zone := domain.AlertChartZone{PeriodMinutes: period, ZScoreThreshold: threshold}
+	source := rtm.sourceStore
+	if source == nil {
+		source = rtm.store
+	}
+	if source == nil {
+		return zone
+	}
+	rows, err := source.CandlesRange(ctx, symbol, generatedAt.Add(-time.Duration(period+2)*time.Minute), generatedAt.Add(time.Minute))
+	if err != nil || len(rows) < period {
+		return zone
+	}
+	if len(rows) > period {
+		rows = rows[len(rows)-period:]
+	}
+	price := rows[len(rows)-1].Close
+	vwap, sigma, z, ok := alert.VWAPZScore(rows, period, price)
+	if !ok {
+		return zone
+	}
+	zone.Ready = true
+	zone.VWAP, zone.Sigma = vwap, sigma
+	zone.CurrentPrice, zone.CurrentZScore = price, z
+	zone.UpperOpenPrice = vwap + threshold*sigma
+	zone.LowerOpenPrice = vwap - threshold*sigma
+	return zone
 }

@@ -32,6 +32,7 @@
     hasMore: true, nextBefore: '', newest: 0, atLatest: true, newData: false, keepSpan: 0,
     loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false,
     drag: null, hoverCandle: null, hoverMarker: null,
+    radarConfig: { periodMinutes: 240, zScoreThreshold: .8 }, radarZone: null,
     toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true) }
   };
   let dims = null, colors = {}, scales = null, signalReplayWindowHours = storedText(STORE_SIGNAL_RECALCULATE, '') ? 48 : 0;
@@ -47,6 +48,9 @@
   const signalOptions = () => ({ aggressive: state.toggles.aggressive, steady: state.toggles.steady });
   const shownAlerts = () => state.toggles.alerts ? K.filterAlerts(state.alerts) : [];
   const shownSignals = () => state.toggles.signals ? K.filterSignals(state.signals, signalOptions()) : [];
+  const currentRadarZone = () => state.radarZone && state.radarZone.ready
+    ? state.radarZone
+    : K.radarZone(state.candles, state.radarConfig.periodMinutes, state.radarConfig.zScoreThreshold, step() / 60000);
 
   async function json(path) {
     const response = await fetch(base + path, { cache: 'no-store', credentials: 'same-origin' });
@@ -136,6 +140,9 @@
     parts.push(state.hasMore ? '左拉可读取更早数据' : '已到最早数据');
     parts.push(shownAlerts().length + ' 个预警');
     parts.push(shownSignals().length + ' 个下单信号');
+    const zone = currentRadarZone();
+    if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 · 高于 ' + priceText(zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.lower_open_price) + ' 接多 · 中间仅平仓');
+    else parts.push('VWAP 开仓区计算中');
     parts.push(state.atLatest ? '每 5 秒自动刷新' : '已暂停跟随最新');
     return parts.join(' · ');
   }
@@ -214,6 +221,8 @@
         liquidation_side: row.side, reference_price: row.reference_price, notional_usd: row.notional_usd,
         threshold_usd: row.threshold_usd, status: row.status })).filter(row => Number.isFinite(row.t));
       const thresholds = packet.thresholds || {};
+      state.radarConfig = { periodMinutes: Number(thresholds.vwap_period_minutes) || 240, zScoreThreshold: Number(thresholds.vwap_z_score_threshold) || .8 };
+      state.radarZone = packet.zone && packet.zone.ready ? packet.zone : null;
       const threshold = state.symbol === 'BTCUSDT' ? thresholds.btc_usd : state.symbol === 'ETHUSDT' ? thresholds.eth_usd : thresholds.other_usd;
       const parameterText = '当前参数：' + money(threshold) + ' · ' + (thresholds.window_minutes || '—') + ' 分钟周期';
       const replayText = Number(packet.replay_hours) === 48 ? '过去 48 小时重算' : '按当前参数回放';
@@ -227,6 +236,7 @@
       state.loadingSignals = false;
       state.loadingAlerts = false;
       renderSignals();
+      note(statusText());
       draw();
     }
   }
@@ -317,6 +327,7 @@
       ctx.fillStyle = colors.muted;
       ctx.fillText(clock(at), px, plot.bottom + 16);
     }
+    drawRadarZones(ctx, y, plot, priceBottom);
     const shown = K.visibleCandles(state.candles, state.view, intervalStep);
     const slot = plot.width / Math.max(1, span / intervalStep), body = Math.max(1, Math.min(18, slot * .68));
     const peak = positionMode ? 0 : K.volumeMax(state.candles, state.view, intervalStep);
@@ -345,6 +356,50 @@
     drawLastPrice(ctx, y, plot, priceBottom);
     if (state.hoverCandle) drawCrosshair(ctx, x, plot, priceBottom);
     renderReadout();
+  }
+
+  function drawRadarZones(ctx, y, plot, priceBottom) {
+    const zone = currentRadarZone();
+    if (!zone || !finite(zone.upper_open_price) || !finite(zone.lower_open_price) || zone.upper_open_price <= zone.lower_open_price) return;
+    const upperRaw = y(zone.upper_open_price), lowerRaw = y(zone.lower_open_price);
+    const upper = Math.max(plot.top, Math.min(priceBottom, upperRaw));
+    const lower = Math.max(plot.top, Math.min(priceBottom, lowerRaw));
+    const width = plot.right - plot.left;
+    const fill = (top, bottom, colour, alpha) => {
+      if (bottom <= top) return;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = colour;
+      ctx.fillRect(plot.left, top, width, bottom - top);
+      ctx.globalAlpha = 1;
+    };
+    fill(plot.top, upper, colors.sell, .10);
+    fill(upper, lower, colors.warning, .09);
+    fill(lower, priceBottom, colors.buy, .10);
+    const line = (value, colour, dash) => {
+      const py = y(value);
+      if (py < plot.top || py > priceBottom) return;
+      ctx.save();
+      ctx.globalAlpha = .78;
+      ctx.setLineDash(dash);
+      ctx.strokeStyle = colour;
+      ctx.beginPath(); ctx.moveTo(plot.left, py); ctx.lineTo(plot.right, py); ctx.stroke();
+      ctx.restore();
+    };
+    line(zone.upper_open_price, colors.sell, [6, 4]);
+    line(zone.lower_open_price, colors.buy, [6, 4]);
+    line(zone.vwap, colors.warning, [2, 4]);
+    const label = (text, py, colour) => {
+      if (py < plot.top + 10 || py > priceBottom - 10) return;
+      ctx.save();
+      ctx.fillStyle = colour;
+      ctx.font = 'bold 11px system-ui, "Segoe UI", sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(text, plot.right - 8, py);
+      ctx.restore();
+    };
+    if (upper - plot.top > 20) label('开仓区 · 高位开空', plot.top + Math.min(18, (upper - plot.top) / 2), colors.sell);
+    if (lower - upper > 20) label('仅平仓区', upper + (lower - upper) / 2, colors.warning);
+    if (priceBottom - lower > 20) label('开仓区 · 低位接多', lower + Math.min(18, (priceBottom - lower) / 2), colors.buy);
   }
 
   // drawAlerts paints warning diamonds below the signal layer. They use the

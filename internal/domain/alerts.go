@@ -273,10 +273,26 @@ type AlertGamma struct {
 type AlertChartSignals struct {
 	Symbol      string             `json:"symbol"`
 	Thresholds  AlertThresholds    `json:"thresholds"`
+	Zone        AlertChartZone     `json:"zone"`
 	Alerts      []LiquidationAlert `json:"alerts"`
 	Signals     []TradeSignal      `json:"signals"`
 	ReplayHours int                `json:"replay_hours"`
 	GeneratedAt time.Time          `json:"generated_at"`
+}
+
+// AlertChartZone is the latest 1m VWAP zone used by the radar. Prices above
+// UpperOpenPrice are the high-side opening zone, prices below LowerOpenPrice
+// are the low-side opening zone, and the band between them is close-only.
+type AlertChartZone struct {
+	Ready           bool    `json:"ready"`
+	PeriodMinutes   int     `json:"period_minutes"`
+	ZScoreThreshold float64 `json:"z_score_threshold"`
+	VWAP            float64 `json:"vwap"`
+	Sigma           float64 `json:"sigma"`
+	CurrentPrice    float64 `json:"current_price"`
+	CurrentZScore   float64 `json:"current_z_score"`
+	UpperOpenPrice  float64 `json:"upper_open_price"`
+	LowerOpenPrice  float64 `json:"lower_open_price"`
 }
 
 // AlertSignalRecalculation is the result of an ephemeral signal replay. The

@@ -251,6 +251,27 @@ func TestAlertChartSignalsReplayCurrentStrategySettings(t *testing.T) {
 	}
 }
 
+func TestAlertChartSignalsExposeVWAPZone(t *testing.T) {
+	ctx := context.Background()
+	svc, _, st := alertTestService(t, "chart-zone.db")
+	now := time.Now().UTC().Truncate(time.Minute)
+	candles := make([]domain.Candle, 0, 240)
+	for index := 0; index < 240; index++ {
+		price := 100 + float64(index%24)
+		candles = append(candles, domain.Candle{Exchange: "binance", Symbol: "BTCUSDT", Time: now.Add(time.Duration(index-239) * time.Minute), Open: price, High: price + 1, Low: price - 1, Close: price, VolumeUSD: 1000})
+	}
+	if err := st.UpsertCandles(ctx, candles); err != nil {
+		t.Fatal(err)
+	}
+	view, err := svc.AlertChartSignals(ctx, "BTCUSDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.Zone.Ready || view.Zone.PeriodMinutes != 240 || view.Zone.ZScoreThreshold != .8 || view.Zone.UpperOpenPrice <= view.Zone.LowerOpenPrice {
+		t.Fatalf("chart VWAP zone = %+v", view.Zone)
+	}
+}
+
 func TestAlertSignalRecalculationUses48HourWindow(t *testing.T) {
 	ctx := context.Background()
 	svc, _, st := alertTestService(t, "chart-recalculate.db")
