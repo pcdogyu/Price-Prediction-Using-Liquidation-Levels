@@ -575,10 +575,14 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 		}
 	}
 	chartScript := serveAlert(srv, http.MethodGet, "/assets/alerts-chart-app.js", nil).Body.String()
-	for _, want := range []string{"window_hours", "STORE_SIGNAL_RECALCULATE", "过去 48 小时重算", "addEventListener('storage'", "drawRadarZones", "upper_open_price", "anchorPrice", "dragPriceRange", "STORE_ZONES", "仅平仓区"} {
+	for _, want := range []string{"window_hours", "STORE_SIGNAL_RECALCULATE", "过去 48 小时重算", "addEventListener('storage'", "drawRadarZones", "upper_open_price", "anchorPrice", "dragPriceRange", "Math.round(baseHeight * 1.1)", "STORE_ZONES", "仅平仓区"} {
 		if !strings.Contains(chartScript, want) {
 			t.Fatalf("the chart must refresh after signal recalculation with %q", want)
 		}
+	}
+	chartCSS := serveAlert(srv, http.MethodGet, "/assets/alerts-chart.css", nil).Body.String()
+	if strings.Contains(chartCSS, "width:110%") {
+		t.Fatal("the K-line chart must keep its original width")
 	}
 	if post := serveAlert(srv, http.MethodPost, "/alerts/chart", nil); post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /alerts/chart status=%d", post.Code)
