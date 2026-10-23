@@ -26,6 +26,33 @@
     return sideLabel(side);
   };
   const directionClass = (side, ignored) => ignored && (side === 'long' || side === 'short') ? ' class="gamma-ignored"' : '';
+  const filterReasonLabels = {
+    peak_decay_armed: 'ARMED，等待爆仓脉冲衰竭',
+    peak_decay_not_confirmed: '爆仓速率尚未降至峰值 40% 以下',
+    price_absorption_not_confirmed: '价格尚未止跌吸收',
+    market_context_unavailable: '市场 K 线数据未就绪',
+    vwap_zscore_unavailable: 'VWAP Z-Score 不可用',
+    high_zscore_long_liquidation_close_only: '高位区：多单爆仓仅允许平空',
+    low_zscore_long_liquidation_open_long: '低位区：允许接多',
+    neutral_zscore_long_liquidation_close_only: '中性区：多单爆仓仅允许平空',
+    high_zscore_short_liquidation_open_short: '高位区：允许开空',
+    low_zscore_short_liquidation_close_only: '低位区：空单爆仓仅允许平多',
+    neutral_zscore_short_liquidation_close_only: '中性区：空单爆仓仅允许平多',
+    deep_liquidation_quota_or_atr_not_ready: '深度爆仓配额或 ATR 回撤未达标',
+    exponential_long_grid_not_ready: '多单指数网格间距未达标',
+    unsupported_liquidation_side: '不支持的爆仓方向'
+  };
+  const radarFilterStatus = row => {
+    if (!row || !row.filter_applied) return '';
+    const raw = String(row.filter_reason || '').trim();
+    const reasons = raw.split(';').map(value => value.trim()).filter(Boolean)
+      .map(value => filterReasonLabels[value] || value);
+    const phase = String(row.phase || '').trim();
+    const permission = row.open_allowed && row.close_allowed ? '开仓+平仓' : row.open_allowed ? '开仓' : row.close_allowed ? '仅平仓' : '未放行';
+    const summary = ['雷达', phase, permission, ...reasons].filter(Boolean).join(' · ');
+    const title = raw || summary;
+    return '<span class="muted alerts-radar-filter" title="' + escape(title) + '"> · ' + escape(summary) + '</span>';
+  };
   // Every pair name links to its own K-line page in a new tab, so the alert page
   // keeps its scroll position and filters while the chart opens beside it.
   const chartLink = symbol => '<a class="alerts-symbol-link" target="_blank" rel="noopener" href="' + base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '" title="在新标签页打开 ' + escape(symbol) + ' K线">' + escape(symbol) + '</a>';
@@ -78,7 +105,7 @@
       '<td class="' + (signal.kind === 'steady' ? 'buy' : 'warning') + '">' + (signal.kind === 'steady' ? '稳健' : '激进') + '</td>' +
       '<td' + directionClass(signal.side, historicalGammaIgnored(signal)) + '>' + escape(directionLabel(signal.side, historicalGammaIgnored(signal))) + '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span></td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
-      '<td>' + detail + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
+      '<td>' + detail + radarFilterStatus(signal) + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
       '<td>' + escape(notifyLabels[signal.notify_status] || signal.notify_status || '未推送') + (signal.notify_error ? '<span class="muted" title="' + escape(signal.notify_error) + '"> ⓘ</span>' : '') + '</td>';
   }
 
@@ -90,7 +117,7 @@
       '<td class="warning">预警</td>' +
       '<td' + directionClass(row.trade_side, historicalGammaIgnored(row)) + '>' + escape(directionLabel(row.trade_side, historicalGammaIgnored(row))) + '<span class="muted"> · ' + escape(liqLabel(row.side)) + '</span></td>' +
       '<td>' + money(row.notional_usd) + '<span class="muted"> / ' + money(row.threshold_usd) + '</span></td>' +
-      '<td>' + detail + '</td><td>' + price(row.reference_price) + '</td><td>' + triggerLink('alert', row.id, row.symbol, row.trade_side, row.reference_price) + '</td><td>' + notifyLink('alert', row.id) + '</td><td>—</td>';
+      '<td>' + detail + radarFilterStatus(row) + '</td><td>' + price(row.reference_price) + '</td><td>' + triggerLink('alert', row.id, row.symbol, row.trade_side, row.reference_price) + '</td><td>' + notifyLink('alert', row.id) + '</td><td>—</td>';
   }
 
   function timelineRows(rows) {
