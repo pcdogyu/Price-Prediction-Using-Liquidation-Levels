@@ -25,6 +25,7 @@
 .kline-readout b{color:var(--text)}
 .kline-wrap{position:relative;user-select:none;cursor:crosshair;border:1px solid var(--line);border-radius:12px;background:var(--chart-bg);overflow:hidden;touch-action:none}
 .kline-wrap.dragging{cursor:grabbing}
+.kline-wrap.price-axis-hover:not(.dragging){cursor:ns-resize}
 #kline-chart{display:block;width:100%}
 .kline-tooltip{position:absolute;z-index:5;pointer-events:none;max-width:280px;padding:8px 10px;border:1px solid var(--strong-line);border-radius:10px;background:var(--tooltip-bg);color:var(--text);font-size:12px;line-height:1.5}
 .kline-note{margin-top:10px;overflow-wrap:anywhere}

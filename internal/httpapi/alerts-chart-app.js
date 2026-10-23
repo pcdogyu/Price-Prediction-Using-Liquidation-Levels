@@ -557,6 +557,9 @@
   }
   const inPlot = at => !!dims && at.x >= dims.plot.left && at.x <= dims.plot.right && at.y >= dims.plot.top && at.y <= dims.plot.bottom;
 
+  const inPriceAxis = at => !!dims && at.y >= dims.plot.top && at.y <= dims.priceBottom &&
+    (at.x < dims.plot.left || at.x > dims.plot.right);
+
   // hover tracks the candle under the pointer and, within a marker radius, that
   // marker, so the readout and the tooltip answer what is pointed at.
   function hover(at) {
@@ -609,9 +612,10 @@
     const canvas = $('kline-chart'), wrap = $('kline-wrap');
     canvas.addEventListener('pointerdown', event => {
       const at = pointer(event);
-      if (!inPlot(at) || !state.candles.length) return;
+      const mode = inPriceAxis(at) ? 'price' : inPlot(at) ? 'chart' : '';
+      if (!mode || !state.candles.length) return;
       canvas.setPointerCapture(event.pointerId);
-      state.drag = { id: event.pointerId, x: at.x, y: at.y, view: { start: state.view.start, end: state.view.end }, low: state.yLow, high: state.yHigh };
+      state.drag = { id: event.pointerId, mode, x: at.x, y: at.y, view: { start: state.view.start, end: state.view.end }, low: state.yLow, high: state.yHigh };
       wrap.classList.add('dragging');
       $('kline-tooltip').hidden = true;
       event.preventDefault();
@@ -619,18 +623,23 @@
     canvas.addEventListener('pointermove', event => {
       const at = pointer(event);
       if (state.drag && state.drag.id === event.pointerId) panTo(at);
-      else hover(at);
+      else {
+        wrap.classList.toggle('price-axis-hover', inPriceAxis(at));
+        hover(at);
+      }
     });
     const release = event => {
       if (!state.drag || state.drag.id !== event.pointerId) return;
       state.drag = null;
       wrap.classList.remove('dragging');
+      wrap.classList.remove('price-axis-hover');
       note(statusText());
     };
     canvas.addEventListener('pointerup', release);
     canvas.addEventListener('pointercancel', release);
     canvas.addEventListener('pointerleave', () => {
       if (state.drag) return;
+      wrap.classList.remove('price-axis-hover');
       state.hoverCandle = null;
       state.hoverMarker = null;
       state.hoverY = NaN;
@@ -645,7 +654,9 @@
   // price and pin the price axis manually so the drag does not snap back.
   function panTo(at) {
     const drag = state.drag, plot = dims.plot;
-    state.view = K.panWindow(drag.view, (drag.x - at.x) / plot.width * (drag.view.end - drag.view.start), chartLimits());
+    if (drag.mode === 'chart') {
+      state.view = K.panWindow(drag.view, (drag.x - at.x) / plot.width * (drag.view.end - drag.view.start), chartLimits());
+    }
     if (Math.abs(at.y - drag.y) > 2) {
       const shift = (at.y - drag.y) / (dims.priceBottom - plot.top) * (drag.high - drag.low);
       state.yLow = drag.low + shift;
@@ -654,7 +665,7 @@
     }
     state.atLatest = atLatest();
     $('kline-new-data').classList.toggle('hidden', !state.newData);
-    loadHistory();
+    if (drag.mode === 'chart') loadHistory();
     draw();
   }
 
@@ -663,15 +674,15 @@
   function zoom(event) {
     if (!scales || !dims || !state.candles.length) return;
     const at = pointer(event), factor = event.deltaY > 0 ? 1.18 : 1 / 1.18;
-    if (event.ctrlKey || event.shiftKey || at.x > dims.plot.right) {
+    if (event.ctrlKey || event.shiftKey || inPriceAxis(at)) {
       const anchor = scales.priceAt(Math.max(dims.plot.top, Math.min(dims.priceBottom, at.y)));
       const auto = K.priceRange(state.candles, state.view, step()) || [state.yLow, state.yHigh];
       const minimum = Math.max((state.yHigh - state.yLow) * .0002, 1e-9);
       const maximum = Math.max((auto[1] - auto[0]) * 8, minimum);
-      const next = Math.max(minimum, Math.min(maximum, (state.yHigh - state.yLow) * factor));
-      const ratio = (anchor - state.yLow) / (state.yHigh - state.yLow);
-      state.yLow = anchor - next * ratio;
-      state.yHigh = state.yLow + next;
+      const nextRange = K.zoomPriceRange([state.yLow, state.yHigh], anchor, factor, { minSpan: minimum, maxSpan: maximum });
+      if (!nextRange) return;
+      state.yLow = nextRange[0];
+      state.yHigh = nextRange[1];
       state.yManual = true;
     } else {
       state.view = K.zoomWindow(state.view, scales.timeAt(at.x), factor, chartLimits());

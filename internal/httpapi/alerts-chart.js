@@ -61,6 +61,18 @@
     return [low - padding, high + padding];
   }
 
+  // zoomPriceRange changes the visible price span around the pointer price.
+  // Keeping the anchor's relative position stable makes the price-axis wheel
+  // behave like the time-axis zoom instead of jumping to the middle.
+  function zoomPriceRange(range, anchor, factor, limits) {
+    if (!Array.isArray(range) || range.length < 2 || !finite(range[0]) || !finite(range[1]) || range[1] <= range[0]) return null;
+    const span = range[1] - range[0];
+    const next = Math.max(limits.minSpan, Math.min(limits.maxSpan, span * factor));
+    const ratio = (anchor - range[0]) / span;
+    const low = anchor - next * ratio;
+    return [low, low + next];
+  }
+
   function volumeMax(candles, range, step) {
     let peak = 0;
     for (const candle of visibleCandles(candles, range, step)) if (finite(candle.volume) && candle.volume > peak) peak = candle.volume;
@@ -177,7 +189,8 @@
 
   const exported = { INTERVALS, INTERVAL_MS, DEFAULT_VISIBLE, MIN_VISIBLE, MAX_VISIBLE, RIGHT_PAD, HISTORY_TRIGGER,
     intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles, priceRange, volumeMax,
-    niceTicks, mergeCandles, normaliseCandles, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal };
+    niceTicks, mergeCandles, normaliseCandles, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal,
+    zoomPriceRange };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.LiquidationKline = exported;
 })(typeof window === 'object' ? window : globalThis);

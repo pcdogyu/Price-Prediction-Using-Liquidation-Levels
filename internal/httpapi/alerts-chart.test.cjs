@@ -12,6 +12,13 @@ test('position trade labels are standalone candle-anchored badges', () => {
   assert.match(chartApp, /vertically collision-aware/);
 });
 
+test('price-axis gestures stay independent from time-axis gestures', () => {
+  assert.match(chartApp, /const inPriceAxis = at =>/);
+  assert.match(chartApp, /const mode = inPriceAxis\(at\) \? 'price' : inPlot\(at\) \? 'chart'/);
+  assert.match(chartApp, /if \(drag\.mode === 'chart'\) \{/);
+  assert.match(chartApp, /event\.ctrlKey \|\| event\.shiftKey \|\| inPriceAxis\(at\)/);
+});
+
 test('the requested periods are offered', () => {
   assert.deepEqual(K.INTERVALS, ['1m', '2m', '3m', '5m', '15m', '30m', '1h', '4h', '8h', '12h']);
   assert.equal(K.intervalMs('3m'), 180000);
@@ -70,6 +77,16 @@ test('priceRange pads the visible extremes and keeps a flat series open', () => 
   assert.ok(flat[1] > flat[0] && Math.abs((flat[0] + flat[1]) / 2 - 5) < 1e-6, JSON.stringify(flat));
   assert.equal(K.priceRange([candle(0, 1, 0, -1, -2)], { start: 0, end: 1000 }, 1000), null);
   assert.equal(K.priceRange([], { start: 0, end: 1000 }, 1000), null);
+});
+
+test('zoomPriceRange keeps the pointer price anchored while clamping the span', () => {
+  const limits = { minSpan: 10, maxSpan: 200 };
+  const zoomed = K.zoomPriceRange([100, 200], 125, .5, limits);
+  assert.deepEqual(zoomed, [112.5, 162.5]);
+  assert.equal((125 - zoomed[0]) / (zoomed[1] - zoomed[0]), .25);
+  assert.deepEqual(K.zoomPriceRange([100, 200], 150, .01, limits), [145, 155]);
+  assert.deepEqual(K.zoomPriceRange([100, 200], 150, 10, limits), [50, 250]);
+  assert.equal(K.zoomPriceRange([100, 100], 100, 2, limits), null);
 });
 
 test('volumeMax only looks at the visible candles', () => {
