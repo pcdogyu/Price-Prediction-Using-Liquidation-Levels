@@ -193,7 +193,22 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err)
 		return
 	}
-	page, err := s.svc.AlertTimeline(s.alertContext(r), symbol, kind, 20, query.Get("cursor"))
+	ctx := s.alertContext(r)
+	var page domain.AlertTimelinePage
+	if query.Get("replay") == "1" {
+		replayed, ready, replayErr := s.svc.AlertTimelineReplayed(ctx, symbol, kind, 20, query.Get("cursor"))
+		if replayErr != nil {
+			problem(w, http.StatusServiceUnavailable, replayErr)
+			return
+		}
+		if ready {
+			page = replayed
+		} else {
+			page, err = s.svc.AlertTimeline(ctx, symbol, kind, 20, query.Get("cursor"))
+		}
+	} else {
+		page, err = s.svc.AlertTimeline(ctx, symbol, kind, 20, query.Get("cursor"))
+	}
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
 		return

@@ -265,6 +265,8 @@ type AlertTimelinePage struct {
 	AlertCount      int64               `json:"alert_count"`
 	AggressiveCount int64               `json:"aggressive_count"`
 	SteadyCount     int64               `json:"steady_count"`
+	Replayed        bool                `json:"replayed,omitempty"`
+	ReplayedAt      *time.Time          `json:"replayed_at,omitempty"`
 	Gamma           AlertGamma          `json:"gamma"`
 }
 

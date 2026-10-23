@@ -324,6 +324,13 @@ func TestAlertSignalRecalculationUses48HourWindow(t *testing.T) {
 	if view.ReplayHours != 48 || len(view.Alerts) != 1 {
 		t.Fatalf("the chart window should be 48h = %+v", view)
 	}
+	replayed, ready, err := svc.AlertTimelineReplayed(ctx, "BTCUSDT", "", 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ready || !replayed.Replayed || replayed.AlertCount != int64(result.AlertCount) || replayed.TotalCount != int64(result.AlertCount+result.SignalCount) || len(replayed.Rows) != 1 {
+		t.Fatalf("recalculation must populate replayed history: ready=%v page=%+v result=%+v", ready, replayed, result)
+	}
 }
 
 // TestAlertSettingsRoundTripAndRestartReplay checks that a saved form keeps the stored

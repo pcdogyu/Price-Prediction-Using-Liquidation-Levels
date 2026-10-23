@@ -72,7 +72,7 @@
   };
 
   const SIGNAL_RECALCULATE_STORAGE = 'liquidation.alerts.signal-recalculate';
-  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false, signalProgressTimer = 0, signalProgressValue = 1;
+  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', historyReplayed = (() => { try { return !!localStorage.getItem(SIGNAL_RECALCULATE_STORAGE); } catch (_) { return false; } })(), settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false, signalProgressTimer = 0, signalProgressValue = 1;
 
   function error(message) { const node = $('alerts-error'); node.classList.remove('success'); node.textContent = message; node.hidden = false; }
   function success(message) { const node = $('alerts-error'); node.classList.add('success'); node.innerHTML = message; node.hidden = false; }
@@ -286,12 +286,13 @@
   }
 
 
-  async function loadHistory(cursor, page) {
+  async function loadHistory(cursor, page, replay = historyReplayed) {
     historySequence++;
     const current = historySequence;
     historyBusy = true;
     const params = new URLSearchParams({ symbol: $('alerts-symbol').value.trim(), kind: $('alerts-kind').value });
     if (cursor) params.set('cursor', cursor);
+    if (replay) params.set('replay', '1');
     $('alerts-history-status').textContent = '正在读取…';
     $('alerts-prev').disabled = true;
     $('alerts-next').disabled = true;
@@ -302,11 +303,13 @@
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       if (current !== historySequence) return;
       historyRows = packet.rows || [];
+      historyReplayed = !!packet.replayed;
       renderGammaStatus(packet.gamma);
       historyPage = page;
       historyNextCursor = packet.next_cursor || '';
       timelineRows(historyRows);
-      $('alerts-history-status').textContent = '预警 ' + packet.alert_count + ' · 激进 ' + packet.aggressive_count + ' · 稳健 ' + packet.steady_count + ' · 共 ' + packet.total_count + ' 条';
+      const sourceLabel = packet.replayed ? '过去 48 小时按当前参数重算 · ' : '';
+      $('alerts-history-status').textContent = sourceLabel + '预警 ' + packet.alert_count + ' · 激进 ' + packet.aggressive_count + ' · 稳健 ' + packet.steady_count + ' · 共 ' + packet.total_count + ' 条';
       $('alerts-count').textContent = '第 ' + (historyPage + 1) + ' 页 · 本页 ' + historyRows.length + ' 条';
       $('alerts-prev').disabled = historyPage === 0;
       $('alerts-next').disabled = !historyNextCursor;
@@ -424,6 +427,8 @@
       finishSignalProgress(true);
       clearError();
       loadOverview();
+      historyCursors = [''];
+      void loadHistory('', 0, true);
     } catch (caught) {
       error('信号重算失败：' + caught.message);
       finishSignalProgress(false);
@@ -532,9 +537,9 @@
     }
   }
 
-  $('alerts-filters').addEventListener('submit', event => { event.preventDefault(); historyCursors = ['']; loadHistory('', 0); });
-  $('alerts-prev').addEventListener('click', () => { if (historyPage > 0) loadHistory(historyCursors[historyPage - 1], historyPage - 1); });
-  $('alerts-next').addEventListener('click', () => { if (!historyNextCursor) return; historyCursors[historyPage + 1] = historyNextCursor; loadHistory(historyNextCursor, historyPage + 1); });
+  $('alerts-filters').addEventListener('submit', event => { event.preventDefault(); historyCursors = ['']; loadHistory('', 0, historyReplayed); });
+  $('alerts-prev').addEventListener('click', () => { if (historyPage > 0) loadHistory(historyCursors[historyPage - 1], historyPage - 1, historyReplayed); });
+  $('alerts-next').addEventListener('click', () => { if (!historyNextCursor) return; historyCursors[historyPage + 1] = historyNextCursor; loadHistory(historyNextCursor, historyPage + 1, historyReplayed); });
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
   ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes', 'alerts-vwap-range-hours', 'alerts-vwap-min-drawdown', 'alerts-vwap-donchian'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
@@ -549,7 +554,7 @@
     else triggerOrder(button);
   });
   loadOverview();
-  loadHistory('', 0);
-  setInterval(() => { if (!document.hidden) { loadOverview(); if (historyPage === 0 && !historyBusy) loadHistory('', 0); } }, 5000);
+  loadHistory('', 0, historyReplayed);
+  setInterval(() => { if (!document.hidden) { loadOverview(); if (historyPage === 0 && !historyBusy) loadHistory('', 0, historyReplayed); } }, 5000);
 })();
 

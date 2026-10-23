@@ -42,6 +42,14 @@ type alertRuntime struct {
 	watch    []domain.WatchSymbol
 	watchAt  time.Time
 	watchErr string
+
+	// replayTimeline is the last explicit signal-recalculation result. It is
+	// deliberately kept separate from the persisted audit history so the page
+	// can show rows produced by the current parameters without rewriting rows
+	// that were generated under older parameters.
+	replayTimeline []replayedTimelineRow
+	replayTo       time.Time
+	replayReady    bool
 }
 
 // alertNotifyCooldown suppresses repeated messages for the same symbol and signal

@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -128,19 +127,9 @@ func (s *Service) AlertChartSignalsForContextWindow(ctx context.Context, symbol 
 	if err != nil {
 		return domain.AlertChartSignals{}, err
 	}
-	cfg := rtm.engine.Config()
-	if tenantID := tenantIDFromContext(ctx); tenantID != "" {
-		strategy, found, strategyErr := s.store.AlertStrategySettingsForTenant(ctx, tenantID)
-		if strategyErr != nil {
-			return domain.AlertChartSignals{}, strategyErr
-		}
-		if found && validateAlertStrategySettings(strategy) == nil {
-			cfg.Window = time.Duration(strategy.WindowMinutes) * time.Minute
-			cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = strategy.BTCUSD, strategy.ETHUSD, strategy.OtherUSD
-			cfg.VWAPRangeMinutes = strategy.VWAPRangeHours * 60
-			cfg.VWAPMinDrawdown = strategy.VWAPMinDrawdownPct / 100
-			cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
-		}
+	cfg, err := s.alertStrategyConfigForContext(ctx, rtm)
+	if err != nil {
+		return domain.AlertChartSignals{}, err
 	}
 	return rtm.AlertChartSignalsWithConfigSince(ctx, symbol, cfg, time.Now().UTC().Add(-window))
 }
@@ -157,45 +146,11 @@ func (s *Service) RecalculateAlertSignalsForContext(ctx context.Context) (domain
 	}
 	to := time.Now().UTC()
 	from := to.Add(-alertSignalRecalculationWindow)
-	cfg := rtm.engine.Config()
-	if tenantID := tenantIDFromContext(ctx); tenantID != "" {
-		strategy, found, strategyErr := s.store.AlertStrategySettingsForTenant(ctx, tenantID)
-		if strategyErr != nil {
-			return domain.AlertSignalRecalculation{}, strategyErr
-		}
-		if found && validateAlertStrategySettings(strategy) == nil {
-			cfg.Window = time.Duration(strategy.WindowMinutes) * time.Minute
-			cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = strategy.BTCUSD, strategy.ETHUSD, strategy.OtherUSD
-			cfg.VWAPRangeMinutes = strategy.VWAPRangeHours * 60
-			cfg.VWAPMinDrawdown = strategy.VWAPMinDrawdownPct / 100
-			cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
-		}
+	cfg, err := s.alertStrategyConfigForContext(ctx, rtm)
+	if err != nil {
+		return domain.AlertSignalRecalculation{}, err
 	}
-
-	rtm.mu.RLock()
-	watch := append([]domain.WatchSymbol(nil), rtm.watch...)
-	rtm.mu.RUnlock()
-	symbols := make([]string, 0, len(watch)+len(s.cfg.Symbols))
-	seen := make(map[string]struct{}, len(watch)+len(s.cfg.Symbols))
-	addSymbol := func(raw string) {
-		symbol := strings.ToUpper(strings.TrimSpace(raw))
-		if symbol == "" {
-			return
-		}
-		if _, ok := seen[symbol]; ok {
-			return
-		}
-		seen[symbol] = struct{}{}
-		symbols = append(symbols, symbol)
-	}
-	for _, row := range watch {
-		addSymbol(row.Symbol)
-	}
-	if len(symbols) == 0 {
-		for _, symbol := range s.cfg.Symbols {
-			addSymbol(symbol)
-		}
-	}
+	symbols := s.alertReplaySymbols(rtm)
 
 	result := domain.AlertSignalRecalculation{
 		WindowHours:    int(alertSignalRecalculationWindow / time.Hour),
@@ -204,14 +159,17 @@ func (s *Service) RecalculateAlertSignalsForContext(ctx context.Context) (domain
 		RecalculatedAt: to,
 		SymbolCount:    len(symbols),
 	}
-	for _, symbol := range symbols {
-		view, replayErr := rtm.AlertChartSignalsWithConfigSince(ctx, symbol, cfg, from)
-		if replayErr != nil {
-			return domain.AlertSignalRecalculation{}, replayErr
-		}
-		result.AlertCount += len(view.Alerts)
-		result.SignalCount += len(view.Signals)
+	replayed, alertCount, signalCount, replayErr := s.replayAlertTimeline(ctx, rtm, cfg, symbols, from, to)
+	if replayErr != nil {
+		return domain.AlertSignalRecalculation{}, replayErr
 	}
+	result.AlertCount = alertCount
+	result.SignalCount = signalCount
+	rtm.mu.Lock()
+	rtm.replayTimeline = replayed
+	rtm.replayTo = to
+	rtm.replayReady = true
+	rtm.mu.Unlock()
 	return result, nil
 }
 

@@ -98,7 +98,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "api/v1/alerts/order-settings") || !strings.Contains(script, "保存下单信号设置") {
 		t.Fatal("the alerts script must expose order signal category settings")
 	}
-	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "过去 48 小时") || !strings.Contains(script, "signal-recalculate") || !strings.Contains(script, "startSignalProgress") || !strings.Contains(script, "finishSignalProgress") || !strings.Contains(script, "Math.min(99") || !strings.Contains(script, "setSignalProgress(100") {
+	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "params.set('replay', '1')") || !strings.Contains(script, "historyReplayed") || !strings.Contains(script, "过去 48 小时") || !strings.Contains(script, "signal-recalculate") || !strings.Contains(script, "startSignalProgress") || !strings.Contains(script, "finishSignalProgress") || !strings.Contains(script, "Math.min(99") || !strings.Contains(script, "setSignalProgress(100") {
 		t.Fatal("the alerts script must expose the 48h signal recalculation")
 	}
 	if strings.Contains(body, `id="alerts-order-alerts"`) || strings.Contains(script, "alerts-order-alerts") {
@@ -304,9 +304,21 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid strategy settings status=%d body=%s", invalid.Code, invalid.Body.String())
 	}
+	if err := st.InsertLiquidation(context.Background(), domain.LiquidationEvent{
+		ID: "recalculate-history", Exchange: "binance", Symbol: "BTCUSDT", PositionSide: "long",
+		EventTime: time.Now().UTC().Add(-time.Minute), ReceivedAt: time.Now().UTC(), Price: 100,
+		Quantity: 4000, NotionalUSD: 400000, Coverage: "sampled",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	recalculated := serveAlert(srv, http.MethodPost, "/api/v1/alerts/recalculate", nil)
 	if recalculated.Code != http.StatusOK || !strings.Contains(recalculated.Body.String(), `"window_hours":48`) {
 		t.Fatalf("48h signal recalculation status=%d body=%s", recalculated.Code, recalculated.Body.String())
+	}
+	replayed := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?symbol=BTCUSDT&replay=1", nil)
+	var replayedPage domain.AlertTimelinePage
+	if replayed.Code != http.StatusOK || json.Unmarshal(replayed.Body.Bytes(), &replayedPage) != nil || !replayedPage.Replayed || replayedPage.AlertCount == 0 || replayedPage.TotalCount == 0 {
+		t.Fatalf("recalculation must refresh the history endpoint: %d %s page=%+v", replayed.Code, replayed.Body.String(), replayedPage)
 	}
 	badWindow := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=BTCUSDT&window_hours=0", nil)
 	if badWindow.Code != http.StatusBadRequest {
@@ -570,7 +582,7 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 	}
 	for _, want := range []string{"币对 K 线", "kline-symbol-label", "当前币对", "左右两侧价格轴", "横轴北京时间", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
 		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "kline-zones", "显示预警", "显示下单信号", "VWAP 分区", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "价格轴上下拖动缩放垂直价格", "当前已保存的阈值和周期重新回放生成", "回到最新", "重置缩放", "kline-signal-rows",
-        "历史分区 · 高位开空", "历史分区 · 中间仅平仓", "历史分区 · 低位接多", "kline-chart-surface", "每根 K 线按当时滚动 VWAP、配置窗口内 HH/LL、最小回撤和 Donchian 分位绘制历史三分区", "勾选 VWAP 分区时，图中和下方表格只保留落在对应开仓区的多空信号", "净多空", "累计净多空（48小时）", "币对 K 线、累计净多空与下单信号", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
+		"历史分区 · 高位开空", "历史分区 · 中间仅平仓", "历史分区 · 低位接多", "kline-chart-surface", "每根 K 线按当时滚动 VWAP、配置窗口内 HH/LL、最小回撤和 Donchian 分位绘制历史三分区", "勾选 VWAP 分区时，图中和下方表格只保留落在对应开仓区的多空信号", "净多空", "累计净多空（48小时）", "币对 K 线、累计净多空与下单信号", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the K-line page must contain %q", want)
 		}
