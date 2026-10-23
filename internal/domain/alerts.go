@@ -13,9 +13,10 @@ const (
 	SignalSteady     = "steady"
 )
 
-// Alert cycle states. A cycle starts as watching, becomes aggressive once the
-// quiet period elapsed without a same side liquidation, and ends as steady once
-// an opposite liquidation confirmed the move, or expired when it never arrived.
+// Alert cycle states. A radar cycle starts as watching/ARMED, becomes
+// aggressive/FIRED only after peak-decay and price absorption, and ends as
+// steady once an opposite liquidation confirms the move, or expires when it
+// never arrives.
 const (
 	AlertStateWatching   = "watching"
 	AlertStateAggressive = "aggressive"
@@ -101,8 +102,8 @@ type LiquidationAlert struct {
 }
 
 // TradeSignal is one order recommendation. Kind distinguishes the aggressive
-// signal, which only required the quiet period, from the steady signal, which
-// was additionally confirmed by an opposite direction liquidation.
+// signal, which is the first FIRED radar decision, from the steady signal,
+// which is additionally confirmed by an opposite direction liquidation.
 type TradeSignal struct {
 	ID               string    `json:"id"`
 	TenantID         string    `json:"tenant_id,omitempty"`

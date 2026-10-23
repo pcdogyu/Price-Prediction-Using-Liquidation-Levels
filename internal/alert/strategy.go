@@ -6,7 +6,7 @@
 // The rules, in the order the strategy applies them:
 //
 //  1. A context-aware threshold breach enters ARMED; the legacy Observe path
-//     remains available for replay and callers without market candles.
+//     remains available only for isolated backwards-compatible callers.
 //  2. ARMED becomes FIRED only after peak-decay and price-absorption confirm
 //     the cascade has exhausted, then VWAP zone, quota/ATR, and grid filters
 //     decide whether to open or only close the opposite position.
@@ -273,6 +273,7 @@ type cycle struct {
 	lastContext          MarketContext
 	contextAware         bool
 	lowestPrice          float64
+	highestPrice         float64
 	peakRateUSDPerSecond float64
 }
 
@@ -367,17 +368,17 @@ func (e *Engine) WatchCount() int {
 // have current candles should use ObserveWithContext so the radar filters are
 // applied.
 func (e *Engine) Observe(event domain.LiquidationEvent) Result {
-	return e.observe(event, MarketContext{})
+	return e.observe(event, MarketContext{}, false)
 }
 
 // ObserveWithContext feeds one liquidation event through the four-layer radar.
 // The context is captured on the cycle, allowing Tick to confirm a decayed pulse
 // without requiring a second liquidation event.
 func (e *Engine) ObserveWithContext(event domain.LiquidationEvent, ctx MarketContext) Result {
-	return e.observe(event, ctx)
+	return e.observe(event, ctx, true)
 }
 
-func (e *Engine) observe(event domain.LiquidationEvent, ctx MarketContext) Result {
+func (e *Engine) observe(event domain.LiquidationEvent, ctx MarketContext, forceRadar bool) Result {
 	var res Result
 	side := strings.ToLower(strings.TrimSpace(event.PositionSide))
 	if side != "long" && side != "short" {
@@ -400,7 +401,10 @@ func (e *Engine) observe(event domain.LiquidationEvent, ctx MarketContext) Resul
 	if !ctx.Ready && len(ctx.Candles) >= e.cfg.VWAPPeriodMinutes {
 		ctx.Ready = true
 	}
-	contextAware := ctx.Ready || len(ctx.Candles) > 0
+	// The explicit context API is the production radar entry point. It must stay
+	// ARMED when candles are temporarily unavailable; falling back to the legacy
+	// Observe path here would recreate the unsafe threshold-first entry.
+	contextAware := forceRadar || ctx.Ready || len(ctx.Candles) > 0
 	e.updateMarketState(st, side, event.NotionalUSD, ctx)
 	opposite := "short"
 	if side == "short" {
@@ -438,7 +442,11 @@ func (e *Engine) observe(event domain.LiquidationEvent, ctx MarketContext) Resul
 	if total <= threshold {
 		return res
 	}
-	c := &cycle{id: AlertID(symbol, side, at), side: side, status: domain.AlertStateWatching, threshold: threshold, windowStart: windowStart, triggeredAt: at, total: total, peak: total, count: count, lastSameSideAt: at, lastPrice: event.Price, quietUntil: at.Add(e.cfg.Quiet), contextAware: contextAware, filterApplied: contextAware, lastContext: ctx, lowestPrice: ctx.Price, peakRateUSDPerSecond: currentRate}
+	cyclePrice := ctx.Price
+	if cyclePrice <= 0 {
+		cyclePrice = ctx.CurrentCandle.Close
+	}
+	c := &cycle{id: AlertID(symbol, side, at), side: side, status: domain.AlertStateWatching, threshold: threshold, windowStart: windowStart, triggeredAt: at, total: total, peak: total, count: count, lastSameSideAt: at, lastPrice: event.Price, quietUntil: at.Add(e.cfg.Quiet), contextAware: contextAware, filterApplied: contextAware, lastContext: ctx, lowestPrice: cyclePrice, highestPrice: cyclePrice, peakRateUSDPerSecond: currentRate}
 	if contextAware {
 		c.quietUntil = at.Add(e.cfg.PeakDecayWindow)
 		c.decision = filterDecision(e.cfg, side, ctx, *st, e.cfg.ThresholdFor(symbol))
@@ -452,6 +460,67 @@ func (e *Engine) observe(event domain.LiquidationEvent, ctx MarketContext) Resul
 	return res
 }
 
+// UpdateMarketContext refreshes the latest candle/price snapshot for active
+// radar cycles. It intentionally does not move the liquidation extreme: that
+// extreme is derived from liquidation observations, so a new low/high in the
+// live candle remains a failed absorption until price recovers from it.
+func (e *Engine) UpdateMarketContext(symbol string, ctx MarketContext) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	st := e.watch[symbol]
+	if st == nil {
+		return
+	}
+	for _, c := range st.cycles {
+		if c.contextAware && c.status == domain.AlertStateWatching {
+			c.lastContext = ctx
+		}
+	}
+}
+
+// RadarSymbols returns symbols with a live ARMED radar cycle. The application
+// uses this bounded list to refresh current 1m candles before each Tick without
+// querying all watched pairs every second.
+func (e *Engine) RadarSymbols() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]string, 0)
+	for symbol, st := range e.watch {
+		for _, c := range st.cycles {
+			if c.contextAware && c.status == domain.AlertStateWatching {
+				out = append(out, symbol)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (e *Engine) updateCycleContext(c *cycle, ctx MarketContext) {
+	c.lastContext = ctx
+	price := ctx.Price
+	if price <= 0 {
+		price = ctx.CurrentCandle.Close
+	}
+	if price <= 0 {
+		return
+	}
+	if c.side == "short" {
+		if c.highestPrice <= 0 || price > c.highestPrice {
+			c.highestPrice = price
+		}
+		return
+	}
+	if c.lowestPrice <= 0 || price < c.lowestPrice {
+		c.lowestPrice = price
+	}
+}
+
 // Seed replays stored events, typically the recent liquidations read from SQLite
 // after a restart, so rolling windows and open cycles survive a deployment. The
 // returned rows are reported like any other result; the app persists them without
@@ -459,7 +528,10 @@ func (e *Engine) observe(event domain.LiquidationEvent, ctx MarketContext) Resul
 func (e *Engine) Seed(events []domain.LiquidationEvent) Result {
 	var out Result
 	for _, event := range events {
-		res := e.Observe(event)
+		// Restarts must rebuild ARMED cycles without manufacturing a signal from
+		// a static threshold. The live tick loop refreshes the current candle
+		// after this replay and can then confirm a genuine decay/absorption.
+		res := e.ObserveWithContext(event, MarketContext{})
 		out.Alerts = append(out.Alerts, res.Alerts...)
 		out.Signals = append(out.Signals, res.Signals...)
 	}
@@ -487,10 +559,7 @@ func (e *Engine) refreshCycle(symbol string, c *cycle, at time.Time, total float
 		changed = true
 	}
 	if c.contextAware && ctx.Price > 0 {
-		c.lastContext = ctx
-		if c.lowestPrice <= 0 || ctx.Price < c.lowestPrice {
-			c.lowestPrice = ctx.Price
-		}
+		e.updateCycleContext(c, ctx)
 	}
 	// Rule 2 needs FollowUpMinimumUSD, which is zero by default so every
 	// liquidation extends the quiet period.
@@ -607,10 +676,18 @@ func (e *Engine) tryFireRadar(symbol string, st *symbolState, c *cycle, now time
 	}
 	ctx := c.lastContext
 	absorbed := false
+	recovered := false
+	if ctx.Price > 0 {
+		if c.side == "short" && c.highestPrice > 0 {
+			recovered = ctx.Price <= c.highestPrice
+		} else if c.side == "long" && c.lowestPrice > 0 {
+			recovered = ctx.Price >= c.lowestPrice
+		}
+	}
 	if ctx.CurrentCandle.Close > 0 || ctx.CurrentCandle.Low > 0 {
-		absorbed = candleAbsorbed(ctx.CurrentCandle, ctx.Price, e.cfg.AbsorptionWickRatio)
-	} else if ctx.Price > 0 && c.lowestPrice > 0 {
-		absorbed = ctx.Price >= c.lowestPrice
+		absorbed = recovered || candleAbsorbed(c.side, ctx.CurrentCandle, ctx.Price, e.cfg.AbsorptionWickRatio)
+	} else {
+		absorbed = recovered
 	}
 	d := filterDecision(e.cfg, c.side, ctx, *st, e.cfg.ThresholdFor(symbol))
 	d.PeakRateUSDPerSecond = c.peakRateUSDPerSecond

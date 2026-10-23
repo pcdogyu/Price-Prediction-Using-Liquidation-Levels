@@ -24,14 +24,16 @@ func alertTestService(t *testing.T, name string) (*Service, config.Config, *stor
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	cfg := config.Config{
-		Symbols:              []string{"BTCUSDT"},
-		DatabasePath:         databasePath,
-		AlertTenantDataPath:  filepath.Join(dataDir, "alert-tenants"),
-		ModelPath:            filepath.Join(dataDir, "model.json"),
-		AlertWindow:          3 * time.Minute,
-		AlertQuiet:           time.Minute,
-		AlertConfirm:         30 * time.Minute,
-		AlertThresholdBTCUSD: 100000,
+		Symbols:                  []string{"BTCUSDT"},
+		DatabasePath:             databasePath,
+		AlertTenantDataPath:      filepath.Join(dataDir, "alert-tenants"),
+		ModelPath:                filepath.Join(dataDir, "model.json"),
+		AlertWindow:              3 * time.Minute,
+		AlertQuiet:               time.Minute,
+		AlertConfirm:             30 * time.Minute,
+		AlertThresholdBTCUSD:     100000,
+		AlertDeepQuotaMultiplier: 1,
+		AlertDeepDrawdownATR:     0.5,
 	}
 	return New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil))), cfg, st
 }
@@ -42,14 +44,30 @@ func alertTestEvent(id, symbol, side string, at time.Time, usd float64) domain.L
 		Quantity: usd / 100, NotionalUSD: usd, Coverage: "sampled"}
 }
 
+func seedAlertRadarCandles(t *testing.T, st *store.Store, symbol string, base time.Time) {
+	t.Helper()
+	rows := make([]domain.Candle, 0, 300)
+	for index := 0; index < 300; index++ {
+		at := base.Add(time.Duration(index-299) * time.Minute)
+		close := 108 + float64(index%5)
+		rows = append(rows, domain.Candle{Exchange: "binance", Symbol: symbol, Time: at,
+			Open: close - .5, High: close + 2, Low: close - 2, Close: close, VolumeUSD: 1000})
+	}
+	rows[len(rows)-1].Low = 90
+	if err := st.UpsertCandles(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestRecordLiquidationDrivesAlertAndSignals covers the full pipeline the running
 // service uses: RecordLiquidation feeds the engine, the tick timer ends the quiet
 // period, an opposite liquidation confirms the steady signal, and every produced row
 // reaches SQLite with the notification status the alert page shows.
 func TestRecordLiquidationDrivesAlertAndSignals(t *testing.T) {
 	ctx := context.Background()
-	svc, _, _ := alertTestService(t, "alerts.db")
+	svc, _, st := alertTestService(t, "alerts.db")
 	base := time.Now().UTC().Truncate(time.Second)
+	seedAlertRadarCandles(t, st, "BTCUSDT", base)
 	svc.alerts.engine.SetClock(func() time.Time { return base })
 	svc.alerts.applyWatch(
 		[]alert.WatchEntry{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 1e9}},
@@ -83,6 +101,9 @@ func TestRecordLiquidationDrivesAlertAndSignals(t *testing.T) {
 		t.Fatalf("signal counters = %+v rows=%+v", signals, signals.Rows)
 	}
 	for _, row := range signals.Rows {
+		if !row.FilterApplied || row.Phase != domain.AlertPhaseFired || row.PeakDecayRatio >= .4 || !row.AbsorptionConfirmed {
+			t.Fatalf("signal was not produced by the radar: %+v", row)
+		}
 		// Telegram is not configured, so both signals are stored as muted.
 		if row.NotifyStatus != "muted" {
 			t.Fatalf("signal %s notify status = %q", row.ID, row.NotifyStatus)
@@ -162,8 +183,9 @@ func TestAlertPagesUseBTCGammaOnlyForBTC(t *testing.T) {
 
 func TestAlertHistoryKeepsGammaDecisionFromSignalTime(t *testing.T) {
 	ctx := context.Background()
-	svc, _, _ := alertTestService(t, "alert-gamma-history.db")
+	svc, _, st := alertTestService(t, "alert-gamma-history.db")
 	base := time.Now().UTC().Truncate(time.Second)
+	seedAlertRadarCandles(t, st, "BTCUSDT", base)
 	svc.alerts.engine.SetClock(func() time.Time { return base })
 	svc.alerts.applyWatch(
 		[]alert.WatchEntry{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 1e9}},
@@ -227,6 +249,7 @@ func TestAlertChartSignalsReplayCurrentStrategySettings(t *testing.T) {
 	ctx := context.Background()
 	svc, _, st := alertTestService(t, "chart-current-settings.db")
 	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	seedAlertRadarCandles(t, st, "BTCUSDT", base)
 	if err := st.InsertLiquidation(ctx, alertTestEvent("chart-long", "BTCUSDT", "long", base, 120000)); err != nil {
 		t.Fatal(err)
 	}
@@ -237,6 +260,9 @@ func TestAlertChartSignalsReplayCurrentStrategySettings(t *testing.T) {
 	}
 	if len(view.Alerts) != 1 || len(view.Signals) != 1 || view.Thresholds.BTCUSD != 100000 {
 		t.Fatalf("default chart replay = %+v", view)
+	}
+	if view.Signals[0].Phase != domain.AlertPhaseFired || !view.Signals[0].FilterApplied || view.Signals[0].PeakDecayRatio >= .4 || !view.Signals[0].AbsorptionConfirmed {
+		t.Fatalf("chart replay did not use peak-decay radar: %+v", view.Signals[0])
 	}
 
 	if _, err = svc.SaveAlertStrategySettings(ctx, domain.AlertStrategySettings{WindowMinutes: 3, BTCUSD: 200000, ETHUSD: 200000, OtherUSD: 100000}); err != nil {
@@ -307,6 +333,7 @@ func TestAlertSettingsRoundTripAndRestartReplay(t *testing.T) {
 	ctx := context.Background()
 	stored, cfg, st := alertTestService(t, "settings.db")
 	base := time.Now().UTC().Truncate(time.Second)
+	seedAlertRadarCandles(t, st, "BTCUSDT", base)
 	stored.alerts.engine.SetClock(func() time.Time { return base })
 	stored.alerts.applyWatch([]alert.WatchEntry{{Symbol: "BTCUSDT", Rank: 1}},
 		[]domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1, UpdatedAt: base}}, base, "")

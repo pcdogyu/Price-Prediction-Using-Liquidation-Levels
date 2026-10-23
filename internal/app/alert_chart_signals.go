@@ -71,6 +71,14 @@ func (rtm *alertRuntime) alertChartSignalsWithConfigAt(ctx context.Context, symb
 	if err != nil {
 		return view, err
 	}
+	period := cfg.VWAPPeriodMinutes
+	if period <= 0 {
+		period = 240
+	}
+	candles, err := source.CandlesRange(ctx, symbol, since.Add(-time.Duration(period+2)*time.Minute), generatedAt.Add(time.Minute))
+	if err != nil {
+		return view, err
+	}
 
 	replay := alert.New(cfg)
 	replay.Watch([]alert.WatchEntry{{Symbol: symbol, Rank: 1}})
@@ -85,13 +93,17 @@ func (rtm *alertRuntime) alertChartSignalsWithConfigAt(ctx context.Context, symb
 		}
 	}
 	for _, event := range events {
+		market := buildLiquidationMarketContext(event, cfg, candles)
+		replay.UpdateMarketContext(symbol, market)
 		collect(replay.Tick(event.EventTime))
-		collect(replay.Observe(event))
+		collect(replay.ObserveWithContext(event, market))
 	}
 	// Let the final open cycle reach its current quiet/confirmation deadline so
 	// a chart opened after a quiet period shows the same pending aggressive signal
 	// that the live engine would emit on its next tick.
 	if len(events) > 0 {
+		market := buildLiquidationMarketContext(domain.LiquidationEvent{Symbol: symbol, EventTime: generatedAt}, cfg, candles)
+		replay.UpdateMarketContext(symbol, market)
 		collect(replay.Tick(view.GeneratedAt))
 	}
 

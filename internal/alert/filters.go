@@ -137,14 +137,14 @@ func ATR(candles []domain.Candle, period int) float64 {
 	return total / float64(count)
 }
 
-func candleAbsorbed(candle domain.Candle, price, wickRatio float64) bool {
+// candleAbsorbed confirms that the current candle is absorbing the side of the
+// cascade that was liquidated. Long liquidations use a lower wick; short
+// liquidations use the mirrored upper wick.
+func candleAbsorbed(side string, candle domain.Candle, price, wickRatio float64) bool {
 	if price <= 0 {
 		price = candle.Close
 	}
-	if candle.Low <= 0 {
-		return false
-	}
-	if price < candle.Low {
+	if candle.Low <= 0 || candle.High < candle.Low {
 		return false
 	}
 	rangeSize := candle.High - candle.Low
@@ -154,6 +154,9 @@ func candleAbsorbed(candle domain.Candle, price, wickRatio float64) bool {
 	close := candle.Close
 	if close <= 0 {
 		close = price
+	}
+	if strings.EqualFold(strings.TrimSpace(side), "short") {
+		return (candle.High-close)/rangeSize >= wickRatio
 	}
 	return (close-candle.Low)/rangeSize >= wickRatio
 }

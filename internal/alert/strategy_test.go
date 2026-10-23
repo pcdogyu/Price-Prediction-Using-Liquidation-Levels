@@ -228,13 +228,18 @@ func TestDroppedSymbolStopsTracking(t *testing.T) {
 // TestSeedReplayIsIdempotent proves a restart replay reproduces the same row IDs, so
 // the store can drop duplicates instead of notifying twice.
 func TestSeedReplayIsIdempotent(t *testing.T) {
-	first := testEngine(t, Defaults(), "BTCUSDT")
-	second := testEngine(t, Defaults(), "BTCUSDT")
+	cfg := Defaults()
+	cfg.VWAPPeriodMinutes = 3
+	cfg.ATRPeriod = 2
+	first := testEngine(t, cfg, "BTCUSDT")
+	second := testEngine(t, cfg, "BTCUSDT")
 	trigger := testEvent("BTCUSDT", "long", testStart, 400000)
 	a, b := first.Seed([]domain.LiquidationEvent{trigger}), second.Seed([]domain.LiquidationEvent{trigger})
 	if len(a.Alerts) != 1 || len(b.Alerts) != 1 || a.Alerts[0].ID != b.Alerts[0].ID {
 		t.Fatalf("warning IDs must be deterministic: %v vs %v", a.Alerts, b.Alerts)
 	}
+	first.UpdateMarketContext("BTCUSDT", radarContext(103, radarCandles(100, 101, 102)))
+	second.UpdateMarketContext("BTCUSDT", radarContext(103, radarCandles(100, 101, 102)))
 	ta := first.Tick(testStart.Add(10 * time.Minute))
 	tb := second.Tick(testStart.Add(10 * time.Minute))
 	if len(ta.Signals) != 1 || len(tb.Signals) != 1 || ta.Signals[0].ID != tb.Signals[0].ID {
@@ -280,6 +285,11 @@ func radarContext(price float64, candles []domain.Candle) MarketContext {
 	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current}
 }
 
+func radarShortContext(price float64, candles []domain.Candle) MarketContext {
+	current := domain.Candle{Time: testStart, Open: price - 1, High: price + 2, Low: price - 1, Close: price}
+	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current}
+}
+
 func TestRadarArmedPeakDecayAndHighZoneShortEntry(t *testing.T) {
 	cfg := Defaults()
 	cfg.Window = 3 * time.Minute
@@ -289,7 +299,7 @@ func TestRadarArmedPeakDecayAndHighZoneShortEntry(t *testing.T) {
 	cfg.PeakDecayWindow = 30 * time.Second
 	engine := testEngine(t, cfg, "SOLUSDT")
 	candles := radarCandles(100, 101, 102)
-	ctx := radarContext(103, candles)
+	ctx := radarShortContext(103, candles)
 	first := testEvent("SOLUSDT", "short", testStart, 150)
 	first.Price = 103
 	armed := engine.ObserveWithContext(first, ctx)
@@ -302,6 +312,37 @@ func TestRadarArmedPeakDecayAndHighZoneShortEntry(t *testing.T) {
 	fired := engine.Tick(testStart.Add(31 * time.Second))
 	if len(fired.Signals) != 1 || fired.Signals[0].Side != "short" || !fired.Signals[0].OpenAllowed || fired.Signals[0].PeakDecayRatio >= .4 {
 		t.Fatalf("decayed high-zone short signal=%+v", fired.Signals)
+	}
+}
+
+func TestRadarContextUnavailableNeverFallsBackToStaticSignal(t *testing.T) {
+	cfg := Defaults()
+	cfg.OtherUSD = 100
+	cfg.VWAPPeriodMinutes = 3
+	cfg.ATRPeriod = 2
+	engine := testEngine(t, cfg, "SOLUSDT")
+	first := testEvent("SOLUSDT", "long", testStart, 150)
+	first.Price = 99
+	armed := engine.ObserveWithContext(first, MarketContext{})
+	if len(armed.Signals) != 0 || len(armed.Alerts) != 1 || armed.Alerts[0].Phase != domain.AlertPhaseArmed {
+		t.Fatalf("missing market context must remain ARMED: %+v", armed)
+	}
+	if got := engine.Tick(testStart.Add(31 * time.Second)); len(got.Signals) != 0 {
+		t.Fatalf("missing market context must not create a static signal: %+v", got.Signals)
+	}
+	engine.UpdateMarketContext("SOLUSDT", radarContext(103, radarCandles(100, 101, 102)))
+	fired := engine.Tick(testStart.Add(62 * time.Second))
+	if len(fired.Signals) != 1 || fired.Signals[0].Phase != domain.AlertPhaseFired || fired.Signals[0].PeakDecayRatio >= .4 || !fired.Signals[0].AbsorptionConfirmed {
+		t.Fatalf("fresh context should allow the decayed signal: %+v", fired.Signals)
+	}
+}
+
+func TestRadarShortUsesUpperWickAbsorption(t *testing.T) {
+	if !candleAbsorbed("short", domain.Candle{High: 110, Low: 100, Close: 106}, 106, .35) {
+		t.Fatal("short cascade should accept a clear upper wick")
+	}
+	if candleAbsorbed("short", domain.Candle{High: 110, Low: 100, Close: 109}, 109, .35) {
+		t.Fatal("short cascade should reject a candle without upper absorption")
 	}
 }
 

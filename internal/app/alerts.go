@@ -272,7 +272,16 @@ func (rtm *alertRuntime) tickLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			rtm.persist(context.WithoutCancel(ctx), rtm.engine.Tick(time.Now().UTC()), true)
+			now := time.Now().UTC()
+			storeCtx := context.WithoutCancel(ctx)
+			if rtm.service != nil {
+				cfg := rtm.engine.Config()
+				for _, symbol := range rtm.engine.RadarSymbols() {
+					market := rtm.service.liquidationMarketContext(storeCtx, domain.LiquidationEvent{Symbol: symbol, EventTime: now}, cfg)
+					rtm.engine.UpdateMarketContext(symbol, market)
+				}
+			}
+			rtm.persist(storeCtx, rtm.engine.Tick(now), true)
 		}
 	}
 }
@@ -364,15 +373,13 @@ func topSymbolEntries(rows []exchange.TopSymbol) []alert.WatchEntry {
 func (rtm *alertRuntime) observe(ctx context.Context, event domain.LiquidationEvent) {
 	if rtm.service != nil {
 		market := rtm.service.liquidationMarketContext(ctx, event, rtm.engine.Config())
-		if market.Ready {
-			rtm.persist(ctx, rtm.engine.ObserveWithContext(event, market), true)
-			return
-		}
+		// A missing candle window is a data-readiness problem. Keep the cycle
+		// ARMED and let the tick loop retry the current market context; never
+		// fall back to the legacy threshold-first signal path.
+		rtm.persist(ctx, rtm.engine.ObserveWithContext(event, market), true)
+		return
 	}
-	// A missing candle window is a data-readiness problem, not a reason to
-	// rewrite legacy alert history or make a false filter decision. Once the
-	// 240-minute window is available, new events use the radar path above.
-	rtm.persist(ctx, rtm.engine.Observe(event), true)
+	rtm.persist(ctx, rtm.engine.ObserveWithContext(event, alert.MarketContext{}), true)
 }
 
 // persist stores the rows an engine call produced and hands the enabled categories

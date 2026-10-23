@@ -22,26 +22,54 @@ func (s *Service) liquidationMarketContext(ctx context.Context, event domain.Liq
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
+	event.EventTime = at
 	from := at.Add(-time.Duration(period+2) * time.Minute)
 	to := at.Add(time.Minute)
 	rows, err := s.store.CandlesRange(ctx, strings.ToUpper(strings.TrimSpace(event.Symbol)), from, to)
 	if err != nil || len(rows) == 0 {
 		return alert.MarketContext{Price: event.Price}
 	}
+	return buildLiquidationMarketContext(event, cfg, rows)
+}
+
+// buildLiquidationMarketContext is the allocation-local part of the live
+// context builder. Historical replay uses it with one candle query per symbol
+// instead of issuing a SQLite range query for every liquidation event.
+func buildLiquidationMarketContext(event domain.LiquidationEvent, cfg alert.Config, rows []domain.Candle) alert.MarketContext {
+	period := cfg.VWAPPeriodMinutes
+	if period <= 0 {
+		period = 240
+	}
 
 	price := event.Price
+	at := event.EventTime.UTC()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	bucket := at.Truncate(time.Minute)
+	// The replay range can contain candles after the event. Only candles up to
+	// the event minute are visible to that event's decision.
+	end := len(rows)
+	for end > 0 && rows[end-1].Time.After(bucket) {
+		end--
+	}
+	if end == 0 {
+		return alert.MarketContext{Price: price}
+	}
+	rows = append([]domain.Candle(nil), rows[:end]...)
 	if price <= 0 {
 		price = rows[len(rows)-1].Close
 	}
-	bucket := at.Truncate(time.Minute)
 	last := len(rows) - 1
 	if rows[last].Time.Equal(bucket) {
-		rows[last].Close = price
-		if rows[last].High < price {
-			rows[last].High = price
-		}
-		if rows[last].Low <= 0 || rows[last].Low > price {
-			rows[last].Low = price
+		if price > 0 {
+			rows[last].Close = price
+			if rows[last].High < price {
+				rows[last].High = price
+			}
+			if rows[last].Low <= 0 || rows[last].Low > price {
+				rows[last].Low = price
+			}
 		}
 	} else if rows[last].Time.Before(bucket) {
 		rows = append(rows, domain.Candle{Exchange: "binance", Symbol: event.Symbol, Time: bucket, Open: price, High: price, Low: price, Close: price})
