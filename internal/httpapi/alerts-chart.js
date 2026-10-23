@@ -243,13 +243,19 @@
       if (!finite(deltaUSD)) continue;
       values.push({ time: new Date(at).toISOString(), t: at, long_usd: longUSD, short_usd: shortUSD, delta_usd: deltaUSD,
         cumulative_delta_usd: finite(row.cumulative_delta_usd) ? row.cumulative_delta_usd : NaN,
+        cumulative_long_usd: finite(row.cumulative_long_usd) ? row.cumulative_long_usd : NaN,
+        cumulative_short_usd: finite(row.cumulative_short_usd) ? row.cumulative_short_usd : NaN,
         count: Number.isInteger(row.count) && row.count >= 0 ? row.count : 0 });
     }
     values.sort((a, b) => a.t - b.t);
-    let cumulative = 0;
+    let cumulative = 0, cumulativeLong = 0, cumulativeShort = 0;
     for (const point of values) {
       cumulative = finite(point.cumulative_delta_usd) ? point.cumulative_delta_usd : cumulative + point.delta_usd;
+      cumulativeLong = finite(point.cumulative_long_usd) ? point.cumulative_long_usd : cumulativeLong + point.long_usd;
+      cumulativeShort = finite(point.cumulative_short_usd) ? point.cumulative_short_usd : cumulativeShort + point.short_usd;
       point.cumulative_delta_usd = cumulative;
+      point.cumulative_long_usd = cumulativeLong;
+      point.cumulative_short_usd = cumulativeShort;
     }
     return values;
   }

@@ -208,7 +208,7 @@ test('normaliseLiquidationDelta keeps signed short-minus-long buckets ordered', 
     { time: new Date(180000).toISOString(), long_usd: -1, short_usd: 1 }
   ];
   const points = K.normaliseLiquidationDelta(rows);
-  assert.deepEqual(points.map(point => [point.t, point.delta_usd, point.cumulative_delta_usd, point.count]), [[0, 150, 150, 2], [120000, -500, -350, 4]]);
+  assert.deepEqual(points.map(point => [point.t, point.delta_usd, point.cumulative_delta_usd, point.cumulative_long_usd, point.cumulative_short_usd, point.count]), [[0, 150, 150, 100, 250, 2], [120000, -500, -350, 900, 550, 4]]);
   assert.deepEqual(K.normaliseLiquidationDelta(null), []);
 });
 
@@ -219,6 +219,15 @@ test('normaliseLiquidationDelta preserves server cumulative values and carries z
     { time: new Date(180000).toISOString(), long_usd: 50, short_usd: 0, delta_usd: -50, cumulative_delta_usd: 225, count: 1 }
   ]);
   assert.deepEqual(points.map(point => point.cumulative_delta_usd), [150, 275, 225]);
+  assert.deepEqual(points.map(point => [point.cumulative_long_usd, point.cumulative_short_usd]), [[100, 250], [100, 250], [150, 250]]);
+});
+
+test('the chart exposes cumulative long and short liquidation amounts in hover displays', () => {
+  assert.match(chartApp, /cumulative_long_usd/);
+  assert.match(chartApp, /cumulative_short_usd/);
+  assert.match(chartApp, /累计多单爆仓额/);
+  assert.match(chartApp, /累计空单爆仓额/);
+  assert.match(chartApp, /liquidationTotalsText/);
 });
 
 test('liquidationDeltaCumulativeWindow always returns the latest aligned 48 hours', () => {

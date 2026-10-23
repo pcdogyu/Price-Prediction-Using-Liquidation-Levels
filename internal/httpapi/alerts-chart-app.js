@@ -112,6 +112,26 @@
     return (value > 0 ? '+' : '') + money(value);
   }
 
+  function liquidationTotalsAt(at) {
+    const target = K.bucketStart(at, K.LIQUIDATION_DELTA_INTERVAL_MS);
+    const window = state.liquidationDeltaWindow;
+    if (!finite(target) || !window || target < window.start || target >= window.end) return null;
+    let point = null;
+    for (const candidate of state.liquidationDelta) {
+      if (candidate.t > target) break;
+      point = candidate;
+    }
+    if (!point || !finite(point.cumulative_long_usd) || !finite(point.cumulative_short_usd)) return null;
+    return { longUSD: point.cumulative_long_usd, shortUSD: point.cumulative_short_usd };
+  }
+
+  function liquidationTotalsText(at) {
+    const totals = liquidationTotalsAt(at);
+    if (!totals) return '';
+    return '<br>累计多单爆仓额 ' + escape(money(totals.longUSD)) +
+      '<br>累计空单爆仓额 ' + escape(money(totals.shortUSD));
+  }
+
   function liquidationDeltaRange() {
     return K.liquidationDeltaCumulativeWindow(Date.now(), K.LIQUIDATION_DELTA_INTERVAL_MS, K.LIQUIDATION_DELTA_CUMULATIVE_HOURS);
   }
@@ -923,7 +943,11 @@
           if (gap < distance) { closest = point; distance = gap; }
         }
         state.liquidationDeltaHover = closest;
-        canvas.title = clock(closest.time) + '\n累计净多空 ' + deltaText(closest.cumulative_delta_usd) + '\n本10分钟变化 ' + deltaText(closest.delta_usd);
+        const totals = liquidationTotalsAt(closest.t);
+        canvas.title = clock(closest.time) + '\n累计净多空 ' + deltaText(closest.cumulative_delta_usd) +
+          '\n累计多单爆仓额 ' + (totals ? money(totals.longUSD) : '—') +
+          '\n累计空单爆仓额 ' + (totals ? money(totals.shortUSD) : '—') +
+          '\n本10分钟变化 ' + deltaText(closest.delta_usd);
       } else {
         state.liquidationDeltaHover = null;
         canvas.title = '';
@@ -949,6 +973,7 @@
     const tooltip = $('kline-tooltip'), wrap = $('kline-wrap');
     if (!state.hoverMarker || !dims) { tooltip.hidden = true; return; }
     const marker = state.hoverMarker;
+    const cumulativeTotals = liquidationTotalsText(marker.type === 'trade' ? marker.time : marker.first);
     if (marker.type === 'trade') {
       const operationLabels = { open: '开仓', close: '平仓', take_profit: '止盈', stop_loss: '止损' };
       const sourceLabels = { manual: '手动', auto: '自动', exchange: '成交' };
@@ -961,16 +986,16 @@
         (marker.quantity ? '<br>数量 ' + escape(marker.quantity) : '') +
          (marker.notional_usdt ? '<br>名义USDT金额 ' + escape(marker.notional_usdt) : '') +
          (marker.margin_usdt ? '<br>保证金USDT金额 ' + escape(marker.margin_usdt) : '') +
-        (marker.order_id ? '<br>订单号 ' + escape(marker.order_id) : '');
+        (marker.order_id ? '<br>订单号 ' + escape(marker.order_id) : '') + cumulativeTotals;
     } else if (marker.type === 'alert') {
       tooltip.innerHTML = '<b>预警 · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>清算方向 ' +
         escape(marker.liquidationSide === 'short' ? '空单爆仓' : '多单爆仓') + '<br>参考价 ' + escape(priceText(marker.price)) +
-        '<br>预警爆仓额 ' + escape(money(marker.notionalUSD));
+        '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + cumulativeTotals;
     } else {
       tooltip.innerHTML = '<b>' + escape(marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>参考价 ' + escape(priceText(marker.price)) +
-        '<br>预警爆仓额 ' + escape(money(marker.notionalUSD));
+        '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + cumulativeTotals;
     }
     tooltip.hidden = false;
     tooltip.style.left = Math.max(6, Math.min(wrap.clientWidth - tooltip.offsetWidth - 6, at.x + 14)) + 'px';
