@@ -284,6 +284,41 @@ func TestVWAPZoneBoundsUseSymmetricDonchianGates(t *testing.T) {
 	}
 }
 
+func TestRadarMiddleZoneBlocksBothOpeningDirections(t *testing.T) {
+	cfg := Defaults()
+	cfg.VWAPPeriodMinutes = 3
+	cfg.VWAPRangeMinutes = 3
+	candles := radarCandles(98, 100, 102)
+	ctx := radarContext(100, candles)
+
+	long := filterDecision(cfg, "long", ctx, symbolState{}, 100)
+	if long.OpenAllowed || !long.CloseAllowed {
+		t.Fatalf("middle zone must keep long liquidation close-only: %+v", long)
+	}
+	short := filterDecision(cfg, "short", ctx, symbolState{}, 100)
+	if short.OpenAllowed || !short.CloseAllowed {
+		t.Fatalf("middle zone must keep short liquidation close-only: %+v", short)
+	}
+}
+
+func TestRadarInvalidOpeningZoneFailsClosedForBothDirections(t *testing.T) {
+	cfg := Defaults()
+	cfg.VWAPPeriodMinutes = 3
+	cfg.VWAPRangeMinutes = 3
+	cfg.VWAPDonchianFraction = 0
+	ctx := radarContext(100, radarCandles(98, 100, 102))
+
+	for _, side := range []string{"long", "short"} {
+		decision := filterDecision(cfg, side, ctx, symbolState{}, 100)
+		if decision.OpenAllowed || !decision.CloseAllowed {
+			t.Fatalf("invalid VWAP zone must fail closed for %s liquidation: %+v", side, decision)
+		}
+		if decision.Reason != "vwap_zone_unavailable_"+side+"_liquidation_close_only" {
+			t.Fatalf("invalid VWAP zone reason for %s = %q", side, decision.Reason)
+		}
+	}
+}
+
 func radarCandles(closes ...float64) []domain.Candle {
 	out := make([]domain.Candle, 0, len(closes))
 	for i, close := range closes {

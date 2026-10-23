@@ -370,10 +370,15 @@
       if (signalReplayWindowHours > 0) query.set('window_hours', String(signalReplayWindowHours));
       const packet = await json('api/v1/alerts/chart-signals?' + query.toString());
       state.signals = (packet.signals || []).map(row => ({ id: row.id, t: Date.parse(row.created_at), kind: row.kind, side: row.side,
-        reference_price: row.reference_price, alert_notional_usd: row.alert_notional_usd, notify_status: 'replayed' })).filter(row => Number.isFinite(row.t));
+        reference_price: row.reference_price, alert_notional_usd: row.alert_notional_usd,
+        filter_applied: row.filter_applied === true, open_allowed: row.open_allowed === true,
+        close_allowed: row.close_allowed === true, filter_reason: row.filter_reason || '',
+        notify_status: 'replayed' })).filter(row => Number.isFinite(row.t));
       state.alerts = (packet.alerts || []).map(row => ({ id: row.id, t: Date.parse(row.triggered_at), side: row.trade_side || row.side,
         liquidation_side: row.side, reference_price: row.reference_price, notional_usd: row.notional_usd,
-        threshold_usd: row.threshold_usd, status: row.status })).filter(row => Number.isFinite(row.t));
+        threshold_usd: row.threshold_usd, status: row.status, filter_applied: row.filter_applied === true,
+        open_allowed: row.open_allowed === true, close_allowed: row.close_allowed === true,
+        filter_reason: row.filter_reason || '' })).filter(row => Number.isFinite(row.t));
       const thresholds = packet.thresholds || {};
       state.radarConfig = {
         periodMinutes: Number(thresholds.vwap_period_minutes) || 240,
@@ -988,12 +993,14 @@
          (marker.margin_usdt ? '<br>保证金USDT金额 ' + escape(marker.margin_usdt) : '') +
         (marker.order_id ? '<br>订单号 ' + escape(marker.order_id) : '') + cumulativeTotals;
     } else if (marker.type === 'alert') {
-      tooltip.innerHTML = '<b>预警 · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +
+      const filterStatus = marker.filterApplied ? (marker.openAllowed ? '允许开仓' : marker.closeAllowed ? '仅平仓' : '未放行') : '';
+      tooltip.innerHTML = '<b>预警 · ' + escape(marker.side === 'short' ? '做空' : '做多') + (filterStatus ? ' · ' + filterStatus : '') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>清算方向 ' +
         escape(marker.liquidationSide === 'short' ? '空单爆仓' : '多单爆仓') + '<br>参考价 ' + escape(priceText(marker.price)) +
         '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + cumulativeTotals;
     } else {
-      tooltip.innerHTML = '<b>' + escape(marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + escape(marker.side === 'short' ? '做空' : '做多') + '</b><br>' +
+      const filterStatus = marker.filterApplied ? (marker.openAllowed ? '允许开仓' : marker.closeAllowed ? '仅平仓' : '未放行') : '';
+      tooltip.innerHTML = '<b>' + escape(marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + escape(marker.side === 'short' ? '做空' : '做多') + (filterStatus ? ' · ' + filterStatus : '') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>参考价 ' + escape(priceText(marker.price)) +
         '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + cumulativeTotals;
     }

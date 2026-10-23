@@ -32,6 +32,8 @@
     price_absorption_not_confirmed: '价格尚未止跌吸收',
     market_context_unavailable: '市场 K 线数据未就绪',
     vwap_zscore_unavailable: 'VWAP Z-Score 不可用',
+    vwap_zone_unavailable_long_liquidation_close_only: 'VWAP 分区不可用：多单爆仓仅允许平仓',
+    vwap_zone_unavailable_short_liquidation_close_only: 'VWAP 分区不可用：空单爆仓仅允许平仓',
     donchian_range_unavailable_long_liquidation_close_only: 'Donchian 大周期数据不足：多单爆仓仅允许平仓',
     donchian_range_unavailable_short_liquidation_close_only: 'Donchian 大周期数据不足：空单爆仓仅允许平仓',
     vwap_donchian_zone_overlap_long_liquidation_close_only: 'VWAP/Donchian 区域重叠：多单爆仓仅允许平仓',

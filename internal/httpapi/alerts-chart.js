@@ -194,7 +194,13 @@
   // side of the historical VWAP/Donchian zone. Missing or overlapping opening
   // boundaries fail closed because the chart must not suggest an unsafe entry.
   function vwapSignalAllowed(signal, zone) {
-    if (!signal || !zone || !finite(zone.red_zone_lower) || !finite(zone.green_zone_upper) || zone.boundary_overlap) return false;
+    if (!signal) return false;
+    // Chart replay carries the exact server-side filter decision made for the
+    // signal. Prefer it over client-side reconstruction, which may use a
+    // different display interval (for example 3m instead of the radar's 1m
+    // candles) and could otherwise disagree about the middle close-only band.
+    if (signal.filter_applied === true) return signal.open_allowed === true;
+    if (!zone || !finite(zone.red_zone_lower) || !finite(zone.green_zone_upper) || zone.boundary_overlap) return false;
     const price = finite(signal.reference_price) && signal.reference_price > 0 ? signal.reference_price : zone.current_price;
     if (!finite(price) || price <= 0) return false;
     if (signal.side === 'short') return price >= zone.red_zone_lower;
@@ -285,14 +291,23 @@
       const key = bucket + '|' + kind + '|' + side;
       const group = groups.get(key);
       if (group) {
+        const newer = signal.t >= group.latest;
         group.count += 1;
         group.latest = Math.max(group.latest, signal.t);
         group.notionalUSD += finite(signal.alert_notional_usd) ? signal.alert_notional_usd : 0;
+        if (newer) {
+          group.openAllowed = signal.open_allowed === true;
+          group.closeAllowed = signal.close_allowed === true;
+          group.filterApplied = signal.filter_applied === true;
+          group.filterReason = signal.filter_reason || '';
+        }
         continue;
       }
       groups.set(key, { bucket, kind, side, count: 1, first: signal.t, latest: signal.t,
         price: finite(signal.reference_price) && signal.reference_price > 0 ? signal.reference_price : 0,
-        notionalUSD: finite(signal.alert_notional_usd) ? signal.alert_notional_usd : 0 });
+        notionalUSD: finite(signal.alert_notional_usd) ? signal.alert_notional_usd : 0,
+        openAllowed: signal.open_allowed === true, closeAllowed: signal.close_allowed === true,
+        filterApplied: signal.filter_applied === true, filterReason: signal.filter_reason || '' });
     }
     return Array.from(groups.values()).sort((a, b) => a.bucket - b.bucket);
   }
@@ -319,17 +334,26 @@
       const key = bucket + '|' + alert.side;
       const group = groups.get(key);
       if (group) {
+        const newer = alert.t >= group.latest;
         group.count += 1;
         group.latest = Math.max(group.latest, alert.t);
         group.notionalUSD += finite(alert.notional_usd) ? alert.notional_usd : 0;
         if (alert.reference_price > 0) group.price = alert.reference_price;
         if (alert.liquidation_side === 'short' || alert.liquidation_side === 'long') group.liquidationSide = alert.liquidation_side;
+        if (newer) {
+          group.openAllowed = alert.open_allowed === true;
+          group.closeAllowed = alert.close_allowed === true;
+          group.filterApplied = alert.filter_applied === true;
+          group.filterReason = alert.filter_reason || '';
+        }
         continue;
       }
       groups.set(key, { type: 'alert', bucket, side: alert.side, count: 1, first: alert.t, latest: alert.t,
         price: finite(alert.reference_price) && alert.reference_price > 0 ? alert.reference_price : 0,
         liquidationSide: alert.liquidation_side || alert.side,
-        notionalUSD: finite(alert.notional_usd) ? alert.notional_usd : 0 });
+        notionalUSD: finite(alert.notional_usd) ? alert.notional_usd : 0,
+        openAllowed: alert.open_allowed === true, closeAllowed: alert.close_allowed === true,
+        filterApplied: alert.filter_applied === true, filterReason: alert.filter_reason || '' });
     }
     return Array.from(groups.values()).sort((a, b) => a.bucket - b.bucket);
   }

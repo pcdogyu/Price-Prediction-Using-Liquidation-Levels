@@ -253,18 +253,25 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 		rangeHigh, rangeLow, rangeReady = DonchianRange(ctx.Candles, cfg.VWAPRangeMinutes)
 	}
 	d.DonchianHigh, d.DonchianLow, d.DonchianReady = rangeHigh, rangeLow, rangeReady
+	zoneReady := false
 	if rangeReady {
-		d.GreenZoneUpper, d.RedZoneLower, d.BoundaryOverlap, _ = VWAPZoneBounds(cfg, d.VWAP, d.Sigma, rangeHigh, rangeLow)
+		d.GreenZoneUpper, d.RedZoneLower, d.BoundaryOverlap, zoneReady = VWAPZoneBounds(cfg, d.VWAP, d.Sigma, rangeHigh, rangeLow)
 	}
+	// Both directions must fail closed when the opening boundaries are not
+	// computable. In particular, treating a missing red boundary as zero would
+	// make every positive price look like a valid short-entry price.
+	openingZoneReady := rangeReady && zoneReady && d.GreenZoneUpper > 0 && d.RedZoneLower > 0
 	// High: short-liquidation opens short; long-liquidation only closes short.
 	// Middle: neither side opens; the liquidation direction may close the
 	// profitable opposite position. Low is the mirror image for long entries.
 	side = strings.ToLower(strings.TrimSpace(side))
 	if side == "long" {
-		d.OpenAllowed = rangeReady && !d.BoundaryOverlap && price <= d.GreenZoneUpper
+		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && price <= d.GreenZoneUpper
 		d.CloseAllowed = !d.OpenAllowed
 		if !rangeReady {
 			d.Reason = "donchian_range_unavailable_long_liquidation_close_only"
+		} else if !zoneReady {
+			d.Reason = "vwap_zone_unavailable_long_liquidation_close_only"
 		} else if d.BoundaryOverlap {
 			d.Reason = "vwap_donchian_zone_overlap_long_liquidation_close_only"
 		} else if d.OpenAllowed {
@@ -275,10 +282,12 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 			d.Reason = "neutral_zscore_long_liquidation_close_only"
 		}
 	} else if side == "short" {
-		d.OpenAllowed = rangeReady && !d.BoundaryOverlap && price >= d.RedZoneLower
+		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && price >= d.RedZoneLower
 		d.CloseAllowed = !d.OpenAllowed
 		if !rangeReady {
 			d.Reason = "donchian_range_unavailable_short_liquidation_close_only"
+		} else if !zoneReady {
+			d.Reason = "vwap_zone_unavailable_short_liquidation_close_only"
 		} else if d.BoundaryOverlap {
 			d.Reason = "vwap_donchian_zone_overlap_short_liquidation_close_only"
 		} else if d.OpenAllowed {

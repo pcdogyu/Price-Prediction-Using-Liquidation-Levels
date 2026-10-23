@@ -173,6 +173,21 @@ test('VWAP signal filtering uses both effective opening boundaries', () => {
   assert.equal(K.vwapSignalAllowed(signal('overlap', 1000, 'steady', 'long', 82050), { ...zone, boundary_overlap: true }), false);
 });
 
+test('server-side close-only decisions override display-interval reconstruction', () => {
+  const zone = { green_zone_upper: 82525, red_zone_lower: 83575, boundary_overlap: false, current_price: 83000 };
+  assert.equal(K.vwapSignalAllowed({ filter_applied: true, open_allowed: false, side: 'long', reference_price: 82050 }, zone), false);
+  assert.equal(K.vwapSignalAllowed({ filter_applied: true, open_allowed: false, side: 'short', reference_price: 84144 }, zone), false);
+  assert.equal(K.vwapSignalAllowed({ filter_applied: true, open_allowed: true, side: 'long', reference_price: 82050 }, zone), true);
+});
+
+test('markerGroups retain the server-side opening filter decision', () => {
+  const grouped = K.markerGroups([{ ...signal('close-only', 1500), filter_applied: true, open_allowed: false, close_allowed: true, filter_reason: 'neutral_zone' }], 1000);
+  assert.equal(grouped[0].filterApplied, true);
+  assert.equal(grouped[0].openAllowed, false);
+  assert.equal(grouped[0].closeAllowed, true);
+  assert.equal(grouped[0].filterReason, 'neutral_zone');
+});
+
 test('niceTicks stays inside the range and terminates', () => {
   assert.deepEqual(K.niceTicks(0, 10, 5), [0, 2, 4, 6, 8, 10]);
   assert.deepEqual(K.niceTicks(5, 5, 5), []);
