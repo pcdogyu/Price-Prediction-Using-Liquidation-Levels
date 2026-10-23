@@ -1079,6 +1079,7 @@
     window.addEventListener('resize', resize);
     window.addEventListener('themechange', () => { palette(); draw(); drawLiquidationDelta(); });
     if (window.ResizeObserver) new ResizeObserver(resize).observe($('kline-wrap'));
+    resizeLiquidationDelta();
     bindLiquidationDelta();
     if (window.ResizeObserver) new ResizeObserver(resizeLiquidationDelta).observe($('liquidation-delta-wrap'));
   }
