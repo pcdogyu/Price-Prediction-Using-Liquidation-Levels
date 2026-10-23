@@ -999,52 +999,100 @@ const tvbotHTML = `<!doctype html>
       width: min(260px, 60vw);
       min-width: 180px;
     }
-    .coinpair-cooldown-settings {
+    .coinpair-filter-combined-card {
+      display: block;
+    }
+    .coinpair-filter-parameter-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .coinpair-filter-parameter {
+      min-width: 0;
+    }
+    .coinpair-filter-parameter + .coinpair-filter-parameter {
+      padding-left: 16px;
+      border-left: 1px solid var(--line);
+    }
+    .coinpair-filter-parameter .coinpair-filter-actions {
       justify-content: flex-start;
+      margin-top: 10px;
+    }
+    .coinpair-filter-parameter .coinpair-filter-list {
+      flex: none;
+      margin-top: 10px;
+      padding-top: 10px;
+    }
+    .coinpair-filter-combined-card > .coinpair-filter-group {
+      margin-top: 14px;
+    }
+    .coinpair-cooldown-settings {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
       align-items: stretch;
-      gap: 12px;
+      gap: 8px;
     }
     .coinpair-cooldown-card {
-      display: flex;
-      flex: 1 1 300px;
-      flex-direction: column;
-      gap: 10px;
-      min-width: 260px;
-      padding: 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "title checkbox"
+        "duration duration";
+      align-items: center;
+      gap: 6px 12px;
+      min-width: 0;
+      padding: 8px 10px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
     }
     .coinpair-cooldown-card h5 {
+      grid-area: title;
       margin: 0;
       color: var(--text);
-      font-size: 14px;
+      font-size: 13px;
     }
     .coinpair-cooldown-card label {
       display: inline-flex;
       align-items: center;
       gap: 7px;
+      margin: 0;
       color: var(--text);
       font-size: 13px;
       font-weight: 700;
     }
     .coinpair-cooldown-card .coinpair-cooldown-checkbox {
-      align-items: flex-start;
-      justify-content: flex-start;
-      line-height: 1.45;
+      grid-area: checkbox;
+      justify-self: end;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+    .coinpair-cooldown-card .coinpair-cooldown-checkbox input {
+      flex: 0 0 auto;
+      width: 16px;
+      min-height: 16px;
     }
     .coinpair-cooldown-card .coinpair-cooldown-duration {
+      grid-area: duration;
       justify-content: space-between;
       font-weight: 600;
     }
     .coinpair-cooldown-submit {
       display: flex;
-      align-items: flex-end;
-      padding-bottom: 12px;
+      align-items: center;
+    }
+    .coinpair-cooldown-submit .btn {
+      width: auto;
+      margin-top: 0;
+      white-space: nowrap;
     }
     .coinpair-cooldown-hours {
-      width: 96px;
-      min-width: 96px;
+      width: 82px;
+      min-width: 82px;
+      min-height: 30px;
+      padding: 5px 7px;
     }
     .coinpair-cooldown-status {
       margin-top: 8px;
@@ -1102,8 +1150,10 @@ const tvbotHTML = `<!doctype html>
       padding: 6px 0;
     }
     .coinpair-cooldown-item {
-      min-width: 190px;
-      padding-right: 34px;
+      flex: 1 1 240px;
+      min-width: 210px;
+      max-width: 420px;
+      padding: 8px 30px 8px 10px;
       border-color: var(--warning-line);
       background: var(--warning-bg);
     }
@@ -1111,14 +1161,15 @@ const tvbotHTML = `<!doctype html>
       display: flex;
       align-items: center;
       gap: 6px;
-      margin-bottom: 5px;
+      margin-bottom: 2px;
     }
     .coinpair-cooldown-meta {
-      display: block;
+      display: inline-block;
+      margin-right: 8px;
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 500;
-      line-height: 1.5;
+      line-height: 1.35;
     }
     .menu-hidden-check {
       display: flex;
@@ -1649,6 +1700,16 @@ const tvbotHTML = `<!doctype html>
       .balance-window-toolbar .balance-window-btn { min-height: 32px; padding: 6px 8px; font-size: 13px; }
       .chart-wrap { min-height: 0; padding: 6px; }
       .section-head { gap: 8px; }
+      .coinpair-filter-parameter-grid { grid-template-columns: 1fr; }
+      .coinpair-filter-parameter + .coinpair-filter-parameter {
+        padding-top: 14px;
+        padding-left: 0;
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+      .coinpair-cooldown-settings { grid-template-columns: 1fr; }
+      .coinpair-cooldown-submit .btn { width: 100%; }
+      .coinpair-cooldown-item { max-width: none; }
     }
   </style>
 </head>
@@ -2219,19 +2280,30 @@ const tvbotHTML = `<!doctype html>
         <span class="muted" id="order-page-info">-</span>
         <button class="btn small" type="button" id="order-next">下一页</button>
       </div>
-      <div class="coinpair-filter-card">
-        <div>
-          <h3>忽略币对关键字</h3>
-          <div class="muted" id="ignored-coinpair-status">当前未启用</div>
-          <div class="muted">不区分大小写，采用包含匹配并忽略常见分隔符；只过滤开仓信号，平仓和系统持仓保护不受影响。</div>
-        </div>
-        <div class="coinpair-filter-actions">
-          <input class="coinpair-filter-input" id="ignored-coinpair" autocomplete="off" spellcheck="false" placeholder="例如 ETH" aria-label="忽略币对关键字">
-          <button class="btn primary" type="button" id="add-ignored-coinpair" disabled>添加过滤</button>
-        </div>
-        <div class="coinpair-filter-group">
-          <h4 class="coinpair-filter-group-title">手动过滤</h4>
-          <div class="coinpair-filter-list" id="ignored-coinpair-list"><span class="muted coinpair-filter-empty">暂无已添加的币对过滤</span></div>
+      <div class="coinpair-filter-card coinpair-filter-combined-card">
+        <div class="coinpair-filter-parameter-grid">
+          <div class="coinpair-filter-parameter">
+            <h3>币对黑名单</h3>
+            <div class="muted" id="ignored-coinpair-status">当前未启用</div>
+            <div class="muted">不区分大小写，采用包含匹配并忽略常见分隔符；只过滤开仓信号，平仓和系统持仓保护不受影响。</div>
+            <div class="coinpair-filter-actions">
+              <input class="coinpair-filter-input" id="ignored-coinpair" autocomplete="off" spellcheck="false" placeholder="例如 ETH" aria-label="币对黑名单关键字">
+              <button class="btn primary" type="button" id="add-ignored-coinpair" disabled>添加黑名单</button>
+            </div>
+            <h4 class="coinpair-filter-group-title">已添加黑名单</h4>
+            <div class="coinpair-filter-list" id="ignored-coinpair-list"><span class="muted coinpair-filter-empty">暂无已添加的币对黑名单</span></div>
+          </div>
+          <div class="coinpair-filter-parameter">
+            <h3>币对白名单</h3>
+            <div class="muted" id="coinpair-whitelist-status">当前未启用</div>
+            <div class="muted">不区分大小写，采用包含匹配并忽略常见分隔符；填写后只执行命中任一关键字的开仓信号，平仓不受影响。例如输入 ETH，可匹配 ETHUSDT、ETHUSDC、ETHFIUSDT、ETHUSDG 等。</div>
+            <div class="coinpair-filter-actions">
+              <input class="coinpair-filter-input" id="coinpair-whitelist-keyword" autocomplete="off" spellcheck="false" placeholder="例如 ETH" aria-label="币对白名单关键字">
+              <button class="btn primary" type="button" id="add-coinpair-whitelist" disabled>添加白名单</button>
+            </div>
+            <h4 class="coinpair-filter-group-title">已添加白名单</h4>
+            <div class="coinpair-filter-list" id="coinpair-whitelist-list"><span class="muted coinpair-filter-empty">暂无已添加的币对白名单</span></div>
+          </div>
         </div>
         <div class="coinpair-filter-group">
           <h4 class="coinpair-filter-group-title">亏损平仓后冷静期</h4>
@@ -2254,20 +2326,8 @@ const tvbotHTML = `<!doctype html>
         </div>
         <div class="coinpair-filter-group">
           <h4 class="coinpair-filter-group-title">动态冷静期（按来源生效）</h4>
-          <div class="coinpair-filter-list" id="coinpair-cooldown-list"><span class="muted coinpair-filter-empty">暂无冷静期币对</span></div>
+          <div class="coinpair-filter-list coinpair-cooldown-list" id="coinpair-cooldown-list"><span class="muted coinpair-filter-empty">暂无冷静期币对</span></div>
         </div>
-      </div>
-      <div class="coinpair-filter-card coinpair-whitelist-card">
-        <div>
-          <h3>币对白名单</h3>
-          <div class="muted" id="coinpair-whitelist-status">当前未启用</div>
-          <div class="muted">不区分大小写，采用包含匹配并忽略常见分隔符；填写后只执行命中任一关键字的开仓信号，平仓不受影响。例如输入 ETH，可匹配 ETHUSDT、ETHUSDC、ETHFIUSDT、ETHUSDG 等。</div>
-        </div>
-        <div class="coinpair-filter-actions">
-          <input class="coinpair-filter-input" id="coinpair-whitelist-keyword" autocomplete="off" spellcheck="false" placeholder="例如 ETH" aria-label="币对白名单关键字">
-          <button class="btn primary" type="button" id="add-coinpair-whitelist" disabled>添加白名单</button>
-        </div>
-        <div class="coinpair-filter-list" id="coinpair-whitelist-list"><span class="muted coinpair-filter-empty">暂无已添加的币对白名单</span></div>
       </div>
     </section>
 

@@ -896,6 +896,25 @@ func TestTVBotUIIncludesLossCooldownControls(t *testing.T) {
 	}
 }
 
+func TestTVBotUICombinesCoinpairFiltersAndUsesCompactCooldownLayout(t *testing.T) {
+	for _, marker := range []string{
+		`class="coinpair-filter-card coinpair-filter-combined-card"`,
+		`class="coinpair-filter-parameter-grid"`,
+		`<h3>币对黑名单</h3>`,
+		`<h3>币对白名单</h3>`,
+		`coinpair-cooldown-list" id="coinpair-cooldown-list"`,
+		`grid-template-areas:`,
+		`grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto`,
+	} {
+		if !strings.Contains(tvbotHTML, marker) {
+			t.Fatalf("tvbot UI missing compact combined filter marker %q", marker)
+		}
+	}
+	if strings.Contains(tvbotHTML, `class="coinpair-filter-card coinpair-whitelist-card"`) {
+		t.Fatal("coinpair whitelist should be rendered inside the combined filter card")
+	}
+}
+
 func TestPositionActionsExcludeProtectionButtons(t *testing.T) {
 	start := strings.Index(tvbotHTML, "function positionActionCell(row)")
 	end := strings.Index(tvbotHTML, "function positionEntryTimeTitle(row)")
