@@ -275,7 +275,20 @@ type AlertChartSignals struct {
 	Thresholds  AlertThresholds    `json:"thresholds"`
 	Alerts      []LiquidationAlert `json:"alerts"`
 	Signals     []TradeSignal      `json:"signals"`
+	ReplayHours int                `json:"replay_hours"`
 	GeneratedAt time.Time          `json:"generated_at"`
+}
+
+// AlertSignalRecalculation is the result of an ephemeral signal replay. The
+// replay is intentionally not written back to the historical audit tables.
+type AlertSignalRecalculation struct {
+	WindowHours    int       `json:"window_hours"`
+	From           time.Time `json:"from"`
+	To             time.Time `json:"to"`
+	RecalculatedAt time.Time `json:"recalculated_at"`
+	SymbolCount    int       `json:"symbol_count"`
+	AlertCount     int       `json:"alert_count"`
+	SignalCount    int       `json:"signal_count"`
 }
 
 // KlineView backs the per symbol K-line chart on the alert page. The candles come

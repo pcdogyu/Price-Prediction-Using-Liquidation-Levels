@@ -32,19 +32,41 @@ func (rtm *alertRuntime) AlertChartSignalsWithConfig(ctx context.Context, symbol
 	return rtm.alertChartSignalsWithConfig(ctx, symbol, cfg)
 }
 
+func (rtm *alertRuntime) AlertChartSignalsWithConfigSince(ctx context.Context, symbol string, cfg alert.Config, since time.Time) (domain.AlertChartSignals, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	generatedAt := time.Now().UTC()
+	if since.IsZero() {
+		since = generatedAt.Add(-alertChartReplayDays * 24 * time.Hour)
+	}
+	if since.After(generatedAt) {
+		since = generatedAt
+	}
+	return rtm.alertChartSignalsWithConfigAt(ctx, symbol, cfg, generatedAt, since)
+}
+
 func (rtm *alertRuntime) alertChartSignalsWithConfig(ctx context.Context, symbol string, cfg alert.Config) (domain.AlertChartSignals, error) {
+	generatedAt := time.Now().UTC()
+	return rtm.alertChartSignalsWithConfigAt(ctx, symbol, cfg, generatedAt, generatedAt.Add(-alertChartReplayDays*24*time.Hour))
+}
+
+func (rtm *alertRuntime) alertChartSignalsWithConfigAt(ctx context.Context, symbol string, cfg alert.Config, generatedAt, since time.Time) (domain.AlertChartSignals, error) {
+	replayHours := int(generatedAt.Sub(since).Hours())
+	if replayHours < 1 {
+		replayHours = 1
+	}
 	view := domain.AlertChartSignals{
 		Symbol:      symbol,
 		Thresholds:  cfg.Thresholds(),
 		Alerts:      []domain.LiquidationAlert{},
 		Signals:     []domain.TradeSignal{},
-		GeneratedAt: time.Now().UTC(),
+		ReplayHours: replayHours,
+		GeneratedAt: generatedAt,
 	}
 	source := rtm.sourceStore
 	if source == nil {
 		source = rtm.store
 	}
-	events, err := source.LiquidationEventsForSymbol(ctx, symbol, view.GeneratedAt.Add(-alertChartReplayDays*24*time.Hour), alertChartReplayLimit)
+	events, err := source.LiquidationEventsForSymbol(ctx, symbol, since, alertChartReplayLimit)
 	if err != nil {
 		return view, err
 	}

@@ -92,6 +92,7 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/signals", getOnly(s.alertSignals))
 	mux.HandleFunc("/api/v1/alerts/timeline", getOnly(s.alertTimeline))
 	mux.HandleFunc("/api/v1/alerts/chart-signals", getOnly(s.alertChartSignals))
+	mux.HandleFunc("/api/v1/alerts/recalculate", postOnly(s.alertRecalculate))
 	mux.HandleFunc("/api/v1/alerts/klines", getOnly(s.alertKlines))
 	mux.HandleFunc("/api/v1/alerts/settings", s.alertSettings)
 	mux.HandleFunc("/api/v1/alerts/order-settings", s.alertOrderSettings)
@@ -324,13 +325,45 @@ func (s *Server) alertChartSignals(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err)
 		return
 	}
-	view, err := s.svc.AlertChartSignalsForContext(s.alertContext(r), symbol)
+	replayHours, err := alertChartReplayHours(r.URL.Query().Get("window_hours"))
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	var view domain.AlertChartSignals
+	if replayHours > 0 {
+		view, err = s.svc.AlertChartSignalsForContextWindow(s.alertContext(r), symbol, time.Duration(replayHours)*time.Hour)
+	} else {
+		view, err = s.svc.AlertChartSignalsForContext(s.alertContext(r), symbol)
+	}
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, view)
+}
+
+func (s *Server) alertRecalculate(w http.ResponseWriter, r *http.Request) {
+	result, err := s.svc.RecalculateAlertSignalsForContext(s.alertContext(r))
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func alertChartReplayHours(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	hours, err := strconv.Atoi(raw)
+	if err != nil || hours < 1 || hours > domain.AlertRetentionDays*24 {
+		return 0, fmt.Errorf("window_hours must be between 1 and %d", domain.AlertRetentionDays*24)
+	}
+	return hours, nil
 }
 
 // alertKlineQuery validates the K-line query. The symbol is mandatory because the

@@ -13,7 +13,7 @@
   const storedText = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (error) { return fallback; } };
   const rememberText = (key, value) => { try { localStorage.setItem(key, value); } catch (error) { /* private mode keeps defaults */ } };
 
-  const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady';
+  const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000;
   const params = new URLSearchParams(location.search);
   const positionMode = params.get('position') === '1';
@@ -34,7 +34,7 @@
     drag: null, hoverCandle: null, hoverMarker: null,
     toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true) }
   };
-  let dims = null, colors = {}, scales = null;
+  let dims = null, colors = {}, scales = null, signalReplayWindowHours = storedText(STORE_SIGNAL_RECALCULATE, '') ? 48 : 0;
 
   const step = () => K.intervalMs(state.interval);
   const newestCandle = () => state.candles.length ? state.candles[state.candles.length - 1] : null;
@@ -205,7 +205,9 @@
     state.loadingSignals = true;
     state.loadingAlerts = true;
     try {
-      const packet = await json('api/v1/alerts/chart-signals?symbol=' + encodeURIComponent(state.symbol));
+      const query = new URLSearchParams({ symbol: state.symbol });
+      if (signalReplayWindowHours > 0) query.set('window_hours', String(signalReplayWindowHours));
+      const packet = await json('api/v1/alerts/chart-signals?' + query.toString());
       state.signals = (packet.signals || []).map(row => ({ id: row.id, t: Date.parse(row.created_at), kind: row.kind, side: row.side,
         reference_price: row.reference_price, alert_notional_usd: row.alert_notional_usd, notify_status: 'replayed' })).filter(row => Number.isFinite(row.t));
       state.alerts = (packet.alerts || []).map(row => ({ id: row.id, t: Date.parse(row.triggered_at), side: row.trade_side || row.side,
@@ -214,8 +216,9 @@
       const thresholds = packet.thresholds || {};
       const threshold = state.symbol === 'BTCUSDT' ? thresholds.btc_usd : state.symbol === 'ETHUSDT' ? thresholds.eth_usd : thresholds.other_usd;
       const parameterText = '当前参数：' + money(threshold) + ' · ' + (thresholds.window_minutes || '—') + ' 分钟周期';
-      $('kline-signal-status').textContent = '按当前参数重算 ' + state.signals.length + ' 条 · ' + parameterText;
-      $('kline-alert-status').textContent = '按当前参数重算 ' + state.alerts.length + ' 条 · 每 15 秒刷新';
+      const replayText = Number(packet.replay_hours) === 48 ? '过去 48 小时重算' : '按当前参数回放';
+      $('kline-signal-status').textContent = replayText + ' ' + state.signals.length + ' 条 · ' + parameterText;
+      $('kline-alert-status').textContent = replayText + ' ' + state.alerts.length + ' 条 · 每 15 秒刷新';
       clearError();
     } catch (error) {
       $('kline-signal-status').textContent = '当前参数信号读取失败：' + error.message;
@@ -741,10 +744,19 @@
     });
   }
 
+  function bindSignalRecalculation() {
+    window.addEventListener('storage', event => {
+      if (event.key !== STORE_SIGNAL_RECALCULATE || !event.newValue || positionMode) return;
+      signalReplayWindowHours = 48;
+      loadChartSignals();
+    });
+  }
+
   function boot() {
     loadPositionTradeMarkers();
     buildIntervals();
     bindControls();
+    bindSignalRecalculation();
     bindCanvas();
     palette();
     resize();

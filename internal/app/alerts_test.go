@@ -251,6 +251,34 @@ func TestAlertChartSignalsReplayCurrentStrategySettings(t *testing.T) {
 	}
 }
 
+func TestAlertSignalRecalculationUses48HourWindow(t *testing.T) {
+	ctx := context.Background()
+	svc, _, st := alertTestService(t, "chart-recalculate.db")
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	if err := st.InsertLiquidation(ctx, alertTestEvent("recalculate-long", "BTCUSDT", "long", base, 120000)); err != nil {
+		t.Fatal(err)
+	}
+	svc.alerts.applyWatch([]alert.WatchEntry{{Symbol: "BTCUSDT", Rank: 1}}, []domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1, UpdatedAt: base}}, base, "")
+
+	result, err := svc.RecalculateAlertSignalsForContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.WindowHours != 48 || result.SymbolCount != 1 || result.From.IsZero() || result.To.IsZero() || result.RecalculatedAt.IsZero() {
+		t.Fatalf("unexpected recalculation result = %+v", result)
+	}
+	if result.AlertCount != 1 {
+		t.Fatalf("the replay should include the recent alert = %+v", result)
+	}
+	view, err := svc.AlertChartSignalsForContextWindow(ctx, "BTCUSDT", 48*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.ReplayHours != 48 || len(view.Alerts) != 1 {
+		t.Fatalf("the chart window should be 48h = %+v", view)
+	}
+}
+
 // TestAlertSettingsRoundTripAndRestartReplay checks that a saved form keeps the stored
 // bot token when a later submission leaves it blank, and that the restart warm start
 // replays stored liquidations without handing an existing signal to Telegram twice.

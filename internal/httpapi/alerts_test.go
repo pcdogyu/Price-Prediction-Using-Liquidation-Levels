@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "下单信号类别", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "信号重算", "下单信号类别", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -97,6 +97,9 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	if !strings.Contains(script, "api/v1/alerts/order-settings") || !strings.Contains(script, "保存下单信号设置") {
 		t.Fatal("the alerts script must expose order signal category settings")
+	}
+	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "过去 48 小时") || !strings.Contains(script, "signal-recalculate") {
+		t.Fatal("the alerts script must expose the 48h signal recalculation")
 	}
 	if strings.Contains(body, `id="alerts-order-alerts"`) || strings.Contains(script, "alerts-order-alerts") {
 		t.Fatal("the legacy alert opening toggle must not be presented")
@@ -289,6 +292,10 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 	if chart.Code != http.StatusOK || !strings.Contains(chart.Body.String(), `"btc_usd":300000`) || !strings.Contains(chart.Body.String(), `"window_minutes":5`) {
 		t.Fatalf("chart signals must expose the saved strategy settings: %d %s", chart.Code, chart.Body.String())
 	}
+	chart48 := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=BTCUSDT&window_hours=48", nil)
+	if chart48.Code != http.StatusOK || !strings.Contains(chart48.Body.String(), `"replay_hours":48`) {
+		t.Fatalf("chart signals must expose the requested 48h replay window: %d %s", chart48.Code, chart48.Body.String())
+	}
 	badChart := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=bad-symbol", nil)
 	if badChart.Code != http.StatusBadRequest {
 		t.Fatalf("invalid chart symbol status=%d body=%s", badChart.Code, badChart.Body.String())
@@ -296,6 +303,14 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 	invalid := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":0,"btc_usd":300000,"eth_usd":200000,"other_usd":100000}`))
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid strategy settings status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+	recalculated := serveAlert(srv, http.MethodPost, "/api/v1/alerts/recalculate", nil)
+	if recalculated.Code != http.StatusOK || !strings.Contains(recalculated.Body.String(), `"window_hours":48`) {
+		t.Fatalf("48h signal recalculation status=%d body=%s", recalculated.Code, recalculated.Body.String())
+	}
+	badWindow := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=BTCUSDT&window_hours=0", nil)
+	if badWindow.Code != http.StatusBadRequest {
+		t.Fatalf("invalid chart replay window status=%d body=%s", badWindow.Code, badWindow.Body.String())
 	}
 }
 
@@ -557,6 +572,12 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 		}
 		if asset.Body.Len() == 0 {
 			t.Fatalf("%s must not be empty", path)
+		}
+	}
+	chartScript := serveAlert(srv, http.MethodGet, "/assets/alerts-chart-app.js", nil).Body.String()
+	for _, want := range []string{"window_hours", "STORE_SIGNAL_RECALCULATE", "过去 48 小时重算", "addEventListener('storage'"} {
+		if !strings.Contains(chartScript, want) {
+			t.Fatalf("the chart must refresh after signal recalculation with %q", want)
 		}
 	}
 	if post := serveAlert(srv, http.MethodPost, "/alerts/chart", nil); post.Code != http.StatusMethodNotAllowed {

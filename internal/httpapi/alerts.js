@@ -67,7 +67,8 @@
     return '<button type="button" class="alerts-action alerts-notify-trigger" data-action="notify" data-trigger-type="' + escape(recordType) + '" data-trigger-id="' + escape(recordID) + '">触发报价</button>';
   };
 
-  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false;
+  const SIGNAL_RECALCULATE_STORAGE = 'liquidation.alerts.signal-recalculate';
+  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false;
 
   function error(message) { const node = $('alerts-error'); node.classList.remove('success'); node.textContent = message; node.hidden = false; }
   function success(message) { const node = $('alerts-error'); node.classList.add('success'); node.innerHTML = message; node.hidden = false; }
@@ -334,7 +335,44 @@
         strategySavePending = false;
         strategySavePendingAuto = false;
         void saveStrategySettings(null, pendingAutomatic);
+      } else if (strategyRecalculatePending) {
+        strategyRecalculatePending = false;
+        void recalculateSignals();
       }
+    }
+  }
+
+  async function recalculateSignals() {
+    if (strategySaveBusy) {
+      strategyRecalculatePending = true;
+      $('alerts-strategy-status').textContent = '等待报警参数保存完成后重算…';
+      return;
+    }
+    if (signalRecalculateBusy) return;
+    const button = $('alerts-signal-recalculate');
+    signalRecalculateBusy = true;
+    button.disabled = true;
+    button.textContent = '重算中…';
+    $('alerts-strategy-status').textContent = '正在重算过去 48 小时信号…';
+    try {
+      const response = await fetch(base + 'api/v1/alerts/recalculate', { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
+      const packet = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
+      const recalculatedAt = packet.recalculated_at || new Date().toISOString();
+      try { localStorage.setItem(SIGNAL_RECALCULATE_STORAGE, recalculatedAt); } catch (_) { /* private mode still refreshes this page */ }
+      const symbols = Number(packet.symbol_count) || 0;
+      const alerts = Number(packet.alert_count) || 0;
+      const signals = Number(packet.signal_count) || 0;
+      $('alerts-strategy-status').textContent = '过去 48 小时已重算 · ' + symbols + ' 个币对 · 预警 ' + alerts + ' · 信号 ' + signals;
+      clearError();
+      loadOverview();
+    } catch (caught) {
+      error('信号重算失败：' + caught.message);
+      $('alerts-strategy-status').textContent = '信号重算失败';
+    } finally {
+      signalRecalculateBusy = false;
+      button.disabled = false;
+      button.textContent = '信号重算';
     }
   }
 
@@ -441,6 +479,7 @@
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
   ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
+  $('alerts-signal-recalculate').addEventListener('click', recalculateSignals);
   $('alerts-order-signal-settings').addEventListener('submit', saveOrderSignalSettings);
   ['alerts-order-alert-close', 'alerts-order-alert', 'alerts-order-aggressive-close', 'alerts-order-aggressive', 'alerts-order-steady-close', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));
   $('alerts-test').addEventListener('click', testSettings);
