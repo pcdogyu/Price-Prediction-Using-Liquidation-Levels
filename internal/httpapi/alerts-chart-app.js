@@ -50,16 +50,47 @@
   };
   const signalOptions = () => ({ aggressive: state.toggles.aggressive, steady: state.toggles.steady });
   const shownAlerts = () => state.toggles.alerts ? K.filterAlerts(state.alerts) : [];
-  const shownSignals = () => state.toggles.signals ? K.filterSignals(state.signals, signalOptions()) : [];
+  const rawShownSignals = () => state.toggles.signals ? K.filterSignals(state.signals, signalOptions()) : [];
   const currentRadarZone = () => state.radarZone && state.radarZone.ready
     ? state.radarZone
     : K.radarZone(state.candles, state.radarConfig.periodMinutes, state.radarConfig.zScoreThreshold, step() / 60000);
+  let historicalZoneCacheKey = '', historicalZoneCache = [];
   const historicalRadarZones = () => {
+    const first = state.candles.length ? state.candles[0].t : 0;
+    const last = state.candles.length ? state.candles[state.candles.length - 1].t : 0;
+    const latest = state.radarZone && state.radarZone.ready ? state.radarZone : {};
+    const key = state.candles.length + '|' + first + '|' + last + '|' + state.radarConfig.periodMinutes + '|' + state.radarConfig.zScoreThreshold + '|' +
+      [latest.current_price, latest.upper_open_price, latest.lower_open_price].map(value => finite(value) ? value : 0).join('|');
+    if (key === historicalZoneCacheKey) return historicalZoneCache;
     const zones = K.radarZones(state.candles, state.radarConfig.periodMinutes, state.radarConfig.zScoreThreshold, step() / 60000);
-    if (!zones || !zones.length) return [];
-    if (state.radarZone && state.radarZone.ready) zones[zones.length - 1] = Object.assign({}, zones[zones.length - 1], state.radarZone);
-    return zones;
+    historicalZoneCacheKey = key;
+    historicalZoneCache = zones && zones.length ? zones : [];
+    if (state.radarZone && state.radarZone.ready && historicalZoneCache.length) {
+      historicalZoneCache[historicalZoneCache.length - 1] = Object.assign({}, historicalZoneCache[historicalZoneCache.length - 1], state.radarZone);
+    }
+    return historicalZoneCache;
   };
+  const vwapZoneAt = at => {
+    const zones = historicalRadarZones();
+    if (!zones.length || !finite(at)) return null;
+    const target = K.bucketStart(at, step());
+    let low = 0, high = zones.length - 1, match = null;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      if (zones[middle].t <= target) { match = zones[middle]; low = middle + 1; }
+      else high = middle - 1;
+    }
+    return match;
+  };
+  const vwapAllowsSignal = signal => {
+    if (!state.toggles.zones) return true;
+    const zone = vwapZoneAt(signal.t);
+    // Keep a signal visible while the historical VWAP window is unavailable;
+    // absence of filter data must not silently erase an existing signal.
+    if (!zone || !finite(zone.upper_open_price) || !finite(zone.lower_open_price)) return true;
+    return K.vwapSignalAllowed(signal, zone);
+  };
+  const shownSignals = () => rawShownSignals().filter(vwapAllowsSignal);
 
   async function json(path) {
     const response = await fetch(base + path, { cache: 'no-store', credentials: 'same-origin' });
@@ -237,7 +268,8 @@
       const threshold = state.symbol === 'BTCUSDT' ? thresholds.btc_usd : state.symbol === 'ETHUSDT' ? thresholds.eth_usd : thresholds.other_usd;
       const parameterText = '当前参数：' + money(threshold) + ' · ' + (thresholds.window_minutes || '—') + ' 分钟周期';
       const replayText = Number(packet.replay_hours) === 48 ? '过去 48 小时重算' : '按当前参数回放';
-      $('kline-signal-status').textContent = replayText + ' ' + state.signals.length + ' 条 · ' + parameterText;
+      const vwapVisibleCount = state.toggles.zones ? state.signals.filter(vwapAllowsSignal).length : state.signals.length;
+      $('kline-signal-status').textContent = replayText + ' ' + vwapVisibleCount + ' 条' + (state.toggles.zones ? ' · VWAP 过滤后' : '') + ' · ' + parameterText;
       $('kline-alert-status').textContent = replayText + ' ' + state.alerts.length + ' 条 · 每 15 秒刷新';
       clearError();
     } catch (error) {

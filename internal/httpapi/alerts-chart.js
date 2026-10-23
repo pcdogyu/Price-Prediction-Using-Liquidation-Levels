@@ -139,6 +139,18 @@
     return zones && zones.length ? zones[zones.length - 1] : null;
   }
 
+  // vwapSignalAllowed keeps only signals whose direction matches the opening
+  // side of the historical VWAP zone. Invalid or missing zone data is treated
+  // as unknown so the chart does not silently erase an existing signal.
+  function vwapSignalAllowed(signal, zone) {
+    if (!signal || !zone || !finite(zone.upper_open_price) || !finite(zone.lower_open_price)) return true;
+    const price = finite(signal.reference_price) && signal.reference_price > 0 ? signal.reference_price : zone.current_price;
+    if (!finite(price) || price <= 0) return true;
+    if (signal.side === 'short') return price >= zone.upper_open_price;
+    if (signal.side === 'long') return price <= zone.lower_open_price;
+    return true;
+  }
+
   function niceTicks(low, high, target) {
     if (!finite(low) || !finite(high) || high <= low || target < 1) return [];
     const magnitude = Math.pow(10, Math.floor(Math.log10((high - low) / target)));
@@ -250,7 +262,7 @@
   const exported = { INTERVALS, INTERVAL_MS, DEFAULT_VISIBLE, MIN_VISIBLE, MAX_VISIBLE, RIGHT_PAD, HISTORY_TRIGGER,
     intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles, priceRange, volumeMax,
     niceTicks, mergeCandles, normaliseCandles, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal,
-    radarZone, radarZones, dragPriceRange, zoomPriceRange };
+    radarZone, radarZones, vwapSignalAllowed, dragPriceRange, zoomPriceRange };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.LiquidationKline = exported;
 })(typeof window === 'object' ? window : globalThis);
