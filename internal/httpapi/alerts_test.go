@@ -570,7 +570,7 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 	}
 	for _, want := range []string{"币对 K 线", "kline-symbol-label", "当前币对", "左右两侧价格轴", "横轴北京时间", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
 		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "kline-zones", "显示预警", "显示下单信号", "VWAP 分区", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "价格轴上下拖动缩放垂直价格", "当前已保存的阈值和周期重新回放生成", "回到最新", "重置缩放", "kline-signal-rows",
-		"历史分区 · 高位开空", "历史分区 · 中间仅平仓", "历史分区 · 低位接多", "kline-chart-surface", "每根 K 线按当时滚动 VWAP、配置窗口内 HH/LL、最小回撤和 Donchian 分位绘制历史三分区", "勾选 VWAP 分区时，图中和下方表格只保留落在对应开仓区的多空信号", "净多空", "币对 K 线、净多空与下单信号", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
+		"历史分区 · 高位开空", "历史分区 · 中间仅平仓", "历史分区 · 低位接多", "kline-chart-surface", "每根 K 线按当时滚动 VWAP、配置窗口内 HH/LL、最小回撤和 Donchian 分位绘制历史三分区", "勾选 VWAP 分区时，图中和下方表格只保留落在对应开仓区的多空信号", "净多空", "币对 K 线、累计净多空与下单信号", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the K-line page must contain %q", want)
 		}
@@ -655,7 +655,7 @@ func TestAlertLiquidationDeltaEndpointAggregatesConfiguredWindow(t *testing.T) {
 			previous = point
 		}
 	}
-	if current == nil || current.ShortUSD != 350 || current.LongUSD != 0 || current.DeltaUSD != 350 || current.Count != 1 || previous == nil || previous.DeltaUSD != -100 {
+	if current == nil || current.ShortUSD != 350 || current.LongUSD != 0 || current.DeltaUSD != 350 || current.CumulativeDeltaUSD != 250 || current.Count != 1 || previous == nil || previous.DeltaUSD != -100 || previous.CumulativeDeltaUSD != -100 {
 		t.Fatalf("current=%+v previous=%+v", current, previous)
 	}
 	rangeFrom := bucket.Add(-19 * time.Minute)
@@ -676,7 +676,7 @@ func TestAlertLiquidationDeltaEndpointAggregatesConfiguredWindow(t *testing.T) {
 	if !rangedView.From.Equal(bucket.Add(-20*time.Minute)) || !rangedView.To.Equal(bucket.Add(10*time.Minute)) || len(rangedView.Points) != 3 {
 		t.Fatalf("ranged delta view=%+v", rangedView)
 	}
-	if rangedView.Points[0].DeltaUSD != 0 || rangedView.Points[1].DeltaUSD != -100 || rangedView.Points[2].DeltaUSD != 350 {
+	if rangedView.Points[0].DeltaUSD != 0 || rangedView.Points[0].CumulativeDeltaUSD != 0 || rangedView.Points[1].DeltaUSD != -100 || rangedView.Points[1].CumulativeDeltaUSD != -100 || rangedView.Points[2].DeltaUSD != 350 || rangedView.Points[2].CumulativeDeltaUSD != 250 {
 		t.Fatalf("ranged delta points=%+v", rangedView.Points)
 	}
 	longFrom := bucket.Add(-72 * time.Hour)
@@ -694,7 +694,7 @@ func TestAlertLiquidationDeltaEndpointAggregatesConfiguredWindow(t *testing.T) {
 	if err := json.Unmarshal(longRange.Body.Bytes(), &longView); err != nil {
 		t.Fatal(err)
 	}
-	if longView.Hours != 72 || !longView.From.Equal(longFrom) || !longView.To.Equal(longTo) || len(longView.Points) != 72*6 {
+	if longView.Hours != 72 || !longView.From.Equal(longFrom) || !longView.To.Equal(longTo) || len(longView.Points) != 72*6 || longView.Points[0].CumulativeDeltaUSD != 0 || longView.Points[len(longView.Points)-1].CumulativeDeltaUSD != -100 {
 		t.Fatalf("long ranged delta view=%+v", longView)
 	}
 	hoursRange := serveAlert(srv, http.MethodGet, "/api/v1/alerts/liquidation-delta?symbol=BTCUSDT&hours=72", nil)

@@ -47,6 +47,11 @@ func (s *Service) AlertLiquidationDeltaWindow(ctx context.Context, symbol string
 	if err != nil {
 		return domain.LiquidationDeltaView{}, err
 	}
+	var cumulative float64
+	for index := range points {
+		cumulative += points[index].DeltaUSD
+		points[index].CumulativeDeltaUSD = cumulative
+	}
 	hours := int(to.Sub(from) / time.Hour)
 	if to.Sub(from)%time.Hour != 0 {
 		hours++

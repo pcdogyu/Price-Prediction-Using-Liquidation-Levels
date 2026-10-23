@@ -28,18 +28,21 @@ test('the K-line canvas contains a lower net long-short band without volume', ()
   assert.doesNotMatch(chartApp, /deltaDims/);
   assert.doesNotMatch(chartHTML, /liquidation-delta-(section|chart|status|legend|readout|note)/);
   assert.doesNotMatch(chartHTML, /kline-status/);
-  assert.match(chartHTML, /币对 K 线、净多空与下单信号/);
+  assert.match(chartHTML, /币对 K 线、累计净多空与下单信号/);
 });
 
-test('the net long-short panel follows the K-line viewport with bounded debounced requests', () => {
+test('the cumulative net long-short band uses a fixed 72-hour window with bounded requests', () => {
   assert.match(chartApp, /LIQUIDATION_DELTA_DEBOUNCE_MS = 250/);
-  assert.match(chartApp, /liquidationDeltaWindow\(state\.view/);
+  assert.match(chartApp, /liquidationDeltaCumulativeWindow\(Date\.now\(\)/);
+  assert.match(chartApp, /K\.LIQUIDATION_DELTA_CUMULATIVE_HOURS/);
   assert.match(chartApp, /&from=' \+ encodeURIComponent/);
   assert.match(chartApp, /&to=' \+ encodeURIComponent/);
   assert.match(chartApp, /new AbortController\(\)/);
   assert.match(chartApp, /requestId !== state\.liquidationDeltaRequestSequence/);
   assert.match(chartApp, /LIQUIDATION_DELTA_DEBOUNCE_MS = 250/);
   assert.match(chartApp, /state\.liquidationDeltaError/);
+  assert.match(chartApp, /cumulative_delta_usd/);
+  assert.match(chartApp, /当前视窗不在最近72小时累计范围内/);
 });
 
 test('position chart tooltip distinguishes merged closing fills', () => {
@@ -197,8 +200,27 @@ test('normaliseLiquidationDelta keeps signed short-minus-long buckets ordered', 
     { time: new Date(180000).toISOString(), long_usd: -1, short_usd: 1 }
   ];
   const points = K.normaliseLiquidationDelta(rows);
-  assert.deepEqual(points.map(point => [point.t, point.delta_usd, point.count]), [[0, 150, 2], [120000, -500, 4]]);
+  assert.deepEqual(points.map(point => [point.t, point.delta_usd, point.cumulative_delta_usd, point.count]), [[0, 150, 150, 2], [120000, -500, -350, 4]]);
   assert.deepEqual(K.normaliseLiquidationDelta(null), []);
+});
+
+test('normaliseLiquidationDelta preserves server cumulative values and carries zero buckets', () => {
+  const points = K.normaliseLiquidationDelta([
+    { time: new Date(120000).toISOString(), long_usd: 0, short_usd: 0, delta_usd: 0, cumulative_delta_usd: 275, count: 0 },
+    { time: new Date(0).toISOString(), long_usd: 100, short_usd: 250, delta_usd: 150, cumulative_delta_usd: 150, count: 2 },
+    { time: new Date(180000).toISOString(), long_usd: 50, short_usd: 0, delta_usd: -50, cumulative_delta_usd: 225, count: 1 }
+  ]);
+  assert.deepEqual(points.map(point => point.cumulative_delta_usd), [150, 275, 225]);
+});
+
+test('liquidationDeltaCumulativeWindow always returns the latest aligned 72 hours', () => {
+  const interval = 10 * 60 * 1000;
+  const now = Date.parse('2026-10-23T04:07:00.000Z');
+  assert.equal(K.LIQUIDATION_DELTA_CUMULATIVE_HOURS, 72);
+  assert.deepEqual(K.liquidationDeltaCumulativeWindow(now, interval), {
+    start: Date.parse('2026-10-20T04:10:00.000Z'),
+    end: Date.parse('2026-10-23T04:10:00.000Z')
+  });
 });
 
 test('liquidationDeltaWindow follows the extended history horizon and 10m buckets', () => {

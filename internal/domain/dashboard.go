@@ -25,13 +25,15 @@ type LiquidationPage struct {
 
 // LiquidationDeltaPoint is one fixed-width bucket of liquidation notional.
 // A positive DeltaUSD means short liquidations were larger than long
-// liquidations; a negative value means the opposite.
+// liquidations; a negative value means the opposite. CumulativeDeltaUSD is
+// the running sum of DeltaUSD from the beginning of the requested window.
 type LiquidationDeltaPoint struct {
-	Time     time.Time `json:"time"`
-	LongUSD  float64   `json:"long_usd"`
-	ShortUSD float64   `json:"short_usd"`
-	DeltaUSD float64   `json:"delta_usd"`
-	Count    int       `json:"count"`
+	Time               time.Time `json:"time"`
+	LongUSD            float64   `json:"long_usd"`
+	ShortUSD           float64   `json:"short_usd"`
+	DeltaUSD           float64   `json:"delta_usd"`
+	CumulativeDeltaUSD float64   `json:"cumulative_delta_usd"`
+	Count              int       `json:"count"`
 }
 
 type LiquidationDeltaView struct {

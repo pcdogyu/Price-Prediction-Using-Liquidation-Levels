@@ -10,6 +10,7 @@
   const DEFAULT_VISIBLE = 150, MIN_VISIBLE = 12, MAX_VISIBLE = 800, RIGHT_PAD = 2;
   const HISTORY_TRIGGER = 25, CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000, SIGNAL_PAGES = 3;
   const LIQUIDATION_DELTA_INTERVAL_MS = 10 * 60 * 1000, LIQUIDATION_DELTA_MAX_MS = 180 * 24 * 60 * 60 * 1000;
+  const LIQUIDATION_DELTA_CUMULATIVE_HOURS = 72, LIQUIDATION_DELTA_CUMULATIVE_MS = LIQUIDATION_DELTA_CUMULATIVE_HOURS * 60 * 60 * 1000;
   const STORE_INTERVAL = 'liquidation.kline.interval', STORE_SIGNALS = 'liquidation.kline.signals';
 
   const intervalMs = name => INTERVAL_MS[name] || 0;
@@ -60,6 +61,14 @@
     const requestedEnd = Math.min(latest, range.end);
     const end = Math.min(latest, Math.ceil(requestedEnd / interval) * interval);
     return end > start ? { start, end } : null;
+  }
+
+  // The cumulative baseline is independent of the K-line viewport. Panning or
+  // zooming therefore changes which bars are visible, never their meaning.
+  function liquidationDeltaCumulativeWindow(now, interval = LIQUIDATION_DELTA_INTERVAL_MS, hours = LIQUIDATION_DELTA_CUMULATIVE_HOURS) {
+    if (!finite(now) || interval <= 0 || !finite(hours) || hours <= 0) return null;
+    const latest = bucketStart(now, interval) + interval;
+    return { start: latest - hours * 60 * 60 * 1000, end: latest };
   }
 
   function visibleLiquidationDelta(points, range, interval = LIQUIDATION_DELTA_INTERVAL_MS) {
@@ -222,7 +231,7 @@
   }
 
   // normaliseLiquidationDelta keeps the chart tolerant of a partial response
-  // while preserving the signed short-minus-long value used by the bars.
+  // while preserving both the signed bucket value and the cumulative value.
   function normaliseLiquidationDelta(rows) {
     const values = [];
     for (const row of rows || []) {
@@ -233,9 +242,16 @@
       const deltaUSD = finite(row.delta_usd) ? row.delta_usd : shortUSD - longUSD;
       if (!finite(deltaUSD)) continue;
       values.push({ time: new Date(at).toISOString(), t: at, long_usd: longUSD, short_usd: shortUSD, delta_usd: deltaUSD,
+        cumulative_delta_usd: finite(row.cumulative_delta_usd) ? row.cumulative_delta_usd : NaN,
         count: Number.isInteger(row.count) && row.count >= 0 ? row.count : 0 });
     }
-    return values.sort((a, b) => a.t - b.t);
+    values.sort((a, b) => a.t - b.t);
+    let cumulative = 0;
+    for (const point of values) {
+      cumulative = finite(point.cumulative_delta_usd) ? point.cumulative_delta_usd : cumulative + point.delta_usd;
+      point.cumulative_delta_usd = cumulative;
+    }
+    return values;
   }
 
   // filterSignals keeps one entry per signal id and applies the kind toggles.
@@ -319,8 +335,9 @@
   }
 
   const exported = { INTERVALS, INTERVAL_MS, DEFAULT_VISIBLE, MIN_VISIBLE, MAX_VISIBLE, RIGHT_PAD, HISTORY_TRIGGER,
-    LIQUIDATION_DELTA_INTERVAL_MS, LIQUIDATION_DELTA_MAX_MS, intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles,
-    liquidationDeltaWindow, visibleLiquidationDelta, priceRange, volumeMax,
+    LIQUIDATION_DELTA_INTERVAL_MS, LIQUIDATION_DELTA_MAX_MS, LIQUIDATION_DELTA_CUMULATIVE_HOURS, LIQUIDATION_DELTA_CUMULATIVE_MS,
+    intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles,
+    liquidationDeltaWindow, liquidationDeltaCumulativeWindow, visibleLiquidationDelta, priceRange, volumeMax,
     niceTicks, mergeCandles, normaliseCandles, normaliseLiquidationDelta, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal,
     radarZone, radarZones, vwapZoneBounds, vwapSignalAllowed, dragPriceRange, zoomPriceRange };
   if (typeof module === 'object' && module.exports) module.exports = exported;

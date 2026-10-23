@@ -345,10 +345,10 @@ func (s *Server) alertChartSignals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, view)
 }
 
-// alertLiquidationDelta serves the compact 10-minute liquidation imbalance
-// shown below the symbol K-line. Without a range it returns the compatible
-// 48-hour view; hours or from/to lets the browser request older shared K-line
-// windows, up to the configured liquidation retention horizon.
+// alertLiquidationDelta serves the compact 10-minute liquidation imbalance and
+// its cumulative value shown below the symbol K-line. Without a range it
+// returns the compatible 48-hour view; hours or from/to lets callers request
+// another bounded window.
 func (s *Server) alertLiquidationDelta(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	symbol, _, err := alertFilters(query.Get("symbol"), "")

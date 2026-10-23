@@ -111,19 +111,22 @@
   }
 
   function liquidationDeltaRange() {
-    return K.liquidationDeltaWindow(state.view, Date.now(), K.LIQUIDATION_DELTA_INTERVAL_MS, K.LIQUIDATION_DELTA_MAX_MS);
+    return K.liquidationDeltaCumulativeWindow(Date.now(), K.LIQUIDATION_DELTA_INTERVAL_MS, K.LIQUIDATION_DELTA_CUMULATIVE_HOURS);
   }
 
-  function mergeLiquidationDelta(points) {
-    const merged = new Map((state.liquidationDelta || []).filter(point => point && finite(point.t)).map(point => [point.t, point]));
-    for (const point of points || []) {
-      if (point && finite(point.t)) merged.set(point.t, point);
-    }
-    return Array.from(merged.values()).sort((a, b) => a.t - b.t);
+  function sameLiquidationDeltaWindow(left, right) {
+    return !!left && !!right && left.start === right.start && left.end === right.end;
   }
 
-  function scheduleLiquidationDelta() {
+  function scheduleLiquidationDelta(force = false) {
     if (positionMode || !state.symbol) return;
+    const requested = liquidationDeltaRange();
+    if (!force && requested && state.liquidationDelta.length && sameLiquidationDeltaWindow(state.liquidationDeltaWindow, requested)) {
+      state.liquidationDeltaPending = false;
+      state.liquidationDeltaError = '';
+      draw();
+      return;
+    }
     if (state.liquidationDeltaRequestTimer) clearTimeout(state.liquidationDeltaRequestTimer);
     state.liquidationDeltaRequestSequence += 1;
     if (state.liquidationDeltaAbortController) state.liquidationDeltaAbortController.abort();
@@ -131,18 +134,24 @@
     state.loadingLiquidationDelta = false;
     state.liquidationDeltaPending = true;
     state.liquidationDeltaError = '';
-    state.liquidationDeltaWindow = null;
     state.liquidationDeltaHover = null;
     draw();
     state.liquidationDeltaRequestTimer = window.setTimeout(() => {
       state.liquidationDeltaRequestTimer = 0;
-      loadLiquidationDelta();
+      loadLiquidationDelta(force);
     }, LIQUIDATION_DELTA_DEBOUNCE_MS);
   }
 
-  async function loadLiquidationDelta() {
+  async function loadLiquidationDelta(force = false) {
     if (positionMode || !state.symbol) return;
     const requested = liquidationDeltaRange();
+    if (!force && requested && state.liquidationDelta.length && sameLiquidationDeltaWindow(state.liquidationDeltaWindow, requested)) {
+      state.loadingLiquidationDelta = false;
+      state.liquidationDeltaPending = false;
+      state.liquidationDeltaError = '';
+      draw();
+      return;
+    }
     const requestId = ++state.liquidationDeltaRequestSequence;
     if (state.liquidationDeltaAbortController) state.liquidationDeltaAbortController.abort();
     state.liquidationDeltaAbortController = null;
@@ -167,7 +176,7 @@
       const responseFrom = Date.parse(view.from);
       const responseTo = Date.parse(view.to);
       const responseWindow = finite(responseFrom) && finite(responseTo) ? { start: responseFrom, end: responseTo } : requested;
-      state.liquidationDelta = mergeLiquidationDelta(K.normaliseLiquidationDelta(view.points));
+      state.liquidationDelta = K.normaliseLiquidationDelta(view.points);
       state.liquidationDeltaWindow = responseWindow;
       state.liquidationDeltaHover = null;
       state.liquidationDeltaError = '';
@@ -445,13 +454,13 @@
       const message = state.loadingLiquidationDelta || state.liquidationDeltaPending
         ? '正在读取爆仓净额'
         : state.liquidationDeltaError ? state.liquidationDeltaError
-        : state.liquidationDeltaWindow ? '该窗口暂无爆仓数据' : '当前视窗超出可读取的历史爆仓数据范围';
+        : state.liquidationDeltaWindow ? '当前视窗不在最近72小时累计范围内' : '等待最近72小时累计爆仓数据';
       empty(message);
       ctx.restore();
       return;
     }
     const x = at => plot.left + (at - state.view.start) / span * plot.width;
-    const maxAbs = Math.max(1, ...points.map(point => Math.abs(point.delta_usd)).filter(finite));
+    const maxAbs = Math.max(1, ...points.map(point => Math.abs(point.cumulative_delta_usd)).filter(finite));
     const ceiling = maxAbs * 1.12;
     const y = value => plot.top + (ceiling - value) / (ceiling * 2) * plot.height;
     const zeroY = Math.round(y(0)) + .5;
@@ -478,7 +487,7 @@
       ctx.fillText(clock(at), px, plot.bottom + 17);
     }
     for (const point of points) {
-      const value = finite(point.delta_usd) ? point.delta_usd : 0;
+      const value = finite(point.cumulative_delta_usd) ? point.cumulative_delta_usd : 0;
       const left = Math.max(plot.left, x(point.t));
       const right = Math.min(plot.right, x(point.t + K.LIQUIDATION_DELTA_INTERVAL_MS));
       const pointWidth = Math.max(1, right - left);
@@ -898,7 +907,7 @@
           if (gap < distance) { closest = point; distance = gap; }
         }
         state.liquidationDeltaHover = closest;
-        canvas.title = clock(closest.time) + '\n空单爆仓 - 多单爆仓 ' + deltaText(closest.delta_usd);
+        canvas.title = clock(closest.time) + '\n累计净多空 ' + deltaText(closest.cumulative_delta_usd) + '\n本10分钟变化 ' + deltaText(closest.delta_usd);
       } else {
         state.liquidationDeltaHover = null;
         canvas.title = '';
@@ -1098,7 +1107,7 @@
     }
     $('kline-latest').addEventListener('click', goLatest);
     $('kline-reset').addEventListener('click', resetView);
-    $('kline-refresh').addEventListener('click', () => { loadCandles(); loadChartSignals(); scheduleLiquidationDelta(); });
+    $('kline-refresh').addEventListener('click', () => { loadCandles(); loadChartSignals(); scheduleLiquidationDelta(true); });
     $('kline-jump').addEventListener('submit', event => {
       event.preventDefault();
       const target = $('kline-symbol-input').value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32);
@@ -1141,9 +1150,9 @@
     loadCandles();
     if (!positionMode) loadChartSignals();
     setInterval(() => { if (!document.hidden && !state.drag) loadCandles(); }, CANDLE_REFRESH_MS);
-    if (!positionMode) setInterval(() => { if (!document.hidden && !state.drag) scheduleLiquidationDelta(); }, LIQUIDATION_DELTA_REFRESH_MS);
+    if (!positionMode) setInterval(() => { if (!document.hidden && !state.drag) scheduleLiquidationDelta(true); }, LIQUIDATION_DELTA_REFRESH_MS);
     if (!positionMode) setInterval(() => { if (!document.hidden && !state.drag) loadChartSignals(); }, SIGNAL_REFRESH_MS);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadCandles(); if (!positionMode) { scheduleLiquidationDelta(); loadChartSignals(); } } });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadCandles(); if (!positionMode) { scheduleLiquidationDelta(true); loadChartSignals(); } } });
     window.addEventListener('resize', resize);
     window.addEventListener('themechange', () => { palette(); draw(); });
     if (window.ResizeObserver) new ResizeObserver(resize).observe($('kline-wrap'));
