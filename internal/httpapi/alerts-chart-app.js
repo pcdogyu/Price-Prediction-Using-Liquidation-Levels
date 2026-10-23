@@ -117,7 +117,7 @@
       return;
     }
     const bias = point.delta_usd > 0 ? '空单爆仓占优' : point.delta_usd < 0 ? '多单爆仓占优' : '多空相等';
-    $('liquidation-delta-readout').innerHTML = '<b>' + escape(clock(point.time)) + '</b> · 净额（空 − 多） <span class="' + (point.delta_usd >= 0 ? 'buy' : 'sell') + '">' + escape(deltaText(point.delta_usd)) + '</span> · 空单 ' + escape(money(point.short_usd)) + ' · 多单 ' + escape(money(point.long_usd)) + ' · ' + bias + ' · ' + escape(String(point.count || 0)) + ' 笔';
+    $('liquidation-delta-readout').innerHTML = '<b>' + escape(clock(point.time)) + '</b> · 净多空（空 − 多） <span class="' + (point.delta_usd >= 0 ? 'buy' : 'sell') + '">' + escape(deltaText(point.delta_usd)) + '</span> · 空单 ' + escape(money(point.short_usd)) + ' · 多单 ' + escape(money(point.long_usd)) + ' · ' + bias + ' · ' + escape(String(point.count || 0)) + ' 笔';
   }
 
   async function loadLiquidationDelta() {
@@ -352,8 +352,7 @@
         (state.hoverMarker.side === 'short' ? '做空' : '做多') + ' ×' + state.hoverMarker.count) : '';
     $('kline-readout').innerHTML = '<b>' + escape(state.symbol) + ' · ' + escape(state.interval) + '</b> ' + escape(clock(candle.t)) +
       ' 开 ' + escape(priceText(candle.open)) + ' 高 ' + escape(priceText(candle.high)) + ' 低 ' + escape(priceText(candle.low)) +
-      ' 收 ' + escape(priceText(candle.close)) + ' <span class="' + (change >= 0 ? 'buy' : 'sell') + '">' + (change >= 0 ? '+' : '') + change.toFixed(2) + '%</span>' +
-      ' 成交额 ' + escape(money(candle.volume)) + markerText;
+      ' 收 ' + escape(priceText(candle.close)) + ' <span class="' + (change >= 0 ? 'buy' : 'sell') + '">' + (change >= 0 ? '+' : '') + change.toFixed(2) + '%</span>' + markerText;
   }
 
   // palette reads the theme variables so the canvas follows the shared light and
@@ -468,12 +467,12 @@
     canvas.addEventListener('pointerleave', () => { state.liquidationDeltaHover = null; canvas.title = ''; drawLiquidationDelta(); });
   }
 
-  // draw paints grid, volume band, candles, the newest price line and the signal
+  // draw paints the price grid, candles, the newest price line and the signal
   // layer, and records the drawn markers so the pointer can hit test them.
   function draw() {
     if (!dims) return;
     const ctx = $('kline-chart').getContext('2d');
-    const { width, height, ratio, plot, priceBottom, volumeTop } = dims;
+    const { width, height, ratio, plot, priceBottom } = dims;
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.fillStyle = colors.bg;
     ctx.fillRect(0, 0, width, height);
@@ -506,30 +505,24 @@
       ctx.textAlign = 'left';
       ctx.fillText(priceText(tick), plot.right + 7, py);
     }
-    ctx.textAlign = 'center';
-    const labels = Math.max(3, Math.min(8, Math.floor(plot.width / 130)));
-    for (let index = 0; index <= labels; index += 1) {
-      const at = state.view.start + span * index / labels, px = Math.round(x(at)) + .5;
-      ctx.strokeStyle = colors.grid;
-      ctx.beginPath(); ctx.moveTo(px, plot.top); ctx.lineTo(px, plot.bottom); ctx.stroke();
-      ctx.fillStyle = colors.muted;
-      ctx.fillText(clock(at), px, plot.bottom + 16);
+    if (positionMode) {
+      ctx.textAlign = 'center';
+      const labels = Math.max(3, Math.min(8, Math.floor(plot.width / 130)));
+      for (let index = 0; index <= labels; index += 1) {
+        const at = state.view.start + span * index / labels, px = Math.round(x(at)) + .5;
+        ctx.strokeStyle = colors.grid;
+        ctx.beginPath(); ctx.moveTo(px, plot.top); ctx.lineTo(px, plot.bottom); ctx.stroke();
+        ctx.fillStyle = colors.muted;
+        ctx.fillText(clock(at), px, plot.bottom + 16);
+      }
     }
     drawRadarZones(ctx, x, y, plot, priceBottom, intervalStep);
     const shown = K.visibleCandles(state.candles, state.view, intervalStep);
     const slot = plot.width / Math.max(1, span / intervalStep), body = Math.max(1, Math.min(18, slot * .68));
-    const peak = positionMode ? 0 : K.volumeMax(state.candles, state.view, intervalStep);
     for (const candle of shown) {
       const cx = x(candle.t + intervalStep / 2);
       if (cx < plot.left - 12 || cx > plot.right + 12) continue;
       const up = candle.close >= candle.open, colour = up ? colors.buy : colors.sell;
-      if (peak > 0) {
-        const bar = Math.max(1, candle.volume / peak * (plot.bottom - volumeTop));
-        ctx.globalAlpha = .4;
-        ctx.fillStyle = colors.blue;
-        ctx.fillRect(cx - body / 2, plot.bottom - bar, body, bar);
-        ctx.globalAlpha = 1;
-      }
       ctx.strokeStyle = colour;
       ctx.beginPath(); ctx.moveTo(cx, y(candle.high)); ctx.lineTo(cx, y(candle.low)); ctx.stroke();
       const top = y(Math.max(candle.open, candle.close)), bottom = y(Math.min(candle.open, candle.close));
@@ -805,14 +798,14 @@
     ctx.restore();
   }
 
-  // layout splits the canvas into the price area, the volume band and the axes.
+  // layout gives the K-line the full canvas height; the net-long/short panel
+  // below owns the shared time labels instead of a volume band.
   function layout(width, height) {
-    const margins = { left: 78, right: 82, top: 18, bottom: 42 };
+    const margins = { left: 78, right: 82, top: 18, bottom: positionMode ? 42 : 18 };
     const plot = { left: margins.left, top: margins.top, width: Math.max(60, width - margins.left - margins.right), height: Math.max(140, height - margins.top - margins.bottom) };
     plot.right = plot.left + plot.width;
     plot.bottom = plot.top + plot.height;
-    const volumeHeight = positionMode ? 0 : Math.max(34, Math.min(90, plot.height * .18));
-    return { plot, priceBottom: plot.bottom - volumeHeight - 8, volumeTop: plot.bottom - volumeHeight };
+    return { plot, priceBottom: plot.bottom };
   }
 
   // resize maps the drawing buffer to the device pixels so the candles stay crisp.

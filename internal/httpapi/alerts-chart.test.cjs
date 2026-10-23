@@ -19,6 +19,14 @@ test('price-axis gestures stay independent from time-axis gestures', () => {
   assert.match(chartApp, /event\.ctrlKey \|\| event\.shiftKey \|\| inPriceAxis\(at\)/);
 });
 
+test('the K-line uses the full price canvas and the lower panel is net long-short', () => {
+  assert.doesNotMatch(chartApp, /volumeTop/);
+  assert.doesNotMatch(chartApp, /volumeMax\(state\.candles/);
+  assert.doesNotMatch(chartApp, /成交额/);
+  assert.match(chartApp, /bottom: positionMode \? 42 : 18/);
+  assert.match(chartApp, /净多空（空 − 多）/);
+});
+
 test('position chart tooltip distinguishes merged closing fills', () => {
   assert.match(chartApp, /marker\.phase === 'exit' \? '平仓' : '开仓'/);
 });
