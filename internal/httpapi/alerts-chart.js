@@ -178,8 +178,7 @@
       const bucket = bucketStart(signal.t, step);
       const kind = signal.kind === 'steady' ? 'steady' : 'aggressive';
       const side = signal.side === 'short' ? 'short' : 'long';
-      const peakDecay = signal.peakDecay === true;
-      const key = bucket + '|' + kind + '|' + side + '|' + (peakDecay ? 'peak-decay' : 'normal');
+      const key = bucket + '|' + kind + '|' + side;
       const group = groups.get(key);
       if (group) {
         group.count += 1;
@@ -187,7 +186,7 @@
         group.notionalUSD += finite(signal.alert_notional_usd) ? signal.alert_notional_usd : 0;
         continue;
       }
-      groups.set(key, { bucket, kind, side, peakDecay, count: 1, first: signal.t, latest: signal.t,
+      groups.set(key, { bucket, kind, side, count: 1, first: signal.t, latest: signal.t,
         price: finite(signal.reference_price) && signal.reference_price > 0 ? signal.reference_price : 0,
         notionalUSD: finite(signal.alert_notional_usd) ? signal.alert_notional_usd : 0 });
     }

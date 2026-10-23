@@ -558,8 +558,13 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 	if strings.Contains(body, "K 线实时取自 Binance USDⓈ-M klines 接口") {
 		t.Fatal("the chart page must not render the removed K-line data note")
 	}
+	for _, removed := range []string{"peak-decay", "Peak-Decay", "kline-peak-decay-label", "peakDecay"} {
+		if strings.Contains(body, removed) {
+			t.Fatalf("the chart page must not render removed peak-decay display logic %q", removed)
+		}
+	}
 	for _, want := range []string{"币对 K 线", "kline-symbol-label", "当前币对", "左右两侧价格轴", "横轴北京时间", `data-page="alerts"`, `aria-current="page"`, "kline-chart", "kline-intervals",
-		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "kline-zones", "显示预警", "显示下单信号", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "peak-decay", "kline-peak-decay-label", "价格轴上下拖动缩放垂直价格", "当前已保存的阈值和周期重新回放生成", "回到最新", "重置缩放", "kline-signal-rows",
+		"kline-alerts", "kline-signals", "kline-aggressive", "kline-steady", "kline-zones", "显示预警", "显示下单信号", "稳健实心 / 激进空心", "◆!", "激进信号", "稳健信号", "价格轴上下拖动缩放垂直价格", "当前已保存的阈值和周期重新回放生成", "回到最新", "重置缩放", "kline-signal-rows",
 		"开仓区 · 高位开空", "仅平仓区 · 中轴", "开仓区 · 低位接多", "kline-chart-surface", "开仓区", "assets/alerts-chart.css", "assets/alerts-chart.js", "assets/alerts-chart-app.js", "assets/bubble-chart.js", "position-chart-page"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the K-line page must contain %q", want)
@@ -575,18 +580,28 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 		}
 	}
 	chartScript := serveAlert(srv, http.MethodGet, "/assets/alerts-chart-app.js", nil).Body.String()
-	for _, want := range []string{"window_hours", "signalReplayWindowHours = positionMode ? 0 : 48", "peakDecay", "phase === 'FIRED'", "peak-decay", "STORE_SIGNAL_RECALCULATE", "过去 48 小时重算", "addEventListener('storage'", "drawRadarZones", "upper_open_price", "anchorPrice", "dragPriceRange", "Math.round(baseHeight * 1.1)", "STORE_ZONES", "仅平仓区"} {
+	for _, removed := range []string{"peak-decay", "Peak-Decay", "kline-peak-decay-label", "peakDecay"} {
+		if strings.Contains(chartScript, removed) {
+			t.Fatalf("the chart script must not contain removed peak-decay display logic %q", removed)
+		}
+	}
+	for _, want := range []string{"window_hours", "signalReplayWindowHours = positionMode ? 0 : 48", "STORE_SIGNAL_RECALCULATE", "过去 48 小时重算", "addEventListener('storage'", "drawRadarZones", "upper_open_price", "anchorPrice", "dragPriceRange", "Math.round(baseHeight * 1.1)", "STORE_ZONES", "仅平仓区"} {
 		if !strings.Contains(chartScript, want) {
 			t.Fatalf("the chart must refresh after signal recalculation with %q", want)
 		}
 	}
 	chartMath := serveAlert(srv, http.MethodGet, "/assets/alerts-chart.js", nil).Body.String()
-	for _, want := range []string{"peakDecay", "peak-decay"} {
-		if !strings.Contains(chartMath, want) {
-			t.Fatalf("the chart marker grouping must preserve %q", want)
+	for _, removed := range []string{"peak-decay", "peakDecay"} {
+		if strings.Contains(chartMath, removed) {
+			t.Fatalf("the chart marker script must not contain removed peak-decay display logic %q", removed)
 		}
 	}
 	chartCSS := serveAlert(srv, http.MethodGet, "/assets/alerts-chart.css", nil).Body.String()
+	for _, removed := range []string{"peak-decay", "kline-peak-decay-label"} {
+		if strings.Contains(chartCSS, removed) {
+			t.Fatalf("the chart CSS must not contain removed peak-decay display logic %q", removed)
+		}
+	}
 	if strings.Contains(chartCSS, "width:110%") {
 		t.Fatal("the K-line chart must keep its original width")
 	}

@@ -32,7 +32,6 @@
       <span><b class="kline-warning">◆!</b>预警</span>
       <span><b class="kline-mark buy hollow">△</b>激进信号（空心）</span>
       <span><b class="kline-mark buy">▲</b>稳健信号（实心）</span>
-      <span><b class="kline-peak-decay-label">peak-decay</b>山峰后衰竭</span>
       <span><b class="kline-mark buy">▲</b>做多&nbsp;&nbsp;<b class="kline-mark sell">▼</b>做空</span>
       <span><i class="zone-swatch zone-open-high"></i>开仓区 · 高位开空</span>
       <span><i class="zone-swatch zone-close-only"></i>仅平仓区 · 中轴</span>
@@ -49,7 +48,7 @@
   <section id="kline-signal-section" class="surface">
     <div class="section-head"><h2>该币对下单信号</h2><span id="kline-signal-status" class="muted">读取信号</span><span id="kline-alert-status" class="muted">读取预警</span></div>
     <div class="table-scroll alerts-scroll"><table class="alerts-signal-table kline-signal-table"><thead><tr><th>时间（北京时间）</th><th>类型</th><th>下单方向</th><th>参考价</th><th>预警爆仓额</th><th>通知</th></tr></thead><tbody id="kline-signal-rows"><tr><td colspan="6">尚无信号</td></tr></tbody></table></div>
-    <p class="muted alerts-note">信号按报警页当前已保存的阈值和周期重新回放生成；图中背景区按 1m VWAP 和 ±Z 阈值绘制：高位、低位为开仓区，中间为仅平仓区。保存参数后重新打开或刷新币对，图表会显示新参数对应的预警、激进、稳健和 peak-decay 信号。历史数据库记录仍保留原参数，不会被改写。图中 ◆! 为预警，△ 为空心激进信号，▲ / ▼ 为实心稳健信号（稳健实心 / 激进空心），peak-decay 标签表示山峰后衰竭并完成价格吸收确认。</p>
+    <p class="muted alerts-note">信号按报警页当前已保存的阈值和周期重新回放生成；图中背景区按 1m VWAP 和 ±Z 阈值绘制：高位、低位为开仓区，中间为仅平仓区。保存参数后重新打开或刷新币对，图表会显示新参数对应的预警、激进和稳健信号。历史数据库记录仍保留原参数，不会被改写。图中 ◆! 为预警，△ 为空心激进信号，▲ / ▼ 为实心稳健信号（稳健实心 / 激进空心），三类信号均画在对应 K 线上。</p>
   </section>
   <footer class="page-footer"><span class="page-version">{{VERSION}}</span></footer>
 </main>
