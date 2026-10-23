@@ -23,6 +23,10 @@ test('position chart tooltip distinguishes merged closing fills', () => {
   assert.match(chartApp, /marker\.phase === 'exit' \? '平仓' : '开仓'/);
 });
 
+test('position chart uses orange for short closes and blue for long closes', () => {
+  assert.match(chartApp, /marker\.phase === 'exit'\s*\n?\s*\? \(marker\.side === 'short' \? colors\.orange : colors\.blue\)/);
+});
+
 test('the requested periods are offered', () => {
   assert.deepEqual(K.INTERVALS, ['1m', '2m', '3m', '5m', '15m', '30m', '1h', '4h', '8h', '12h']);
   assert.equal(K.intervalMs('3m'), 180000);

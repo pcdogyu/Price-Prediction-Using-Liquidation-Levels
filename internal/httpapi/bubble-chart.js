@@ -137,16 +137,12 @@
       const priceY = clamp(y(marker.price), bounds.top + 9, bounds.bottom - 9);
       const long = marker.side === 'long';
       const closing = marker.phase === 'exit';
-      const label = long ? '多单' : '空单';
-      const operation = String(marker.operation || (closing ? 'close' : 'open')).toLowerCase();
-      const operationLabel = operation === 'take_profit' ? '止盈' : operation === 'stop_loss' ? '止损' : operation === 'close' ? '平仓' : '开仓';
-      const source = String(marker.operation_source || '').toLowerCase();
-      const sourceLabel = source === 'manual' ? '手动' : source === 'auto' ? '自动' : source === 'exchange' ? '成交' : '';
       // Opening markers use the compact trading-chart convention requested by
       // the position view: B for long below the candle, S for short above it.
-      // Keep close/TP/SL labels descriptive so their operation remains clear.
+      // Closing markers use the compact direction labels requested by the
+      // position view; detailed operation/source data remains in the tooltip.
       const collapsedLabel = closing && marker.collapsed_count > 1 ? '×' + marker.collapsed_count : '';
-      const labelText = closing ? label + operationLabel + collapsedLabel + (sourceLabel ? '·' + sourceLabel : '') : (long ? 'B' : 'S');
+      const labelText = closing ? (long ? '多平' : '空平') + collapsedLabel : (long ? 'B' : 'S');
       const labelWidth = labelText.length * 11 + 12;
       const labelBelow = closing ? !long : long;
       const direction = labelBelow ? 1 : -1;

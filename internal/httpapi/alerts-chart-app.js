@@ -264,7 +264,7 @@
     const styles = getComputedStyle(document.documentElement);
     const read = name => styles.getPropertyValue(name).trim();
     colors = { bg: read('--chart-bg'), grid: read('--chart-grid'), text: read('--text'), muted: read('--muted'),
-      buy: read('--buy'), sell: read('--sell'), warning: read('--warning'), blue: read('--blue'), line: read('--line') };
+      buy: read('--buy'), sell: read('--sell'), warning: read('--warning'), blue: read('--blue'), orange: read('--orange'), line: read('--line') };
   }
 
   // draw paints grid, volume band, candles, the newest price line and the signal
@@ -419,7 +419,9 @@
     );
     for (const item of placements.markers) {
       const marker = item.marker;
-      const colour = marker.phase === 'exit' ? colors.warning : marker.side === 'short' ? colors.sell : colors.buy;
+      const colour = marker.phase === 'exit'
+        ? (marker.side === 'short' ? colors.orange : colors.blue)
+        : marker.side === 'short' ? colors.sell : colors.buy;
       ctx.save();
       const width = item.labelWidth + 6, height = 24;
       const left = item.labelX - width / 2, top = item.labelCenterY - height / 2;
