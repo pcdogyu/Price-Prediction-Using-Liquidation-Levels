@@ -23,19 +23,19 @@ func (f credentialProviderFunc) OKXCredentials(apiID string) (Credentials, strin
 func TestAttachAlgoOrdersBuildsTPSLAndTrailing(t *testing.T) {
 	tp := trading.NewFlexibleFloat(2)
 	sl := trading.NewFlexibleFloat(1)
-	shortTPSL := AttachAlgoOrders(trading.ActionShort, trading.Risk{Type: trading.RiskTPSL, TPPct: &tp, SLPct: &sl}, "CLIENT100")
+	shortTPSL := AttachAlgoOrders(trading.ActionShort, trading.Risk{Type: trading.RiskTPSL, TPPct: &tp, SLPct: &sl}, "CLIENT100", 10)
 	if len(shortTPSL) != 1 {
 		t.Fatalf("short tp/sl attach length = %d", len(shortTPSL))
 	}
-	if shortTPSL[0]["attachAlgoClOrdId"] != "CLIENT100A" || shortTPSL[0]["tpTriggerRatio"] != "-0.02" || shortTPSL[0]["slTriggerRatio"] != "0.01" || shortTPSL[0]["tpOrdPx"] != "-1" || shortTPSL[0]["slOrdPx"] != "-1" {
+	if shortTPSL[0]["attachAlgoClOrdId"] != "CLIENT100A" || shortTPSL[0]["tpTriggerRatio"] != "-0.002" || shortTPSL[0]["slTriggerRatio"] != "0.001" || shortTPSL[0]["tpOrdPx"] != "-1" || shortTPSL[0]["slOrdPx"] != "-1" {
 		t.Fatalf("bad short tp/sl attach: %#v", shortTPSL[0])
 	}
 
-	longTPSL := AttachAlgoOrders(trading.ActionLong, trading.Risk{Type: trading.RiskTPSL, TPPct: &tp, SLPct: &sl}, "CLIENT101")
+	longTPSL := AttachAlgoOrders(trading.ActionLong, trading.Risk{Type: trading.RiskTPSL, TPPct: &tp, SLPct: &sl}, "CLIENT101", 10)
 	if len(longTPSL) != 1 {
 		t.Fatalf("long tp/sl attach length = %d", len(longTPSL))
 	}
-	if longTPSL[0]["attachAlgoClOrdId"] != "CLIENT101A" || longTPSL[0]["tpTriggerRatio"] != "0.02" || longTPSL[0]["slTriggerRatio"] != "-0.01" || longTPSL[0]["tpOrdPx"] != "-1" || longTPSL[0]["slOrdPx"] != "-1" {
+	if longTPSL[0]["attachAlgoClOrdId"] != "CLIENT101A" || longTPSL[0]["tpTriggerRatio"] != "0.002" || longTPSL[0]["slTriggerRatio"] != "-0.001" || longTPSL[0]["tpOrdPx"] != "-1" || longTPSL[0]["slOrdPx"] != "-1" {
 		t.Fatalf("bad long tp/sl attach: %#v", longTPSL[0])
 	}
 	if longTPSL[0]["tpTriggerPxType"] != "last" || longTPSL[0]["slTriggerPxType"] != "last" {
@@ -43,7 +43,7 @@ func TestAttachAlgoOrdersBuildsTPSLAndTrailing(t *testing.T) {
 	}
 
 	trailingPct := trading.NewFlexibleFloat(1.5)
-	trailing := AttachAlgoOrders(trading.ActionLong, trading.Risk{Type: trading.RiskTrailing, TrailingPct: &trailingPct}, "CLIENT200")
+	trailing := AttachAlgoOrders(trading.ActionLong, trading.Risk{Type: trading.RiskTrailing, TrailingPct: &trailingPct}, "CLIENT200", 10)
 	if len(trailing) != 1 {
 		t.Fatalf("trailing attach length = %d", len(trailing))
 	}
@@ -55,11 +55,11 @@ func TestAttachAlgoOrdersBuildsTPSLAndTrailing(t *testing.T) {
 func TestAttachAlgoOrdersQuantizesRatiosToOKXStep(t *testing.T) {
 	tp := trading.NewFlexibleFloat(1.23456)
 	sl := trading.NewFlexibleFloat(0.005)
-	tpsl := AttachAlgoOrders(trading.ActionLong, trading.Risk{Type: trading.RiskTPSL, TPPct: &tp, SLPct: &sl}, "CLIENT300")
+	tpsl := AttachAlgoOrders(trading.ActionLong, trading.Risk{Type: trading.RiskTPSL, TPPct: &tp, SLPct: &sl}, "CLIENT300", 10)
 	if len(tpsl) != 1 {
 		t.Fatalf("tp/sl attach length = %d", len(tpsl))
 	}
-	if tpsl[0]["tpTriggerRatio"] != "0.0123" || tpsl[0]["slTriggerRatio"] != "-0.0001" {
+	if tpsl[0]["tpTriggerRatio"] != "0.0012" || tpsl[0]["slTriggerRatio"] != "-0.0001" {
 		t.Fatalf("bad quantized tp/sl attach: %#v", tpsl[0])
 	}
 }
@@ -136,7 +136,7 @@ func TestTraderExecuteSignalPlacesDefaultMarketOrderWithTPSL(t *testing.T) {
 		t.Fatalf("attach algo length = %d", len(orderReq.AttachAlgoOrds))
 	}
 	attach := orderReq.AttachAlgoOrds[0]
-	if attach["tpTriggerRatio"] != "0.02" || attach["slTriggerRatio"] != "-0.01" || attach["tpOrdPx"] != "-1" || attach["slOrdPx"] != "-1" {
+	if attach["tpTriggerRatio"] != "0.004" || attach["slTriggerRatio"] != "-0.002" || attach["tpOrdPx"] != "-1" || attach["slOrdPx"] != "-1" {
 		t.Fatalf("bad attach algo: %#v", attach)
 	}
 	if attach["tpTriggerPxType"] != "last" || attach["slTriggerPxType"] != "last" {
@@ -207,11 +207,11 @@ func TestTraderExecuteSignalRetriesTPSLWithFixedTriggerPricesOnOKX54079(t *testi
 		t.Fatalf("expected TP/SL fallback retry, got %#v", orderReqs)
 	}
 	firstAttach := orderReqs[0].AttachAlgoOrds[0]
-	if firstAttach["tpTriggerRatio"] != "-0.015" || firstAttach["slTriggerRatio"] != "0.02" || firstAttach["tpTriggerPxType"] != "last" || firstAttach["slTriggerPxType"] != "last" {
+	if firstAttach["tpTriggerRatio"] != "-0.0015" || firstAttach["slTriggerRatio"] != "0.002" || firstAttach["tpTriggerPxType"] != "last" || firstAttach["slTriggerPxType"] != "last" {
 		t.Fatalf("bad first tp/sl attach: %#v", firstAttach)
 	}
 	secondAttach := orderReqs[1].AttachAlgoOrds[0]
-	if secondAttach["tpTriggerRatio"] != "" || secondAttach["slTriggerRatio"] != "" || secondAttach["tpTriggerPx"] != "593.9" || secondAttach["slTriggerPx"] != "615.1" {
+	if secondAttach["tpTriggerRatio"] != "" || secondAttach["slTriggerRatio"] != "" || secondAttach["tpTriggerPx"] != "602" || secondAttach["slTriggerPx"] != "604.3" {
 		t.Fatalf("bad fallback tp/sl attach: %#v", secondAttach)
 	}
 	if secondAttach["tpOrdPx"] != "-1" || secondAttach["slOrdPx"] != "-1" || secondAttach["tpTriggerPxType"] != "last" || secondAttach["slTriggerPxType"] != "last" {

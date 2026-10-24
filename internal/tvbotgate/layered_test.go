@@ -64,10 +64,10 @@ func TestTraderPlacesSixLayeredGateOrdersFromOneTicker(t *testing.T) {
 			t.Fatalf("Gate layer %d is missing its TP/SL trigger prices: %#v", i, order)
 		}
 	}
-	if !almostEqualGatePrice(orders[0].TPTriggerPrice, 102) || !almostEqualGatePrice(orders[0].SLTriggerPrice, 99) ||
-		!almostEqualGatePrice(orders[1].TPTriggerPrice, 107.1) || !almostEqualGatePrice(orders[1].SLTriggerPrice, 104) ||
-		!almostEqualGatePrice(orders[2].TPTriggerPrice, 101.5) || !almostEqualGatePrice(orders[2].SLTriggerPrice, 98.5) ||
-		!almostEqualGatePrice(orders[5].TPTriggerPrice, 98.9) || !almostEqualGatePrice(orders[5].SLTriggerPrice, 96) {
+	if !almostEqualGatePrice(orders[0].TPTriggerPrice, 100.4) || !almostEqualGatePrice(orders[0].SLTriggerPrice, 99.8) ||
+		!almostEqualGatePrice(orders[1].TPTriggerPrice, 105.4) || !almostEqualGatePrice(orders[1].SLTriggerPrice, 104.8) ||
+		!almostEqualGatePrice(orders[2].TPTriggerPrice, 99.9) || !almostEqualGatePrice(orders[2].SLTriggerPrice, 99.3) ||
+		!almostEqualGatePrice(orders[5].TPTriggerPrice, 97.4) || !almostEqualGatePrice(orders[5].SLTriggerPrice, 96.8) {
 		t.Fatalf("each Gate layer should calculate TP/SL from its own entry price: %#v", orders)
 	}
 	for i, layer := range result.Layers {

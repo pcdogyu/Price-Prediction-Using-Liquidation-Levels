@@ -5262,7 +5262,11 @@ func pendingOrderAttachAlgoOrders(cfg config.Config, order okx.PendingOrder, clO
 	if !ok {
 		return nil
 	}
-	return okx.AttachAlgoOrders(action, risk, clOrdID)
+	leverage := cfg.Trading.Leverage
+	if parsed, err := strconv.Atoi(strings.TrimSpace(order.Lever)); err == nil && parsed > 0 {
+		leverage = parsed
+	}
+	return okx.AttachAlgoOrders(action, risk, clOrdID, leverage)
 }
 
 func pendingOrderTradingAction(side string) (trading.Side, bool) {
@@ -7602,30 +7606,47 @@ func positionProtectionTriggerPrice(position okx.Position, kind, tickRaw string,
 	if err != nil {
 		return "", err
 	}
+	leverage, err := strconv.ParseFloat(strings.TrimSpace(position.Lever), 64)
+	if err != nil || leverage <= 0 || math.IsNaN(leverage) || math.IsInf(leverage, 0) {
+		return "", fmt.Errorf("position leverage is required for protection orders")
+	}
+	if math.Trunc(leverage) != leverage {
+		return "", fmt.Errorf("position leverage must be a whole number, got %q", position.Lever)
+	}
 	longPosition := side == "sell"
 	var target float64
 	var roundUp bool
 	switch kind {
 	case positionProtectionTP:
-		if math.IsNaN(takeProfitPct) || math.IsInf(takeProfitPct, 0) || takeProfitPct <= 0 {
-			return "", fmt.Errorf("take_profit_pct must be positive")
+		leverageAdjustedTP, _, triggerErr := trading.FixedTPSLTriggerPrices(trading.ActionLong, entry, takeProfitPct, 1, int(leverage))
+		if triggerErr != nil {
+			return "", fmt.Errorf("invalid take-profit settings: %w", triggerErr)
 		}
 		if longPosition {
-			target = entry * (1 + takeProfitPct/100)
+			target = leverageAdjustedTP
 			roundUp = true
 		} else {
-			target = entry * (1 - takeProfitPct/100)
+			shortTP, _, triggerErr := trading.FixedTPSLTriggerPrices(trading.ActionShort, entry, takeProfitPct, 1, int(leverage))
+			if triggerErr != nil {
+				return "", fmt.Errorf("invalid take-profit settings: %w", triggerErr)
+			}
+			target = shortTP
 			roundUp = false
 		}
 	case positionProtectionSL:
-		if math.IsNaN(stopLossPct) || math.IsInf(stopLossPct, 0) || stopLossPct <= 0 {
-			return "", fmt.Errorf("stop_loss_pct must be positive")
+		_, leverageAdjustedSL, triggerErr := trading.FixedTPSLTriggerPrices(trading.ActionLong, entry, 1, stopLossPct, int(leverage))
+		if triggerErr != nil {
+			return "", fmt.Errorf("invalid stop-loss settings: %w", triggerErr)
 		}
 		if longPosition {
-			target = entry * (1 - stopLossPct/100)
+			target = leverageAdjustedSL
 			roundUp = false
 		} else {
-			target = entry * (1 + stopLossPct/100)
+			_, shortSL, triggerErr := trading.FixedTPSLTriggerPrices(trading.ActionShort, entry, 1, stopLossPct, int(leverage))
+			if triggerErr != nil {
+				return "", fmt.Errorf("invalid stop-loss settings: %w", triggerErr)
+			}
+			target = shortSL
 			roundUp = true
 		}
 	default:

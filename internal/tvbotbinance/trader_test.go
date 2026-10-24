@@ -92,10 +92,10 @@ func TestTraderPlacesLimitOrderAndTPSLAlgoOrders(t *testing.T) {
 	for _, order := range result.RiskOrders {
 		riskByType[order.OrderType] = order
 	}
-	if riskByType["TAKE_PROFIT_MARKET"].AlgoID != "456" || riskByType["TAKE_PROFIT_MARKET"].ClientAlgoID == "" || riskByType["TAKE_PROFIT_MARKET"].TriggerPrice != "50847" {
+	if riskByType["TAKE_PROFIT_MARKET"].AlgoID != "456" || riskByType["TAKE_PROFIT_MARKET"].ClientAlgoID == "" || riskByType["TAKE_PROFIT_MARKET"].TriggerPrice != "50000.1" {
 		t.Fatalf("bad TP risk order metadata: %#v", riskByType["TAKE_PROFIT_MARKET"])
 	}
-	if riskByType["STOP_MARKET"].AlgoID != "456" || riskByType["STOP_MARKET"].ClientAlgoID == "" || riskByType["STOP_MARKET"].TriggerPrice != "49351.5" {
+	if riskByType["STOP_MARKET"].AlgoID != "456" || riskByType["STOP_MARKET"].ClientAlgoID == "" || riskByType["STOP_MARKET"].TriggerPrice != "49800" {
 		t.Fatalf("bad SL risk order metadata: %#v", riskByType["STOP_MARKET"])
 	}
 	if orderForm.Get("symbol") != "BTCUSDT" || orderForm.Get("side") != "BUY" || orderForm.Get("type") != "LIMIT" || orderForm.Get("timeInForce") != "GTC" || orderForm.Get("quantity") != "0.002" || orderForm.Get("price") != "49850" {
@@ -110,10 +110,10 @@ func TestTraderPlacesLimitOrderAndTPSLAlgoOrders(t *testing.T) {
 	}
 	tp := types["TAKE_PROFIT_MARKET"]
 	sl := types["STOP_MARKET"]
-	if tp.Get("side") != "SELL" || tp.Get("triggerPrice") != "50847" || tp.Get("workingType") != "MARK_PRICE" {
+	if tp.Get("side") != "SELL" || tp.Get("triggerPrice") != "50000.1" || tp.Get("workingType") != "MARK_PRICE" {
 		t.Fatalf("bad TP form: %#v", tp)
 	}
-	if sl.Get("side") != "SELL" || sl.Get("triggerPrice") != "49351.5" || sl.Get("workingType") != "MARK_PRICE" {
+	if sl.Get("side") != "SELL" || sl.Get("triggerPrice") != "49800" || sl.Get("workingType") != "MARK_PRICE" {
 		t.Fatalf("bad SL form: %#v", sl)
 	}
 }
@@ -344,7 +344,7 @@ func TestTraderAdjustsBinanceTPSLAwayFromMarkPrice(t *testing.T) {
 	if types["TAKE_PROFIT_MARKET"].Get("triggerPrice") != "0.005865" || types["TAKE_PROFIT_MARKET"].Get("side") != "BUY" {
 		t.Fatalf("bad adjusted TP form: %#v", types["TAKE_PROFIT_MARKET"])
 	}
-	if types["STOP_MARKET"].Get("triggerPrice") != "0.006077" || types["STOP_MARKET"].Get("side") != "BUY" {
+	if types["STOP_MARKET"].Get("triggerPrice") != "0.006023" || types["STOP_MARKET"].Get("side") != "BUY" {
 		t.Fatalf("bad adjusted SL form: %#v", types["STOP_MARKET"])
 	}
 }

@@ -4948,7 +4948,7 @@ func TestTVBotPendingOrderChaseRebuildsNakedOrderWithRiskControls(t *testing.T) 
 		t.Fatalf("missing attach algo on rebuilt order: %#v", order)
 	}
 	first, ok := attach[0].(map[string]any)
-	if !ok || first["tpTriggerRatio"] != "0.02" || first["slTriggerRatio"] != "-0.01" || first["tpOrdPx"] != "-1" || first["slOrdPx"] != "-1" {
+	if !ok || first["tpTriggerRatio"] != "0.004" || first["slTriggerRatio"] != "-0.002" || first["tpOrdPx"] != "-1" || first["slOrdPx"] != "-1" {
 		t.Fatalf("bad rebuilt attach algo: %#v", attach)
 	}
 }
@@ -4973,7 +4973,7 @@ func TestTVBotPendingOrderChasePreservesExistingRiskControlsWhileAmendingPrice(t
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v5/trade/orders-pending":
-			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"BTC-USDT-SWAP","ordId":"100","clOrdId":"client-100","tdMode":"isolated","side":"sell","posSide":"short","ordType":"limit","px":"64000","sz":"0.5","accFillSz":"0","state":"live","attachAlgoOrds":[{"attachAlgoClOrdId":"client-100A","tpTriggerRatio":"-0.03","slTriggerRatio":"0.015"}],"cTime":"1784880000000"}]}`))
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"BTC-USDT-SWAP","ordId":"100","clOrdId":"client-100","tdMode":"isolated","side":"sell","posSide":"short","ordType":"limit","px":"64000","sz":"0.5","accFillSz":"0","state":"live","attachAlgoOrds":[{"attachAlgoClOrdId":"client-100A","tpTriggerRatio":"-0.006","slTriggerRatio":"0.003"}],"cTime":"1784880000000"}]}`))
 		case "/api/v5/public/instruments":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","tickSz":"0.1","ctVal":"1","lotSz":"1","minSz":"1"}]}`))
 		case "/api/v5/market/ticker":
@@ -5125,7 +5125,7 @@ func TestTVBotPendingOrderChaseRebuildsStaleTPSLRiskControls(t *testing.T) {
 		t.Fatalf("missing attach algo on rebuilt order: %#v", order)
 	}
 	first, ok := attach[0].(map[string]any)
-	if !ok || first["tpTriggerRatio"] != "-0.0075" || first["slTriggerRatio"] != "0.01" || first["tpOrdPx"] != "-1" || first["slOrdPx"] != "-1" {
+	if !ok || first["tpTriggerRatio"] != "-0.0015" || first["slTriggerRatio"] != "0.002" || first["tpOrdPx"] != "-1" || first["slOrdPx"] != "-1" {
 		t.Fatalf("bad rebuilt attach algo: %#v", attach)
 	}
 }
@@ -5204,7 +5204,7 @@ func TestTVBotPendingOrderRiskRebuildPreservesPriceAndRefreshesTPSL(t *testing.T
 		t.Fatalf("missing attach algo on replacement order: %#v", order)
 	}
 	first, ok := attach[0].(map[string]any)
-	if !ok || first["tpTriggerRatio"] != "-0.0075" || first["slTriggerRatio"] != "0.01" || first["tpOrdPx"] != "-1" || first["slOrdPx"] != "-1" {
+	if !ok || first["tpTriggerRatio"] != "-0.0015" || first["slTriggerRatio"] != "0.002" || first["tpOrdPx"] != "-1" || first["slOrdPx"] != "-1" {
 		t.Fatalf("bad replacement attach algo: %#v", attach)
 	}
 }
@@ -5525,7 +5525,7 @@ func TestTVBotPendingOrderChaseFallbackMarketIncludesRiskControls(t *testing.T) 
 				_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 				return
 			}
-			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"BTC-USDT-SWAP","ordId":"100","clOrdId":"client-100","tdMode":"cross","side":"buy","posSide":"net","ordType":"limit","px":"64000","sz":"0.5","accFillSz":"0.1","state":"live","attachAlgoOrds":[{"attachAlgoClOrdId":"client-100A","tpTriggerRatio":"0.04","slTriggerRatio":"-0.02"}],"cTime":"1784880000000"}]}`))
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"BTC-USDT-SWAP","ordId":"100","clOrdId":"client-100","tdMode":"cross","side":"buy","posSide":"net","ordType":"limit","px":"64000","sz":"0.5","accFillSz":"0.1","state":"live","attachAlgoOrds":[{"attachAlgoClOrdId":"client-100A","tpTriggerRatio":"0.008","slTriggerRatio":"-0.004"}],"cTime":"1784880000000"}]}`))
 		case "/api/v5/public/instruments":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","tickSz":"0.1","ctVal":"1","lotSz":"1","minSz":"1"}]}`))
 		case "/api/v5/market/ticker":
@@ -5605,7 +5605,7 @@ func TestTVBotPendingOrderChaseFallbackMarketIncludesRiskControls(t *testing.T) 
 		t.Fatalf("missing attach algo on market fallback: %#v", market)
 	}
 	first, ok := attach[0].(map[string]any)
-	if !ok || first["tpTriggerRatio"] != "0.04" || first["slTriggerRatio"] != "-0.02" || first["tpOrdPx"] != "-1" || first["slOrdPx"] != "-1" {
+	if !ok || first["tpTriggerRatio"] != "0.008" || first["slTriggerRatio"] != "-0.004" || first["tpOrdPx"] != "-1" || first["slOrdPx"] != "-1" {
 		t.Fatalf("bad market fallback attach algo: %#v", attach)
 	}
 }

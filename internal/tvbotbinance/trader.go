@@ -139,6 +139,7 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 	if err != nil {
 		return result, err
 	}
+	signal.Leverage = usedLeverage
 	for _, orderReq := range orderRequests {
 		riskOrders, err := t.placeRiskOrders(ctx, client, signal, orderReq, sizingPx, filters)
 		if err != nil {
@@ -204,6 +205,7 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 		PositionEffect: signal.PositionEffect,
 		PositionSide:   signal.PositionSide,
 	}
+	signal.Leverage = usedLeverage
 	var firstErr error
 	for index, leg := range legs {
 		layer := trading.OrderLayerResult{
@@ -595,7 +597,7 @@ func (t Trader) placeRiskOrders(ctx context.Context, client Client, signal tradi
 	if signal.Action == trading.ActionShort {
 		closeSide = "BUY"
 	}
-	tpPx, slPx := riskTriggerPrices(signal.Action, entryPx, risk.TPPct.Value, risk.SLPct.Value)
+	tpPx, slPx := riskTriggerPrices(signal.Action, entryPx, risk.TPPct.Value, risk.SLPct.Value, signal.Leverage)
 	tpTrigger := formatStep(tpPx, filters.TickSize, signal.Action == trading.ActionLong)
 	slTrigger := formatStep(slPx, filters.TickSize, signal.Action == trading.ActionShort)
 	if markPx, err := binanceMarkPrice(ctx, client, order.Symbol); err == nil {
@@ -1094,11 +1096,12 @@ func positiveDecimalString(raw string) bool {
 	return err == nil && value > 0
 }
 
-func riskTriggerPrices(action trading.Side, entryPx, tpPct, slPct float64) (float64, float64) {
-	if action == trading.ActionShort {
-		return entryPx * (1 - tpPct/100), entryPx * (1 + slPct/100)
+func riskTriggerPrices(action trading.Side, entryPx, tpPct, slPct float64, leverage int) (float64, float64) {
+	tp, sl, err := trading.FixedTPSLTriggerPrices(action, entryPx, tpPct, slPct, leverage)
+	if err != nil {
+		return 0, 0
 	}
-	return entryPx * (1 + tpPct/100), entryPx * (1 - slPct/100)
+	return tp, sl
 }
 
 func binanceMarkPrice(ctx context.Context, client Client, symbol string) (float64, error) {

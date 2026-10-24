@@ -78,16 +78,18 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 	if cfg.PositionMode() == "long_short" {
 		return trading.OrderResult{}, errors.New("Gate futures currently requires net position mode; set position_mode=net")
 	}
-	if _, err := client.SetLeverage(ctx, contract.Name, signal.Leverage, marginMode, ""); err != nil {
+	leveragePosition, err := client.SetLeverage(ctx, contract.Name, signal.Leverage, marginMode, "")
+	if err != nil {
 		return trading.OrderResult{}, fmt.Errorf("Gate set leverage %s to %dx: %w", contract.Name, signal.Leverage, err)
 	}
+	signal.Leverage = gateEffectiveLeverage(leveragePosition, signal.Leverage)
 	textID := gateClientOrderID(signal)
 	req := PlaceOrderRequest{Contract: contract.Name, Size: qty, Price: price, TIF: tif, Text: textID, PosMarginMode: marginMode}
 	if signal.Action == trading.ActionShort {
 		req.Size = "-" + qty
 	}
 	if signal.Risk.Type == trading.RiskTPSL {
-		tp, sl := riskTriggerPrices(signal.Action, sizingPx, signal.Risk.TPPct.Value, signal.Risk.SLPct.Value)
+		tp, sl := riskTriggerPrices(signal.Action, sizingPx, signal.Risk.TPPct.Value, signal.Risk.SLPct.Value, signal.Leverage)
 		req.TPTriggerPrice = formatStep(tp, contract.OrderPriceRound, false)
 		req.SLTriggerPrice = formatStep(sl, contract.OrderPriceRound, false)
 	}
@@ -143,9 +145,11 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 	if cfg.PositionMode() == "long_short" {
 		return trading.OrderResult{}, errors.New("Gate futures currently requires net position mode; set position_mode=net")
 	}
-	if _, err := client.SetLeverage(ctx, contract.Name, signal.Leverage, marginMode, ""); err != nil {
+	leveragePosition, err := client.SetLeverage(ctx, contract.Name, signal.Leverage, marginMode, "")
+	if err != nil {
 		return trading.OrderResult{}, fmt.Errorf("Gate set leverage %s to %dx: %w", contract.Name, signal.Leverage, err)
 	}
+	signal.Leverage = gateEffectiveLeverage(leveragePosition, signal.Leverage)
 	result := trading.OrderResult{
 		APIID:          apiID,
 		TargetExchange: trading.ExchangeGate,
@@ -195,7 +199,7 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 			req.Size = "-" + qty
 		}
 		if signal.Risk.Type == trading.RiskTPSL {
-			tp, sl := riskTriggerPrices(signal.Action, leg.Price, signal.Risk.TPPct.Value, signal.Risk.SLPct.Value)
+			tp, sl := riskTriggerPrices(signal.Action, leg.Price, signal.Risk.TPPct.Value, signal.Risk.SLPct.Value, signal.Leverage)
 			req.TPTriggerPrice = formatStep(tp, contract.OrderPriceRound, false)
 			req.SLTriggerPrice = formatStep(sl, contract.OrderPriceRound, false)
 			layer.RiskOrders = []trading.RiskOrderResult{
@@ -433,12 +437,24 @@ func gateStepDecimalPlaces(step string) int {
 	}
 	return len(raw) - dot - 1
 }
-func riskTriggerPrices(action trading.Side, entry, tpPct, slPct float64) (float64, float64) {
-	if action == trading.ActionShort {
-		return entry * (1 - tpPct/100), entry * (1 + slPct/100)
+func riskTriggerPrices(action trading.Side, entry, tpPct, slPct float64, leverage int) (float64, float64) {
+	tp, sl, err := trading.FixedTPSLTriggerPrices(action, entry, tpPct, slPct, leverage)
+	if err != nil {
+		return 0, 0
 	}
-	return entry * (1 + tpPct/100), entry * (1 - slPct/100)
+	return tp, sl
 }
+
+func gateEffectiveLeverage(position Position, fallback int) int {
+	for _, raw := range []string{position.Lever, position.Leverage} {
+		value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+		if err == nil && value > 0 && math.Trunc(value) == value {
+			return int(value)
+		}
+	}
+	return fallback
+}
+
 func gateCloseSide(action trading.Side) string {
 	if action == trading.ActionShort {
 		return "BUY"

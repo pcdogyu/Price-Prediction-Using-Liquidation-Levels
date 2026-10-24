@@ -2179,8 +2179,8 @@ const tvbotHTML = `<!doctype html>
         <label>杠杆<input id="order-leverage" type="number" min="1" step="1"></label>
         <label>订单类型<select id="order-type"><option value="market">市价单</option><option value="limit">限价单</option><option value="layered">多层订单</option></select></label>
         <label>风控模式<select id="order-risk-type"><option value="tp_sl">固定止盈止损</option><option value="trailing">移动止损</option><option value="none">不设置</option></select></label>
-        <label>固定止盈 %<input id="order-tp" type="number" min="0" step="0.01"></label>
-        <label>固定止损 %<input id="order-sl" type="number" min="0" step="0.01"></label>
+        <label>固定止盈（保证金收益率）%<input id="order-tp" type="number" min="0" step="0.01"></label>
+        <label>固定止损（保证金亏损率）%<input id="order-sl" type="number" min="0" step="0.01"></label>
         <label>移动止损 %<input id="order-trailing" type="number" min="0" step="0.01"></label>
         <label>多单限价倍率<input id="order-long-multiplier" type="number" min="0" step="0.000001"></label>
         <label>空单限价倍率<input id="order-short-multiplier" type="number" min="0" step="0.000001"></label>
@@ -2196,7 +2196,7 @@ const tvbotHTML = `<!doctype html>
         </div>
       </div>
       <div id="layered-order-fields" style="display:none;margin-top:14px">
-        <div class="muted">多层订单按一次实时价快照计算：市价层立即成交，信号价层按 TradingView 价格挂单，其余层按当前价格的方向性价差挂单。每层成交价都会单独计算并提交对应的止盈、止损触发价；比例合计必须为 100%。</div>
+        <div class="muted">固定止盈止损按保证金收益率计算，实际价格距离会除以本次使用的杠杆；多层订单按一次实时价快照计算：市价层立即成交，信号价层按 TradingView 价格挂单，其余层按当前价格的方向性价差挂单。每层成交价都会单独计算并提交对应的止盈、止损触发价；比例合计必须为 100%。</div>
         <div class="grid two" style="margin-top:10px">
           <label>市价层金额 %<input id="order-layered-market-pct" type="number" min="0" step="0.01"></label>
           <label>信号价限价层金额 %<input id="order-layered-signal-pct" type="number" min="0" step="0.01"></label>

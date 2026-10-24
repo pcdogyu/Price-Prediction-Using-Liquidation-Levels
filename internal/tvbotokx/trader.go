@@ -160,6 +160,7 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
+	signal.Leverage = usedLeverage
 	result := trading.OrderResult{
 		APIID:          apiID,
 		TargetExchange: trading.ExchangeOKX,
@@ -614,22 +615,22 @@ func okxSide(action trading.Side) string {
 }
 
 func attachAlgoOrders(signal trading.Signal, clOrdID string) []map[string]string {
-	return AttachAlgoOrders(signal.Action, signal.Risk, clOrdID)
+	return AttachAlgoOrders(signal.Action, signal.Risk, clOrdID, signal.Leverage)
 }
 
-func AttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID string) []map[string]string {
+func AttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID string, leverage int) []map[string]string {
 	risk.Normalize()
 	switch risk.Type {
 	case trading.RiskTPSL:
-		if risk.TPPct == nil || risk.SLPct == nil {
+		if risk.TPPct == nil || risk.SLPct == nil || leverage <= 0 {
 			return nil
 		}
 		return []map[string]string{{
 			"attachAlgoClOrdId": attachAlgoClOrdID(clOrdID, "A"),
-			"tpTriggerRatio":    signedTPRatio(action, risk.TPPct.Value),
+			"tpTriggerRatio":    signedTPRatio(action, risk.TPPct.Value, leverage),
 			"tpOrdPx":           "-1",
 			"tpTriggerPxType":   "last",
-			"slTriggerRatio":    signedSLRatio(action, risk.SLPct.Value),
+			"slTriggerRatio":    signedSLRatio(action, risk.SLPct.Value, leverage),
 			"slOrdPx":           "-1",
 			"slTriggerPxType":   "last",
 		}}
@@ -655,7 +656,7 @@ func dynamicAlgoFallbackRequest(req PlaceOrderRequest, signal trading.Signal, cl
 		if referencePx <= 0 || !placeOrderRequestUsesTPSLRatio(req) {
 			return PlaceOrderRequest{}, "", false
 		}
-		attach := fixedTPSLAttachAlgoOrders(signal.Action, risk, clOrdID, referencePx, tickSz)
+		attach := fixedTPSLAttachAlgoOrders(signal.Action, risk, clOrdID, referencePx, tickSz, signal.Leverage)
 		if len(attach) == 0 {
 			return PlaceOrderRequest{}, "", false
 		}
@@ -989,12 +990,17 @@ func firstRegexFloat(re *regexp.Regexp, text string) (float64, bool) {
 	return value, true
 }
 
-func fixedTPSLAttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID string, referencePx, tickSz float64) []map[string]string {
+func fixedTPSLAttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID string, referencePx, tickSz float64, leverage int) []map[string]string {
 	risk.Normalize()
-	if risk.Type != trading.RiskTPSL || risk.TPPct == nil || risk.SLPct == nil || referencePx <= 0 {
+	if risk.Type != trading.RiskTPSL || risk.TPPct == nil || risk.SLPct == nil || referencePx <= 0 || leverage <= 0 {
 		return nil
 	}
-	tpTrigger, slTrigger := fixedTPSLTriggerPrices(action, risk.TPPct.Value, risk.SLPct.Value, referencePx, tickSz)
+	tpPx, slPx, err := trading.FixedTPSLTriggerPrices(action, referencePx, risk.TPPct.Value, risk.SLPct.Value, leverage)
+	if err != nil {
+		return nil
+	}
+	tpTrigger := formatOKXTriggerPrice(tpPx, tickSz, action == trading.ActionLong)
+	slTrigger := formatOKXTriggerPrice(slPx, tickSz, action == trading.ActionShort)
 	if tpTrigger == "" || slTrigger == "" || tpTrigger == "0" || slTrigger == "0" {
 		return nil
 	}
@@ -1009,22 +1015,12 @@ func fixedTPSLAttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID s
 	}}
 }
 
-func fixedTPSLTriggerPrices(action trading.Side, tpPct, slPct, referencePx, tickSz float64) (string, string) {
-	if referencePx <= 0 ||
-		math.IsNaN(tpPct) || math.IsInf(tpPct, 0) || tpPct <= 0 ||
-		math.IsNaN(slPct) || math.IsInf(slPct, 0) || slPct <= 0 {
+func fixedTPSLTriggerPrices(action trading.Side, tpPct, slPct, referencePx, tickSz float64, leverage int) (string, string) {
+	tpPx, slPx, err := trading.FixedTPSLTriggerPrices(action, referencePx, tpPct, slPct, leverage)
+	if err != nil {
 		return "", ""
 	}
-	switch action {
-	case trading.ActionLong:
-		return formatOKXTriggerPrice(referencePx*(1+tpPct/100), tickSz, true),
-			formatOKXTriggerPrice(referencePx*(1-slPct/100), tickSz, false)
-	case trading.ActionShort:
-		return formatOKXTriggerPrice(referencePx*(1-tpPct/100), tickSz, false),
-			formatOKXTriggerPrice(referencePx*(1+slPct/100), tickSz, true)
-	default:
-		return "", ""
-	}
+	return formatOKXTriggerPrice(tpPx, tickSz, action == trading.ActionLong), formatOKXTriggerPrice(slPx, tickSz, action == trading.ActionShort)
 }
 
 func refreshedOKXLimitOrderPrice(ctx context.Context, client Client, action trading.Side, orderSettings trading.OrderSettings, sym trading.SymbolInfo) (float64, string, error) {
@@ -1124,16 +1120,16 @@ func attachAlgoClOrdID(clOrdID, suffix string) string {
 	return clOrdID + suffix
 }
 
-func signedTPRatio(action trading.Side, pct float64) string {
-	ratio := pct / 100
+func signedTPRatio(action trading.Side, pct float64, leverage int) string {
+	ratio := pct / float64(leverage) / 100
 	if action == trading.ActionShort {
 		ratio = -ratio
 	}
 	return okxRatio(ratio)
 }
 
-func signedSLRatio(action trading.Side, pct float64) string {
-	ratio := pct / 100
+func signedSLRatio(action trading.Side, pct float64, leverage int) string {
+	ratio := pct / float64(leverage) / 100
 	if action != trading.ActionShort {
 		ratio = -ratio
 	}

@@ -64,8 +64,8 @@ func TestTVBotOKXPositionProtectionOrders(t *testing.T) {
 		triggerPx string
 		callback  string
 	}{
-		{kind: "tp", triggerPx: "102.5"},
-		{kind: "sl", triggerPx: "98.7"},
+		{kind: "tp", triggerPx: "100.3"},
+		{kind: "sl", triggerPx: "99.8"},
 		{kind: "trailing", callback: "0.035"},
 	} {
 		body := []byte(`{"exchange":"okx","api_id":"default","inst_id":"BTC-USDT-SWAP","pos_side":"long","kind":"` + tc.kind + `"}`)
@@ -88,11 +88,11 @@ func TestTVBotOKXPositionProtectionOrders(t *testing.T) {
 		t.Fatalf("expected three OKX algo orders, got %#v", orderBodies)
 	}
 	tp := orderBodies[0]
-	if tp["instId"] != "BTC-USDT-SWAP" || tp["tdMode"] != "isolated" || tp["side"] != "sell" || tp["posSide"] != "long" || tp["ordType"] != "conditional" || tp["sz"] != "2" || tp["tpTriggerPx"] != "102.5" || tp["tpOrdPx"] != "-1" || tp["tpTriggerPxType"] != "mark" || tp["reduceOnly"] != true {
+	if tp["instId"] != "BTC-USDT-SWAP" || tp["tdMode"] != "isolated" || tp["side"] != "sell" || tp["posSide"] != "long" || tp["ordType"] != "conditional" || tp["sz"] != "2" || tp["tpTriggerPx"] != "100.3" || tp["tpOrdPx"] != "-1" || tp["tpTriggerPxType"] != "mark" || tp["reduceOnly"] != true {
 		t.Fatalf("bad OKX tp body: %#v", tp)
 	}
 	sl := orderBodies[1]
-	if sl["side"] != "sell" || sl["ordType"] != "conditional" || sl["slTriggerPx"] != "98.7" || sl["slOrdPx"] != "-1" || sl["slTriggerPxType"] != "mark" || sl["reduceOnly"] != true {
+	if sl["side"] != "sell" || sl["ordType"] != "conditional" || sl["slTriggerPx"] != "99.8" || sl["slOrdPx"] != "-1" || sl["slTriggerPxType"] != "mark" || sl["reduceOnly"] != true {
 		t.Fatalf("bad OKX sl body: %#v", sl)
 	}
 	trailing := orderBodies[2]
@@ -157,8 +157,8 @@ func TestTVBotBinancePositionProtectionOrders(t *testing.T) {
 		triggerPx string
 		callback  string
 	}{
-		{kind: "tp", triggerPx: "97.5"},
-		{kind: "sl", triggerPx: "101"},
+		{kind: "tp", triggerPx: "99.7"},
+		{kind: "sl", triggerPx: "100.1"},
 		{kind: "trailing", callback: "2"},
 	} {
 		body := []byte(`{"exchange":"binance","api_id":"main","inst_id":"ETHUSDT","pos_side":"short","kind":"` + tc.kind + `"}`)
@@ -181,11 +181,11 @@ func TestTVBotBinancePositionProtectionOrders(t *testing.T) {
 		t.Fatalf("expected three Binance algo orders, got %#v", algoForms)
 	}
 	tp := algoForms[0]
-	if tp.Get("symbol") != "ETHUSDT" || tp.Get("side") != "BUY" || tp.Get("positionSide") != "SHORT" || tp.Get("type") != "TAKE_PROFIT_MARKET" || tp.Get("quantity") != "3" || tp.Get("triggerPrice") != "97.5" || tp.Get("workingType") != "MARK_PRICE" || tp.Get("reduceOnly") != "" {
+	if tp.Get("symbol") != "ETHUSDT" || tp.Get("side") != "BUY" || tp.Get("positionSide") != "SHORT" || tp.Get("type") != "TAKE_PROFIT_MARKET" || tp.Get("quantity") != "3" || tp.Get("triggerPrice") != "99.7" || tp.Get("workingType") != "MARK_PRICE" || tp.Get("reduceOnly") != "" {
 		t.Fatalf("bad Binance tp form: %#v", tp)
 	}
 	sl := algoForms[1]
-	if sl.Get("type") != "STOP_MARKET" || sl.Get("side") != "BUY" || sl.Get("triggerPrice") != "101" || sl.Get("positionSide") != "SHORT" {
+	if sl.Get("type") != "STOP_MARKET" || sl.Get("side") != "BUY" || sl.Get("triggerPrice") != "100.1" || sl.Get("positionSide") != "SHORT" {
 		t.Fatalf("bad Binance sl form: %#v", sl)
 	}
 	trailing := algoForms[2]
