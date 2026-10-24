@@ -134,6 +134,28 @@ func TestAlertKlinesFallsBackToStoredMinutes(t *testing.T) {
 	}
 }
 
+func TestAlertKlinesRetriesTransientUpstreamTimeout(t *testing.T) {
+	svc := klineService(t)
+	original := fetchAlertKlines
+	calls := 0
+	fetchAlertKlines = func(_ context.Context, symbol, interval string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+		calls++
+		if calls == 1 {
+			return nil, false, context.DeadlineExceeded
+		}
+		return []domain.MarketCandle{{Time: until.Add(-time.Minute), Open: 100, High: 101, Low: 99, Close: 100.5, VolumeUSD: 10}}, false, nil
+	}
+	t.Cleanup(func() { fetchAlertKlines = original })
+
+	view, err := svc.AlertKlines(context.Background(), "ZECUSDT", "15m", 1, time.Date(2026, 10, 22, 3, 30, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || view.Source != "binance_usdm_klines" || len(view.Candles) != 1 {
+		t.Fatalf("transient timeout was not retried: calls=%d view=%+v", calls, view)
+	}
+}
+
 func TestAlertKlinesReportsBothUpstreamAndFallbackFailures(t *testing.T) {
 	svc := klineService(t)
 	original := fetchAlertKlines

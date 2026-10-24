@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"time"
 
@@ -20,6 +21,13 @@ const klineCacheTTL = 5 * time.Second
 // klineUpstreamTimeout fails over before an empty chart spends the full generic
 // exchange-client timeout waiting on a temporarily unreachable Binance host.
 const klineUpstreamTimeout = 8 * time.Second
+
+// klineUpstreamAttempts absorbs a transient Binance edge timeout without
+// making the browser request a second time or exposing a false invalid-symbol
+// error for a valid perpetual pair.
+const klineUpstreamAttempts = 2
+
+const klineUpstreamRetryDelay = 100 * time.Millisecond
 
 // klineCacheSize bounds the memo so an attacker cannot grow it by cycling
 // through symbols and pagination cursors.
@@ -68,9 +76,7 @@ func (s *Service) AlertKlines(ctx context.Context, symbol, interval string, limi
 	if cached, ok := s.cachedKlines(key); ok {
 		return cached, nil
 	}
-	upstreamCtx, cancel := context.WithTimeout(ctx, klineUpstreamTimeout)
-	candles, hasMore, err := fetchAlertKlines(upstreamCtx, symbol, interval, limit, until)
-	cancel()
+	candles, hasMore, err := fetchAlertKlinesWithRetry(ctx, symbol, interval, limit, until)
 	if err != nil {
 		fallback, fallbackErr := s.localAlertKlines(ctx, symbol, interval, limit, until)
 		if fallbackErr != nil {
@@ -88,6 +94,37 @@ func (s *Service) AlertKlines(ctx context.Context, symbol, interval string, limi
 	}
 	s.rememberKlines(key, view)
 	return view, nil
+}
+
+func fetchAlertKlinesWithRetry(ctx context.Context, symbol, interval string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+	var lastErr error
+	for attempt := 0; attempt < klineUpstreamAttempts; attempt++ {
+		upstreamCtx, cancel := context.WithTimeout(ctx, klineUpstreamTimeout)
+		candles, hasMore, err := fetchAlertKlines(upstreamCtx, symbol, interval, limit, until)
+		cancel()
+		if err == nil {
+			return candles, hasMore, nil
+		}
+		lastErr = err
+		if attempt+1 >= klineUpstreamAttempts || ctx.Err() != nil || !retryableKlineError(err) {
+			break
+		}
+		timer := time.NewTimer(klineUpstreamRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+	return nil, false, lastErr
+}
+
+func retryableKlineError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var networkErr net.Error
+	return errors.As(err, &networkErr) && (networkErr.Timeout() || networkErr.Temporary())
 }
 
 // onDemandMarket serves a valid exchange pair that is not part of the local
