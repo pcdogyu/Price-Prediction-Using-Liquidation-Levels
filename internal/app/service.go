@@ -37,42 +37,44 @@ type WebhookTargetResolver func(tenantID string) (WebhookTarget, bool)
 type GammaPolicyResolver func(tenantID string) string
 
 type Service struct {
-	dashboard          *dashboardState
-	alerts             *alertRuntime
-	alertTenantsMu     sync.Mutex
-	alertTenants       map[string]*alertRuntime
-	alertContext       context.Context
-	cfg                config.Config
-	store              *store.Store
-	clients            []exchange.Client
-	cg                 *coinglass.Capturer
-	health             *exchange.HealthRegistry
-	log                *slog.Logger
-	mu                 sync.RWMutex
-	priceMu            sync.Mutex
-	klineMu            sync.Mutex
-	marketMu           sync.Mutex
-	symbolCatalogMu    sync.Mutex
-	klineCache         map[string]klineCacheEntry
-	marketCache        map[string]marketCacheEntry
-	symbolCatalog      []exchange.ContractSymbol
-	symbolCatalogAt    time.Time
-	trainMu            sync.Mutex
-	maps               map[string]engine.MapResult
-	predictions        map[string]domain.Prediction
-	model              domain.ModelArtifact
-	subs               map[chan domain.Prediction]struct{}
-	liquidationSubs    map[chan domain.LiquidationEvent]struct{}
-	priceSubs          map[chan domain.PriceTick]struct{}
-	latestPrices       map[string]domain.PriceTick
-	lastPriceBroadcast map[string]int64
-	backfillDone       bool
-	volumeHistoryReady bool
-	volumeLiveReady    chan struct{}
-	webhookTargetMu    sync.RWMutex
-	webhookTarget      WebhookTargetResolver
-	gammaPolicyMu      sync.RWMutex
-	gammaPolicy        GammaPolicyResolver
+	dashboard           *dashboardState
+	alerts              *alertRuntime
+	alertTenantsMu      sync.Mutex
+	alertTenants        map[string]*alertRuntime
+	alertContext        context.Context
+	cfg                 config.Config
+	store               *store.Store
+	clients             []exchange.Client
+	cg                  *coinglass.Capturer
+	health              *exchange.HealthRegistry
+	log                 *slog.Logger
+	mu                  sync.RWMutex
+	priceMu             sync.Mutex
+	klineMu             sync.Mutex
+	alertCandleRepairMu sync.Mutex
+	marketMu            sync.Mutex
+	symbolCatalogMu     sync.Mutex
+	klineCache          map[string]klineCacheEntry
+	alertCandleRepairAt map[string]time.Time
+	marketCache         map[string]marketCacheEntry
+	symbolCatalog       []exchange.ContractSymbol
+	symbolCatalogAt     time.Time
+	trainMu             sync.Mutex
+	maps                map[string]engine.MapResult
+	predictions         map[string]domain.Prediction
+	model               domain.ModelArtifact
+	subs                map[chan domain.Prediction]struct{}
+	liquidationSubs     map[chan domain.LiquidationEvent]struct{}
+	priceSubs           map[chan domain.PriceTick]struct{}
+	latestPrices        map[string]domain.PriceTick
+	lastPriceBroadcast  map[string]int64
+	backfillDone        bool
+	volumeHistoryReady  bool
+	volumeLiveReady     chan struct{}
+	webhookTargetMu     sync.RWMutex
+	webhookTarget       WebhookTargetResolver
+	gammaPolicyMu       sync.RWMutex
+	gammaPolicy         GammaPolicyResolver
 }
 
 func (s *Service) SetWebhookTargetResolver(resolver WebhookTargetResolver) {
@@ -139,7 +141,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	if strings.TrimSpace(cfg.AlertTenantDataPath) == "" && strings.TrimSpace(cfg.DatabasePath) != "" {
 		cfg.AlertTenantDataPath = filepath.Join(filepath.Dir(cfg.DatabasePath), "alert-tenants")
 	}
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, marketCache: map[string]marketCacheEntry{}, volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime)}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime)}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	if a, e := ml.Load(cfg.ModelPath); e == nil {

@@ -7,6 +7,16 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/alert"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
+)
+
+const (
+	// A few missing minutes are normally an internal polling gap. Repair those
+	// gaps from Binance, but do not turn a mostly empty local store into a
+	// per-event historical downloader.
+	alertCandleRepairMinCoverage = 60
+	alertCandleRepairCooldown    = 30 * time.Second
+	alertCandleRepairTimeout     = 8 * time.Second
 )
 
 // liquidationMarketContext builds the 1m market window used by the radar. The
@@ -26,11 +36,77 @@ func (s *Service) liquidationMarketContext(ctx context.Context, event domain.Liq
 	event.EventTime = at
 	from := at.Add(-time.Duration(historyMinutes) * time.Minute)
 	to := at.Add(time.Minute)
-	rows, err := s.store.CandlesRange(ctx, strings.ToUpper(strings.TrimSpace(event.Symbol)), from, to)
-	if err != nil || len(rows) == 0 {
+	symbol := strings.ToUpper(strings.TrimSpace(event.Symbol))
+	rows, err := s.store.CandlesRange(ctx, symbol, from, to)
+	if err != nil {
 		return alert.MarketContext{Price: event.Price}
 	}
-	return buildLiquidationMarketContext(event, cfg, rows)
+	market := buildLiquidationMarketContext(event, cfg, rows)
+	if market.DonchianReady || !s.alertCandleRepairCandidate(symbol, rows, cfg) || !s.claimAlertCandleRepair(symbol, time.Now().UTC()) {
+		return market
+	}
+	repaired, ok := s.repairAlertCandleWindow(ctx, symbol, event.EventTime, cfg)
+	if !ok {
+		return market
+	}
+	if err := s.store.UpsertCandles(ctx, repaired); err != nil {
+		s.log.Warn("store alert candle repair failed", "symbol", symbol, "error", err)
+	}
+	return buildLiquidationMarketContext(event, cfg, repaired)
+}
+
+func (s *Service) alertCandleRepairCandidate(symbol string, rows []domain.Candle, cfg alert.Config) bool {
+	if len(rows) == 0 || !s.isConfiguredAlertSymbol(symbol) {
+		return false
+	}
+	rangeMinutes := cfg.VWAPRangeMinutes
+	if rangeMinutes <= 0 {
+		rangeMinutes = 24 * 60
+	}
+	return len(rows) >= rangeMinutes-alertCandleRepairMinCoverage
+}
+
+func (s *Service) isConfiguredAlertSymbol(symbol string) bool {
+	for _, configured := range s.cfg.Symbols {
+		if strings.EqualFold(strings.TrimSpace(configured), symbol) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) claimAlertCandleRepair(symbol string, now time.Time) bool {
+	s.alertCandleRepairMu.Lock()
+	defer s.alertCandleRepairMu.Unlock()
+	if last, ok := s.alertCandleRepairAt[symbol]; ok && now.Sub(last) < alertCandleRepairCooldown {
+		return false
+	}
+	if s.alertCandleRepairAt == nil {
+		s.alertCandleRepairAt = make(map[string]time.Time)
+	}
+	s.alertCandleRepairAt[symbol] = now
+	return true
+}
+
+func (s *Service) repairAlertCandleWindow(ctx context.Context, symbol string, at time.Time, cfg alert.Config) ([]domain.Candle, bool) {
+	historyMinutes := alertMarketHistoryMinutes(cfg)
+	if historyMinutes > exchange.KlinePageLimit {
+		historyMinutes = exchange.KlinePageLimit
+	}
+	until := at.UTC().Add(time.Minute)
+	if at.IsZero() {
+		until = time.Now().UTC().Add(time.Minute)
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, alertCandleRepairTimeout)
+	defer cancel()
+	rows, _, err := fetchAlertKlines(fetchCtx, symbol, "1m", historyMinutes, until)
+	if err != nil || len(rows) == 0 {
+		if err != nil {
+			s.log.Warn("alert candle repair fetch failed", "symbol", symbol, "error", err)
+		}
+		return nil, false
+	}
+	return marketCandlesToDomain(symbol, rows), true
 }
 
 // buildLiquidationMarketContext is the allocation-local part of the live
