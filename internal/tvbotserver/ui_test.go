@@ -228,6 +228,19 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotPositionsFormatsFractionalEpochSeconds(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/positions", nil))
+	for _, want := range []string{
+		`const epoch = Number(raw);`,
+		`Math.abs(epoch) < 1e12 ? epoch * 1000 : epoch`,
+		`timeZone: "Asia/Shanghai"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("pending-order timestamps should format fractional epoch seconds, missing %q", want)
+		}
+	}
+}
+
 func TestRenderTVBotPositionsShowsOverallReturn(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/positions", nil))
 	metricsStart := strings.Index(page, `<div class="analysis-metrics position-metrics">`)

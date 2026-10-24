@@ -3196,9 +3196,11 @@ const tvbotHTML = `<!doctype html>
     function shanghaiTimeFromOKX(v) {
       if (!v) return "-";
       const raw = String(v).trim();
-      if (/^\d+$/.test(raw)) {
-        const ms = Number(raw);
-        if (Number.isFinite(ms)) return shanghaiTime(new Date(ms).toISOString());
+      const epoch = Number(raw);
+      if (Number.isFinite(epoch) && epoch > 0) {
+        const ms = Math.abs(epoch) < 1e12 ? epoch * 1000 : epoch;
+        const date = new Date(ms);
+        if (!Number.isNaN(date.getTime())) return shanghaiTime(date.toISOString());
       }
       return shanghaiTime(raw);
     }
