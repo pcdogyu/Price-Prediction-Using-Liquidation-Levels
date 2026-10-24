@@ -170,6 +170,7 @@ func (s *Service) Start(ctx context.Context) {
 	s.startVolumeProfiles(ctx)
 	go s.volumeArchiveLoop(ctx)
 	go s.startAlerts(ctx)
+	go s.alertCandleRepairLoop(ctx)
 }
 
 func (s *Service) predictionLoop(ctx context.Context) {

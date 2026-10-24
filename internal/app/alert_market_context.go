@@ -17,7 +17,62 @@ const (
 	alertCandleRepairMinCoverage = 60
 	alertCandleRepairCooldown    = 30 * time.Second
 	alertCandleRepairTimeout     = 8 * time.Second
+	alertCandleRepairInterval    = time.Minute
+	alertCandleRepairInitialWait = 5 * time.Second
 )
+
+func (s *Service) alertCandleRepairLoop(ctx context.Context) {
+	timer := time.NewTimer(alertCandleRepairInitialWait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
+	s.repairConfiguredAlertCandles(ctx)
+	ticker := time.NewTicker(alertCandleRepairInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.repairConfiguredAlertCandles(ctx)
+		}
+	}
+}
+
+func (s *Service) repairConfiguredAlertCandles(ctx context.Context) {
+	if s.alerts == nil {
+		return
+	}
+	cfg := s.alerts.engine.Config()
+	now := time.Now().UTC()
+	historyMinutes := alertMarketHistoryMinutes(cfg)
+	from := now.Add(-time.Duration(historyMinutes) * time.Minute)
+	to := now.Add(time.Minute)
+	for _, configured := range s.cfg.Symbols {
+		symbol := strings.ToUpper(strings.TrimSpace(configured))
+		if symbol == "" {
+			continue
+		}
+		rows, err := s.store.CandlesRange(ctx, symbol, from, to)
+		_, _, rangeReady := alert.DonchianRange(rows, cfg.VWAPRangeMinutes)
+		if err != nil || rangeReady {
+			continue
+		}
+		if !s.alertCandleRepairCandidate(symbol, rows, cfg) || !s.claimAlertCandleRepair(symbol, now) {
+			continue
+		}
+		repaired, ok := s.repairAlertCandleWindow(ctx, symbol, now, cfg)
+		if !ok {
+			continue
+		}
+		if err := s.store.UpsertCandles(ctx, repaired); err != nil {
+			s.log.Warn("store alert candle repair failed", "symbol", symbol, "error", err)
+		}
+	}
+}
 
 // liquidationMarketContext builds the 1m market window used by the radar. The
 // liquidation event price is overlaid on the current minute so a just-arrived
