@@ -125,6 +125,9 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 			t.Fatalf("bubble chart missing television viewport support %q", marker)
 		}
 	}
+	if strings.Index(body, `data-interval="24h"`) > strings.Index(body, `id="liquidation-minimum"`) || strings.Index(body, `id="liquidation-short-offset"`) > strings.Index(body, `id="chart-latest"`) {
+		t.Fatal("bubble chart controls are not placed beside their requested buttons")
+	}
 	for _, marker := range []string{
 		"calculateBubbleChartViewportHeight",
 		"const bubbleChartDefaultHeight = 874",
@@ -163,6 +166,10 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		`id="chart-height-apply"`,
 		`id="chart-height-auto"`,
 		`id="chart-resize-handle"`,
+		`id="liquidation-minimum"`,
+		`id="liquidation-minimum-apply"`,
+		`id="liquidation-long-offset"`,
+		`id="liquidation-short-offset"`,
 		`拖动调整K线图高度`,
 	} {
 		if !strings.Contains(body, marker) {

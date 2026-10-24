@@ -200,18 +200,31 @@
     return Math.max(3, Math.min(18, 3 + Math.log10(Math.max(100, amount) / 100) * 2.5));
   }
 
-  function placements(events, range, bounds, x, y, offset = 10) {
+  function placementOffsets(value) {
+    if (typeof value === 'number') {
+      const amount = Number.isFinite(value) ? Math.max(0, value) : 0;
+      return { long: amount, short: amount };
+    }
+    return {
+      long: Number.isFinite(Number(value?.long)) ? Math.max(0, Number(value.long)) : 0,
+      short: Number.isFinite(Number(value?.short)) ? Math.max(0, Number(value.short)) : 0
+    };
+  }
+
+  function placements(events, range, bounds, x, y, offsets = { long: 20, short: 20 }) {
     const points = [];
     let outside = 0;
+    const placementOffset = placementOffsets(offsets);
     // Draw smaller circles last so they remain reachable; every event keeps its own circle.
     for (const event of events.slice().sort((a, b) => b.notional_usd - a.notional_usd)) {
       if (event.price < range[0] || event.price > range[1]) { outside++; continue; }
       const r = radius(event.notional_usd);
       const margin = r + 1; // Include the stroke inside the common plot clip.
       const cx = Math.max(bounds.left + margin, Math.min(bounds.right - margin, x(Date.parse(event.event_time))));
-      // SVG's y-axis grows downward: move long-liquidation bubbles up and
-      // short-liquidation bubbles down by the requested pixel offset.
-      const cy = Math.max(bounds.top + margin, Math.min(bounds.bottom - margin, y(event.price) + (event.position_side === 'long' ? -offset : offset)));
+      // SVG's y-axis grows downward: move long-liquidation bubbles down and
+      // short-liquidation bubbles up by their independently configured offsets.
+      const offset = event.position_side === 'long' ? placementOffset.long : -placementOffset.short;
+      const cy = Math.max(bounds.top + margin, Math.min(bounds.bottom - margin, y(event.price) + offset));
       points.push({ event, x: cx, y: cy, radius: r });
     }
     return { points, outside };
@@ -279,8 +292,9 @@
       this.state = { status: 'waiting', pages: 0, loaded: 0 };
     }
     cover(start, end) { this.ranges = union(this.ranges, start, end); }
-    async ensure(symbol, start, end, retry = false) {
-      const key = symbol + ':' + start + ':' + end;
+    async ensure(symbol, start, end, retry = false, minimum = 0) {
+      const minimumUSD = Number.isFinite(Number(minimum)) && Number(minimum) >= 0 ? Number(minimum) : 0;
+      const key = symbol + ':' + start + ':' + end + ':' + minimumUSD;
       if (this.active?.key === key) return this.active.promise;
       if (this.state.status === 'error' && this.state.key === key && !retry) return;
       this.active?.controller.abort();
@@ -301,7 +315,7 @@
             let cursor = '';
             const cursors = new Set();
             do {
-              const params = new URLSearchParams({ symbol, side: 'all', field: 'notional_usd', minimum: '0', limit: '500', from: new Date(from).toISOString(), to: new Date(to).toISOString() });
+              const params = new URLSearchParams({ symbol, side: 'all', field: 'notional_usd', minimum: String(minimumUSD), limit: '500', from: new Date(from).toISOString(), to: new Date(to).toISOString() });
               if (cursor) params.set('cursor', cursor);
               const packet = await this.request('liquidations?' + params, { signal: controller.signal });
               if (!valid()) return;

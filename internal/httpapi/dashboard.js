@@ -9,6 +9,18 @@ const cache = { signal: null, map: null, market: null, volume: null };
 let savedInterval = '15m';
 try { savedInterval = localStorage.getItem('liquidation.interval') || savedInterval; } catch (_) { /* browser storage is optional */ }
 const defaultLiquidationMinimumUSD = 0;
+const defaultLiquidationLongOffset = 20;
+const defaultLiquidationShortOffset = 20;
+const liquidationOffsetLimits = { minimum: 0, maximum: 200 };
+function storedNonNegativeNumber(key, fallback, maximum = Number.POSITIVE_INFINITY) {
+  try {
+    const value = Number(localStorage.getItem(key));
+    return Number.isFinite(value) && value >= 0 ? Math.min(maximum, value) : fallback;
+  } catch (_) { return fallback; }
+}
+const storedLiquidationMinimumUSD = storedNonNegativeNumber('liquidation.minimumUSD', defaultLiquidationMinimumUSD);
+const storedLiquidationLongOffset = storedNonNegativeNumber('liquidation.longOffset', defaultLiquidationLongOffset, liquidationOffsetLimits.maximum);
+const storedLiquidationShortOffset = storedNonNegativeNumber('liquidation.shortOffset', defaultLiquidationShortOffset, liquidationOffsetLimits.maximum);
 const defaultVisibleCandles = 120;
 const chartHeightLimits = { minimum: 320, maximum: 1600 };
 const storedChartHeight = (() => {
@@ -24,7 +36,7 @@ const candleZoomLimits = { minimum: 24, maximum: 500 };
 const profileZoomLimits = { minimum: .25, maximum: 12 };
 const chart = {
   interval: savedInterval,
-  candles: [], signals: [], liquidations: [], liquidationsTruncated: false, liquidationMinimumUSD: defaultLiquidationMinimumUSD, latestPriceTradeID: 0, latestPriceTick: null, windowEnd: 0, visibleCount: defaultVisibleCandles, volumeZoom: 1, liquidationZoom: 1,
+  candles: [], signals: [], liquidations: [], liquidationsTruncated: false, liquidationMinimumUSD: storedLiquidationMinimumUSD, liquidationLongOffset: storedLiquidationLongOffset, liquidationShortOffset: storedLiquidationShortOffset, latestPriceTradeID: 0, latestPriceTick: null, windowEnd: 0, visibleCount: defaultVisibleCandles, volumeZoom: 1, liquidationZoom: 1,
   hasMore: false, nextBefore: '', loadingOlder: false,
   yLow: null, yHigh: null, autoSpan: null, yManual: false,
   manualHeight: storedChartHeight,
@@ -83,7 +95,6 @@ const patternName = { doji: '十字星', hammer: '锤头', shooting_star: '流�
 const statusName = { unavailable: '不可用', reference: '参考', armed: '等待触发', approaching: '接近触发', triggered: '已触发', expired: '已过期' };
 const intervalName = { '1m': '1分钟', '2m': '2分钟', '3m': '3分钟', '5m': '5分钟', '10m': '10分钟', '15m': '15分钟', '30m': '30分钟', '1h': '1小时', '4h': '4小时', '8h': '8小时', '12h': '12小时', '24h': '24小时' };
 const intervalMilliseconds = { '1m': 60000, '2m': 120000, '3m': 180000, '5m': 300000, '10m': 600000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000, '8h': 28800000, '12h': 43200000, '24h': 86400000 };
-const liquidationPixelOffset = 10;
 let bubbleHits = () => [];
 let tooltipHideTimer;
 let chartTipsBound = false;
@@ -364,14 +375,13 @@ const bubbleLoader = new window.BubbleChart.WindowLoader(json, rows => {
 
 function ensureWindowLiquidations(retry = false) {
   const scale = chartTimeScale(visibleCandles(), dims.left, dims.candleRight);
-  if (scale) bubbleLoader.ensure(symbol, scale.start, scale.end, retry);
+  if (scale) bubbleLoader.ensure(symbol, scale.start, scale.end, retry, chart.liquidationMinimumUSD);
 }
 
 function mergeMarket(view, older, reset) {
   const incomingCandles = view.candles || [];
   const incomingSignals = view.model_signals || [];
   const incomingLiquidations = view.liquidations || [];
-  chart.liquidationMinimumUSD = defaultLiquidationMinimumUSD;
   if (reset) {
     chart.candles = incomingCandles.slice();
     chart.signals = incomingSignals.slice();
@@ -592,12 +602,14 @@ function drawTimeGrid(svg, scale, top, plotBottom, labelY, left, right) {
 
 function bubbleTip(event) {
   const long = event.position_side === 'long';
-  return 'Binance ' + (long ? '多单爆仓' : '空单爆仓') + '\n时间 ' + when(event.event_time) + '\n成交价 ' + money(event.price) + ' · ' + (long ? '向上' : '向下') + '偏移10像素\n数量 ' + quantityFormat.format(event.quantity || 0) + ' · 金额 $' + compact(event.notional_usd);
+  const offset = long ? chart.liquidationLongOffset : chart.liquidationShortOffset;
+  return 'Binance ' + (long ? '多单爆仓' : '空单爆仓') + '\n时间 ' + when(event.event_time) + '\n成交价 ' + money(event.price) + ' · ' + (long ? '向下' : '向上') + '偏移' + offset + '像素\n数量 ' + quantityFormat.format(event.quantity || 0) + ' · 金额 $' + compact(event.notional_usd);
 }
 
 function drawLiquidationBubbles(plot, events, range, scale, y, left, candleRight, top, plotBottom) {
-  const pixelOffset = liquidationPixelOffset * dims.height / $('market-chart').getBoundingClientRect().height;
-  const result = window.BubbleChart.placements(events, range, { left, right: candleRight, top, bottom: plotBottom }, scale.x, y, pixelOffset);
+  const pixelScale = dims.height / $('market-chart').getBoundingClientRect().height;
+  const offsets = { long: chart.liquidationLongOffset * pixelScale, short: chart.liquidationShortOffset * pixelScale };
+  const result = window.BubbleChart.placements(events, range, { left, right: candleRight, top, bottom: plotBottom }, scale.x, y, offsets);
   bubbleHits = window.BubbleChart.hitIndex(result.points);
   result.points.forEach(point => {
     const color = point.event.position_side === 'long' ? '#fb7185' : '#2dd4bf';
@@ -768,13 +780,14 @@ function draw(view, map, signal, volume) {
       plot.appendChild(group);
     });
   }
-  const windowLiquidations = embeddedChart ? [] : window.BubbleChart.windowEvents(chart.liquidations, timeScale.start, timeScale.end);
+  const windowLiquidations = embeddedChart ? [] : window.BubbleChart.windowEvents(chart.liquidations, timeScale.start, timeScale.end).filter(event => event.notional_usd >= chart.liquidationMinimumUSD);
   const bubbles = embeddedChart ? { points: [], outside: 0 } : drawLiquidationBubbles(plot, windowLiquidations, range, timeScale, y, left, candleRight, top, plotBottom);
   const tradeMarkers = tradeView.enabled ? drawTradeMarkers(plot, tradeView.markers, range, timeScale, y, left, candleRight, top, plotBottom) : { visible: 0, outside: 0 };
   svg.setAttribute('data-bubble-count', bubbles.points.length);
   svg.setAttribute('data-trade-marker-count', tradeMarkers.visible);
   const tradeText = tradeView.enabled ? ' · ' + tradeExchangeLabel(tradeView.exchange || tradeView.markers[0]?.exchange) + '交易点 屏内 ' + tradeMarkers.visible + '个' + (tradeMarkers.outside ? ' · 视野外 ' + tradeMarkers.outside + '个' : '') : '';
-  $('chart-context').textContent = context + ' · 窗口已加载 ' + windowLiquidations.length + '笔 · 屏内气泡 ' + bubbles.points.length + '笔' + (bubbles.outside ? ' · 价格视野外 ' + bubbles.outside + '笔' : '') + tradeText + ' · ' + loadState;
+  const liquidationFilterText = chart.liquidationMinimumUSD > 0 ? ' · 金额≥$' + compact(chart.liquidationMinimumUSD) : '';
+  $('chart-context').textContent = context + liquidationFilterText + ' · 窗口已加载 ' + windowLiquidations.length + '笔 · 屏内气泡 ' + bubbles.points.length + '笔' + (bubbles.outside ? ' · 价格视野外 ' + bubbles.outside + '笔' : '') + tradeText + ' · ' + loadState;
   if (!embeddedChart && bins.length) {
     const maximum = Math.max(...bins.map(item => item.total_usd), 1);
     const binWidth = map?.bin_width || (high - low) / Math.max(1, bins.length);
@@ -1021,6 +1034,78 @@ function zoomPriceAxis(point, factor) {
   return true;
 }
 
+function normalizedLiquidationMinimum(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function normalizedLiquidationOffset(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(liquidationOffsetLimits.minimum, Math.min(liquidationOffsetLimits.maximum, number)) : null;
+}
+
+function applyLiquidationMinimum() {
+  const input = $('liquidation-minimum');
+  const minimum = normalizedLiquidationMinimum(input?.value);
+  if (minimum === null) {
+    if (input) input.value = String(chart.liquidationMinimumUSD);
+    return false;
+  }
+  if (minimum === chart.liquidationMinimumUSD) return true;
+  chart.liquidationMinimumUSD = minimum;
+  try { localStorage.setItem('liquidation.minimumUSD', String(minimum)); } catch (_) { /* browser storage is optional */ }
+  bubbleLoader.reset();
+  draw(cache.market, cache.map, cache.signal, cache.volume);
+  ensureWindowLiquidations();
+  return true;
+}
+
+function applyLiquidationOffsets() {
+  const longInput = $('liquidation-long-offset');
+  const shortInput = $('liquidation-short-offset');
+  const long = normalizedLiquidationOffset(longInput?.value);
+  const short = normalizedLiquidationOffset(shortInput?.value);
+  if (long === null || short === null) {
+    if (longInput) longInput.value = String(chart.liquidationLongOffset);
+    if (shortInput) shortInput.value = String(chart.liquidationShortOffset);
+    return false;
+  }
+  chart.liquidationLongOffset = long;
+  chart.liquidationShortOffset = short;
+  try {
+    localStorage.setItem('liquidation.longOffset', String(long));
+    localStorage.setItem('liquidation.shortOffset', String(short));
+  } catch (_) { /* browser storage is optional */ }
+  draw(cache.market, cache.map, cache.signal, cache.volume);
+  return true;
+}
+
+function installLiquidationControls() {
+  const minimum = $('liquidation-minimum');
+  const minimumApply = $('liquidation-minimum-apply');
+  const longOffset = $('liquidation-long-offset');
+  const shortOffset = $('liquidation-short-offset');
+  if (!minimum || !longOffset || !shortOffset) return;
+  minimum.value = String(chart.liquidationMinimumUSD);
+  longOffset.min = String(liquidationOffsetLimits.minimum);
+  longOffset.max = String(liquidationOffsetLimits.maximum);
+  shortOffset.min = String(liquidationOffsetLimits.minimum);
+  shortOffset.max = String(liquidationOffsetLimits.maximum);
+  longOffset.value = String(chart.liquidationLongOffset);
+  shortOffset.value = String(chart.liquidationShortOffset);
+  minimumApply?.addEventListener('click', applyLiquidationMinimum);
+  minimum.addEventListener('change', applyLiquidationMinimum);
+  minimum.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); applyLiquidationMinimum(); }
+  });
+  [longOffset, shortOffset].forEach(input => {
+    input.addEventListener('change', applyLiquidationOffsets);
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') { event.preventDefault(); applyLiquidationOffsets(); }
+    });
+  });
+}
+
 function normalizedChartHeight(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return null;
@@ -1230,7 +1315,6 @@ function resetChartState() {
   chart.signals = [];
   chart.liquidations = [];
   chart.liquidationsTruncated = false;
-  chart.liquidationMinimumUSD = defaultLiquidationMinimumUSD;
   chart.latestPriceTradeID = 0;
   chart.latestPriceTick = null;
   chart.windowEnd = 0;
@@ -1401,6 +1485,7 @@ $('log-copy').addEventListener('click', async () => {
   catch (_) { $('log-error').textContent = '浏览器不允许复制日志'; $('log-error').classList.remove('hidden'); }
 });
 
+installLiquidationControls();
 if (!embeddedChart) installChartSizeControls();
 if (!embeddedChart) installChartInteractions();
 if (embeddedChart) installEmbeddedChartInteractions();

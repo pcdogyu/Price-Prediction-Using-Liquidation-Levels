@@ -441,14 +441,14 @@ with sync_playwright() as playwright:
         for theme in ("light", "dark"):
             page.evaluate("theme => window.LiquidationTheme.set(theme)", theme)
             assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth + 1"), (width, theme)
-            # Away from the edge clamp, actual screen displacement remains six pixels.
+            # Away from the edge clamp, actual screen displacement remains twenty pixels.
             assert page.evaluate("""() => {
               const svg = document.getElementById('market-chart'), rect = svg.getBoundingClientRect();
               const low = Number(svg.dataset.priceLow), high = Number(svg.dataset.priceHigh);
               const circles = Array.from(svg.querySelectorAll('[data-event-id]'));
               return circles.filter(e => { const y = 24 + (high-Number(e.dataset.eventPrice))/(high-low)*494; return y>50 && y<490; }).every(e => {
                 const anchor = 24 + (high-Number(e.dataset.eventPrice))/(high-low)*494;
-                return Math.abs(Math.abs(Number(e.getAttribute('cy'))-anchor)*rect.height/560 - 6) < .001;
+                return Math.abs(Math.abs(Number(e.getAttribute('cy'))-anchor)*rect.height/560 - 20) < .001;
               });
             }"""), (width, theme)
             assert page.evaluate("() => Array.from(document.querySelectorAll('[data-event-id]')).every(e => [getComputedStyle(document.documentElement).getPropertyValue('--buy').trim(),getComputedStyle(document.documentElement).getPropertyValue('--sell').trim()].includes(e.getAttribute('stroke')))")
