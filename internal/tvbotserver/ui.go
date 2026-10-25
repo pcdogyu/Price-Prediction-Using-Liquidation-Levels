@@ -3372,6 +3372,12 @@ const tvbotHTML = `<!doctype html>
       return ticks;
     }
 
+    function chartTimeLabelStep(timeSpan, plotWidth) {
+      const hourMS = 60 * 60 * 1000;
+      const candidates = [hourMS, 2 * hourMS, 3 * hourMS, 4 * hourMS, 6 * hourMS, 8 * hourMS, 12 * hourMS, 24 * hourMS, 48 * hourMS, 7 * 24 * hourMS];
+      return candidates.find((step) => step * plotWidth / timeSpan >= 90) || candidates[candidates.length - 1];
+    }
+
     function chartAxisValue(v) {
       const formatted = formatUSDTBalance(v);
       return formatted === "-" ? asText(v) : formatted;
@@ -6629,15 +6635,17 @@ const tvbotHTML = `<!doctype html>
       const halfHourMS = 30 * 60 * 1000;
       const hourMS = 60 * 60 * 1000;
       const timeGridTicks = timeSpan > 0 ? chartTimeGridTicks(minTime, maxTime, halfHourMS) : [];
+      const timeLabelStep = timeSpan > 0 ? chartTimeLabelStep(timeSpan, plotWidth) : hourMS;
+      const labelTicks = timeGridTicks.filter((tickTime) => tickTime % timeLabelStep === 0);
+      const firstLabelTick = labelTicks[0];
+      const lastLabelTick = labelTicks[labelTicks.length - 1];
       if (timeGridTicks.length) {
-        const firstTick = timeGridTicks[0];
-        const lastTick = timeGridTicks[timeGridTicks.length - 1];
         timeGridTicks.forEach((tickTime) => {
           const lineX = pad.left + (tickTime - minTime) * plotWidth / timeSpan;
           const onHour = tickTime % hourMS === 0;
           grid += '<line class="chart-grid ' + (onHour ? 'chart-time-grid-hour' : 'chart-time-grid-half') + '" x1="' + lineX.toFixed(2) + '" y1="' + pad.top + '" x2="' + lineX.toFixed(2) + '" y2="' + plotBottom + '"/>';
-          if (onHour) {
-            const anchor = tickTime === firstTick ? "start" : (tickTime === lastTick ? "end" : "middle");
+          if (onHour && tickTime % timeLabelStep === 0) {
+            const anchor = tickTime === firstLabelTick ? "start" : (tickTime === lastLabelTick ? "end" : "middle");
             grid += '<text class="chart-label" x="' + lineX.toFixed(2) + '" y="' + (height - 22) + '" text-anchor="' + anchor + '">' + escapeHTML(chartTimeLabel(new Date(tickTime))) + '</text>';
           }
         });
