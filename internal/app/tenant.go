@@ -18,28 +18,11 @@ import (
 
 type tenantContextKey struct{}
 
-type sharedAlertHistoryContextKey struct{}
-
 // WithTenantID carries the authenticated username through alert service calls.
 // The store keeps it as an opaque tenant key; it is never accepted from a
 // browser request body.
 func WithTenantID(ctx context.Context, tenantID string) context.Context {
 	return context.WithValue(ctx, tenantContextKey{}, strings.TrimSpace(tenantID))
-}
-
-// WithSharedAlertHistory marks an authenticated operator request as a request
-// for the public market alert stream. Alert strategy and notification settings
-// still use the tenant carried by the same context.
-func WithSharedAlertHistory(ctx context.Context) context.Context {
-	return context.WithValue(ctx, sharedAlertHistoryContextKey{}, true)
-}
-
-func sharedAlertHistoryFromContext(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	shared, _ := ctx.Value(sharedAlertHistoryContextKey{}).(bool)
-	return shared
 }
 
 func tenantIDFromContext(ctx context.Context) string {
@@ -153,6 +136,8 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 	if len(watch) > 0 {
 		rtm.applyWatch(rowsToEntries(watch), watch, watchAt, watchErr)
 	}
+	// The root store is the shared market source. Only the derived alert and
+	// signal rows produced with this tenant's strategy are written to rtm.store.
 	if events, historyErr := s.store.RecentLiquidationEvents(ctx, time.Now().UTC().Add(-(rtm.engine.Config().Window + rtm.cfg.Quiet)), 60000); historyErr == nil && len(events) > 0 {
 		rtm.persist(context.WithoutCancel(ctx), rtm.engine.Seed(events), false)
 	}

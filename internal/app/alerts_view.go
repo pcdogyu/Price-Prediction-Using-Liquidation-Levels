@@ -44,22 +44,18 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 			view.State = "stale"
 		}
 	}
-	history := rtm.historyStore(ctx)
-	if history == nil {
-		return view, errors.New("alert history store is unavailable")
-	}
-	alerts, err := history.LiquidationAlerts(ctx, "", "", 30, "")
+	alerts, err := rtm.store.LiquidationAlerts(ctx, "", "", 30, "")
 	if err != nil {
 		return view, err
 	}
-	signals, err := history.TradeSignals(ctx, "", "", 30, "")
+	signals, err := rtm.store.TradeSignals(ctx, "", "", 30, "")
 	if err != nil {
 		return view, err
 	}
 	view.Alerts, view.AlertTotal = alerts.Rows, alerts.AlertCount
 	view.Signals, view.SignalTotal = signals.Rows, signals.SignalCount
 	view.AggressiveTotal, view.SteadyTotal = signals.AggressiveCount, signals.SteadyCount
-	oldest, err := history.AlertOldestTime(ctx)
+	oldest, err := rtm.store.AlertOldestTime(ctx)
 	if err != nil {
 		return view, err
 	}
@@ -76,11 +72,7 @@ func (s *Service) AlertHistory(ctx context.Context, symbol, side string, limit i
 	if err != nil {
 		return domain.AlertPage{}, err
 	}
-	history := rtm.historyStore(ctx)
-	if history == nil {
-		return domain.AlertPage{}, errors.New("alert history store is unavailable")
-	}
-	page, err := history.LiquidationAlerts(ctx, symbol, side, limit, cursor)
+	page, err := rtm.store.LiquidationAlerts(ctx, symbol, side, limit, cursor)
 	if err != nil {
 		return page, err
 	}
@@ -94,11 +86,7 @@ func (s *Service) AlertSignals(ctx context.Context, symbol, kind string, limit i
 	if err != nil {
 		return domain.SignalPage{}, err
 	}
-	history := rtm.historyStore(ctx)
-	if history == nil {
-		return domain.SignalPage{}, errors.New("alert history store is unavailable")
-	}
-	page, err := history.TradeSignals(ctx, symbol, kind, limit, cursor)
+	page, err := rtm.store.TradeSignals(ctx, symbol, kind, limit, cursor)
 	if err != nil {
 		return page, err
 	}
@@ -112,11 +100,7 @@ func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit 
 	if err != nil {
 		return domain.AlertTimelinePage{}, err
 	}
-	history := rtm.historyStore(ctx)
-	if history == nil {
-		return domain.AlertTimelinePage{}, errors.New("alert history store is unavailable")
-	}
-	page, err := history.AlertTimeline(ctx, symbol, kind, limit, cursor)
+	page, err := rtm.store.AlertTimeline(ctx, symbol, kind, limit, cursor)
 	if err != nil {
 		return page, err
 	}

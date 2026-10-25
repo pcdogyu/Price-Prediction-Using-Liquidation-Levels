@@ -87,39 +87,54 @@ func TestTenantAlertHistoryIsIsolated(t *testing.T) {
 	}
 }
 
-func TestAdminAlertHistoryUsesSharedMarketStream(t *testing.T) {
-	svc, _, st := alertTestService(t, "admin-shared-history.db")
+func TestTenantAlertHistoryIsDerivedFromSharedMarketEvents(t *testing.T) {
+	svc, _, st := alertTestService(t, "tenant-derived-history.db")
 	defer svc.Close()
 	ctx := context.Background()
-	at := time.Now().UTC().Truncate(time.Second)
-	if _, err := st.SaveLiquidationAlert(ctx, domain.LiquidationAlert{
-		ID: "shared-alert", Symbol: "ETHUSDT", Side: "short", TradeSide: "short", TriggeredAt: at,
-		Status: domain.AlertStateWatching,
+	at := time.Now().UTC().Add(-30 * time.Second).Truncate(time.Second)
+	svc.alerts.applyWatch(
+		[]alert.WatchEntry{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 1e9}},
+		[]domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 1e9, UpdatedAt: at}},
+		at, "")
+	if err := st.InsertLiquidation(ctx, alertTestEvent("shared-market-event", "BTCUSDT", "short", at, 150000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveAlertStrategySettingsForTenant(ctx, "alice", domain.AlertStrategySettings{
+		WindowMinutes: 3, BTCUSD: 100000, ETHUSD: 200000, OtherUSD: 100000,
+		VWAPRangeHours: 24, VWAPMinDrawdownPct: 2.2, VWAPDonchianPct: 35,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SaveTradeSignal(ctx, domain.TradeSignal{
-		ID: "shared-signal", AlertID: "shared-alert", Symbol: "ETHUSDT", Kind: domain.SignalAggressive,
-		Side: "short", LiquidationSide: "short", CreatedAt: at,
+	if err := st.SaveAlertStrategySettingsForTenant(ctx, "bob", domain.AlertStrategySettings{
+		WindowMinutes: 3, BTCUSD: 200000, ETHUSD: 200000, OtherUSD: 100000,
+		VWAPRangeHours: 24, VWAPMinDrawdownPct: 2.2, VWAPDonchianPct: 35,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	admin := WithSharedAlertHistory(WithTenantID(ctx, "admin"))
-	page, err := svc.AlertTimeline(admin, "ETHUSDT", "", 20, "")
+	alice := WithTenantID(ctx, "alice")
+	page, err := svc.AlertTimeline(alice, "BTCUSDT", "", 20, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.TotalCount != 2 || len(page.Rows) != 2 {
-		t.Fatalf("admin did not see shared market history: %+v", page)
+	if page.TotalCount != 1 || len(page.Rows) != 1 || page.Rows[0].Alert == nil || page.Rows[0].Alert.ThresholdUSD != 100000 {
+		t.Fatalf("alice did not derive a private alert from the shared event: %+v", page)
 	}
 
-	regular := WithTenantID(ctx, "regular")
-	regularPage, err := svc.AlertTimeline(regular, "ETHUSDT", "", 20, "")
+	bob := WithTenantID(ctx, "bob")
+	bobPage, err := svc.AlertTimeline(bob, "BTCUSDT", "", 20, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if regularPage.TotalCount != 0 {
-		t.Fatalf("regular tenant unexpectedly saw shared history: %+v", regularPage)
+	if bobPage.TotalCount != 0 {
+		t.Fatalf("bob incorrectly derived an alert below its threshold: %+v", bobPage)
+	}
+
+	publicPage, err := svc.AlertTimeline(ctx, "BTCUSDT", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publicPage.TotalCount != 0 {
+		t.Fatalf("public market store unexpectedly exposed tenant alert history: %+v", publicPage)
 	}
 }
