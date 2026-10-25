@@ -166,6 +166,18 @@ test('timestamp placements apply independent long-down and short-up offsets', ()
   assert.deepEqual(B.hitIndex(result.points)(50, 70).map(e => e.id).sort(), ['long', 'same']);
 });
 
+test('time grid ticks align to every half hour and exclude the range end', () => {
+  const halfHour = 30 * 60 * 1000;
+  const start = Date.parse('2026-01-01T00:07:00Z');
+  const end = Date.parse('2026-01-01T02:00:00Z');
+  assert.deepEqual(B.timeGridTicks(start, end, halfHour), [
+    Date.parse('2026-01-01T00:30:00Z'),
+    Date.parse('2026-01-01T01:00:00Z'),
+    Date.parse('2026-01-01T01:30:00Z')
+  ]);
+  assert.deepEqual(B.timeGridTicks(end, start, halfHour), []);
+});
+
 test('capped snapshot supplements more than 5000 events with fixed cutoff, page duplicates dedupe and completed coverage is reused', async () => {
   const all = Array.from({ length: 6003 }, (_, i) => event(i, 1000 + i));
   let merged = B.mergeEvents([], all.slice(-5000), 'ETHUSDT');

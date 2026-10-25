@@ -1323,6 +1323,15 @@ const tvbotHTML = `<!doctype html>
       stroke: #edf1f7;
       stroke-width: 1;
     }
+    .chart-grid.chart-time-grid-half {
+      stroke: #dfe6f0;
+      stroke-opacity: 0.9;
+    }
+    .chart-grid.chart-time-grid-hour {
+      stroke: #c7d2e0;
+      stroke-width: 1.2;
+      stroke-opacity: 0.95;
+    }
     .chart-axis {
       stroke: #d8dee9;
       stroke-width: 1;
@@ -3347,6 +3356,20 @@ const tvbotHTML = `<!doctype html>
         indexes.push(Math.round(i * (length - 1) / (count - 1)));
       }
       return Array.from(new Set(indexes));
+    }
+
+    function chartTimeGridTicks(minTime, maxTime, step) {
+      const start = Number(minTime);
+      const end = Number(maxTime);
+      const interval = Number(step);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || !(end > start) || !Number.isFinite(interval) || interval <= 0) return [];
+      const ticks = [];
+      const first = Math.ceil(start / interval) * interval;
+      for (let tickTime = first; tickTime <= end; tickTime += interval) {
+        ticks.push(tickTime);
+        if (ticks.length >= 10000) break;
+      }
+      return ticks;
     }
 
     function chartAxisValue(v) {
@@ -6603,17 +6626,21 @@ const tvbotHTML = `<!doctype html>
         grid += '<text class="chart-label" x="8" y="' + (lineY + 4).toFixed(2) + '">' + chartAxisPercentValue(labelValue, baselineValue) + '</text>';
         grid += '<text class="chart-label chart-axis-value-right" x="' + (width - 8) + '" y="' + (lineY + 4).toFixed(2) + '" text-anchor="end">' + chartAxisValue(labelValue) + '</text>';
       }
-      const useHourlyGateTicks = svgID === "analysis-gate-usdt-chart" && Number(state.balanceWindowMinutes) === 720 && timeSpan > 0;
-      if (useHourlyGateTicks) {
-        const hourMS = 60 * 60 * 1000;
-        const firstHour = Math.ceil(minTime / hourMS) * hourMS;
-        for (let tickTime = firstHour; tickTime <= maxTime; tickTime += hourMS) {
+      const halfHourMS = 30 * 60 * 1000;
+      const hourMS = 60 * 60 * 1000;
+      const timeGridTicks = timeSpan > 0 ? chartTimeGridTicks(minTime, maxTime, halfHourMS) : [];
+      if (timeGridTicks.length) {
+        const firstTick = timeGridTicks[0];
+        const lastTick = timeGridTicks[timeGridTicks.length - 1];
+        timeGridTicks.forEach((tickTime) => {
           const lineX = pad.left + (tickTime - minTime) * plotWidth / timeSpan;
-          const tickDate = new Date(tickTime);
-          const anchor = tickTime === firstHour ? "start" : (tickTime + hourMS > maxTime ? "end" : "middle");
-          grid += '<line class="chart-grid" x1="' + lineX.toFixed(2) + '" y1="' + pad.top + '" x2="' + lineX.toFixed(2) + '" y2="' + plotBottom + '"/>';
-          grid += '<text class="chart-label" x="' + lineX.toFixed(2) + '" y="' + (height - 22) + '" text-anchor="' + anchor + '">' + escapeHTML(chartTimeLabel(tickDate)) + '</text>';
-        }
+          const onHour = tickTime % hourMS === 0;
+          grid += '<line class="chart-grid ' + (onHour ? 'chart-time-grid-hour' : 'chart-time-grid-half') + '" x1="' + lineX.toFixed(2) + '" y1="' + pad.top + '" x2="' + lineX.toFixed(2) + '" y2="' + plotBottom + '"/>';
+          if (onHour) {
+            const anchor = tickTime === firstTick ? "start" : (tickTime === lastTick ? "end" : "middle");
+            grid += '<text class="chart-label" x="' + lineX.toFixed(2) + '" y="' + (height - 22) + '" text-anchor="' + anchor + '">' + escapeHTML(chartTimeLabel(new Date(tickTime))) + '</text>';
+          }
+        });
       } else {
         const xTicks = chartTickIndexes(chartPoints.length, 6);
         xTicks.forEach((tickIndex) => {

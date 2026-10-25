@@ -583,20 +583,26 @@ function timeGridStep(span, width, minimumPixels, candidates) {
 function drawTimeGrid(svg, scale, top, plotBottom, labelY, left, right) {
   const fiveMinutes = 5 * 60 * 1000;
   const hour = 60 * 60 * 1000;
+  const halfHour = 30 * 60 * 1000;
   const span = scale.end - scale.start;
   const width = right - left;
   const minorStep = timeGridStep(span, width, 4, [fiveMinutes, 2 * fiveMinutes, 3 * fiveMinutes, 6 * fiveMinutes, hour, 2 * hour, 4 * hour, 8 * hour, 12 * hour, 24 * hour, 48 * hour, 7 * 24 * hour]);
   const labelStep = timeGridStep(span, width, 90, [hour, 2 * hour, 3 * hour, 4 * hour, 6 * hour, 8 * hour, 12 * hour, 24 * hour, 48 * hour, 72 * hour, 7 * 24 * hour, 14 * 24 * hour, 30 * 24 * hour]);
+  const majorTicks = window.BubbleChart.timeGridTicks(scale.start, scale.end, halfHour);
+  const majorTickSet = new Set(majorTicks);
   for (let at = Math.ceil(scale.start / minorStep) * minorStep; at < scale.end; at += minorStep) {
-    if (at % labelStep === 0) continue;
+    if (majorTickSet.has(at)) continue;
     const x = scale.x(at);
     svg.appendChild(svgNode('line', { x1: x, y1: top, x2: x, y2: plotBottom, stroke: '#132a36', 'stroke-width': .7, opacity: .58 }));
   }
-  for (let at = Math.ceil(scale.start / labelStep) * labelStep; at < scale.end; at += labelStep) {
+  for (const at of majorTicks) {
     const x = scale.x(at);
-    const label = new Date(at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
-    svg.appendChild(svgNode('line', { x1: x, y1: top, x2: x, y2: plotBottom, stroke: '#315064', 'stroke-width': 1, opacity: .92 }));
-    svg.appendChild(svgNode('text', { x, y: labelY, 'text-anchor': 'middle', fill: '#7895a7', 'font-size': 11 }, label));
+    const onHour = at % hour === 0;
+    svg.appendChild(svgNode('line', { x1: x, y1: top, x2: x, y2: plotBottom, stroke: onHour ? '#315064' : '#234252', 'stroke-width': onHour ? 1 : .8, opacity: onHour ? .92 : .72 }));
+    if (onHour && at % labelStep === 0) {
+      const label = new Date(at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+      svg.appendChild(svgNode('text', { x, y: labelY, 'text-anchor': 'middle', fill: '#7895a7', 'font-size': 11 }, label));
+    }
   }
 }
 

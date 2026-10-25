@@ -249,6 +249,18 @@
     };
   }
 
+  function timeGridTicks(start, end, step) {
+    const low = Number(start), high = Number(end), interval = Number(step);
+    if (!Number.isFinite(low) || !Number.isFinite(high) || !(high > low) || !Number.isFinite(interval) || interval <= 0) return [];
+    const ticks = [];
+    const first = Math.ceil(low / interval) * interval;
+    for (let at = first; at < high; at += interval) {
+      ticks.push(at);
+      if (ticks.length >= 10000) break;
+    }
+    return ticks;
+  }
+
   function union(ranges, start, end) {
     if (!(end > start)) return ranges;
     const result = [];
@@ -342,7 +354,7 @@
     }
   }
 
-  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, collapseTradeMarkers, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, WindowLoader };
+  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, collapseTradeMarkers, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.BubbleChart = exported;
 })(typeof window === 'object' ? window : globalThis);
