@@ -94,6 +94,8 @@
     return K.vwapSignalAllowed(signal, zone);
   };
   const shownSignals = () => rawShownSignals().filter(vwapAllowsSignal);
+  const closeOnlyMarker = marker => !!(marker && marker.filterApplied && marker.closeAllowed && !marker.openAllowed);
+  const closeOnlyPrefix = marker => closeOnlyMarker(marker) ? '仅平仓区忽略 · ' : '';
 
   async function json(path, options) {
     const response = await fetch(base + path, Object.assign({ cache: 'no-store', credentials: 'same-origin' }, options || {}));
@@ -416,7 +418,7 @@
     }
     $('kline-signal-rows').innerHTML = rows.map(row => '<tr>' +
       '<td>' + escape(clock(row.t)) + '</td>' +
-      '<td class="' + (row.kind === 'steady' ? 'buy' : 'warning') + '">' + (row.kind === 'steady' ? '稳健' : '激进') + '</td>' +
+      '<td class="' + (row.kind === 'steady' ? 'buy' : 'warning') + '">' + (K.closeOnlyIgnored(row) ? '<span class="kline-close-only-label">仅平仓区忽略 · </span>' : '') + (row.kind === 'steady' ? '稳健' : '激进') + '</td>' +
       '<td class="' + (row.side === 'short' ? 'sell' : 'buy') + '">' + (row.side === 'short' ? '做空' : '做多') + '</td>' +
       '<td>' + escape(priceText(row.reference_price)) + '</td>' +
       '<td>' + escape(money(row.alert_notional_usd)) + '</td>' +
@@ -428,8 +430,8 @@
     if (!candle) { $('kline-readout').textContent = '等待 K 线数据'; return; }
     const change = candle.open > 0 ? (candle.close / candle.open - 1) * 100 : 0;
     const markerText = state.hoverMarker ? (state.hoverMarker.type === 'alert'
-      ? ' · 悬停预警：' + (state.hoverMarker.side === 'short' ? '做空' : '做多') + ' ×' + state.hoverMarker.count
-      : ' · 悬停信号：' + escape(state.hoverMarker.kind === 'steady' ? '稳健' : '激进') +
+      ? ' · 悬停预警：' + escape(closeOnlyPrefix(state.hoverMarker)) + (state.hoverMarker.side === 'short' ? '做空' : '做多') + ' ×' + state.hoverMarker.count
+      : ' · 悬停信号：' + escape(closeOnlyPrefix(state.hoverMarker) + (state.hoverMarker.kind === 'steady' ? '稳健' : '激进')) +
         (state.hoverMarker.side === 'short' ? '做空' : '做多') + ' ×' + state.hoverMarker.count) : '';
     $('kline-readout').innerHTML = '<b>' + escape(state.symbol) + ' · ' + escape(state.interval) + '</b> ' + escape(clock(candle.t)) +
       ' 开 ' + escape(priceText(candle.open)) + ' 高 ' + escape(priceText(candle.high)) + ' 低 ' + escape(priceText(candle.low)) +
@@ -733,7 +735,7 @@
       if (!price) continue;
       const long = group.side !== 'short';
       const py = Math.max(plot.top + 10, Math.min(priceBottom - 10, y(price) + (long ? 16 : -16)));
-      triangle(ctx, cx, py, long, group.kind === 'steady', long ? colors.buy : colors.sell);
+      triangle(ctx, cx, py, long, group.kind === 'steady', closeOnlyMarker(group) ? colors.warning : long ? colors.buy : colors.sell);
       if (group.count > 1) {
         ctx.fillStyle = colors.text;
         ctx.textAlign = 'left';
@@ -994,13 +996,13 @@
         (marker.order_id ? '<br>订单号 ' + escape(marker.order_id) : '') + cumulativeTotals;
     } else if (marker.type === 'alert') {
       const filterStatus = marker.filterApplied ? (marker.openAllowed ? '允许开仓' : marker.closeAllowed ? '仅平仓' : '未放行') : '';
-      tooltip.innerHTML = '<b>预警 · ' + escape(marker.side === 'short' ? '做空' : '做多') + (filterStatus ? ' · ' + filterStatus : '') + '</b><br>' +
+      tooltip.innerHTML = '<b>' + escape(closeOnlyPrefix(marker) + '预警 · ' + (marker.side === 'short' ? '做空' : '做多')) + (filterStatus ? ' · ' + filterStatus : '') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>清算方向 ' +
         escape(marker.liquidationSide === 'short' ? '空单爆仓' : '多单爆仓') + '<br>参考价 ' + escape(priceText(marker.price)) +
         '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + cumulativeTotals;
     } else {
       const filterStatus = marker.filterApplied ? (marker.openAllowed ? '允许开仓' : marker.closeAllowed ? '仅平仓' : '未放行') : '';
-      tooltip.innerHTML = '<b>' + escape(marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + escape(marker.side === 'short' ? '做空' : '做多') + (filterStatus ? ' · ' + filterStatus : '') + '</b><br>' +
+      tooltip.innerHTML = '<b>' + escape(closeOnlyPrefix(marker) + (marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + (marker.side === 'short' ? '做空' : '做多')) + (filterStatus ? ' · ' + filterStatus : '') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>参考价 ' + escape(priceText(marker.price)) +
         '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + cumulativeTotals;
     }

@@ -358,6 +358,13 @@
     return Array.from(groups.values()).sort((a, b) => a.bucket - b.bucket);
   }
 
+  // closeOnlyIgnored is the shared display rule for a radar decision that may
+  // close an existing position but must never be presented as an opening
+  // opportunity.
+  function closeOnlyIgnored(row) {
+    return !!(row && row.filter_applied === true && row.close_allowed === true && row.open_allowed !== true);
+  }
+
   // signalWindowStart reports the oldest signal time, which decides whether more
   // signal pages are needed to cover the visible chart range.
   function oldestSignal(signals) {
@@ -368,7 +375,7 @@
     LIQUIDATION_DELTA_INTERVAL_MS, LIQUIDATION_DELTA_MAX_MS, LIQUIDATION_DELTA_CUMULATIVE_HOURS, LIQUIDATION_DELTA_CUMULATIVE_MS,
     intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles,
     liquidationDeltaWindow, liquidationDeltaCumulativeWindow, visibleLiquidationDelta, priceRange, volumeMax,
-    niceTicks, mergeCandles, normaliseCandles, normaliseLiquidationDelta, filterSignals, markerGroups, filterAlerts, alertGroups, oldestSignal,
+    niceTicks, mergeCandles, normaliseCandles, normaliseLiquidationDelta, filterSignals, markerGroups, filterAlerts, alertGroups, closeOnlyIgnored, oldestSignal,
     radarZone, radarZones, vwapZoneBounds, vwapSignalAllowed, dragPriceRange, zoomPriceRange };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.LiquidationKline = exported;
