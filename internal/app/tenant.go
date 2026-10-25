@@ -18,11 +18,28 @@ import (
 
 type tenantContextKey struct{}
 
+type sharedAlertHistoryContextKey struct{}
+
 // WithTenantID carries the authenticated username through alert service calls.
 // The store keeps it as an opaque tenant key; it is never accepted from a
 // browser request body.
 func WithTenantID(ctx context.Context, tenantID string) context.Context {
 	return context.WithValue(ctx, tenantContextKey{}, strings.TrimSpace(tenantID))
+}
+
+// WithSharedAlertHistory marks an authenticated operator request as a request
+// for the public market alert stream. Alert strategy and notification settings
+// still use the tenant carried by the same context.
+func WithSharedAlertHistory(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sharedAlertHistoryContextKey{}, true)
+}
+
+func sharedAlertHistoryFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	shared, _ := ctx.Value(sharedAlertHistoryContextKey{}).(bool)
+	return shared
 }
 
 func tenantIDFromContext(ctx context.Context) string {

@@ -86,3 +86,40 @@ func TestTenantAlertHistoryIsIsolated(t *testing.T) {
 		t.Fatalf("tenant history was not isolated: alice=%+v bob=%+v", alicePage, bobPage)
 	}
 }
+
+func TestAdminAlertHistoryUsesSharedMarketStream(t *testing.T) {
+	svc, _, st := alertTestService(t, "admin-shared-history.db")
+	defer svc.Close()
+	ctx := context.Background()
+	at := time.Now().UTC().Truncate(time.Second)
+	if _, err := st.SaveLiquidationAlert(ctx, domain.LiquidationAlert{
+		ID: "shared-alert", Symbol: "ETHUSDT", Side: "short", TradeSide: "short", TriggeredAt: at,
+		Status: domain.AlertStateWatching,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveTradeSignal(ctx, domain.TradeSignal{
+		ID: "shared-signal", AlertID: "shared-alert", Symbol: "ETHUSDT", Kind: domain.SignalAggressive,
+		Side: "short", LiquidationSide: "short", CreatedAt: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	admin := WithSharedAlertHistory(WithTenantID(ctx, "admin"))
+	page, err := svc.AlertTimeline(admin, "ETHUSDT", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.TotalCount != 2 || len(page.Rows) != 2 {
+		t.Fatalf("admin did not see shared market history: %+v", page)
+	}
+
+	regular := WithTenantID(ctx, "regular")
+	regularPage, err := svc.AlertTimeline(regular, "ETHUSDT", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regularPage.TotalCount != 0 {
+		t.Fatalf("regular tenant unexpectedly saw shared history: %+v", regularPage)
+	}
+}

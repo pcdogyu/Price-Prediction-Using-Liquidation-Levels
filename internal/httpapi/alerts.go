@@ -106,7 +106,11 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 func (s *Server) alertContext(r *http.Request) context.Context {
 	ctx := r.Context()
 	if username, ok := s.unifiedUser(r); ok {
-		return app.WithTenantID(ctx, username)
+		ctx = app.WithTenantID(ctx, username)
+		if cookie, err := r.Cookie(sessionCookie); err == nil && s.auth.IsAdmin(cookie.Value) {
+			ctx = app.WithSharedAlertHistory(ctx)
+		}
+		return ctx
 	}
 	return ctx
 }

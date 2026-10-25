@@ -52,6 +52,16 @@ type alertRuntime struct {
 	replayReady    bool
 }
 
+func (rtm *alertRuntime) historyStore(ctx context.Context) *store.Store {
+	if rtm != nil && rtm.service != nil && sharedAlertHistoryFromContext(ctx) && rtm.service.store != nil {
+		return rtm.service.store
+	}
+	if rtm == nil {
+		return nil
+	}
+	return rtm.store
+}
+
 // alertNotifyCooldown suppresses repeated messages for the same symbol and signal
 // kind so a burst cannot flood the chat.
 const alertNotifyCooldown = 5 * time.Minute
@@ -615,9 +625,13 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 		return manualTriggerResult{}, errors.New("steady webhook is not configured")
 	}
 	var signal domain.TradeSignal
+	history := rtm.historyStore(ctx)
+	if history == nil {
+		return manualTriggerResult{}, errors.New("alert history store is unavailable")
+	}
 	switch recordType {
 	case "alert":
-		row, err := rtm.store.LiquidationAlertByID(ctx, recordID)
+		row, err := history.LiquidationAlertByID(ctx, recordID)
 		if err != nil {
 			return manualTriggerResult{}, err
 		}
@@ -627,7 +641,7 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 			AlertNotionalUSD: row.NotionalUSD, ThresholdUSD: row.ThresholdUSD, WindowMinutes: row.WindowMinutes,
 		}
 	case domain.SignalAggressive, domain.SignalSteady:
-		row, err := rtm.store.TradeSignalByID(ctx, recordID)
+		row, err := history.TradeSignalByID(ctx, recordID)
 		if err != nil {
 			return manualTriggerResult{}, err
 		}
@@ -680,16 +694,20 @@ func (rtm *alertRuntime) notifyTelegramUsing(ctx context.Context, recordType, re
 	var symbol, side, text string
 	var markerAt time.Time
 	var referencePrice float64
+	history := rtm.historyStore(ctx)
+	if history == nil {
+		return manualNotifyResult{}, errors.New("alert history store is unavailable")
+	}
 	switch recordType {
 	case "alert":
-		row, err := rtm.store.LiquidationAlertByID(ctx, recordID)
+		row, err := history.LiquidationAlertByID(ctx, recordID)
 		if err != nil {
 			return manualNotifyResult{}, err
 		}
 		symbol, side, text = row.Symbol, row.TradeSide, alertMessage(row)
 		markerAt, referencePrice = row.TriggeredAt, row.ReferencePrice
 	case domain.SignalAggressive, domain.SignalSteady:
-		row, err := rtm.store.TradeSignalByID(ctx, recordID)
+		row, err := history.TradeSignalByID(ctx, recordID)
 		if err != nil {
 			return manualNotifyResult{}, err
 		}
