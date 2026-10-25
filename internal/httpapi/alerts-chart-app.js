@@ -52,7 +52,7 @@
     return { minSpan: K.MIN_VISIBLE * step(), maxSpan: K.MAX_VISIBLE * step(), minStart: first - span, maxEnd: last + (K.RIGHT_PAD + 1) * step() };
   };
   const signalOptions = () => ({ aggressive: state.toggles.aggressive, steady: state.toggles.steady });
-  const shownAlerts = () => state.toggles.alerts ? K.filterAlerts(state.alerts) : [];
+  const shownAlerts = () => state.toggles.alerts ? K.filterAlerts(state.alerts).filter(vwapAllowsSignal) : [];
   const rawShownSignals = () => state.toggles.signals ? K.filterSignals(state.signals, signalOptions()) : [];
   const currentRadarZone = () => state.radarZone && state.radarZone.ready
     ? state.radarZone
@@ -95,7 +95,15 @@
   };
   const shownSignals = () => rawShownSignals().filter(vwapAllowsSignal);
   const closeOnlyMarker = marker => !!(marker && marker.filterApplied && marker.closeAllowed && !marker.openAllowed);
-  const closeOnlyPrefix = marker => closeOnlyMarker(marker) ? '仅平仓区忽略 · ' : '';
+  const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : '激进信号过滤';
+  const closeOnlyPrefix = marker => {
+    if (!closeOnlyMarker(marker)) return '';
+    const label = marker.type === 'alert' ? '预警' : marker.kind === 'steady' ? '稳健' : '激进';
+    return closeOnlyFilterLabel(label) + ' · ';
+  };
+  const chartRecordTypeLabel = (row, label) => (K.closeOnlyIgnored(row)
+    ? '<span class="kline-close-only-label">' + escape(closeOnlyFilterLabel(label)) + ' · </span>'
+    : '') + escape(label);
 
   async function json(path, options) {
     const response = await fetch(base + path, Object.assign({ cache: 'no-store', credentials: 'same-origin' }, options || {}));
@@ -395,7 +403,7 @@
       const replayText = Number(packet.replay_hours) === 48 ? '过去 48 小时重算' : '按当前参数回放';
       const vwapVisibleCount = state.toggles.zones ? state.signals.filter(vwapAllowsSignal).length : state.signals.length;
       $('kline-signal-status').textContent = replayText + ' ' + vwapVisibleCount + ' 条' + (state.toggles.zones ? ' · VWAP 过滤后' : '') + ' · ' + parameterText;
-      $('kline-alert-status').textContent = replayText + ' ' + state.alerts.length + ' 条 · 每 15 秒刷新';
+      $('kline-alert-status').textContent = replayText + ' ' + shownAlerts().length + ' 条' + (state.toggles.zones ? ' · VWAP 过滤后' : '') + ' · 每 15 秒刷新';
       clearError();
     } catch (error) {
       $('kline-signal-status').textContent = '当前参数信号读取失败：' + error.message;
@@ -418,7 +426,7 @@
     }
     $('kline-signal-rows').innerHTML = rows.map(row => '<tr>' +
       '<td>' + escape(clock(row.t)) + '</td>' +
-      '<td class="' + (row.kind === 'steady' ? 'buy' : 'warning') + '">' + (K.closeOnlyIgnored(row) ? '<span class="kline-close-only-label">仅平仓区忽略 · </span>' : '') + (row.kind === 'steady' ? '稳健' : '激进') + '</td>' +
+      '<td class="' + (row.kind === 'steady' ? 'buy' : 'warning') + '">' + chartRecordTypeLabel(row, row.kind === 'steady' ? '稳健' : '激进') + '</td>' +
       '<td class="' + (row.side === 'short' ? 'sell' : 'buy') + '">' + (row.side === 'short' ? '做空' : '做多') + '</td>' +
       '<td>' + escape(priceText(row.reference_price)) + '</td>' +
       '<td>' + escape(money(row.alert_notional_usd)) + '</td>' +

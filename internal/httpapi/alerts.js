@@ -60,7 +60,8 @@
     return '<span class="muted alerts-radar-filter" title="' + escape(title) + '"> · ' + escape(summary) + '</span>';
   };
   const closeOnlyIgnored = row => !!(row && row.filter_applied && row.close_allowed && !row.open_allowed);
-  const recordTypeLabel = (row, label) => (closeOnlyIgnored(row) ? '<span class="alerts-close-only-prefix">仅平仓区忽略 · </span>' : '') + escape(label);
+  const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : '激进信号过滤';
+  const recordTypeLabel = (row, label) => (closeOnlyIgnored(row) ? '<span class="alerts-close-only-prefix">' + escape(closeOnlyFilterLabel(label)) + ' · </span>' : '') + escape(label);
   // Every pair name links to its own K-line page in a new tab, so the alert page
   // keeps its scroll position and filters while the chart opens beside it.
   const chartLink = symbol => '<a class="alerts-symbol-link" target="_blank" rel="noopener" href="' + base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '" title="在新标签页打开 ' + escape(symbol) + ' K线">' + escape(symbol) + '</a>';
