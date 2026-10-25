@@ -91,7 +91,13 @@
     // Missing or overlapping boundaries fail closed while VWAP filtering is on;
     // the chart must not suggest an opening signal without the 24h range gate.
     if (!zone || !finite(zone.red_zone_lower) || !finite(zone.green_zone_upper) || zone.boundary_overlap) return false;
-    return K.vwapSignalAllowed(signal, zone);
+    // Keep the exact server-side decision as the first gate, then apply the
+    // chart's historical zone to the marker as well. The server evaluates 1m
+    // candles while a user may view 15m/30m candles; requiring both decisions
+    // prevents a valid 1m opening decision from being painted inside the
+    // wider close-only band visible on the selected chart interval.
+    if (!K.vwapSignalAllowed(signal, zone)) return false;
+    return K.vwapSignalAllowed(Object.assign({}, signal, { filter_applied: false }), zone);
   };
   const shownSignals = () => rawShownSignals().filter(vwapAllowsSignal);
   const closeOnlyMarker = marker => !!(marker && marker.filterApplied && marker.closeAllowed && !marker.openAllowed);

@@ -10,6 +10,7 @@ test('the chart hides close-only warnings when VWAP filtering is enabled', () =>
   assert.equal(K.closeOnlyIgnored({ filter_applied: true, open_allowed: true, close_allowed: true }), false);
   assert.equal(K.closeOnlyIgnored({ filter_applied: true, open_allowed: false, close_allowed: false }), false);
   assert.match(chartApp, /K\.filterAlerts\(state\.alerts\)\.filter\(vwapAllowsSignal\)/);
+  assert.match(chartApp, /Object\.assign\(\{\}, signal, \{ filter_applied: false \}\)/);
   assert.match(chartApp, /kline-close-only-label/);
   assert.match(chartApp, /平仓区域预警信号过滤/);
   assert.match(chartApp, /稳健信号过滤/);
