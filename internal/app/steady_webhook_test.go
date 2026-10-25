@@ -196,6 +196,52 @@ func TestDisabledOpeningSignalStillSendsPreclose(t *testing.T) {
 	}
 }
 
+func TestCloseOnlyRecordsSuppressAutomaticWebhooks(t *testing.T) {
+	requests := make(chan []byte, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	svc, cfg, _ := alertTestService(t, "close-only-suppressed.db")
+	cfg.SteadyWebhookURL = server.URL
+	cfg.SteadyWebhookAPIID = "okx_bot"
+	cfg.SteadyWebhookTargetExchange = "okx"
+	cfg.SteadyWebhookTradeEnv = "demo"
+	cfg.SteadyWebhookExchange = "binance"
+	cfg.SteadyWebhookInterval = "3m"
+	cfg.SteadyWebhookTokenNonce = "nonce-value"
+	cfg.SteadyWebhookToken = "token-value"
+	svc.alerts.webhookURL = cfg.SteadyWebhookURL
+	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
+	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	svc.alerts.webhookConfig = cfg
+	svc.alerts.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), svc.alerts.webhookSettings, 4, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := svc.SaveAlertOrderSignalSettings(context.Background(), domain.OrderSignalSettings{Alerts: true, Aggressive: true, Steady: true, AlertsClose: true, AggressiveClose: true, SteadyClose: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.alerts.webhook.Start(ctx)
+	svc.alerts.submitSignalWebhook(domain.TradeSignal{
+		Symbol: "BTCUSDT", Kind: domain.SignalSteady, Side: "long", CreatedAt: time.Now().UTC(), ReferencePrice: 67123.45,
+		FilterApplied: true, OpenAllowed: false, CloseAllowed: true,
+	}, true)
+	svc.alerts.submitAlertWebhook(domain.LiquidationAlert{
+		ID: "close-only-alert", Symbol: "BTCUSDT", TradeSide: "long", Side: "short", TriggeredAt: time.Now().UTC(), ReferencePrice: 67123.45,
+		FilterApplied: true, OpenAllowed: false, CloseAllowed: true,
+	}, true)
+
+	select {
+	case raw := <-requests:
+		t.Fatalf("close-only records unexpectedly sent an automatic webhook: %s", raw)
+	case <-time.After(700 * time.Millisecond):
+	}
+}
+
 func TestNegativeETHGammaLeavesOpeningWebhookForUnifiedTVOrderPolicy(t *testing.T) {
 	requests := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

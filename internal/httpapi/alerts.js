@@ -59,6 +59,8 @@
     const title = raw || summary;
     return '<span class="muted alerts-radar-filter" title="' + escape(title) + '"> · ' + escape(summary) + '</span>';
   };
+  const closeOnlyIgnored = row => !!(row && row.filter_applied && row.close_allowed && !row.open_allowed);
+  const recordTypeLabel = (row, label) => (closeOnlyIgnored(row) ? '<span class="alerts-close-only-prefix">仅平仓区忽略 · </span>' : '') + escape(label);
   // Every pair name links to its own K-line page in a new tab, so the alert page
   // keeps its scroll position and filters while the chart opens beside it.
   const chartLink = symbol => '<a class="alerts-symbol-link" target="_blank" rel="noopener" href="' + base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '" title="在新标签页打开 ' + escape(symbol) + ' K线">' + escape(symbol) + '</a>';
@@ -159,7 +161,7 @@
       ? '反向爆仓 ' + money(signal.opposite_usd) + ' · ' + (signal.opposite_count || 0) + ' 笔 · ' + span(signal.opposite_elapsed_seconds)
       : '安静 ' + span(signal.quiet_elapsed_seconds) + ' · 顺延 ' + (signal.follow_ups || 0) + ' 次';
     return '<td>' + when(signal.created_at) + '</td><td>' + chartLink(signal.symbol) + '</td>' +
-      '<td class="' + (signal.kind === 'steady' ? 'buy' : 'warning') + '">' + (signal.kind === 'steady' ? '稳健' : '激进') + '</td>' +
+      '<td class="' + (signal.kind === 'steady' ? 'buy' : 'warning') + '">' + recordTypeLabel(signal, signal.kind === 'steady' ? '稳健' : '激进') + '</td>' +
       '<td' + directionClass(signal.side, historicalGammaIgnored(signal)) + '>' + escape(directionLabel(signal.side, historicalGammaIgnored(signal))) + '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span></td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
       '<td>' + detail + radarFilterStatus(signal) + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
@@ -171,7 +173,7 @@
       '<span class="' + stateClass(row.status) + '">' + escape(cycleStates[row.status] || row.status) + '</span>' +
       (row.quiet_until ? '<span class="muted">安静至 ' + when(row.quiet_until) + '</span>' : '');
     return '<td>' + when(row.triggered_at) + '</td><td>' + chartLink(row.symbol) + '</td>' +
-      '<td class="warning">预警</td>' +
+      '<td class="warning">' + recordTypeLabel(row, '预警') + '</td>' +
       '<td' + directionClass(row.trade_side, historicalGammaIgnored(row)) + '>' + escape(directionLabel(row.trade_side, historicalGammaIgnored(row))) + '<span class="muted"> · ' + escape(liqLabel(row.side)) + '</span></td>' +
       '<td>' + money(row.notional_usd) + '<span class="muted"> / ' + money(row.threshold_usd) + '</span></td>' +
       '<td>' + detail + radarFilterStatus(row) + '</td><td>' + price(row.reference_price) + '</td><td>' + triggerLink('alert', row.id, row.symbol, row.trade_side, row.reference_price) + '</td><td>' + notifyLink('alert', row.id) + '</td><td>—</td>';

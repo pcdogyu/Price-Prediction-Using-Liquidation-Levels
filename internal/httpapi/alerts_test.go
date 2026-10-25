@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "下单信号类别", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "下单信号类别", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "仅平仓区忽略", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -88,6 +88,9 @@ func TestAlertPageAndAssets(t *testing.T) {
 	script := serveAlert(srv, http.MethodGet, "/assets/alerts.js", nil).Body.String()
 	if !strings.Contains(script, "alerts-trigger") || !strings.Contains(script, "api/v1/alerts/trigger") {
 		t.Fatal("the alerts script must expose the manual order trigger")
+	}
+	if !strings.Contains(script, "alerts-close-only-prefix") || !strings.Contains(script, "closeOnlyIgnored") {
+		t.Fatal("the alerts script must mark close-only history records")
 	}
 	if !strings.Contains(script, "api/v1/alerts/notify") || !strings.Contains(script, "触发报价") {
 		t.Fatal("the alerts script must expose the manual Telegram alert trigger")

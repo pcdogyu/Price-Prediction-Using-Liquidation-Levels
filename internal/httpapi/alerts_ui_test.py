@@ -40,6 +40,15 @@ def timeline_fixture():
                 "opposite_usd": 120000, "opposite_count": 2, "opposite_elapsed_seconds": 90,
                 "reference_price": 68000, "notify_status": "queued", "gamma_ignored": index == 0,
             }
+        if index < 3:
+            target = item["alert"] if kind == "alert" else item["signal"]
+            target.update({"filter_applied": True, "open_allowed": False, "close_allowed": True})
+        elif index == 3:
+            target = item["alert"] if kind == "alert" else item["signal"]
+            target.update({"filter_applied": True, "open_allowed": True, "close_allowed": True})
+        elif index == 4:
+            target = item["alert"] if kind == "alert" else item["signal"]
+            target.update({"filter_applied": True, "open_allowed": False, "close_allowed": False})
         rows.append(item)
     return rows
 
@@ -87,6 +96,8 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows")).to_contain_text("预警")
     expect(page.locator("#alerts-history-rows")).to_contain_text("激进")
     expect(page.locator("#alerts-history-rows")).to_contain_text("稳健")
+    expect(page.locator(".alerts-close-only-prefix")).to_have_count(3)
+    expect(page.locator(".alerts-order-trigger")).to_have_count(20)
     expect(page.get_by_text("下单信号类别", exact=True)).to_be_visible()
     expect(page.locator("#alerts-history-rows")).to_contain_text("做多 gamma忽略")
     assert page.locator(".gamma-ignored").count() == 1

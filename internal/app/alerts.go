@@ -488,10 +488,13 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if !allowNotify || (signal.Kind != domain.SignalAggressive && signal.Kind != domain.SignalSteady) {
 		return
 	}
-	if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(signal) {
+	// A radar decision that is not allowed to open must not emit any automatic
+	// order webhook. In particular, do not send the preclose leg for a
+	// close-only zone; the alert history remains available for manual action.
+	if signal.FilterApplied && !signal.OpenAllowed {
 		return
 	}
-	if signal.FilterApplied && !signal.OpenAllowed {
+	if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(signal) {
 		return
 	}
 	if !rtm.orderSignalEnabled(signal.Kind) {
@@ -534,10 +537,13 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 			return
 		}
 	}
-	if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(signal) {
+	// A radar decision that is not allowed to open must not emit any automatic
+	// order webhook. In particular, do not send the preclose leg for a
+	// close-only zone; the alert history remains available for manual action.
+	if signal.FilterApplied && !signal.OpenAllowed {
 		return
 	}
-	if signal.FilterApplied && !signal.OpenAllowed {
+	if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(signal) {
 		return
 	}
 	if !rtm.orderSignalEnabled(signal.Kind) {
@@ -553,10 +559,11 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 	}
 }
 
-// submitPrecloseWebhook sends a close-only request before any optional opening
+// submitPrecloseWebhook sends a close-only request before an allowed opening
 // request. A failed or suppressed preclose prevents the subsequent open from
 // being queued, so a queue/backpressure issue cannot turn into an unprotected
-// direction switch.
+// direction switch. Filtered close-only decisions return before this helper is
+// called by the automatic webhook paths.
 func (rtm *alertRuntime) submitPrecloseWebhook(signal domain.TradeSignal) bool {
 	if !rtm.orderCloseEnabled(signal.Kind) {
 		return true
