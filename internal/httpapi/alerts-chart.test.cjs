@@ -187,7 +187,6 @@ test('markerGroups retain the server-side opening filter decision', () => {
   assert.equal(grouped[0].closeAllowed, true);
   assert.equal(grouped[0].filterReason, 'neutral_zone');
 });
-
 test('niceTicks stays inside the range and terminates', () => {
   assert.deepEqual(K.niceTicks(0, 10, 5), [0, 2, 4, 6, 8, 10]);
   assert.deepEqual(K.niceTicks(5, 5, 5), []);
@@ -296,6 +295,14 @@ test('markerGroups buckets by candle, kind and direction with counts and amounts
   assert.equal(groups[4].price, 0);
   assert.equal(groups[4].notionalUSD, 0);
   assert.equal(K.bucketStart(2999, 1000), 2000);
+});
+
+test('markerGroups retain the server-side opening filter decision', () => {
+  const grouped = K.markerGroups([{ ...signal('close-only', 1500), filter_applied: true, open_allowed: false, close_allowed: true, filter_reason: 'neutral_zone' }], 1000);
+  assert.equal(grouped[0].filterApplied, true);
+  assert.equal(grouped[0].openAllowed, false);
+  assert.equal(grouped[0].closeAllowed, true);
+  assert.equal(grouped[0].filterReason, 'neutral_zone');
 });
 
 test('oldestSignal reports the earliest fetched signal time', () => {
