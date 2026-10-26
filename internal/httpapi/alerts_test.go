@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "下单信号类别", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "平仓区域预警信号过滤", "激进信号过滤", "稳健信号过滤", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "策略开关", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "平仓区域预警信号过滤", "激进信号过滤", "稳健信号过滤", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -70,6 +70,10 @@ func TestAlertPageAndAssets(t *testing.T) {
 	history, monitor := strings.Index(body, "信号历史"), strings.Index(body, "实时监控")
 	if history < 0 || monitor < 0 || monitor < history {
 		t.Fatalf("实时监控 must stay below 信号历史: history %d monitor %d", history, monitor)
+	}
+	strategy, switches := strings.Index(body, "报警参数"), strings.Index(body, "策略开关")
+	if strategy < 0 || switches < strategy {
+		t.Fatalf("策略开关 must be placed inside 报警参数 section: strategy %d switches %d", strategy, switches)
 	}
 	// The unified navigation makes 报警 the primary entry before the options page.
 	options, alerts := strings.Index(body, `href="/options"`), strings.Index(body, `href="/alerts"`)

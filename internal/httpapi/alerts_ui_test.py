@@ -98,7 +98,7 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows")).to_contain_text("稳健")
     expect(page.locator(".alerts-close-only-prefix")).to_have_count(3)
     expect(page.locator(".alerts-order-trigger")).to_have_count(20)
-    expect(page.get_by_text("下单信号类别", exact=True)).to_be_visible()
+    expect(page.get_by_text("策略开关", exact=True)).to_be_visible()
     expect(page.locator("#alerts-history-rows")).to_contain_text("做多 gamma忽略")
     assert page.locator(".gamma-ignored").count() == 1
     expect(page.get_by_text("ETHUSDT Gamma：-0.123450", exact=False)).to_be_visible()

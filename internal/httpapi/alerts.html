@@ -37,9 +37,8 @@
       </div>
       <p class="muted">修改任一参数并切换焦点后自动保存并立即用于实时监控；也可点击保存按钮。绿色接多区上沿取 VWAP 下界、24 小时高点最小回撤线和 Donchian 分位线的最小值；红色开空区下线取对应三项的最大值。点击“信号重算”会按当前参数回放过去 48 小时，重算时跳过 Peak-Decay，并通知已打开的币对图表刷新；实时监控和普通图表回放仍保留 Peak-Decay；历史预警和信号保留产生时的阈值与周期。</p>
     </form>
-  </section>
-  <section class="surface alerts-order-signal-surface">
-    <div class="section-head"><div><h2>下单信号类别</h2><p class="muted alerts-section-lead">三类实时信号分别控制平仓和开仓；BTCUSDT 使用 BTCUSDT Gamma，ETHUSDT 及其他币对使用 ETHUSDT Gamma；对应 Gamma 小于 0 时仍只发送已开启的平仓，不发送开仓 JSON。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>
+    <div class="alerts-strategy-switches">
+      <div class="section-head alerts-strategy-switch-head"><div><h3>策略开关</h3><p class="muted alerts-section-lead">三类实时信号分别控制平仓和开仓，可单独打开或关闭；BTCUSDT 使用 BTCUSDT Gamma，ETHUSDT 及其他币对使用 ETHUSDT Gamma。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>
     <form id="alerts-order-signal-settings">
       <div class="table-scroll">
         <table class="alerts-order-signal-table">
@@ -51,9 +50,10 @@
           </tbody>
         </table>
       </div>
-      <div class="alerts-order-signal-footer"><span id="alerts-order-signal-summary" class="muted">—</span><button id="alerts-order-signal-save" type="submit">保存下单信号设置</button></div>
-      <p class="muted alerts-note">每类实时信号按本页开关独立发送平仓和开仓指令。当前使用 Deribit 归一化 Gamma，并按币对选择锚点：BTCUSDT 使用 BTCUSDT，ETHUSDT 及其他币对使用 ETHUSDT；对应 Gamma 小于 0 时不会发送开仓 JSON，平仓是否发送仍由本页开关决定。历史记录按信号产生当时的 Gamma 判断展示，不会被当前 Gamma 改写；历史记录中的“触发下单”仍可手动执行完整开仓。</p>
+      <div class="alerts-order-signal-footer"><span id="alerts-order-signal-summary" class="muted">—</span><button id="alerts-order-signal-save" type="submit">保存策略开关</button></div>
+      <p class="muted alerts-note">每类实时信号按本页开关独立发送平仓和开仓指令。对应 Gamma 小于 0 时不会发送开仓 JSON，平仓是否发送仍由本页开关决定；历史记录中的“触发下单”仍可手动执行完整开仓。</p>
     </form>
+    </div>
   </section>
   <section class="surface">
     <div class="section-head"><h2>Telegram 通知</h2><span id="alerts-notify-status" class="muted" role="status">读取设置</span></div>
