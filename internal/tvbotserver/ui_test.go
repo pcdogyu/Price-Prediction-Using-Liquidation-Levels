@@ -183,10 +183,9 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`function positionSymbolTradeRows(row, includeAnalysis)`,
 		`includeAnalysis !== false`,
 		`state.analysis.trades`,
-		`entry_fill_time`,
+		`filter((item) => String(item && (item.trade_id || item.ord_id) || "").trim())`,
 		`tradeChartPayloadRow(item)`,
 		`operation_source: String(item && item.operation_source || "").trim().toLowerCase()`,
-		`operation: "open"`,
 		`function buildPositionChartURL(symbol, exchange, trades, selectedRow)`,
 		`function analysisPositionKlineURL()`,
 		`base + "/alerts/chart"`,
@@ -201,6 +200,9 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Fatalf("position symbol details marker missing %q", want)
 		}
+	}
+	if strings.Contains(page, `trade_id: "position-entry"`) {
+		t.Fatal("position chart must not synthesize a marker from the current position average price")
 	}
 	for _, removed := range []string{"position-symbol-history-panel", "position-symbol-history-rows", "历史下单信息"} {
 		if strings.Contains(page, removed) {

@@ -6133,43 +6133,29 @@ const tvbotHTML = `<!doctype html>
       const exchange = normalizeExchange(row && row._exchange || activeExchange());
       const apiID = String(row && row._api_id || "").trim();
       const symbol = analysisGateChartSymbol(row && row.instId);
+      // Position charts must be grounded in exchange fills returned by the
+      // analysis endpoint. Do not synthesize an opening marker from the
+      // current position snapshot: its average price is not an order fill.
       const source = includeAnalysis !== false && state.analysis && Array.isArray(state.analysis.trades) ? state.analysis.trades : [];
       const trades = source
         .filter((item) => normalizeExchange(item && item.exchange) === exchange)
         .filter((item) => analysisGateChartSymbol(item && item.inst_id) === symbol)
         .filter((item) => !apiID || !item.api_id || String(item.api_id).trim() === apiID)
         .filter((item) => String(item && item.position_effect || "").trim().toLowerCase() === "open" || String(item && item.position_effect || "").trim().toLowerCase() === "close")
+        .filter((item) => String(item && (item.trade_id || item.ord_id) || "").trim())
         .map((item) => {
-          const side = String(item && item.pos_side || "").trim().toLowerCase();
-          return Object.assign({}, item, { side: side === "short" ? "short" : side === "long" ? "long" : "" });
+          const positionSide = String(item && item.pos_side || "").trim().toLowerCase();
+          if (positionSide === "short" || positionSide === "long") return Object.assign({}, item, { side: positionSide });
+          const effect = String(item && item.position_effect || "").trim().toLowerCase();
+          const orderSide = String(item && item.side || "").trim().toLowerCase();
+          const side = effect === "open"
+            ? (orderSide === "buy" ? "long" : orderSide === "sell" ? "short" : "")
+            : (orderSide === "sell" ? "long" : orderSide === "buy" ? "short" : "");
+          return Object.assign({}, item, { side });
         })
         .filter((item) => item.side)
         .slice()
         .sort((a, b) => String(b && b.fill_time || "").localeCompare(String(a && a.fill_time || "")));
-      const hasOpenMarker = trades.some((item) => String(item && item.position_effect || "").trim().toLowerCase() === "open" && item.fill_time && item.fill_px);
-      if (!hasOpenMarker && row && row.entry_fill_time && row.avgPx) {
-        const side = positionSideKind(row.posSide, row.pos);
-        if (side) {
-          trades.push({
-            exchange,
-            api_id: apiID,
-            inst_id: row.instId,
-            side,
-            pos_side: side,
-            position_effect: "open",
-            operation: "open",
-            operation_source: "exchange",
-            fill_time: row.entry_fill_time,
-            fill_px: row.avgPx,
-            fill_sz: row.pos,
-            turnover: row.position_amount,
-            notional_usdt: row.position_amount,
-            margin_usdt: row.margin,
-            trade_id: "position-entry",
-            ord_id: ""
-          });
-        }
-      }
       return trades;
     }
 
