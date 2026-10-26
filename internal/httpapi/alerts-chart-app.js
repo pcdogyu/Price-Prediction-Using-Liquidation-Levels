@@ -13,7 +13,7 @@
   const storedText = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (error) { return fallback; } };
   const rememberText = (key, value) => { try { localStorage.setItem(key, value); } catch (error) { /* private mode keeps defaults */ } };
 
-  const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_ZONES = 'liquidation.kline.zones', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
+  const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_ZONES = 'liquidation.kline.zones', STORE_DONCHIAN = 'liquidation.kline.donchian', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000, LIQUIDATION_DELTA_REFRESH_MS = 15000, LIQUIDATION_DELTA_DEBOUNCE_MS = 250;
   const KLINE_HEIGHT_SCALE = 1.20, LIQUIDATION_DELTA_HEIGHT_SCALE = 1.15;
   const CHART_MARGIN_TOP = 18, CHART_MARGIN_BOTTOM = 42, CHART_SECTION_GAP = 12;
@@ -36,7 +36,7 @@
     drag: null, hoverCandle: null, hoverMarker: null,
     radarConfig: { periodMinutes: 240, zScoreThreshold: .8, rangeMinutes: 1440, minDrawdown: .022, donchianFraction: .35 }, radarZone: null,
     liquidationDeltaHover: null, liquidationDeltaWindow: null, liquidationDeltaPending: false, liquidationDeltaRequestTimer: 0, liquidationDeltaRequestSequence: 0, liquidationDeltaAbortController: null,
-    toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true), zones: stored(STORE_ZONES, true) }
+    toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true), zones: stored(STORE_ZONES, true), donchian: stored(STORE_DONCHIAN, true) }
   };
   // The standalone alert chart must be useful when opened directly from a URL.
   // Relying only on the alert-page localStorage event made a fresh tab request
@@ -52,7 +52,7 @@
     return { minSpan: K.MIN_VISIBLE * step(), maxSpan: K.MAX_VISIBLE * step(), minStart: first - span, maxEnd: last + (K.RIGHT_PAD + 1) * step() };
   };
   const signalOptions = () => ({ aggressive: state.toggles.aggressive, steady: state.toggles.steady });
-  const shownAlerts = () => state.toggles.alerts ? K.filterAlerts(state.alerts).filter(vwapAllowsSignal) : [];
+  const shownAlerts = () => state.toggles.alerts ? K.filterAlerts(state.alerts).filter(donchianAllowsSignal) : [];
   const rawShownSignals = () => state.toggles.signals ? K.filterSignals(state.signals, signalOptions()) : [];
   const currentRadarZone = () => state.radarZone && state.radarZone.ready
     ? state.radarZone
@@ -85,10 +85,10 @@
     }
     return match;
   };
-  const vwapAllowsSignal = signal => {
-    if (!state.toggles.zones) return true;
+  const donchianAllowsSignal = signal => {
+    if (!state.toggles.donchian) return true;
     const zone = vwapZoneAt(signal.t);
-    // Missing or overlapping boundaries fail closed while VWAP filtering is on;
+    // Missing or overlapping boundaries fail closed while Donchian filtering is on;
     // the chart must not suggest an opening signal without the 24h range gate.
     if (!zone || !finite(zone.red_zone_lower) || !finite(zone.green_zone_upper) || zone.boundary_overlap) return false;
     // Keep the exact server-side decision as the first gate, then apply the
@@ -99,15 +99,15 @@
     if (!K.vwapSignalAllowed(signal, zone)) return false;
     return K.vwapSignalAllowed(Object.assign({}, signal, { filter_applied: false }), zone);
   };
-  const shownSignals = () => rawShownSignals().filter(vwapAllowsSignal);
-  const closeOnlyMarker = marker => !!(marker && marker.filterApplied && marker.closeAllowed && !marker.openAllowed);
+  const shownSignals = () => rawShownSignals().filter(donchianAllowsSignal);
+  const closeOnlyMarker = marker => !!(state.toggles.donchian && marker && marker.filterApplied && marker.closeAllowed && !marker.openAllowed);
   const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : '激进信号过滤';
   const closeOnlyPrefix = marker => {
     if (!closeOnlyMarker(marker)) return '';
     const label = marker.type === 'alert' ? '预警' : marker.kind === 'steady' ? '稳健' : '激进';
     return closeOnlyFilterLabel(label) + ' · ';
   };
-  const chartRecordTypeLabel = (row, label) => (K.closeOnlyIgnored(row)
+  const chartRecordTypeLabel = (row, label) => (state.toggles.donchian && K.closeOnlyIgnored(row)
     ? '<span class="kline-close-only-label">' + escape(closeOnlyFilterLabel(label)) + ' · </span>'
     : '') + escape(label);
 
@@ -309,9 +309,10 @@
     parts.push(shownAlerts().length + ' 个预警');
     parts.push(shownSignals().length + ' 个下单信号');
     const zone = currentRadarZone();
-    if (!state.toggles.zones) parts.push('VWAP 开仓区与仅平仓区已隐藏');
+    if (!state.toggles.zones) parts.push('VWAP 分区已隐藏');
     else if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 + Donchian ' + (zone.range_hours || state.radarConfig.rangeMinutes / 60) + ' 小时 · 历史三分区 ' + historicalRadarZones().length + ' 根 · 高于 ' + priceText(zone.red_zone_lower || zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.green_zone_upper || zone.lower_open_price) + ' 接多 · 中间仅平仓' + (zone.boundary_overlap ? ' · 边界重叠，禁止开仓' : ''));
     else parts.push('VWAP 开仓区计算中');
+    parts.push(state.toggles.donchian ? 'Donchian 信号过滤开启' : 'Donchian 信号过滤关闭');
     parts.push(state.atLatest ? '每 5 秒自动刷新' : '已暂停跟随最新');
     return parts.join(' · ');
   }
@@ -407,9 +408,10 @@
       const threshold = state.symbol === 'BTCUSDT' ? thresholds.btc_usd : state.symbol === 'ETHUSDT' ? thresholds.eth_usd : thresholds.other_usd;
       const parameterText = '当前参数：' + money(threshold) + ' · ' + (thresholds.window_minutes || '—') + ' 分钟周期';
       const replayText = Number(packet.replay_hours) === 48 ? '过去 48 小时重算' : '按当前参数回放';
-      const vwapVisibleCount = state.toggles.zones ? state.signals.filter(vwapAllowsSignal).length : state.signals.length;
-      $('kline-signal-status').textContent = replayText + ' ' + vwapVisibleCount + ' 条' + (state.toggles.zones ? ' · VWAP 过滤后' : '') + ' · ' + parameterText;
-      $('kline-alert-status').textContent = replayText + ' ' + shownAlerts().length + ' 条' + (state.toggles.zones ? ' · VWAP 过滤后' : '') + ' · 每 15 秒刷新';
+      const filteredSignalCount = state.signals.filter(donchianAllowsSignal).length;
+      const filterText = state.toggles.donchian ? ' · Donchian 过滤后' : ' · 未过滤';
+      $('kline-signal-status').textContent = replayText + ' ' + filteredSignalCount + ' 条' + filterText + ' · ' + parameterText;
+      $('kline-alert-status').textContent = replayText + ' ' + shownAlerts().length + ' 条' + filterText + ' · 每 15 秒刷新';
       clearError();
     } catch (error) {
       $('kline-signal-status').textContent = '当前参数信号读取失败：' + error.message;
@@ -1009,13 +1011,13 @@
          (marker.margin_usdt ? '<br>保证金USDT金额 ' + escape(marker.margin_usdt) : '') +
         (marker.order_id ? '<br>订单号 ' + escape(marker.order_id) : '') + cumulativeTotals;
     } else if (marker.type === 'alert') {
-      const filterStatus = marker.filterApplied ? (marker.openAllowed ? '允许开仓' : marker.closeAllowed ? '仅平仓' : '未放行') : '';
+      const filterStatus = state.toggles.donchian && marker.filterApplied ? (marker.openAllowed ? '允许开仓' : marker.closeAllowed ? '仅平仓' : '未放行') : '';
       tooltip.innerHTML = '<b>' + escape(closeOnlyPrefix(marker) + '预警 · ' + (marker.side === 'short' ? '做空' : '做多')) + (filterStatus ? ' · ' + filterStatus : '') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>清算方向 ' +
         escape(marker.liquidationSide === 'short' ? '空单爆仓' : '多单爆仓') + '<br>参考价 ' + escape(priceText(marker.price)) +
         '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + cumulativeTotals;
     } else {
-      const filterStatus = marker.filterApplied ? (marker.openAllowed ? '允许开仓' : marker.closeAllowed ? '仅平仓' : '未放行') : '';
+      const filterStatus = state.toggles.donchian && marker.filterApplied ? (marker.openAllowed ? '允许开仓' : marker.closeAllowed ? '仅平仓' : '未放行') : '';
       tooltip.innerHTML = '<b>' + escape(closeOnlyPrefix(marker) + (marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + (marker.side === 'short' ? '做空' : '做多')) + (filterStatus ? ' · ' + filterStatus : '') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>参考价 ' + escape(priceText(marker.price)) +
         '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + cumulativeTotals;
@@ -1157,7 +1159,7 @@
   }
 
   function bindControls() {
-    const boxes = [[STORE_ALERTS, 'kline-alerts', 'alerts'], [STORE_SIGNALS, 'kline-signals', 'signals'], [STORE_AGGRESSIVE, 'kline-aggressive', 'aggressive'], [STORE_STEADY, 'kline-steady', 'steady'], [STORE_ZONES, 'kline-zones', 'zones']];
+    const boxes = [[STORE_ALERTS, 'kline-alerts', 'alerts'], [STORE_SIGNALS, 'kline-signals', 'signals'], [STORE_AGGRESSIVE, 'kline-aggressive', 'aggressive'], [STORE_STEADY, 'kline-steady', 'steady'], [STORE_ZONES, 'kline-zones', 'zones'], [STORE_DONCHIAN, 'kline-donchian', 'donchian']];
     for (const [key, id, toggle] of boxes) {
       const box = $(id);
       box.checked = state.toggles[toggle];
