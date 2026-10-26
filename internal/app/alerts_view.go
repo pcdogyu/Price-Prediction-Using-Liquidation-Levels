@@ -100,13 +100,15 @@ func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit 
 	if err != nil {
 		return domain.AlertTimelinePage{}, err
 	}
-	page, err := rtm.store.AlertTimeline(ctx, symbol, kind, limit, cursor)
+	page, err := rtm.store.AlertTimelineSince(ctx, symbol, kind, limit, cursor, time.Now().UTC().Add(-alertTimelineHistoryWindow))
 	if err != nil {
 		return page, err
 	}
 	page.Gamma = s.alertGammaForSymbol(ctx, symbol)
 	return page, nil
 }
+
+const alertTimelineHistoryWindow = 30 * 24 * time.Hour
 
 // AlertChartSignals replays the selected symbol with the currently saved alert
 // parameters so the K-line signal layer follows the settings form immediately.

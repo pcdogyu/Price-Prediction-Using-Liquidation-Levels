@@ -387,6 +387,12 @@ func (s *Store) TradeSignals(ctx context.Context, symbol, kind string, limit int
 // one stable, newest-first cursor stream. kind accepts alert, aggressive,
 // steady, or an empty value for all three record types.
 func (s *Store) AlertTimeline(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.AlertTimelinePage, error) {
+	return s.AlertTimelineSince(ctx, symbol, kind, limit, cursor, time.Time{})
+}
+
+// AlertTimelineSince is the bounded variant used by the alerts page. A zero
+// since keeps the historical store API unbounded for chart and export callers.
+func (s *Store) AlertTimelineSince(ctx context.Context, symbol, kind string, limit int, cursor string, since time.Time) (domain.AlertTimelinePage, error) {
 	out := domain.AlertTimelinePage{Rows: []domain.AlertTimelineItem{}}
 	if limit < 1 || limit > 200 {
 		return out, errors.New("invalid timeline limit")
@@ -430,11 +436,21 @@ func (s *Store) AlertTimeline(ctx context.Context, symbol, kind string, limit in
 	}
 
 	query := "SELECT record_type,event_ts,sort_id,payload FROM (" + strings.Join(parts, " UNION ALL ") + ")"
+	outerWhere := []string{}
+	outerArgs := []any{}
+	if !since.IsZero() {
+		outerWhere = append(outerWhere, "event_ts>=?")
+		outerArgs = append(outerArgs, since.UTC().UnixMilli())
+	}
 	if !at.IsZero() {
-		query += " WHERE (event_ts<? OR (event_ts=? AND sort_id<?))"
-		args = append(args, at.UnixMilli(), at.UnixMilli(), cursorID)
+		outerWhere = append(outerWhere, "(event_ts<? OR (event_ts=? AND sort_id<?))")
+		outerArgs = append(outerArgs, at.UnixMilli(), at.UnixMilli(), cursorID)
+	}
+	if len(outerWhere) > 0 {
+		query += " WHERE " + strings.Join(outerWhere, " AND ")
 	}
 	query += " ORDER BY event_ts DESC,sort_id DESC LIMIT ?"
+	args = append(args, outerArgs...)
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -481,16 +497,38 @@ func (s *Store) AlertTimeline(ctx context.Context, symbol, kind string, limit in
 		out.Rows = append(out.Rows, row.item)
 	}
 
-	countWhere := ""
-	countArgs := []any{}
+	alertCountWhereParts := []string{}
+	alertCountArgs := []any{}
 	if symbolWhere != "" {
-		countWhere = " WHERE instr(UPPER(symbol),UPPER(?))>0"
-		countArgs = append(countArgs, symbol)
+		alertCountWhereParts = append(alertCountWhereParts, "instr(UPPER(symbol),UPPER(?))>0")
+		alertCountArgs = append(alertCountArgs, symbol)
 	}
-	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts`+countWhere, countArgs...).Scan(&out.AlertCount); err != nil {
+	if !since.IsZero() {
+		alertCountWhereParts = append(alertCountWhereParts, "trigger_ts>=?")
+		alertCountArgs = append(alertCountArgs, since.UTC().UnixMilli())
+	}
+	alertCountWhere := ""
+	if len(alertCountWhereParts) > 0 {
+		alertCountWhere = " WHERE " + strings.Join(alertCountWhereParts, " AND ")
+	}
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts`+alertCountWhere, alertCountArgs...).Scan(&out.AlertCount); err != nil {
 		return out, err
 	}
-	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0) FROM trade_signals`+countWhere, countArgs...).Scan(&out.AggressiveCount, &out.SteadyCount); err != nil {
+	signalCountWhereParts := []string{}
+	signalCountArgs := []any{}
+	if symbolWhere != "" {
+		signalCountWhereParts = append(signalCountWhereParts, "instr(UPPER(symbol),UPPER(?))>0")
+		signalCountArgs = append(signalCountArgs, symbol)
+	}
+	if !since.IsZero() {
+		signalCountWhereParts = append(signalCountWhereParts, "created_ts>=?")
+		signalCountArgs = append(signalCountArgs, since.UTC().UnixMilli())
+	}
+	signalCountWhere := ""
+	if len(signalCountWhereParts) > 0 {
+		signalCountWhere = " WHERE " + strings.Join(signalCountWhereParts, " AND ")
+	}
+	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0) FROM trade_signals`+signalCountWhere, signalCountArgs...).Scan(&out.AggressiveCount, &out.SteadyCount); err != nil {
 		return out, err
 	}
 	switch kind {

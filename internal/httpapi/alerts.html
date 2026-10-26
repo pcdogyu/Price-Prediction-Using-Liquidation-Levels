@@ -18,7 +18,7 @@
       <span id="alerts-count" class="muted"></span>
     </form>
     <div class="table-scroll"><table class="alerts-history-table"><thead><tr><th>时间（北京时间）</th><th>币对</th><th>记录类型</th><th>方向</th><th>爆仓额 / 阈值</th><th>过程 / 状态</th><th>参考价</th><th>下单</th><th>报警</th><th>通知</th></tr></thead><tbody id="alerts-history-rows"><tr><td colspan="10">尚无历史记录</td></tr></tbody></table></div>
-    <p class="muted alerts-note">公共市场库提供原始爆仓和行情数据；系统按当前登录租户的阈值和策略独立计算，并将预警、激进信号和稳健信号保存到当前账号的报警历史库。三类记录按发生时间统一排序。“顺延”表示预警后同方向继续爆仓并重算安静截止；“已过期”表示确认窗口内没有出现反向爆仓。雷达过滤阶段、开平仓权限和具体过滤理由显示在“过程 / 状态”中；仅平仓区记录仍保留历史和手动“触发下单”操作，但类型左侧明确显示“平仓区域预警信号过滤 / 激进信号过滤 / 稳健信号过滤”，不会发送自动下单信息。被报警层拦截的信号不会进入 TVBot 订单历史。阈值、通知和下单配置始终按当前登录租户隔离。</p>
+    <p class="muted alerts-note">公共市场库提供原始爆仓和行情数据；系统按当前登录租户的阈值和策略独立计算，并将预警、激进信号和稳健信号保存到当前账号的报警历史库。三类记录按发生时间统一排序，历史页仅展示最近 30 天，固定每页 20 条；更早记录仍按保留策略存储用于回测和审计。“顺延”表示预警后同方向继续爆仓并重算安静截止；“已过期”表示确认窗口内没有出现反向爆仓。雷达过滤阶段、开平仓权限和具体过滤理由显示在“过程 / 状态”中；仅平仓区记录仍保留历史和手动“触发下单”操作，但类型左侧明确显示“平仓区域预警信号过滤 / 激进信号过滤 / 稳健信号过滤”，不会发送自动下单信息。被报警层拦截的信号不会进入 TVBot 订单历史。阈值、通知和下单配置始终按当前登录租户隔离。</p>
   </section>
   <section class="surface">
     <div class="section-head"><div><h2>报警回测（过去 2 周）</h2><p class="muted alerts-section-lead">按当前登录账号的报警参数，对预警、激进、稳健信号分别比较四种开仓区过滤。</p></div><span id="alerts-backtest-status" class="muted" role="status">尚未运行</span></div>

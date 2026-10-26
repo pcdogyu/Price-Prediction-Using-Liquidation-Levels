@@ -304,6 +304,46 @@ func TestAlertTimelinePaginationAndFilters(t *testing.T) {
 	}
 }
 
+func TestAlertTimelineSinceFiltersRowsAndCounts(t *testing.T) {
+	store, ctx := openAlertStore(t)
+	base := time.Now().UTC().Truncate(time.Second)
+	since := base.Add(-30 * 24 * time.Hour)
+	oldAt := since.Add(-time.Minute)
+	newAt := since.Add(time.Minute)
+	for _, row := range []domain.LiquidationAlert{
+		alertRow("timeline-old-alert", "BTCUSDT", "long", oldAt, domain.AlertStateWatching),
+		alertRow("timeline-new-alert", "BTCUSDT", "long", newAt, domain.AlertStateWatching),
+	} {
+		if _, err := store.SaveLiquidationAlert(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, row := range []domain.TradeSignal{
+		signalRow("timeline-old-signal", "BTCUSDT", domain.SignalAggressive, "long", oldAt),
+		signalRow("timeline-new-signal", "BTCUSDT", domain.SignalSteady, "long", newAt),
+	} {
+		if _, err := store.SaveTradeSignal(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page, err := store.AlertTimelineSince(ctx, "", "", 20, "", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Rows) != 2 || page.TotalCount != 2 || page.AlertCount != 1 || page.AggressiveCount != 0 || page.SteadyCount != 1 || page.NextCursor != "" {
+		t.Fatalf("the bounded timeline must filter rows and counts together: %+v", page)
+	}
+	for _, row := range page.Rows {
+		if row.EventAt.Before(since) {
+			t.Fatalf("bounded timeline returned an old row: %+v", row)
+		}
+		if (row.Alert != nil && row.Alert.ID == "timeline-old-alert") || (row.Signal != nil && row.Signal.ID == "timeline-old-signal") {
+			t.Fatalf("bounded timeline returned an excluded row: %+v", row)
+		}
+	}
+}
+
 // TestWatchListAndSettingsPersistence covers the two small stores the alert page
 // manages: the top volume watch list and the Telegram settings row.
 func TestWatchListAndSettingsPersistence(t *testing.T) {

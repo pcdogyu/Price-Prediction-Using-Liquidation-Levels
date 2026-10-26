@@ -58,7 +58,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警回测（过去 2 周）", "alerts-backtest-run", "alerts-backtest-rows", "<th>信号</th>", "<th>过滤条件</th>", "<th>交易数</th>", "<th>加仓次数</th>", "<th>胜率</th>", "<th>盈利因子</th>", "<th>最大回撤</th>", "<th>最终权益</th>", "报警参数", "策略开关", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "平仓区域预警信号过滤", "激进信号过滤", "稳健信号过滤", "VWAP过滤", "Donchian过滤", "服务端过滤", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`, `id="alerts-vwap-filter" type="checkbox"`, `id="alerts-donchian-filter" type="checkbox"`} {
+	for _, want := range []string{"预警与信号历史", "最近 30 天", "报警回测（过去 2 周）", "alerts-backtest-run", "alerts-backtest-rows", "<th>信号</th>", "<th>过滤条件</th>", "<th>交易数</th>", "<th>加仓次数</th>", "<th>胜率</th>", "<th>盈利因子</th>", "<th>最大回撤</th>", "<th>最终权益</th>", "报警参数", "策略开关", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "平仓区域预警信号过滤", "激进信号过滤", "稳健信号过滤", "VWAP过滤", "Donchian过滤", "服务端过滤", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`, `id="alerts-vwap-filter" type="checkbox"`, `id="alerts-donchian-filter" type="checkbox"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -430,6 +430,13 @@ func TestAlertHistoryEndpoints(t *testing.T) {
 	var empty domain.SignalPage
 	if unknown.Code != http.StatusOK || json.Unmarshal(unknown.Body.Bytes(), &empty) != nil || len(empty.Rows) != 0 || empty.SignalCount != 0 {
 		t.Fatalf("an unknown symbol must return an empty page: %d %s", unknown.Code, unknown.Body.String())
+	}
+	oldAt := base.Add(-31 * 24 * time.Hour)
+	if _, err := st.SaveLiquidationAlert(ctx, domain.LiquidationAlert{ID: "old-alert", Symbol: "BTCUSDT", Side: "long", TradeSide: "long", WindowMinutes: 3, NotionalUSD: 400000, ThresholdUSD: 300000, TriggeredAt: oldAt, QuietSeconds: 600, QuietUntil: oldAt.Add(10 * time.Minute), Status: domain.AlertStateWatching, UpdatedAt: oldAt}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveTradeSignal(ctx, domain.TradeSignal{ID: "old-signal", AlertID: "old-alert", Symbol: "BTCUSDT", Kind: domain.SignalAggressive, Side: "long", LiquidationSide: "long", CreatedAt: oldAt, AlertNotionalUSD: 400000, ThresholdUSD: 300000, WindowMinutes: 3}); err != nil {
+		t.Fatal(err)
 	}
 	timeline := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline", nil)
 	var merged domain.AlertTimelinePage
