@@ -109,11 +109,11 @@ func RenderSharedLogsDialog() string {
 
 func isSystemMenuItem(item TopMenuItem) bool {
 	switch item.Key {
-	case "system-info", "menu", "system":
+	case "system-info", "menu", "system", "trade-monitor", "upgrade":
 		return true
 	}
 	switch item.Href {
-	case "/system", "/menu", "/admin":
+	case "/system", "/menu", "/admin", "/tvbot?tab=tradeMonitor", "/tvbot?tab=upgrade":
 		return true
 	default:
 		return false

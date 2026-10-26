@@ -47,6 +47,16 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall", Group: "liquidation"},
 		{Key: "market-info", Title: "市场信息", Href: "/market-info", Group: "liquidation"},
 		{Key: "options", Title: "期权", Href: "/options", Group: "liquidation"},
+		{Key: "orders", Title: "信号", Href: "/tvbot?tab=orders", Group: "trading"},
+		{Key: "positions", Title: "持仓", Href: "/tvbot?tab=positions", Group: "trading"},
+		{Key: "analysis", Title: "订单分析", Href: "/tvbot?tab=analysis", Group: "trading"},
+		{Key: "symbols", Title: "币对配置", Href: "/tvbot?tab=symbols", Group: "trading"},
+		{Key: "config", Title: "订单配置", Href: "/tvbot?tab=config", Group: "trading"},
+		{Key: "api-keys", Title: "API Key", Href: "/tvbot?tab=apiKeys", Group: "trading"},
+		{Key: "order-settings", Title: "下单设置", Href: "/tvbot?tab=orderSettings", Group: "trading"},
+		{Key: "template", Title: "告警模板", Href: "/tvbot?tab=template", Group: "trading"},
+		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot?tab=tradeMonitor", Group: "trading"},
+		{Key: "upgrade", Title: "升级", Href: "/tvbot?tab=upgrade", Group: "admin"},
 		{Key: "system-info", Title: "系统信息", Href: "/system", Group: "admin"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"},
 		{Key: "system", Title: "用户管理", Href: "/admin", Group: "admin"},
@@ -61,6 +71,8 @@ var legacyDefaultAdminMenuKeys = []string{
 
 var canonicalDefaultAdminMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+	"orders", "positions", "analysis", "symbols", "config", "api-keys",
+	"order-settings", "template", "trade-monitor", "upgrade",
 	"system-info", "menu", "system",
 }
 
@@ -84,6 +96,8 @@ var legacyOrdersFirstAdminMenuKeys = []string{
 
 var canonicalPersonalMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+	"orders", "positions", "analysis", "symbols", "config", "api-keys",
+	"order-settings", "template", "trade-monitor", "upgrade",
 	"system-info",
 }
 
@@ -181,6 +195,46 @@ func reorderMenuKeys(menu []adminMenuItem, legacyKeys, canonicalKeys []string) (
 	return ordered, true
 }
 
+var tvbotMenuTabs = map[string]string{
+	"orders":         "orders",
+	"positions":      "positions",
+	"analysis":       "analysis",
+	"symbols":        "symbols",
+	"config":         "config",
+	"api-keys":       "apiKeys",
+	"order-settings": "orderSettings",
+	"template":       "template",
+	"trade-monitor":  "tradeMonitor",
+	"upgrade":        "upgrade",
+}
+
+func tvbotMenuHref(item adminMenuItem) (string, bool) {
+	tab, ok := tvbotMenuTabs[item.Key]
+	if !ok {
+		parsed, err := url.Parse(strings.TrimSpace(item.Href))
+		if err != nil {
+			return "", false
+		}
+		if parsed.Path == "/tvbot" {
+			tab = parsed.Query().Get("tab")
+			if tab == "" {
+				tab = strings.TrimPrefix(parsed.Fragment, "tab=")
+			}
+		} else if strings.HasPrefix(parsed.Path, "/tvbot/view/") {
+			slug := strings.TrimPrefix(parsed.Path, "/tvbot/view/")
+			tab = tvbotMenuTabs[slug]
+		} else {
+			return "", false
+		}
+		if tab == "" {
+			return "", false
+		}
+	} else if tab == "" {
+		return "", false
+	}
+	return "/tvbot?tab=" + url.QueryEscape(tab), true
+}
+
 func removeRetiredTVBotMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	filtered := make([]adminMenuItem, 0, len(menu))
 	changed := false
@@ -195,10 +249,6 @@ func removeRetiredTVBotMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
 }
 
 func isRetiredTVBotMenuItem(item adminMenuItem) bool {
-	switch item.Key {
-	case "overview", "orders", "positions", "analysis", "symbols", "config", "api-keys", "order-settings", "template", "trade-monitor", "upgrade":
-		return true
-	}
 	href := strings.TrimSpace(item.Href)
 	return strings.HasPrefix(href, "/tvbot/view/")
 }
@@ -222,6 +272,10 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 				changed = true
 			}
 			continue
+		}
+		if href, ok := tvbotMenuHref(migrated[i]); ok && migrated[i].Href != href {
+			migrated[i].Href = href
+			changed = true
 		}
 	}
 	finish := func(menu []adminMenuItem, reordered bool) ([]adminMenuItem, bool) {

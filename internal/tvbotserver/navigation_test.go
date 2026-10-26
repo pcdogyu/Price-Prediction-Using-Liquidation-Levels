@@ -31,6 +31,14 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 		`href="/hedge-wall"`,
 		`href="/market-info"`,
 		`href="/options"`,
+		`data-tab="orders" href="/tvbot?tab=orders"`,
+		`data-tab="positions" href="/tvbot?tab=positions"`,
+		`data-tab="analysis" href="/tvbot?tab=analysis"`,
+		`data-tab="symbols" href="/tvbot?tab=symbols"`,
+		`data-tab="config" href="/tvbot?tab=config"`,
+		`data-tab="apiKeys" href="/tvbot?tab=apiKeys"`,
+		`data-tab="orderSettings" href="/tvbot?tab=orderSettings"`,
+		`data-tab="template" href="/tvbot?tab=template"`,
 	}
 	last := -1
 	for _, marker := range want {
@@ -47,6 +55,14 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 	systemPanel := page[systemPanelStart:]
 	if strings.Contains(systemPanel, "/tvbot/view/") {
 		t.Fatalf("system submenu contains a retired TVBot route: %s", systemPanel)
+	}
+	for _, marker := range []string{
+		`data-tab="tradeMonitor" href="/tvbot?tab=tradeMonitor">成交监听`,
+		`data-tab="upgrade" href="/tvbot?tab=upgrade">升级`,
+	} {
+		if !strings.Contains(systemPanel, marker) {
+			t.Fatalf("system submenu is missing restored TVBot item %q: %s", marker, systemPanel)
+		}
 	}
 	if !strings.Contains(page, `>系统信息<span class="nav-system-caret"`) {
 		t.Fatal("system menu trigger is missing")

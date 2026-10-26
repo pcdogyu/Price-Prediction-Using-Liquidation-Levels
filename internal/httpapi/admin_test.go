@@ -26,18 +26,28 @@ func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
 		{Key: "custom", Title: "自定义", Href: "/custom", Group: "custom"},
 	}
 	migrated, changed := migrateAdminMenu(legacy)
-	if !changed || len(migrated) != 2 {
+	if !changed || len(migrated) != 5 {
 		t.Fatalf("migration changed=%v menu=%#v", changed, migrated)
 	}
 	if migrated[0].Key != "menu" || migrated[0].Title != "菜单管理" || migrated[0].Href != "/menu" || migrated[0].Group != "admin" {
 		t.Fatalf("migrated menu item=%#v", migrated[0])
 	}
-	if migrated[1] != legacy[5] {
-		t.Fatalf("custom menu item should remain unchanged: %#v", migrated[1])
+	wantHrefs := map[string]string{
+		"positions": "/tvbot?tab=positions",
+		"orders":    "/tvbot?tab=orders",
+		"analysis":  "/tvbot?tab=analysis",
+	}
+	for _, item := range migrated {
+		if want, ok := wantHrefs[item.Key]; ok && item.Href != want {
+			t.Fatalf("TVBot menu item %q href=%q, want=%q", item.Key, item.Href, want)
+		}
+	}
+	if migrated[len(migrated)-1] != legacy[5] {
+		t.Fatalf("custom menu item should remain unchanged: %#v", migrated[len(migrated)-1])
 	}
 	for _, item := range migrated {
 		if isRetiredTVBotMenuItem(item) {
-			t.Fatalf("retired TVBot menu item should be removed from migrated menu: %#v", migrated)
+			t.Fatalf("legacy TVBot view route should not remain in migrated menu: %#v", migrated)
 		}
 	}
 }
@@ -46,6 +56,8 @@ func TestDefaultAdminMenuUsesRequestedTopOrder(t *testing.T) {
 	menu := defaultAdminMenu()
 	want := []string{
 		"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+		"orders", "positions", "analysis", "symbols", "config", "api-keys",
+		"order-settings", "template", "trade-monitor", "upgrade",
 		"system-info", "menu", "system",
 	}
 	if len(menu) != len(want) {
@@ -144,8 +156,8 @@ func TestMigrateAdminMenuRenamesSystemManagement(t *testing.T) {
 func TestMigrateAdminMenuRemovesRetiredUpgradePage(t *testing.T) {
 	legacy := []adminMenuItem{{Key: "upgrade", Title: "升级", Href: "/upgrade", Group: "admin"}}
 	migrated, changed := migrateAdminMenu(legacy)
-	if !changed || len(migrated) != 0 {
-		t.Fatalf("retired upgrade menu should be removed: changed=%v menu=%#v", changed, migrated)
+	if !changed || len(migrated) != 1 || migrated[0].Href != "/tvbot?tab=upgrade" {
+		t.Fatalf("upgrade menu should migrate to the TVBot route: changed=%v menu=%#v", changed, migrated)
 	}
 }
 
@@ -295,6 +307,8 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 		"main-menu":       strings.Count(tvbotPage, `aria-label="主菜单"`) == 1,
 		"menu-link":       strings.Contains(tvbotPage, `href="/menu">菜单管理`),
 		"exchange-link":   strings.Contains(tvbotPage, `data-tab="system" href="/system">交易所信息`),
+		"orders-link":     strings.Contains(tvbotPage, `data-tab="orders" href="/tvbot?tab=orders">信号`),
+		"positions-link":  strings.Contains(tvbotPage, `data-tab="positions" href="/tvbot?tab=positions">持仓`),
 		"system-dropdown": strings.Contains(tvbotPage, `data-system-menu="true"`),
 	}
 	for name, ok := range menuChecks {

@@ -103,6 +103,15 @@ func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 			t.Fatalf("alerts navigation missing %q", marker)
 		}
 	}
+	for _, marker := range []string{
+		`data-tab="orders" href="/liquidation/tvbot?tab=orders">信号`,
+		`data-tab="positions" href="/liquidation/tvbot?tab=positions">持仓`,
+		`data-tab="orderSettings" href="/liquidation/tvbot?tab=orderSettings">下单设置`,
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("alerts navigation missing restored TVBot route %q", marker)
+		}
+	}
 	if strings.Contains(body, `class="app-brand-name"`) || strings.Contains(body, `class="app-logo"`) || strings.Contains(body, `aria-label="清算墙雷达首页"`) {
 		t.Fatal("alerts navigation still contains the removed product name")
 	}

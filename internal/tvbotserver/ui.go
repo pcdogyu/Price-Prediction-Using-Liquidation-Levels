@@ -3,6 +3,7 @@ package server
 import (
 	"html"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -90,6 +91,16 @@ func defaultTopMenu() []TopMenuItem {
 		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall"},
 		{Key: "market-info", Title: "市场信息", Href: "/market-info"},
 		{Key: "options", Title: "期权", Href: "/options"},
+		{Key: "orders", Title: "信号", Href: "/tvbot?tab=orders"},
+		{Key: "positions", Title: "持仓", Href: "/tvbot?tab=positions"},
+		{Key: "analysis", Title: "订单分析", Href: "/tvbot?tab=analysis"},
+		{Key: "symbols", Title: "币对配置", Href: "/tvbot?tab=symbols"},
+		{Key: "config", Title: "订单配置", Href: "/tvbot?tab=config"},
+		{Key: "api-keys", Title: "API Key", Href: "/tvbot?tab=apiKeys"},
+		{Key: "order-settings", Title: "下单设置", Href: "/tvbot?tab=orderSettings"},
+		{Key: "template", Title: "告警模板", Href: "/tvbot?tab=template"},
+		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot?tab=tradeMonitor"},
+		{Key: "upgrade", Title: "升级", Href: "/tvbot?tab=upgrade"},
 		{Key: "system-info", Title: "系统信息", Href: "/system"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu"},
 		{Key: "system", Title: "用户管理", Href: "/admin"},
@@ -137,6 +148,10 @@ func renderTVBotHTMLWithTenantMenuAndUser(info BuildInfo, r *http.Request, menu 
 func topMenuTab(item TopMenuItem) string {
 	if item.Href == "/system" {
 		return "system"
+	}
+	parsed, err := url.Parse(item.Href)
+	if err == nil && parsed.Path == "/tvbot" {
+		return parsed.Query().Get("tab")
 	}
 	return ""
 }
