@@ -393,6 +393,18 @@ func (s *Store) AlertTimeline(ctx context.Context, symbol, kind string, limit in
 // AlertTimelineSince is the bounded variant used by the alerts page. A zero
 // since keeps the historical store API unbounded for chart and export callers.
 func (s *Store) AlertTimelineSince(ctx context.Context, symbol, kind string, limit int, cursor string, since time.Time) (domain.AlertTimelinePage, error) {
+	return s.AlertTimelineSinceFiltered(ctx, symbol, kind, "", limit, cursor, since)
+}
+
+// AlertTimelineFiltered applies an optional persisted filter-state selection to
+// the unified alert and signal stream. An empty filter keeps the legacy API.
+func (s *Store) AlertTimelineFiltered(ctx context.Context, symbol, kind, filter string, limit int, cursor string) (domain.AlertTimelinePage, error) {
+	return s.AlertTimelineSinceFiltered(ctx, symbol, kind, filter, limit, cursor, time.Time{})
+}
+
+// AlertTimelineSinceFiltered is the bounded timeline query used by the alerts
+// page. Legacy rows without filter_applied are treated as unfiltered.
+func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, filter string, limit int, cursor string, since time.Time) (domain.AlertTimelinePage, error) {
 	out := domain.AlertTimelinePage{Rows: []domain.AlertTimelineItem{}}
 	if limit < 1 || limit > 200 {
 		return out, errors.New("invalid timeline limit")
@@ -404,35 +416,52 @@ func (s *Store) AlertTimelineSince(ctx context.Context, symbol, kind string, lim
 	if kind != "" && kind != "alert" && kind != domain.SignalAggressive && kind != domain.SignalSteady {
 		return out, errors.New("invalid timeline kind")
 	}
-
-	symbolWhere := ""
-	if symbol != "" && symbol != "ALL" {
-		symbolWhere = " WHERE instr(UPPER(symbol),UPPER(?))>0"
+	if filter != "" && filter != "filtered" && filter != "unfiltered" {
+		return out, errors.New("invalid timeline filter")
+	}
+	whereSQL := func(clauses []string) string {
+		if len(clauses) == 0 {
+			return ""
+		}
+		return " WHERE " + strings.Join(clauses, " AND ")
+	}
+	filterClause := ""
+	if filter == "filtered" {
+		filterClause = "COALESCE(json_extract(payload,'$.filter_applied'),0)=1"
+	} else if filter == "unfiltered" {
+		filterClause = "COALESCE(json_extract(payload,'$.filter_applied'),0)=0"
 	}
 	parts := []string{}
 	args := []any{}
 	if kind == "" || kind == "alert" {
-		parts = append(parts, `SELECT 'alert' AS record_type,trigger_ts AS event_ts,'alert:'||id AS sort_id,payload FROM liquidation_alerts`+symbolWhere)
-		if symbolWhere != "" {
-			args = append(args, symbol)
+		clauses := []string{}
+		partArgs := []any{}
+		if symbol != "" && symbol != "ALL" {
+			clauses = append(clauses, "instr(UPPER(symbol),UPPER(?))>0")
+			partArgs = append(partArgs, symbol)
 		}
+		if filterClause != "" {
+			clauses = append(clauses, filterClause)
+		}
+		parts = append(parts, `SELECT 'alert' AS record_type,trigger_ts AS event_ts,'alert:'||id AS sort_id,payload FROM liquidation_alerts`+whereSQL(clauses))
+		args = append(args, partArgs...)
 	}
 	if kind == "" || kind == domain.SignalAggressive || kind == domain.SignalSteady {
-		where := symbolWhere
-		if kind == domain.SignalAggressive || kind == domain.SignalSteady {
-			if where == "" {
-				where = " WHERE kind=?"
-			} else {
-				where += " AND kind=?"
-			}
-		}
-		parts = append(parts, `SELECT kind AS record_type,created_ts AS event_ts,'signal:'||id AS sort_id,payload FROM trade_signals`+where)
-		if symbolWhere != "" {
-			args = append(args, symbol)
+		clauses := []string{}
+		partArgs := []any{}
+		if symbol != "" && symbol != "ALL" {
+			clauses = append(clauses, "instr(UPPER(symbol),UPPER(?))>0")
+			partArgs = append(partArgs, symbol)
 		}
 		if kind == domain.SignalAggressive || kind == domain.SignalSteady {
-			args = append(args, kind)
+			clauses = append(clauses, "kind=?")
+			partArgs = append(partArgs, kind)
 		}
+		if filterClause != "" {
+			clauses = append(clauses, filterClause)
+		}
+		parts = append(parts, `SELECT kind AS record_type,created_ts AS event_ts,'signal:'||id AS sort_id,payload FROM trade_signals`+whereSQL(clauses))
+		args = append(args, partArgs...)
 	}
 
 	query := "SELECT record_type,event_ts,sort_id,payload FROM (" + strings.Join(parts, " UNION ALL ") + ")"
@@ -499,9 +528,12 @@ func (s *Store) AlertTimelineSince(ctx context.Context, symbol, kind string, lim
 
 	alertCountWhereParts := []string{}
 	alertCountArgs := []any{}
-	if symbolWhere != "" {
+	if symbol != "" && symbol != "ALL" {
 		alertCountWhereParts = append(alertCountWhereParts, "instr(UPPER(symbol),UPPER(?))>0")
 		alertCountArgs = append(alertCountArgs, symbol)
+	}
+	if filterClause != "" {
+		alertCountWhereParts = append(alertCountWhereParts, filterClause)
 	}
 	if !since.IsZero() {
 		alertCountWhereParts = append(alertCountWhereParts, "trigger_ts>=?")
@@ -516,9 +548,12 @@ func (s *Store) AlertTimelineSince(ctx context.Context, symbol, kind string, lim
 	}
 	signalCountWhereParts := []string{}
 	signalCountArgs := []any{}
-	if symbolWhere != "" {
+	if symbol != "" && symbol != "ALL" {
 		signalCountWhereParts = append(signalCountWhereParts, "instr(UPPER(symbol),UPPER(?))>0")
 		signalCountArgs = append(signalCountArgs, symbol)
+	}
+	if filterClause != "" {
+		signalCountWhereParts = append(signalCountWhereParts, filterClause)
 	}
 	if !since.IsZero() {
 		signalCountWhereParts = append(signalCountWhereParts, "created_ts>=?")

@@ -96,11 +96,18 @@ func (s *Service) AlertSignals(ctx context.Context, symbol, kind string, limit i
 
 // AlertTimeline reads the unified alert and signal history.
 func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.AlertTimelinePage, error) {
+	return s.AlertTimelineFiltered(ctx, symbol, kind, "", limit, cursor)
+}
+
+// AlertTimelineFiltered reads the recent unified history with an optional
+// persisted filter-state selection. An empty filter keeps legacy callers
+// unchanged.
+func (s *Service) AlertTimelineFiltered(ctx context.Context, symbol, kind, filter string, limit int, cursor string) (domain.AlertTimelinePage, error) {
 	rtm, err := s.alertRuntimeForContext(ctx)
 	if err != nil {
 		return domain.AlertTimelinePage{}, err
 	}
-	page, err := rtm.store.AlertTimelineSince(ctx, symbol, kind, limit, cursor, time.Now().UTC().Add(-alertTimelineHistoryWindow))
+	page, err := rtm.store.AlertTimelineSinceFiltered(ctx, symbol, kind, filter, limit, cursor, time.Now().UTC().Add(-alertTimelineHistoryWindow))
 	if err != nil {
 		return page, err
 	}

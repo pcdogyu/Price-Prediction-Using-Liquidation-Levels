@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	errInvalidAlertTimelineLimit = errors.New("invalid timeline limit")
-	errInvalidAlertTimelineKind  = errors.New("invalid timeline kind")
+	errInvalidAlertTimelineLimit  = errors.New("invalid timeline limit")
+	errInvalidAlertTimelineKind   = errors.New("invalid timeline kind")
+	errInvalidAlertTimelineFilter = errors.New("invalid timeline filter")
 )
 
 type replayedTimelineRow struct {
@@ -118,10 +119,29 @@ func (s *Service) replayAlertTimeline(ctx context.Context, rtm *alertRuntime, cf
 	return rows, alertCount, signalCount, nil
 }
 
+func replayedTimelineFilterMatch(row replayedTimelineRow, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	filtered := false
+	if row.item.Alert != nil {
+		filtered = row.item.Alert.FilterApplied
+	} else if row.item.Signal != nil {
+		filtered = row.item.Signal.FilterApplied
+	}
+	return (filter == "filtered" && filtered) || (filter == "unfiltered" && !filtered)
+}
+
 // AlertTimelineReplayed returns the last successful explicit signal replay. It
 // does not touch persisted history and returns ready=false until a recalculation
 // has completed for this runtime.
 func (s *Service) AlertTimelineReplayed(ctx context.Context, symbol, kind string, limit int, cursor string) (page domain.AlertTimelinePage, ready bool, err error) {
+	return s.AlertTimelineReplayedFiltered(ctx, symbol, kind, "", limit, cursor)
+}
+
+// AlertTimelineReplayedFiltered applies the same filter-state selection as the
+// persisted timeline to the in-memory replay result.
+func (s *Service) AlertTimelineReplayedFiltered(ctx context.Context, symbol, kind, filter string, limit int, cursor string) (page domain.AlertTimelinePage, ready bool, err error) {
 	rtm, err := s.alertRuntimeForContext(ctx)
 	if err != nil {
 		return page, false, err
@@ -131,6 +151,9 @@ func (s *Service) AlertTimelineReplayed(ctx context.Context, symbol, kind string
 	}
 	if kind != "" && kind != "alert" && kind != domain.SignalAggressive && kind != domain.SignalSteady {
 		return page, false, errInvalidAlertTimelineKind
+	}
+	if filter != "" && filter != "filtered" && filter != "unfiltered" {
+		return page, false, errInvalidAlertTimelineFilter
 	}
 	at, cursorID, err := store.DecodeCursor(cursor)
 	if err != nil {
@@ -156,6 +179,9 @@ func (s *Service) AlertTimelineReplayed(ctx context.Context, symbol, kind string
 			rowSymbol = row.item.Signal.Symbol
 		}
 		if needle != "" && needle != "ALL" && !strings.Contains(strings.ToUpper(rowSymbol), needle) {
+			continue
+		}
+		if !replayedTimelineFilterMatch(row, filter) {
 			continue
 		}
 		selected = append(selected, row)

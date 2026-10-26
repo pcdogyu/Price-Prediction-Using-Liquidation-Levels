@@ -344,6 +344,55 @@ func TestAlertTimelineSinceFiltersRowsAndCounts(t *testing.T) {
 	}
 }
 
+func TestAlertTimelineFilterState(t *testing.T) {
+	store, ctx := openAlertStore(t)
+	base := time.Now().UTC().Truncate(time.Second)
+	filteredAlert := alertRow("filtered-alert", "BTCUSDT", "long", base, domain.AlertStateWatching)
+	filteredAlert.FilterApplied = true
+	if _, err := store.SaveLiquidationAlert(ctx, filteredAlert); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveLiquidationAlert(ctx, alertRow("unfiltered-alert", "BTCUSDT", "long", base.Add(-time.Minute), domain.AlertStateWatching)); err != nil {
+		t.Fatal(err)
+	}
+	filteredSignal := signalRow("filtered-signal", "BTCUSDT", domain.SignalAggressive, "long", base.Add(-2*time.Minute))
+	filteredSignal.FilterApplied = true
+	if _, err := store.SaveTradeSignal(ctx, filteredSignal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveTradeSignal(ctx, signalRow("unfiltered-signal", "BTCUSDT", domain.SignalSteady, "long", base.Add(-3*time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+
+	filtered, err := store.AlertTimelineFiltered(ctx, "", "", "filtered", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Rows) != 2 || filtered.TotalCount != 2 || filtered.AlertCount != 1 || filtered.AggressiveCount != 1 || filtered.SteadyCount != 0 {
+		t.Fatalf("filtered timeline counts are wrong: %+v", filtered)
+	}
+	for _, row := range filtered.Rows {
+		if (row.Alert != nil && !row.Alert.FilterApplied) || (row.Signal != nil && !row.Signal.FilterApplied) {
+			t.Fatalf("filtered timeline returned an unfiltered row: %+v", row)
+		}
+	}
+	unfiltered, err := store.AlertTimelineFiltered(ctx, "", "", "unfiltered", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unfiltered.Rows) != 2 || unfiltered.TotalCount != 2 || unfiltered.AlertCount != 1 || unfiltered.AggressiveCount != 0 || unfiltered.SteadyCount != 1 {
+		t.Fatalf("unfiltered timeline counts are wrong: %+v", unfiltered)
+	}
+	for _, row := range unfiltered.Rows {
+		if (row.Alert != nil && row.Alert.FilterApplied) || (row.Signal != nil && row.Signal.FilterApplied) {
+			t.Fatalf("unfiltered timeline returned a filtered row: %+v", row)
+		}
+	}
+	if _, err = store.AlertTimelineFiltered(ctx, "", "", "invalid", 20, ""); err == nil {
+		t.Fatal("an invalid timeline filter must be rejected")
+	}
+}
+
 // TestWatchListAndSettingsPersistence covers the two small stores the alert page
 // manages: the top volume watch list and the Telegram settings row.
 func TestWatchListAndSettingsPersistence(t *testing.T) {

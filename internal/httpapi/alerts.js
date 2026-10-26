@@ -487,7 +487,7 @@
     historySequence++;
     const current = historySequence;
     historyBusy = true;
-    const params = new URLSearchParams({ symbol: $('alerts-symbol').value.trim(), kind: $('alerts-kind').value });
+    const params = new URLSearchParams({ symbol: $('alerts-symbol').value.trim(), kind: $('alerts-kind').value, filter: $('alerts-filter').value });
     if (cursor) params.set('cursor', cursor);
     if (replay) params.set('replay', '1');
     $('alerts-history-status').textContent = '正在读取…';

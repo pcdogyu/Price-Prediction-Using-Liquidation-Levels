@@ -190,6 +190,11 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, fmt.Errorf("kind must be alert, aggressive, steady or all"))
 		return
 	}
+	filter, err := alertTimelineFilter(query.Get("filter"))
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
 	if err = alertCursor(query.Get("cursor")); err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return
@@ -197,7 +202,7 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 	ctx := s.alertContext(r)
 	var page domain.AlertTimelinePage
 	if query.Get("replay") == "1" {
-		replayed, ready, replayErr := s.svc.AlertTimelineReplayed(ctx, symbol, kind, domain.AlertTimelinePageSize, query.Get("cursor"))
+		replayed, ready, replayErr := s.svc.AlertTimelineReplayedFiltered(ctx, symbol, kind, filter, domain.AlertTimelinePageSize, query.Get("cursor"))
 		if replayErr != nil {
 			problem(w, http.StatusServiceUnavailable, replayErr)
 			return
@@ -205,10 +210,10 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 		if ready {
 			page = replayed
 		} else {
-			page, err = s.svc.AlertTimeline(ctx, symbol, kind, domain.AlertTimelinePageSize, query.Get("cursor"))
+			page, err = s.svc.AlertTimelineFiltered(ctx, symbol, kind, filter, domain.AlertTimelinePageSize, query.Get("cursor"))
 		}
 	} else {
-		page, err = s.svc.AlertTimeline(ctx, symbol, kind, domain.AlertTimelinePageSize, query.Get("cursor"))
+		page, err = s.svc.AlertTimelineFiltered(ctx, symbol, kind, filter, domain.AlertTimelinePageSize, query.Get("cursor"))
 	}
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
@@ -256,6 +261,14 @@ func alertCursor(value string) error {
 		return err
 	}
 	return nil
+}
+
+func alertTimelineFilter(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || value == "filtered" || value == "unfiltered" {
+		return value, nil
+	}
+	return "", errors.New("filter must be filtered or unfiltered")
 }
 
 // alertHistory reads stored alerts with cursor pagination.
