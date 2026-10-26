@@ -101,7 +101,7 @@
   };
 
   const SIGNAL_RECALCULATE_STORAGE = 'liquidation.alerts.signal-recalculate';
-  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', historyReplayed = (() => { try { return !!localStorage.getItem(SIGNAL_RECALCULATE_STORAGE); } catch (_) { return false; } })(), settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false, signalProgressTimer = 0, signalProgressValue = 1, backtestBusy = false;
+  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', historyReplayed = (() => { try { return !!localStorage.getItem(SIGNAL_RECALCULATE_STORAGE); } catch (_) { return false; } })(), settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false, signalProgressTimer = 0, signalProgressValue = 1, backtestBusy = false, backtestRows = [], backtestSortKey = '', backtestSortDirection = 'asc';
 
   function error(message) { const node = $('alerts-error'); node.classList.remove('success'); node.textContent = message; node.hidden = false; }
   function success(message) { const node = $('alerts-error'); node.classList.add('success'); node.innerHTML = message; node.hidden = false; }
@@ -174,12 +174,55 @@
 
   const backtestSignalLabels = { alert: '预警', aggressive: '激进', steady: '稳健' };
   const backtestFilterLabels = { none: '无', vwap: 'VWAP', donchian: 'Donchian', vwap_donchian: 'VWAP + Donchian' };
+  const backtestSignalOrder = { alert: 0, aggressive: 1, steady: 2 };
+  const backtestFilterOrder = { none: 0, vwap: 1, donchian: 2, vwap_donchian: 3 };
+  const backtestNumericSortKeys = new Set(['trades', 'additions', 'win_rate', 'profit_factor', 'max_drawdown_pct', 'final_equity']);
   const backtestPercent = value => Number.isFinite(Number(value)) ? Number(value).toFixed(2) + '%' : '—';
   const backtestFactor = value => Number(value) > 0 ? Number(value).toFixed(2) : '—';
   const backtestEquity = value => Number.isFinite(Number(value)) ? '$' + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
 
-  function renderBacktest(report) {
-    const rows = Array.isArray(report && report.rows) ? report.rows : [];
+  function updateBacktestSortControls() {
+    document.querySelectorAll('.alerts-backtest-sort').forEach(button => {
+      const active = backtestSortKey === button.dataset.sortKey;
+      const direction = active ? backtestSortDirection : '';
+      const header = button.closest('th');
+      const indicator = button.querySelector('.alerts-sort-indicator');
+      const label = button.dataset.sortLabel || '';
+      if (header) header.setAttribute('aria-sort', active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none');
+      if (indicator) indicator.textContent = active ? (direction === 'asc' ? '↑' : '↓') : '↕';
+      button.setAttribute('aria-label', active ? '按' + label + (direction === 'asc' ? '升序排列' : '降序排列') : '点击按' + label + '排序');
+    });
+  }
+
+  function backtestSortValue(row, key) {
+    if (key === 'signal') return backtestSignalOrder[row.signal] ?? 99;
+    if (key === 'filter') return backtestFilterOrder[row.filter] ?? 99;
+    if (backtestNumericSortKeys.has(key)) {
+      const value = Number(row[key]);
+      return Number.isFinite(value) ? value : null;
+    }
+    return String(row[key] ?? '');
+  }
+
+  function renderBacktestRows() {
+    const indexed = backtestRows.map((row, index) => ({ row, index }));
+    if (backtestSortKey) {
+      indexed.sort((left, right) => {
+        const leftValue = backtestSortValue(left.row, backtestSortKey);
+        const rightValue = backtestSortValue(right.row, backtestSortKey);
+        const leftMissing = leftValue === null;
+        const rightMissing = rightValue === null;
+        let result = leftMissing === rightMissing ? 0 : (leftMissing ? 1 : -1);
+        if (!result) {
+          result = typeof leftValue === 'number' && typeof rightValue === 'number'
+            ? leftValue - rightValue
+            : String(leftValue).localeCompare(String(rightValue), 'zh-CN');
+        }
+        if (!result) result = left.index - right.index;
+        return backtestSortDirection === 'asc' ? result : -result;
+      });
+    }
+    const rows = indexed.map(item => item.row);
     $('alerts-backtest-rows').innerHTML = rows.length ? rows.map(row => '<tr>' +
       '<td>' + escape(backtestSignalLabels[row.signal] || row.signal || '—') + '</td>' +
       '<td>' + escape(backtestFilterLabels[row.filter] || row.filter || '—') + '</td>' +
@@ -190,6 +233,22 @@
       '<td>' + escape(backtestPercent(row.max_drawdown_pct)) + '</td>' +
       '<td>' + escape(backtestEquity(row.final_equity)) + '</td>' +
       '</tr>').join('') : '<tr><td colspan="8">没有可评分的历史信号</td></tr>';
+    updateBacktestSortControls();
+  }
+
+  function sortBacktest(key) {
+    if (backtestSortKey === key) {
+      backtestSortDirection = backtestSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      backtestSortKey = key;
+      backtestSortDirection = 'asc';
+    }
+    renderBacktestRows();
+  }
+
+  function renderBacktest(report) {
+    backtestRows = Array.isArray(report && report.rows) ? report.rows.slice() : [];
+    renderBacktestRows();
     const symbols = Number(report && report.symbol_count) || 0;
     const days = Number(report && report.window_days) || 14;
     const holding = Number(report && report.holding_minutes) || 15;
@@ -662,6 +721,7 @@
   ['alerts-vwap-filter', 'alerts-donchian-filter'].forEach(id => $(id).addEventListener('change', () => { void saveStrategySettings(null, true); }));
   $('alerts-signal-recalculate').addEventListener('click', recalculateSignals);
   $('alerts-backtest-run').addEventListener('click', runBacktest);
+  document.querySelectorAll('.alerts-backtest-sort').forEach(button => button.addEventListener('click', () => sortBacktest(button.dataset.sortKey)));
   $('alerts-order-signal-settings').addEventListener('submit', saveOrderSignalSettings);
   ['alerts-order-alert-close', 'alerts-order-alert', 'alerts-order-aggressive-close', 'alerts-order-aggressive', 'alerts-order-steady-close', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));
   $('alerts-test').addEventListener('click', testSettings);
