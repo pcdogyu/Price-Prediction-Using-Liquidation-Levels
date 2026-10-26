@@ -125,7 +125,13 @@ func (rtm *alertRuntime) replayAlertChartSignalsWithMarkets(ctx context.Context,
 		} else {
 			market = replayLiquidationMarketContext(event, cfg, candles)
 		}
-		replay.UpdateMarketContext(symbol, market)
+		// Historical recalculation fires the market-aware decision immediately
+		// after each breach. ObserveWithContext captures the current market on
+		// the cycle, so the separate refresh is redundant in this mode and costs
+		// another engine lock for every raw liquidation event.
+		if !cfg.SkipPeakDecay {
+			replay.UpdateMarketContext(symbol, market)
+		}
 		collect(replay.Tick(event.EventTime))
 		collect(replay.ObserveWithContext(event, market))
 	}

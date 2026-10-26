@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -186,24 +187,39 @@ func (s *Service) AlertBacktestForContext(ctx context.Context) (domain.AlertBack
 			return domain.AlertBacktestReport{}, replayErr
 		}
 		markets := replayAlertChartMarkets(events, cfg, candles)
+		type filterReplay struct {
+			filter string
+			view   domain.AlertChartSignals
+		}
+		results := make(chan filterReplay, len(alertBacktestFilters))
+		var filters sync.WaitGroup
 		for _, filter := range alertBacktestFilters {
-			replayCfg := cfg
-			replayCfg.VWAPFilterEnabled = filter.vwap
-			replayCfg.DonchianFilterEnabled = filter.donchian
-			replayCfg.FilterSettingsSet = true
-			view := rtm.replayAlertChartSignalsWithMarkets(ctx, symbol, replayCfg, to, from, events, markets, candles)
-			for _, row := range view.Alerts {
+			filter := filter
+			filters.Add(1)
+			go func() {
+				defer filters.Done()
+				replayCfg := cfg
+				replayCfg.VWAPFilterEnabled = filter.vwap
+				replayCfg.DonchianFilterEnabled = filter.donchian
+				replayCfg.FilterSettingsSet = true
+				results <- filterReplay{filter: filter.key, view: rtm.replayAlertChartSignalsWithMarkets(ctx, symbol, replayCfg, to, from, events, markets, candles)}
+			}()
+		}
+		filters.Wait()
+		close(results)
+		for result := range results {
+			for _, row := range result.view.Alerts {
 				if !backtestEntryAllowed(row.FilterApplied, row.OpenAllowed) {
 					continue
 				}
-				bucket := buckets[alertBacktestBucketKey("alert", filter.key)]
+				bucket := buckets[alertBacktestBucketKey("alert", result.filter)]
 				bucket.entries = append(bucket.entries, alertBacktestEntry{at: row.TriggeredAt, price: row.ReferencePrice, side: row.TradeSide, additions: row.FollowUps, candles: candles})
 			}
-			for _, row := range view.Signals {
+			for _, row := range result.view.Signals {
 				if !backtestEntryAllowed(row.FilterApplied, row.OpenAllowed) {
 					continue
 				}
-				bucket := buckets[alertBacktestBucketKey(row.Kind, filter.key)]
+				bucket := buckets[alertBacktestBucketKey(row.Kind, result.filter)]
 				bucket.entries = append(bucket.entries, alertBacktestEntry{at: row.CreatedAt, price: row.ReferencePrice, side: row.Side, additions: row.FollowUps, candles: candles})
 			}
 		}
