@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -26,9 +27,74 @@ type AlertBacktestStatus struct {
 	Error  string                      `json:"error,omitempty"`
 }
 
+// AlertBacktestParameters are ephemeral parameters for one backtest run. They
+// deliberately do not overlap with the persisted live alert settings.
+type AlertBacktestParameters struct {
+	InitialEquity      float64 `json:"initial_equity"`
+	Leverage           float64 `json:"leverage"`
+	TakeProfitPct      float64 `json:"take_profit_pct"`
+	StopLossPct        float64 `json:"stop_loss_pct"`
+	EntryNotionalUSD   float64 `json:"entry_notional_usd"`
+	MaxAddOns          int     `json:"max_add_ons"`
+	VWAPRangeHours     int     `json:"vwap_range_hours"`
+	VWAPMinDrawdownPct float64 `json:"vwap_min_drawdown_pct"`
+	VWAPDonchianPct    float64 `json:"vwap_donchian_pct"`
+}
+
+// DefaultAlertBacktestParameters returns the page/API defaults. The fixed
+// 14-day window and 15-minute holding period are not request parameters.
+func DefaultAlertBacktestParameters() AlertBacktestParameters {
+	return AlertBacktestParameters{
+		InitialEquity:      10000,
+		Leverage:           1,
+		TakeProfitPct:      1.2,
+		StopLossPct:        1.5,
+		EntryNotionalUSD:   1000,
+		MaxAddOns:          1,
+		VWAPRangeHours:     24,
+		VWAPMinDrawdownPct: 2,
+		VWAPDonchianPct:    35,
+	}
+}
+
+// Validate checks all request-controlled backtest values before any replay
+// goroutine is started.
+func (p AlertBacktestParameters) Validate() error {
+	positive := map[string]float64{
+		"initial_equity":     p.InitialEquity,
+		"leverage":           p.Leverage,
+		"take_profit_pct":    p.TakeProfitPct,
+		"stop_loss_pct":      p.StopLossPct,
+		"entry_notional_usd": p.EntryNotionalUSD,
+	}
+	for name, value := range positive {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+			return fmt.Errorf("%s must be finite and positive", name)
+		}
+	}
+	if p.MaxAddOns < 0 {
+		return errors.New("max_add_ons must be a non-negative integer")
+	}
+	if p.VWAPRangeHours < minVWAPRangeHours || p.VWAPRangeHours > maxVWAPRangeHours {
+		return fmt.Errorf("vwap_range_hours must be between %d and %d", minVWAPRangeHours, maxVWAPRangeHours)
+	}
+	if math.IsNaN(p.VWAPMinDrawdownPct) || math.IsInf(p.VWAPMinDrawdownPct, 0) || p.VWAPMinDrawdownPct < minVWAPMinDrawdownPct || p.VWAPMinDrawdownPct > maxVWAPMinDrawdownPct {
+		return fmt.Errorf("vwap_min_drawdown_pct must be between %.1f and %.1f", minVWAPMinDrawdownPct, float64(maxVWAPMinDrawdownPct))
+	}
+	if math.IsNaN(p.VWAPDonchianPct) || math.IsInf(p.VWAPDonchianPct, 0) || p.VWAPDonchianPct < minVWAPDonchianPct || p.VWAPDonchianPct > maxVWAPDonchianPct {
+		return fmt.Errorf("vwap_donchian_pct must be between %d and %d", minVWAPDonchianPct, maxVWAPDonchianPct)
+	}
+	return nil
+}
+
+func (p AlertBacktestParameters) equal(other AlertBacktestParameters) bool {
+	return p == other
+}
+
 type alertBacktestJob struct {
 	id          string
 	status      string
+	params      AlertBacktestParameters
 	report      domain.AlertBacktestReport
 	err         string
 	completedAt time.Time
@@ -54,7 +120,14 @@ func newAlertBacktestJobID() string {
 // StartAlertBacktestForContext starts or reuses the current tenant's one active
 // replay. Completed reports are kept briefly so a page reload does not launch
 // another expensive scan immediately.
-func (s *Service) StartAlertBacktestForContext(ctx context.Context) (AlertBacktestStatus, error) {
+func (s *Service) StartAlertBacktestForContext(ctx context.Context, requested ...AlertBacktestParameters) (AlertBacktestStatus, error) {
+	params := DefaultAlertBacktestParameters()
+	if len(requested) > 0 {
+		params = requested[0]
+	}
+	if err := params.Validate(); err != nil {
+		return AlertBacktestStatus{}, err
+	}
 	rtm, err := s.alertRuntimeForContext(ctx)
 	if err != nil {
 		return AlertBacktestStatus{}, err
@@ -62,13 +135,13 @@ func (s *Service) StartAlertBacktestForContext(ctx context.Context) (AlertBackte
 	rtm.backtestMu.Lock()
 	now := time.Now().UTC()
 	if existing := rtm.backtestJob; existing != nil {
-		if existing.status == "running" || (existing.status == "completed" && now.Sub(existing.completedAt) < 10*time.Minute) {
+		if existing.params.equal(params) && (existing.status == "running" || (existing.status == "completed" && now.Sub(existing.completedAt) < 10*time.Minute)) {
 			status := existing.snapshot()
 			rtm.backtestMu.Unlock()
 			return status, nil
 		}
 	}
-	job := &alertBacktestJob{id: newAlertBacktestJobID(), status: "running"}
+	job := &alertBacktestJob{id: newAlertBacktestJobID(), status: "running", params: params}
 	rtm.backtestJob = job
 	status := job.snapshot()
 	rtm.backtestMu.Unlock()
@@ -76,7 +149,7 @@ func (s *Service) StartAlertBacktestForContext(ctx context.Context) (AlertBackte
 	go func() {
 		// Keep the tenant value but let the replay finish after the browser or
 		// proxy closes the original request.
-		report, replayErr := s.AlertBacktestForContext(context.WithoutCancel(ctx))
+		report, replayErr := s.AlertBacktestForContext(context.WithoutCancel(ctx), params)
 		rtm.backtestMu.Lock()
 		defer rtm.backtestMu.Unlock()
 		if rtm.backtestJob != job {
@@ -110,11 +183,8 @@ func (s *Service) AlertBacktestStatusForContext(ctx context.Context, jobID strin
 }
 
 const (
-	alertBacktestWindow        = 14 * 24 * time.Hour
-	alertBacktestHolding       = 15 * time.Minute
-	alertBacktestInitial       = 100000.0
-	alertBacktestEntryNotional = 10000.0
-	alertBacktestAddOnNotional = 5000.0
+	alertBacktestWindow  = 14 * 24 * time.Hour
+	alertBacktestHolding = 15 * time.Minute
 )
 
 type alertBacktestFilter struct {
@@ -146,6 +216,9 @@ type alertBacktestEntry struct {
 	side      string
 	additions int
 	candles   []domain.Candle
+	// addOnPrices is only useful to deterministic unit tests. Historical
+	// records leave it empty, which deliberately makes every add-on use price.
+	addOnPrices []float64
 }
 
 type alertBacktestBucket struct {
@@ -156,7 +229,14 @@ type alertBacktestBucket struct {
 // over the last two weeks under each opening-zone filter combination. It is an
 // ephemeral research report: no alert history, strategy settings, orders, or
 // notifications are written or changed.
-func (s *Service) AlertBacktestForContext(ctx context.Context) (domain.AlertBacktestReport, error) {
+func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...AlertBacktestParameters) (domain.AlertBacktestReport, error) {
+	params := DefaultAlertBacktestParameters()
+	if len(requested) > 0 {
+		params = requested[0]
+	}
+	if err := params.Validate(); err != nil {
+		return domain.AlertBacktestReport{}, err
+	}
 	rtm, err := s.alertRuntimeForContext(ctx)
 	if err != nil {
 		return domain.AlertBacktestReport{}, err
@@ -167,6 +247,12 @@ func (s *Service) AlertBacktestForContext(ctx context.Context) (domain.AlertBack
 	if err != nil {
 		return domain.AlertBacktestReport{}, err
 	}
+	// The live tenant settings above remain the source for thresholds and
+	// filter switches. Only the three backtest zone parameters are overridden
+	// in this ephemeral replay configuration.
+	cfg.VWAPRangeMinutes = params.VWAPRangeHours * 60
+	cfg.VWAPMinDrawdown = params.VWAPMinDrawdownPct / 100
+	cfg.VWAPDonchianFraction = params.VWAPDonchianPct / 100
 	// Match the explicit historical signal recalculation path. Peak-Decay is a
 	// live timing gate and cannot be inferred reliably from sparse sampled
 	// liquidations; the market/VWAP/Donchian gates remain active in the replay.
@@ -226,20 +312,27 @@ func (s *Service) AlertBacktestForContext(ctx context.Context) (domain.AlertBack
 	}
 
 	report := domain.AlertBacktestReport{
-		WindowDays:       int(alertBacktestWindow / (24 * time.Hour)),
-		HoldingMinutes:   int(alertBacktestHolding / time.Minute),
-		InitialEquity:    alertBacktestInitial,
-		EntryNotionalUSD: alertBacktestEntryNotional,
-		AddOnNotionalUSD: alertBacktestAddOnNotional,
-		From:             from,
-		To:               to,
-		GeneratedAt:      to,
-		SymbolCount:      len(symbols),
-		Rows:             make([]domain.AlertBacktestRow, 0, len(alertBacktestSignals)*len(alertBacktestFilters)),
+		WindowDays:         int(alertBacktestWindow / (24 * time.Hour)),
+		HoldingMinutes:     int(alertBacktestHolding / time.Minute),
+		InitialEquity:      params.InitialEquity,
+		Leverage:           params.Leverage,
+		TakeProfitPct:      params.TakeProfitPct,
+		StopLossPct:        params.StopLossPct,
+		EntryNotionalUSD:   params.EntryNotionalUSD,
+		AddOnNotionalUSD:   params.EntryNotionalUSD,
+		MaxAddOns:          params.MaxAddOns,
+		VWAPRangeHours:     params.VWAPRangeHours,
+		VWAPMinDrawdownPct: params.VWAPMinDrawdownPct,
+		VWAPDonchianPct:    params.VWAPDonchianPct,
+		From:               from,
+		To:                 to,
+		GeneratedAt:        to,
+		SymbolCount:        len(symbols),
+		Rows:               make([]domain.AlertBacktestRow, 0, len(alertBacktestSignals)*len(alertBacktestFilters)),
 	}
 	for _, signal := range alertBacktestSignals {
 		for _, filter := range alertBacktestFilters {
-			metrics := scoreAlertBacktest(buckets[alertBacktestBucketKey(signal.key, filter.key)].entries)
+			metrics := scoreAlertBacktest(buckets[alertBacktestBucketKey(signal.key, filter.key)].entries, params)
 			report.Rows = append(report.Rows, backtestRow(signal.key, filter.key, metrics))
 		}
 	}
@@ -265,16 +358,15 @@ type alertBacktestMetrics struct {
 }
 
 // scoreAlertBacktest is kept separate from the replay so the trade accounting
-// is deterministic and easy to unit test. Each entry carries the ordered
-// candle window for its symbol, and the first close at or after the holding
-// deadline is used.
-func scoreAlertBacktest(entries []alertBacktestEntry) alertBacktestMetrics {
-	metrics := alertBacktestMetrics{finalEquity: alertBacktestInitial}
+// is deterministic and easy to unit test. A candle close triggers TP/SL or the
+// fixed holding deadline; the next complete candle close is the exit price.
+func scoreAlertBacktest(entries []alertBacktestEntry, params AlertBacktestParameters) alertBacktestMetrics {
+	metrics := alertBacktestMetrics{finalEquity: params.InitialEquity}
 	if len(entries) == 0 {
 		return metrics
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].at.Before(entries[j].at) })
-	peak := alertBacktestInitial
+	peak := params.InitialEquity
 	for _, entry := range entries {
 		if entry.at.IsZero() || entry.price <= 0 || (entry.side != "long" && entry.side != "short") {
 			continue
@@ -283,19 +375,66 @@ func scoreAlertBacktest(entries []alertBacktestEntry) alertBacktestMetrics {
 		if len(candles) == 0 {
 			continue
 		}
-		exitAt := entry.at.Add(alertBacktestHolding)
-		index := sort.Search(len(candles), func(i int) bool { return !candles[i].Time.Before(exitAt) })
-		if index >= len(candles) || candles[index].Close <= 0 {
+		additions := maxInt(entry.additions, 0)
+		if additions > params.MaxAddOns {
+			additions = params.MaxAddOns
+		}
+		// Historical rows contain only a follow-up count and signal reference
+		// price, so every order in the production replay uses that reference
+		// price. Build the aggregate position explicitly so the accounting also
+		// remains correct if independent add-on prices become available later.
+		prices := make([]float64, 0, additions+1)
+		prices = append(prices, entry.price)
+		for index := 0; index < additions; index++ {
+			price := entry.price
+			if index < len(entry.addOnPrices) && entry.addOnPrices[index] > 0 {
+				price = entry.addOnPrices[index]
+			}
+			prices = append(prices, price)
+		}
+		var totalQuantity, weightedEntry float64
+		for _, price := range prices {
+			quantity := params.EntryNotionalUSD * params.Leverage / price
+			totalQuantity += quantity
+			weightedEntry += quantity * price
+		}
+		if totalQuantity <= 0 {
 			continue
 		}
-		change := (candles[index].Close - entry.price) / entry.price
-		if entry.side == "short" {
-			change = -change
+		avgEntry := weightedEntry / totalQuantity
+		takeProfit := params.TakeProfitPct / 100
+		stopLoss := params.StopLossPct / 100
+		exitPrice := 0.0
+		for index, candle := range candles {
+			if !candle.Time.After(entry.at) || candle.Close <= 0 {
+				continue
+			}
+			change := (candle.Close - avgEntry) / avgEntry
+			if entry.side == "short" {
+				change = -change
+			}
+			triggered := change >= takeProfit || change <= -stopLoss
+			heldLongEnough := !candle.Time.Before(entry.at.Add(alertBacktestHolding))
+			if !triggered && !heldLongEnough {
+				continue
+			}
+			if index+1 >= len(candles) || candles[index+1].Close <= 0 {
+				// The rule requires a complete next candle for the exit.
+				exitPrice = 0
+				break
+			}
+			exitPrice = candles[index+1].Close
+			break
 		}
-		notional := alertBacktestEntryNotional + float64(maxInt(entry.additions, 0))*alertBacktestAddOnNotional
-		pnl := change * notional
+		if exitPrice <= 0 {
+			continue
+		}
+		pnl := (exitPrice - avgEntry) * totalQuantity
+		if entry.side == "short" {
+			pnl = -pnl
+		}
 		metrics.trades++
-		metrics.additions += maxInt(entry.additions, 0)
+		metrics.additions += additions
 		if pnl > 0 {
 			metrics.wins++
 			metrics.grossProfit += pnl

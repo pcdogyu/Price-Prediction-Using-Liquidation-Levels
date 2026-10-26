@@ -452,7 +452,12 @@ func (s *Server) alertBacktest(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch r.Method {
 	case http.MethodPost:
-		status, err = s.svc.StartAlertBacktestForContext(ctx)
+		params, parseErr := alertBacktestParameters(r)
+		if parseErr != nil {
+			problem(w, http.StatusBadRequest, parseErr)
+			return
+		}
+		status, err = s.svc.StartAlertBacktestForContext(ctx, params)
 	case http.MethodGet:
 		status, err = s.svc.AlertBacktestStatusForContext(ctx, r.URL.Query().Get("job_id"))
 	default:
@@ -476,6 +481,34 @@ func (s *Server) alertBacktest(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusServiceUnavailable
 	}
 	writeJSON(w, code, status)
+}
+
+func alertBacktestParameters(r *http.Request) (app.AlertBacktestParameters, error) {
+	params := app.DefaultAlertBacktestParameters()
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		return app.AlertBacktestParameters{}, fmt.Errorf("read backtest parameters: %w", err)
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return params, nil
+	}
+	var requested app.AlertBacktestParameters
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&requested); err != nil {
+		return app.AlertBacktestParameters{}, fmt.Errorf("invalid backtest parameters: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return app.AlertBacktestParameters{}, errors.New("invalid backtest parameters: multiple JSON values")
+		}
+		return app.AlertBacktestParameters{}, fmt.Errorf("invalid backtest parameters: %w", err)
+	}
+	if err := requested.Validate(); err != nil {
+		return app.AlertBacktestParameters{}, err
+	}
+	return requested, nil
 }
 
 func alertChartReplayHours(raw string) (int, error) {

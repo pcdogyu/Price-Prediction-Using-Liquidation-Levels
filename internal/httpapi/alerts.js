@@ -252,8 +252,32 @@
     const symbols = Number(report && report.symbol_count) || 0;
     const days = Number(report && report.window_days) || 14;
     const holding = Number(report && report.holding_minutes) || 15;
+    const initial = Number(report && report.initial_equity) || 10000;
+    const leverage = Number(report && report.leverage) || 1;
+    const takeProfit = Number(report && report.take_profit_pct) || 1.2;
+    const stopLoss = Number(report && report.stop_loss_pct) || 1.5;
+    const orderSize = Number(report && report.entry_notional_usd) || 1000;
+    const maxAddOns = Number.isFinite(Number(report && report.max_add_ons)) ? Number(report.max_add_ons) : 1;
+    const vwapRangeHours = Number(report && report.vwap_range_hours) || 24;
+    const vwapMinDrawdown = Number(report && report.vwap_min_drawdown_pct) || 2;
+    const vwapDonchian = Number(report && report.vwap_donchian_pct) || 35;
+    const moneyValue = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     $('alerts-backtest-status').textContent = '过去 ' + days + ' 天回测完成 · ' + symbols + ' 个币对 · 持有 ' + holding + ' 分钟 · 生成 ' + when(report && report.generated_at);
-    $('alerts-backtest-note').textContent = '回测采用信号参考价入场、' + holding + ' 分钟持有；初始权益 $' + Number(report.initial_equity || 100000).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + '，每笔基准仓位 $' + Number(report.entry_notional_usd || 10000).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + '，顺延次数按每次 $' + Number(report.add_on_notional_usd || 5000).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' 加仓计。不计手续费、滑点和资金费；没有完整持有 K 线的末端信号不计入交易数。';
+    $('alerts-backtest-note').textContent = '本次回测参数：本金 $' + moneyValue(initial) + ' · 杠杆 ' + leverage + 'x · 止盈 ' + takeProfit + '% · 止损 ' + stopLoss + '% · 每次下单保证金 $' + moneyValue(orderSize) + ' · 最多加仓 ' + maxAddOns + ' 次 · VWAP Donchian 窗口 ' + vwapRangeHours + ' 小时 · 最小回撤 ' + vwapMinDrawdown + '% · 分位 ' + vwapDonchian + '%。采用收盘触发、下一根 K 线收盘成交；不计手续费、滑点和资金费；没有下一根完整 K 线的末端信号不计入交易数。';
+  }
+
+  function backtestParamsBody() {
+    return {
+      initial_equity: Number($('alerts-backtest-initial-equity').value),
+      leverage: Number($('alerts-backtest-leverage').value),
+      take_profit_pct: Number($('alerts-backtest-take-profit').value),
+      stop_loss_pct: Number($('alerts-backtest-stop-loss').value),
+      entry_notional_usd: Number($('alerts-backtest-order-size').value),
+      max_add_ons: Number($('alerts-backtest-max-add-ons').value),
+      vwap_range_hours: Number($('alerts-backtest-vwap-range-hours').value),
+      vwap_min_drawdown_pct: Number($('alerts-backtest-vwap-min-drawdown').value),
+      vwap_donchian_pct: Number($('alerts-backtest-vwap-donchian').value)
+    };
   }
 
   async function runBacktest() {
@@ -264,7 +288,7 @@
     button.textContent = '回测中…';
     $('alerts-backtest-status').textContent = '正在读取过去 2 周报警并计算…';
     try {
-      const response = await fetch(base + 'api/v1/alerts/backtest', { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
+      const response = await fetch(base + 'api/v1/alerts/backtest', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backtestParamsBody()) });
       const packet = await readJSON(response);
       if (!response.ok && response.status !== 202) throw new Error(packet.detail || 'HTTP ' + response.status);
       let result = packet;
