@@ -168,6 +168,10 @@ func (s *Service) repairAlertCandleWindow(ctx context.Context, symbol string, at
 // context builder. Historical replay uses it with one candle query per symbol
 // instead of issuing a SQLite range query for every liquidation event.
 func buildLiquidationMarketContext(event domain.LiquidationEvent, cfg alert.Config, rows []domain.Candle) alert.MarketContext {
+	return buildLiquidationMarketContextWithDonchian(event, cfg, rows, 0, 0, false, false)
+}
+
+func buildLiquidationMarketContextWithDonchian(event domain.LiquidationEvent, cfg alert.Config, rows []domain.Candle, high, low float64, rangeReady, rangeComputed bool) alert.MarketContext {
 	period := cfg.VWAPPeriodMinutes
 	if period <= 0 {
 		period = 240
@@ -214,10 +218,27 @@ func buildLiquidationMarketContext(event domain.LiquidationEvent, cfg alert.Conf
 		return alert.MarketContext{Price: price, Candles: rows}
 	}
 	current := rows[len(rows)-1]
-	high, low, rangeReady := alert.DonchianRange(rows, cfg.VWAPRangeMinutes)
+	if !rangeComputed {
+		high, low, rangeReady = alert.DonchianRange(rows, cfg.VWAPRangeMinutes)
+	} else if rangeReady {
+		// The event price can overlay the current candle or create a synthetic
+		// current-minute candle when the local history has a gap. Keep the
+		// rolling result exact for the common complete-window case.
+		if price > high {
+			high = price
+		}
+		if low <= 0 || price < low {
+			low = price
+		}
+	} else {
+		// Missing/invalid candles are rare, but the fallback preserves the
+		// original fail-closed Donchian semantics when the rolling cache cannot
+		// establish a complete window.
+		high, low, rangeReady = alert.DonchianRange(rows, cfg.VWAPRangeMinutes)
+	}
 	vwap, sigma, z, vwapReady := alert.VWAPZScore(rows, period, price)
 	return alert.MarketContext{Ready: true, Price: price, Candles: rows, VWAP: vwap, Sigma: sigma, ZScore: z, VWAPReady: vwapReady,
-		CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: rangeReady}
+		CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: rangeReady, DonchianComputed: true}
 }
 
 func alertMarketHistoryMinutes(cfg alert.Config) int {

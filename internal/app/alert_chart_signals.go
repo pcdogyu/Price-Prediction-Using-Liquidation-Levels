@@ -161,10 +161,76 @@ func (rtm *alertRuntime) replayAlertChartSignalsWithMarkets(ctx context.Context,
 
 func replayAlertChartMarkets(events []domain.LiquidationEvent, cfg alert.Config, candles []domain.Candle) []alert.MarketContext {
 	markets := make([]alert.MarketContext, len(events))
+	rangeMinutes := cfg.VWAPRangeMinutes
+	if rangeMinutes <= 0 {
+		rangeMinutes = 24 * 60
+	}
+	historyMinutes := alertMarketHistoryMinutes(cfg)
+	window := replayDonchianWindow{}
+	candleEnd := 0
 	for index, event := range events {
-		markets[index] = replayLiquidationMarketContext(event, cfg, candles)
+		bucket := event.EventTime.UTC().Truncate(time.Minute)
+		for candleEnd < len(candles) && !candles[candleEnd].Time.After(bucket) {
+			candleEnd++
+		}
+		high, low, ready := window.advance(candles, candleEnd, rangeMinutes)
+		start := candleEnd - historyMinutes
+		if start < 0 {
+			start = 0
+		}
+		markets[index] = buildLiquidationMarketContextWithDonchian(event, cfg, candles[start:candleEnd], high, low, ready, true)
 	}
 	return markets
+}
+
+type replayDonchianWindow struct {
+	high  []int
+	low   []int
+	valid []int
+	next  int
+}
+
+func (w *replayDonchianWindow) advance(candles []domain.Candle, end, rangeMinutes int) (float64, float64, bool) {
+	if end <= 0 || rangeMinutes <= 0 {
+		return 0, 0, false
+	}
+	for w.next < end {
+		index := w.next
+		w.next++
+		candle := candles[index]
+		valid := candle.High > 0 && candle.Low > 0 && candle.High >= candle.Low
+		if valid {
+			for len(w.high) > 0 && candles[w.high[len(w.high)-1]].High <= candle.High {
+				w.high = w.high[:len(w.high)-1]
+			}
+			w.high = append(w.high, index)
+			for len(w.low) > 0 && candles[w.low[len(w.low)-1]].Low >= candle.Low {
+				w.low = w.low[:len(w.low)-1]
+			}
+			w.low = append(w.low, index)
+			w.valid = append(w.valid, index)
+		}
+		start := candle.Time.Add(-time.Duration(rangeMinutes) * time.Minute)
+		w.removeBefore(candles, start)
+	}
+	endTime := candles[end-1].Time
+	w.removeBefore(candles, endTime.Add(-time.Duration(rangeMinutes)*time.Minute))
+	if len(w.valid) < rangeMinutes || len(w.high) == 0 || len(w.low) == 0 {
+		return 0, 0, false
+	}
+	return candles[w.high[0]].High, candles[w.low[0]].Low, true
+}
+
+func (w *replayDonchianWindow) removeBefore(candles []domain.Candle, start time.Time) {
+	for len(w.high) > 0 && candles[w.high[0]].Time.Before(start) {
+		w.high = w.high[1:]
+	}
+	for len(w.low) > 0 && candles[w.low[0]].Time.Before(start) {
+		w.low = w.low[1:]
+	}
+	for len(w.valid) > 0 && candles[w.valid[0]].Time.Before(start) {
+		w.valid = w.valid[1:]
+	}
 }
 
 // replayLiquidationMarketContext narrows the immutable candle history before

@@ -33,6 +33,7 @@ type MarketContext struct {
 	DonchianHigh          float64
 	DonchianLow           float64
 	DonchianReady         bool
+	DonchianComputed      bool
 }
 
 // FilterDecision is persisted with every context-aware alert/signal so an
@@ -273,7 +274,7 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 	high := vwapOK && d.ZScore > threshold
 	low := vwapOK && d.ZScore < -threshold
 	rangeHigh, rangeLow, rangeReady := ctx.DonchianHigh, ctx.DonchianLow, ctx.DonchianReady
-	if !rangeReady {
+	if !rangeReady && !ctx.DonchianComputed {
 		rangeHigh, rangeLow, rangeReady = DonchianRange(ctx.Candles, cfg.VWAPRangeMinutes)
 	}
 	d.DonchianHigh, d.DonchianLow, d.DonchianReady = rangeHigh, rangeLow, rangeReady
