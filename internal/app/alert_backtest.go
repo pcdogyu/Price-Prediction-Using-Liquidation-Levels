@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/valuearea"
 )
 
 var ErrAlertBacktestNotFound = errors.New("alert backtest job not found")
@@ -208,6 +209,7 @@ var alertBacktestSignals = []struct {
 	{key: "alert", label: "预警"},
 	{key: "aggressive", label: "激进"},
 	{key: "steady", label: "稳健"},
+	{key: domain.SignalValueArea, label: "交易所刷单"},
 }
 
 type alertBacktestEntry struct {
@@ -226,9 +228,10 @@ type alertBacktestBucket struct {
 }
 
 // AlertBacktestForContext replays the current tenant's raw liquidation stream
-// over the last two weeks under each opening-zone filter combination. It is an
-// ephemeral research report: no alert history, strategy settings, orders, or
-// notifications are written or changed.
+// over the last two weeks under each opening-zone filter combination and also
+// evaluates the independent VAL/VAH strategy from stored profile/Gamma history.
+// It is an ephemeral research report: no alert history, strategy settings,
+// orders, or notifications are written or changed.
 func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...AlertBacktestParameters) (domain.AlertBacktestReport, error) {
 	params := DefaultAlertBacktestParameters()
 	if len(requested) > 0 {
@@ -260,7 +263,7 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 	symbols := s.alertReplaySymbols(rtm)
 	buckets := make(map[string]*alertBacktestBucket, len(alertBacktestSignals)*len(alertBacktestFilters))
 	for _, signal := range alertBacktestSignals {
-		for _, filter := range alertBacktestFilters {
+		for _, filter := range backtestFiltersForSignal(signal.key) {
 			buckets[alertBacktestBucketKey(signal.key, filter.key)] = &alertBacktestBucket{}
 		}
 	}
@@ -309,6 +312,12 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 				bucket.entries = append(bucket.entries, alertBacktestEntry{at: row.CreatedAt, price: row.ReferencePrice, side: row.Side, additions: row.FollowUps, candles: candles})
 			}
 		}
+		valueAreaEntries, valueAreaErr := rtm.valueAreaBacktestEntries(ctx, symbol, from, to, candles)
+		if valueAreaErr != nil {
+			return domain.AlertBacktestReport{}, valueAreaErr
+		}
+		valueAreaBucket := buckets[alertBacktestBucketKey(domain.SignalValueArea, "none")]
+		valueAreaBucket.entries = append(valueAreaBucket.entries, valueAreaEntries...)
 	}
 
 	report := domain.AlertBacktestReport{
@@ -331,12 +340,107 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 		Rows:               make([]domain.AlertBacktestRow, 0, len(alertBacktestSignals)*len(alertBacktestFilters)),
 	}
 	for _, signal := range alertBacktestSignals {
-		for _, filter := range alertBacktestFilters {
+		for _, filter := range backtestFiltersForSignal(signal.key) {
 			metrics := scoreAlertBacktest(buckets[alertBacktestBucketKey(signal.key, filter.key)].entries, params)
 			report.Rows = append(report.Rows, backtestRow(signal.key, filter.key, metrics))
 		}
 	}
 	return report, nil
+}
+
+func backtestFiltersForSignal(signal string) []alertBacktestFilter {
+	if signal == domain.SignalValueArea {
+		return []alertBacktestFilter{{key: "none", label: "无"}}
+	}
+	return alertBacktestFilters
+}
+
+func (rtm *alertRuntime) valueAreaBacktestEntries(ctx context.Context, symbol string, from, to time.Time, candles []domain.Candle) ([]alertBacktestEntry, error) {
+	source := rtm.sourceStore
+	if source == nil {
+		source = rtm.store
+	}
+	profileFrom := from.Add(-24 * time.Hour)
+	profiles, err := source.VolumeProfileSnapshots(ctx, symbol, profileFrom, to.Add(time.Minute))
+	if err != nil {
+		return nil, err
+	}
+	anchor := "ETHUSDT"
+	if strings.EqualFold(strings.TrimSpace(symbol), "BTCUSDT") {
+		anchor = "BTCUSDT"
+	}
+	gammaPoints, err := source.OptionGammaHistory(ctx, anchor, profileFrom, to.Add(time.Minute))
+	if err != nil {
+		return nil, err
+	}
+	signals := valueAreaBacktestSignals(symbol, candles, profiles, gammaPoints, from, to)
+	entries := make([]alertBacktestEntry, 0, len(signals))
+	for _, signal := range signals {
+		if signal.PositionEffect != "open" || signal.CreatedAt.Before(from) || signal.CreatedAt.After(to) {
+			continue
+		}
+		entries = append(entries, alertBacktestEntry{at: signal.CreatedAt, price: signal.ReferencePrice, side: signal.Side, candles: candles})
+	}
+	return entries, nil
+}
+
+func valueAreaBacktestSignals(symbol string, candles []domain.Candle, snapshots []domain.VolumeProfileSnapshot, gammaPoints []domain.OptionGammaPoint, from, to time.Time) []domain.TradeSignal {
+	engine := valuearea.New()
+	profileIndex, gammaIndex := 0, 0
+	var profile domain.VolumeProfile
+	var haveProfile bool
+	anchor := "ETHUSDT"
+	if strings.EqualFold(strings.TrimSpace(symbol), "BTCUSDT") {
+		anchor = "BTCUSDT"
+	}
+	signals := []domain.TradeSignal{}
+	for _, candle := range candles {
+		if candle.Time.After(to) {
+			break
+		}
+		if candle.Close <= 0 {
+			continue
+		}
+		for profileIndex < len(snapshots) && !snapshots[profileIndex].Time.After(candle.Time) {
+			profile = volumeProfileFromSnapshot(snapshots[profileIndex])
+			haveProfile = true
+			profileIndex++
+		}
+		for gammaIndex < len(gammaPoints) && !gammaPoints[gammaIndex].Time.After(candle.Time) {
+			gammaIndex++
+		}
+		var gamma domain.AlertGamma
+		if gammaIndex > 0 {
+			point := gammaPoints[gammaIndex-1]
+			gamma = alertGammaFromPoint(anchor, point)
+		} else {
+			gamma = domain.AlertGamma{AnchorSymbol: anchor, State: "unavailable"}
+		}
+		if !haveProfile {
+			profile = domain.VolumeProfile{Symbol: symbol, State: "unavailable"}
+		}
+		tick := domain.PriceTick{TradeID: candle.Time.UnixMilli(), Symbol: symbol, Time: candle.Time, Price: candle.Close}
+		signal, ok := engine.Process(tick, profile, gamma)
+		if ok && !signal.CreatedAt.Before(from) && !signal.CreatedAt.After(to) {
+			signals = append(signals, signal)
+		}
+	}
+	return signals
+}
+
+func volumeProfileFromSnapshot(snapshot domain.VolumeProfileSnapshot) domain.VolumeProfile {
+	val, vah := snapshot.VAL, snapshot.VAH
+	state := "unavailable"
+	if snapshot.Complete {
+		state = "ok"
+	}
+	return domain.VolumeProfile{Symbol: snapshot.Symbol, State: state, SessionStart: snapshot.SessionStart, VAL: &val, VAH: &vah, DataThrough: snapshot.Time, UpdatedAt: snapshot.Time}
+}
+
+func alertGammaFromPoint(anchor string, point domain.OptionGammaPoint) domain.AlertGamma {
+	value := point.Gamma
+	updated := point.Time.UTC()
+	return domain.AlertGamma{AnchorSymbol: anchor, State: point.State, Gamma: value, UpdatedAt: &updated}
 }
 
 func alertBacktestBucketKey(signal, filter string) string {

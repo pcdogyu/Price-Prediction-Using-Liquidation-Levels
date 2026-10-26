@@ -353,9 +353,11 @@ type AlertSignalRecalculation struct {
 }
 
 // AlertBacktestRow is one signal/filter combination in the two-week alert
-// backtest shown on the alert page. Metrics are based only on entries with a
-// complete next candle for the exit; ProfitFactor is zero when no losing trade
-// exists so the JSON remains finite and the UI can render it as unavailable.
+// backtest shown on the alert page. The value_area strategy has one independent
+// "none" row because it uses VAL/VAH and Gamma rather than VWAP/Donchian filters.
+// Metrics are based only on entries with a complete next candle for the exit;
+// ProfitFactor is zero when no losing trade exists so the JSON remains finite
+// and the UI can render it as unavailable.
 type AlertBacktestRow struct {
 	Signal       string  `json:"signal"`
 	Filter       string  `json:"filter"`
