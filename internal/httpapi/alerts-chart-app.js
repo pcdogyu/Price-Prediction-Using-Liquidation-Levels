@@ -128,8 +128,12 @@
 
   function renderSignalStatus() {
     const parameterText = '当前参数：' + money(state.signalThreshold) + ' · ' + (state.signalWindowMinutes || '—') + ' 分钟周期';
-    const filterText = state.toggles.donchian ? ' · Donchian 过滤后' : ' · 未过滤';
-    $('kline-signal-status').textContent = state.signalReplayText + ' ' + state.signals.filter(donchianAllowsSignal).length + ' 条' + filterText + ' · ' + parameterText;
+    const replaySignals = rawShownSignals();
+    const filteredCount = replaySignals.filter(filteredSignal).length;
+    const filterText = state.toggles.donchian
+      ? ' · 共 ' + replaySignals.length + ' 条 · 放行 ' + (replaySignals.length - filteredCount) + ' 条 · 过滤 ' + filteredCount + ' 条'
+      : ' · 共 ' + replaySignals.length + ' 条 · 未过滤';
+    $('kline-signal-status').textContent = state.signalReplayText + filterText + ' · ' + parameterText;
     $('kline-alert-status').textContent = state.signalReplayText + ' ' + shownAlerts().length + ' 条' + filterText + ' · 每 15 秒刷新';
   }
 
