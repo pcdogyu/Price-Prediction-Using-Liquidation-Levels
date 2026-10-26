@@ -492,7 +492,17 @@ func alertBacktestParameters(r *http.Request) (app.AlertBacktestParameters, erro
 	if strings.TrimSpace(string(raw)) == "" {
 		return params, nil
 	}
-	var requested app.AlertBacktestParameters
+	var requested struct {
+		InitialEquity      *float64 `json:"initial_equity"`
+		Leverage           *float64 `json:"leverage"`
+		TakeProfitPct      *float64 `json:"take_profit_pct"`
+		StopLossPct        *float64 `json:"stop_loss_pct"`
+		EntryNotionalUSD   *float64 `json:"entry_notional_usd"`
+		MaxAddOns          *int     `json:"max_add_ons"`
+		VWAPRangeHours     *int     `json:"vwap_range_hours"`
+		VWAPMinDrawdownPct *float64 `json:"vwap_min_drawdown_pct"`
+		VWAPDonchianPct    *float64 `json:"vwap_donchian_pct"`
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&requested); err != nil {
@@ -505,10 +515,37 @@ func alertBacktestParameters(r *http.Request) (app.AlertBacktestParameters, erro
 		}
 		return app.AlertBacktestParameters{}, fmt.Errorf("invalid backtest parameters: %w", err)
 	}
-	if err := requested.Validate(); err != nil {
+	if requested.InitialEquity != nil {
+		params.InitialEquity = *requested.InitialEquity
+	}
+	if requested.Leverage != nil {
+		params.Leverage = *requested.Leverage
+	}
+	if requested.TakeProfitPct != nil {
+		params.TakeProfitPct = *requested.TakeProfitPct
+	}
+	if requested.StopLossPct != nil {
+		params.StopLossPct = *requested.StopLossPct
+	}
+	if requested.EntryNotionalUSD != nil {
+		params.EntryNotionalUSD = *requested.EntryNotionalUSD
+	}
+	if requested.MaxAddOns != nil {
+		params.MaxAddOns = *requested.MaxAddOns
+	}
+	if requested.VWAPRangeHours != nil {
+		params.VWAPRangeHours = *requested.VWAPRangeHours
+	}
+	if requested.VWAPMinDrawdownPct != nil {
+		params.VWAPMinDrawdownPct = *requested.VWAPMinDrawdownPct
+	}
+	if requested.VWAPDonchianPct != nil {
+		params.VWAPDonchianPct = *requested.VWAPDonchianPct
+	}
+	if err := params.Validate(); err != nil {
 		return app.AlertBacktestParameters{}, err
 	}
-	return requested, nil
+	return params, nil
 }
 
 func alertChartReplayHours(raw string) (int, error) {
