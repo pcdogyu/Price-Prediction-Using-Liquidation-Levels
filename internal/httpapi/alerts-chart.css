@@ -18,6 +18,8 @@
 .kline-mark.buy{color:var(--buy)}
 .kline-mark.sell{color:var(--sell)}
 .kline-mark.hollow{font-weight:400}
+.kline-mark.filtered{opacity:.2}
+.kline-signal-filtered{opacity:.2}
 .zone-swatch{display:inline-block;width:14px;height:8px;margin-right:5px;border:1px solid var(--line);border-radius:2px;vertical-align:middle}
 .zone-open-high{background:var(--sell);opacity:.7}
 .zone-close-only{background:var(--warning);opacity:.7}

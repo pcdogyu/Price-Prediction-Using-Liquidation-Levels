@@ -21,7 +21,7 @@ test('the chart uses an independent Donchian filter switch for close-only signal
   assert.match(chartApp, /稳健信号过滤/);
   assert.match(chartApp, /激进信号过滤/);
   assert.match(chartHTML, /平仓区域信号过滤/);
-  assert.match(chartHTML, /平仓区信号会标记/);
+  assert.match(chartHTML, /过滤掉的下单信号仍会保留/);
   assert.match(chartHTML, /id="kline-donchian"/);
   assert.match(chartHTML, /VWAP 分区开关只控制图中的分区显示，不负责 Donchian 信号过滤/);
 });

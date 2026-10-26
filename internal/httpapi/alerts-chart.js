@@ -288,7 +288,10 @@
       const bucket = bucketStart(signal.t, step);
       const kind = signal.kind === 'steady' ? 'steady' : 'aggressive';
       const side = signal.side === 'short' ? 'short' : 'long';
-      const key = bucket + '|' + kind + '|' + side;
+      // Keep allowed and locally filtered signals in separate visual groups so
+      // a faint marker can never hide a normal marker from the same candle.
+      const chartFiltered = signal.chart_filtered === true;
+      const key = bucket + '|' + kind + '|' + side + '|' + (chartFiltered ? 'filtered' : 'allowed');
       const group = groups.get(key);
       if (group) {
         const newer = signal.t >= group.latest;
@@ -307,7 +310,7 @@
         price: finite(signal.reference_price) && signal.reference_price > 0 ? signal.reference_price : 0,
         notionalUSD: finite(signal.alert_notional_usd) ? signal.alert_notional_usd : 0,
         openAllowed: signal.open_allowed === true, closeAllowed: signal.close_allowed === true,
-        filterApplied: signal.filter_applied === true, filterReason: signal.filter_reason || '' });
+        filterApplied: signal.filter_applied === true, filterReason: signal.filter_reason || '', chartFiltered });
     }
     return Array.from(groups.values()).sort((a, b) => a.bucket - b.bucket);
   }

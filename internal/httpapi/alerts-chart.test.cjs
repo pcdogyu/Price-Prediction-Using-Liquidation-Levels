@@ -187,6 +187,26 @@ test('markerGroups retain the server-side opening filter decision', () => {
   assert.equal(grouped[0].closeAllowed, true);
   assert.equal(grouped[0].filterReason, 'neutral_zone');
 });
+
+test('markerGroups preserve filtered display state without merging it into allowed signals', () => {
+  const grouped = K.markerGroups([
+    { ...signal('allowed', 1500), chart_filtered: false },
+    { ...signal('filtered', 1600), chart_filtered: true }
+  ], 1000);
+  assert.equal(grouped.length, 2);
+  assert.equal(grouped[0].chartFiltered, false);
+  assert.equal(grouped[1].chartFiltered, true);
+});
+
+test('filtered chart signals are painted faintly and remain in the display rows', () => {
+  assert.match(chartApp, /const FILTERED_SIGNAL_ALPHA = \.2/);
+  assert.match(chartApp, /const displaySignals = \(\) => rawShownSignals\(\)\.map/);
+  assert.match(chartApp, /K\.markerGroups\(displaySignals\(\), intervalStep\)/);
+  assert.match(chartApp, /if \(group\.chartFiltered\) ctx\.globalAlpha = FILTERED_SIGNAL_ALPHA/);
+  assert.match(chartApp, /const rows = displaySignals\(\)\.slice\(\)\.reverse\(\)\.slice\(0, 200\)/);
+  assert.match(chartApp, /已过滤（淡显）/);
+  assert.match(chartHTML, /已过滤信号（80%透明）/);
+});
 test('niceTicks stays inside the range and terminates', () => {
   assert.deepEqual(K.niceTicks(0, 10, 5), [0, 2, 4, 6, 8, 10]);
   assert.deepEqual(K.niceTicks(5, 5, 5), []);

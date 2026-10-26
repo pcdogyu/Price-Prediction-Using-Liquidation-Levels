@@ -15,6 +15,7 @@
 
   const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_ZONES = 'liquidation.kline.zones', STORE_DONCHIAN = 'liquidation.kline.donchian', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000, LIQUIDATION_DELTA_REFRESH_MS = 15000, LIQUIDATION_DELTA_DEBOUNCE_MS = 250;
+  const FILTERED_SIGNAL_ALPHA = .2;
   const KLINE_HEIGHT_SCALE = 1.20, LIQUIDATION_DELTA_HEIGHT_SCALE = 1.15;
   const CHART_MARGIN_TOP = 18, CHART_MARGIN_BOTTOM = 42, CHART_SECTION_GAP = 12;
   const params = new URLSearchParams(location.search);
@@ -99,7 +100,9 @@
     if (!K.vwapSignalAllowed(signal, zone)) return false;
     return K.vwapSignalAllowed(Object.assign({}, signal, { filter_applied: false }), zone);
   };
-  const shownSignals = () => rawShownSignals().filter(donchianAllowsSignal);
+  const filteredSignal = signal => state.toggles.donchian && !donchianAllowsSignal(signal);
+  const displaySignals = () => rawShownSignals().map(signal => Object.assign({}, signal, { chart_filtered: filteredSignal(signal) }));
+  const shownSignals = () => displaySignals().filter(signal => !signal.chart_filtered);
   const closeOnlyMarker = marker => !!(state.toggles.donchian && marker && marker.filterApplied && marker.closeAllowed && !marker.openAllowed);
   const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : '激进信号过滤';
   const closeOnlyPrefix = marker => {
@@ -431,18 +434,18 @@
 
   function renderSignals() {
     const notifyLabels = { sent: '已推送', suppressed: '已抑制', skipped: '未启用', disabled: '已关闭', invalid: '配置无效', failed: '发送失败', replayed: '当前参数重算' };
-    const rows = shownSignals().slice().reverse().slice(0, 200);
+    const rows = displaySignals().slice().reverse().slice(0, 200);
     if (!rows.length) {
       $('kline-signal-rows').innerHTML = '<tr><td colspan="6">' + (state.toggles.signals ? '该币对暂无下单信号' : '信号图层已隐藏') + '</td></tr>';
       return;
     }
-    $('kline-signal-rows').innerHTML = rows.map(row => '<tr>' +
+    $('kline-signal-rows').innerHTML = rows.map(row => '<tr class="' + (row.chart_filtered ? 'kline-signal-filtered' : '') + '">' +
       '<td>' + escape(clock(row.t)) + '</td>' +
       '<td class="' + (row.kind === 'steady' ? 'buy' : 'warning') + '">' + chartRecordTypeLabel(row, row.kind === 'steady' ? '稳健' : '激进') + '</td>' +
       '<td class="' + (row.side === 'short' ? 'sell' : 'buy') + '">' + (row.side === 'short' ? '做空' : '做多') + '</td>' +
       '<td>' + escape(priceText(row.reference_price)) + '</td>' +
       '<td>' + escape(money(row.alert_notional_usd)) + '</td>' +
-      '<td>' + escape(notifyLabels[row.notify_status] || row.notify_status || '未推送') + '</td></tr>').join('');
+      '<td>' + escape(row.chart_filtered ? '已过滤（淡显）' : (notifyLabels[row.notify_status] || row.notify_status || '未推送')) + '</td></tr>').join('');
   }
 
   function renderReadout() {
@@ -747,7 +750,7 @@
   function drawSignals(ctx, shown, x, y, plot, priceBottom, intervalStep) {
     if (!state.toggles.signals) return;
     const byTime = new Map(shown.map(candle => [candle.t, candle]));
-    for (const group of K.markerGroups(shownSignals(), intervalStep)) {
+    for (const group of K.markerGroups(displaySignals(), intervalStep)) {
       const cx = x(group.bucket + intervalStep / 2);
       if (cx < plot.left - 10 || cx > plot.right + 10) continue;
       const candle = byTime.get(group.bucket) || nearest(shown, group.bucket);
@@ -755,12 +758,15 @@
       if (!price) continue;
       const long = group.side !== 'short';
       const py = Math.max(plot.top + 10, Math.min(priceBottom - 10, y(price) + (long ? 16 : -16)));
+      ctx.save();
+      if (group.chartFiltered) ctx.globalAlpha = FILTERED_SIGNAL_ALPHA;
       triangle(ctx, cx, py, long, group.kind === 'steady', closeOnlyMarker(group) ? colors.warning : long ? colors.buy : colors.sell);
       if (group.count > 1) {
         ctx.fillStyle = colors.text;
         ctx.textAlign = 'left';
         ctx.fillText('×' + group.count, cx + 10, py);
       }
+      ctx.restore();
       state.hits.push({ x: cx, y: py, group: Object.assign({ type: 'signal' }, group) });
     }
   }
@@ -1021,7 +1027,7 @@
         escape(marker.liquidationSide === 'short' ? '空单爆仓' : '多单爆仓') + '<br>参考价 ' + escape(priceText(marker.price)) +
         '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + cumulativeTotals;
     } else {
-      const filterStatus = state.toggles.donchian && marker.filterApplied ? (marker.openAllowed ? '允许开仓' : marker.closeAllowed ? '仅平仓' : '未放行') : '';
+      const filterStatus = marker.chartFiltered ? '已过滤（淡显）' : state.toggles.donchian && marker.filterApplied ? (marker.openAllowed ? '允许开仓' : marker.closeAllowed ? '仅平仓' : '未放行') : '';
       tooltip.innerHTML = '<b>' + escape(closeOnlyPrefix(marker) + (marker.kind === 'steady' ? '稳健信号' : '激进信号') + ' · ' + (marker.side === 'short' ? '做空' : '做多')) + (filterStatus ? ' · ' + filterStatus : '') + '</b><br>' +
         escape(clock(marker.first)) + (marker.count > 1 ? ' 起 · 共 ' + marker.count + ' 条' : '') + '<br>参考价 ' + escape(priceText(marker.price)) +
         '<br>预警爆仓额 ' + escape(money(marker.notionalUSD)) + cumulativeTotals;
