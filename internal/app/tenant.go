@@ -73,6 +73,16 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 	rtm.store = tenantStore
 	rtm.sourceStore = s.store
 	rtm.tenantID = tenantID
+	if s.isLegacyAlertTenant(tenantID) {
+		// Before tenant isolation, the administrator's alert history lived in the
+		// shared process database. Preserve that history in the administrator's
+		// tenant database before serving the first tenant-scoped request.
+		if err := tenantStore.ImportAlertHistory(ctx, s.store); err != nil {
+			_ = tenantStore.Close()
+			s.alertTenantsMu.Unlock()
+			return nil, fmt.Errorf("import legacy alert history: %w", err)
+		}
+	}
 	if settings, found, settingsErr := s.store.AlertSettingsForTenant(ctx, tenantID); settingsErr != nil {
 		_ = tenantStore.Close()
 		s.alertTenantsMu.Unlock()

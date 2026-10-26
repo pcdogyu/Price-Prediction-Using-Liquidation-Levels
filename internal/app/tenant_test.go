@@ -138,3 +138,30 @@ func TestTenantAlertHistoryIsDerivedFromSharedMarketEvents(t *testing.T) {
 		t.Fatalf("public market store unexpectedly exposed tenant alert history: %+v", publicPage)
 	}
 }
+
+func TestLegacyTenantImportsSharedAlertHistory(t *testing.T) {
+	svc, _, st := alertTestService(t, "legacy-history-import.db")
+	defer svc.Close()
+	svc.cfg.AuthUsername = "admin"
+	ctx := context.Background()
+	at := time.Now().UTC().Truncate(time.Second)
+	if _, err := st.SaveLiquidationAlert(ctx, domain.LiquidationAlert{
+		ID: "legacy-admin-alert", Symbol: "BTCUSDT", Side: "long", TradeSide: "long",
+		TriggeredAt: at, Status: domain.AlertStateWatching, GammaIgnored: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveTradeSignal(ctx, domain.TradeSignal{
+		ID: "legacy-admin-signal", AlertID: "legacy-admin-alert", Symbol: "BTCUSDT",
+		Kind: domain.SignalAggressive, Side: "long", LiquidationSide: "long", CreatedAt: at.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	page, err := svc.AlertTimeline(WithTenantID(ctx, "admin"), "", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.TotalCount != 2 || page.AlertCount != 1 || page.AggressiveCount != 1 {
+		t.Fatalf("legacy admin history was not imported: %+v", page)
+	}
+}

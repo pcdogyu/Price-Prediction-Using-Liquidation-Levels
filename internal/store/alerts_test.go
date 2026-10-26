@@ -128,6 +128,39 @@ func TestLiquidationAlertRoundTripAndPagination(t *testing.T) {
 	}
 }
 
+func TestImportAlertHistoryIsIdempotent(t *testing.T) {
+	source, ctx := openAlertStore(t)
+	target, err := Open(filepath.Join(t.TempDir(), "tenant-alerts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = target.Close() })
+	at := time.Now().UTC().Truncate(time.Second)
+	alert := alertRow("legacy-alert", "BTCUSDT", "long", at, domain.AlertStateWatching)
+	alert.GammaIgnored = true
+	if _, err = source.SaveLiquidationAlert(ctx, alert); err != nil {
+		t.Fatal(err)
+	}
+	signal := signalRow("legacy-signal", "BTCUSDT", domain.SignalAggressive, "long", at.Add(time.Minute))
+	signal.NotifyStatus = "sent"
+	if _, err = source.SaveTradeSignal(ctx, signal); err != nil {
+		t.Fatal(err)
+	}
+	if err = target.ImportAlertHistory(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	if err = target.ImportAlertHistory(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	page, err := target.AlertTimeline(ctx, "", "", 20, "")
+	if err != nil || page.TotalCount != 2 || page.AlertCount != 1 || page.AggressiveCount != 1 || len(page.Rows) != 2 {
+		t.Fatalf("legacy history import = %+v err=%v", page, err)
+	}
+	if page.Rows[0].Signal == nil || page.Rows[0].Signal.NotifyStatus != "sent" || page.Rows[1].Alert == nil || !page.Rows[1].Alert.GammaIgnored {
+		t.Fatalf("legacy payloads were not preserved: %+v", page.Rows)
+	}
+}
+
 func TestAlertStrategyMigrationDefaultsNewFiltersOn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy-alerts.db")
 	db, err := sql.Open("sqlite", path)

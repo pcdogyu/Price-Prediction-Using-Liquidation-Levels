@@ -209,6 +209,86 @@ func (s *Store) SaveTradeSignal(ctx context.Context, signal domain.TradeSignal) 
 	return affected > 0, nil
 }
 
+// ImportAlertHistory copies the legacy process-wide alert and signal rows into
+// a tenant store. The import is intentionally insert-only and therefore safe
+// to repeat when a tenant runtime is recreated after a restart or deployment.
+// The source store contains the pre-tenant history; new tenant rows continue to
+// be written only to the tenant store after the runtime is initialized.
+func (s *Store) ImportAlertHistory(ctx context.Context, source *Store) error {
+	if s == nil || s.db == nil || source == nil || source.db == nil {
+		return errors.New("alert history stores are required")
+	}
+
+	type alertRow struct {
+		id, symbol, side, status string
+		triggerTS, updatedTS     int64
+		payload                  []byte
+	}
+	alertRows := []alertRow{}
+	rows, err := source.db.QueryContext(ctx, `SELECT id,symbol,side,trigger_ts,status,payload,updated_ts FROM liquidation_alerts`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var row alertRow
+		if err = rows.Scan(&row.id, &row.symbol, &row.side, &row.triggerTS, &row.status, &row.payload, &row.updatedTS); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		alertRows = append(alertRows, row)
+	}
+	if err = rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+
+	type signalRow struct {
+		id, symbol, kind, side, alertID string
+		createdTS, notified, updatedTS  int64
+		payload                         []byte
+	}
+	signalRows := []signalRow{}
+	rows, err = source.db.QueryContext(ctx, `SELECT id,symbol,kind,side,alert_id,created_ts,notified,payload,updated_ts FROM trade_signals`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var row signalRow
+		if err = rows.Scan(&row.id, &row.symbol, &row.kind, &row.side, &row.alertID, &row.createdTS, &row.notified, &row.payload, &row.updatedTS); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		signalRows = append(signalRows, row)
+	}
+	if err = rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, row := range alertRows {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO liquidation_alerts(id,symbol,side,trigger_ts,status,payload,updated_ts) VALUES(?,?,?,?,?,?,?)`, row.id, row.symbol, row.side, row.triggerTS, row.status, row.payload, row.updatedTS); err != nil {
+			return err
+		}
+	}
+	for _, row := range signalRows {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO trade_signals(id,symbol,kind,side,alert_id,created_ts,notified,payload,updated_ts) VALUES(?,?,?,?,?,?,?,?,?)`, row.id, row.symbol, row.kind, row.side, row.alertID, row.createdTS, row.notified, row.payload, row.updatedTS); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // TradeSignalByID reads one persisted signal for a manual order trigger.
 func (s *Store) TradeSignalByID(ctx context.Context, id string) (domain.TradeSignal, error) {
 	var payload []byte
