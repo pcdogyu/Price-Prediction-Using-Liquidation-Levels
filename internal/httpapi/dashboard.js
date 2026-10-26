@@ -1503,11 +1503,13 @@ setInterval(() => { if (!$('log-drawer').classList.contains('hidden') && $('log-
 
 const events = new EventSource(api('stream'));
 let streamNeedsCalibration = false;
-events.addEventListener('health', () => {
+const recoverStream = () => {
   streamError = '';
   showFailures(lastFailures);
   if (streamNeedsCalibration) { streamNeedsCalibration = false; refresh(false); }
-});
+};
+events.onopen = recoverStream;
+events.addEventListener('health', recoverStream);
 events.addEventListener('prediction', event => {
   streamError = '';
   const prediction = JSON.parse(event.data);
