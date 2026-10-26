@@ -355,12 +355,22 @@ func TestAlertTimelineFilterState(t *testing.T) {
 	if _, err := store.SaveLiquidationAlert(ctx, alertRow("unfiltered-alert", "BTCUSDT", "long", base.Add(-time.Minute), domain.AlertStateWatching)); err != nil {
 		t.Fatal(err)
 	}
+	gammaIgnoredAlert := alertRow("gamma-ignored-alert", "BTCUSDT", "long", base.Add(-4*time.Minute), domain.AlertStateWatching)
+	gammaIgnoredAlert.GammaIgnored = true
+	if _, err := store.SaveLiquidationAlert(ctx, gammaIgnoredAlert); err != nil {
+		t.Fatal(err)
+	}
 	filteredSignal := signalRow("filtered-signal", "BTCUSDT", domain.SignalAggressive, "long", base.Add(-2*time.Minute))
 	filteredSignal.FilterApplied = true
 	if _, err := store.SaveTradeSignal(ctx, filteredSignal); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.SaveTradeSignal(ctx, signalRow("unfiltered-signal", "BTCUSDT", domain.SignalSteady, "long", base.Add(-3*time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	gammaIgnoredSignal := signalRow("gamma-ignored-signal", "BTCUSDT", domain.SignalAggressive, "long", base.Add(-5*time.Minute))
+	gammaIgnoredSignal.GammaIgnored = true
+	if _, err := store.SaveTradeSignal(ctx, gammaIgnoredSignal); err != nil {
 		t.Fatal(err)
 	}
 
@@ -386,6 +396,9 @@ func TestAlertTimelineFilterState(t *testing.T) {
 	for _, row := range unfiltered.Rows {
 		if (row.Alert != nil && row.Alert.FilterApplied) || (row.Signal != nil && row.Signal.FilterApplied) {
 			t.Fatalf("unfiltered timeline returned a filtered row: %+v", row)
+		}
+		if (row.Alert != nil && row.Alert.GammaIgnored) || (row.Signal != nil && row.Signal.GammaIgnored) {
+			t.Fatalf("unfiltered timeline returned a Gamma-ignored row: %+v", row)
 		}
 	}
 	if _, err = store.AlertTimelineFiltered(ctx, "", "", "invalid", 20, ""); err == nil {
