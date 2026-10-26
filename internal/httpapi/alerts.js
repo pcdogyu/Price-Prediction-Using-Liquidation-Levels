@@ -733,7 +733,6 @@
   });
   loadOverview();
   loadHistory('', 0, historyReplayed);
-  void runBacktest();
   setInterval(() => { if (!document.hidden) { loadOverview(); if (historyPage === 0 && !historyBusy) loadHistory('', 0, historyReplayed); } }, 5000);
 })();
 

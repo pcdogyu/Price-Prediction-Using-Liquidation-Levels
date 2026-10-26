@@ -109,6 +109,9 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "api/v1/alerts/notify") || !strings.Contains(script, "触发报价") {
 		t.Fatal("the alerts script must expose the manual Telegram alert trigger")
 	}
+	if strings.Contains(script, "void runBacktest();") {
+		t.Fatal("the alerts page must not start a backtest during initialization")
+	}
 	if !strings.Contains(script, "下单中") || !strings.Contains(script, "button.textContent = original") || strings.Contains(script, "window.confirm") {
 		t.Fatal("manual order trigger must show in-button progress without a confirmation popup")
 	}
