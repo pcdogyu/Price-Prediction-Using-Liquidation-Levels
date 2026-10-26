@@ -94,6 +94,27 @@ func TestBuildPrecloseWebhookPayloadClosesOppositePosition(t *testing.T) {
 	}
 }
 
+func TestBuildValueAreaWebhookPayloadsCarryEffectAndSource(t *testing.T) {
+	open := domain.TradeSignal{Symbol: "BTCUSDT", Kind: domain.SignalValueArea, Side: "long", PositionEffect: "open", Boundary: "val", BoundaryPrice: 100, VAL: 100, VAH: 110, ReferencePrice: 99, CreatedAt: time.Unix(100, 0)}
+	raw, err := buildValueAreaWebhookPayload(open, config.Config{}, false)
+	if err != nil {
+		t.Fatalf("build value-area open payload: %v", err)
+	}
+	var got map[string]any
+	if err = json.Unmarshal(raw, &got); err != nil || got["condition"] != "value_area_signal" || got["source"] != "value_area_signal" || got["position_effect"] != "open" || got["position_side"] != "long" || got["order_intent"] != "entry_long" || got["boundary"] != "val" || got["boundary_price"] != 100.0 || got["val"] != 100.0 || got["vah"] != 110.0 {
+		t.Fatalf("unexpected value-area open payload: %s", raw)
+	}
+	closeSignal := open
+	closeSignal.Side, closeSignal.PositionEffect = "short", "close"
+	raw, err = buildValueAreaCloseWebhookPayload(closeSignal, config.Config{})
+	if err != nil {
+		t.Fatalf("build value-area close payload: %v", err)
+	}
+	if err = json.Unmarshal(raw, &got); err != nil || got["condition"] != "value_area_close" || got["source"] != "value_area_close" || got["position_effect"] != "close" || got["position_side"] != "long" || got["order_intent"] != "close_long" {
+		t.Fatalf("unexpected value-area close payload: %s", raw)
+	}
+}
+
 func TestSubmitSteadyWebhookDeliversThroughApplicationQueue(t *testing.T) {
 	requests := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

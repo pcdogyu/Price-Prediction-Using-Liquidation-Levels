@@ -213,9 +213,23 @@ func TestTradeSignalNoveltyAndNotification(t *testing.T) {
 	if _, err = store.SaveTradeSignal(ctx, signalRow("s3", "ETHUSDT", domain.SignalAggressive, "short", base.Add(2*time.Minute))); err != nil {
 		t.Fatal(err)
 	}
+	valueSignal := signalRow("s4", "BTCUSDT", domain.SignalValueArea, "long", base.Add(3*time.Minute))
+	valueSignal.PositionEffect, valueSignal.Boundary, valueSignal.BoundaryPrice = "close", "val", 100
+	valueSignal.VAL, valueSignal.VAH, valueSignal.GammaState = 100, 110, "ok"
+	if _, err = store.SaveTradeSignal(ctx, valueSignal); err != nil {
+		t.Fatal(err)
+	}
 	total, aggressive, steady, err := store.SignalTotals(ctx)
-	if err != nil || total != 3 || aggressive != 2 || steady != 1 {
-		t.Fatalf("totals wrong: %d/%d/%d err %v", total, aggressive, steady, err)
+	if err != nil || total != 4 || aggressive != 2 || steady != 1 {
+		t.Fatalf("legacy totals wrong: %d/%d/%d err %v", total, aggressive, steady, err)
+	}
+	total, aggressive, steady, valueArea, err := store.SignalTotalsWithValueArea(ctx)
+	if err != nil || total != 4 || aggressive != 2 || steady != 1 || valueArea != 1 {
+		t.Fatalf("value-area totals wrong: %d/%d/%d/%d err %v", total, aggressive, steady, valueArea, err)
+	}
+	valuePage, err := store.TradeSignals(ctx, "BTCUSDT", domain.SignalValueArea, 10, "")
+	if err != nil || len(valuePage.Rows) != 1 || valuePage.ValueAreaCount != 1 || valuePage.Rows[0].PositionEffect != "close" || valuePage.Rows[0].Boundary != "val" {
+		t.Fatalf("value-area signal history failed: %+v err %v", valuePage, err)
 	}
 	page, err := store.TradeSignals(ctx, "", domain.SignalAggressive, 10, "")
 	if err != nil || len(page.Rows) != 2 || page.SignalCount != 2 || page.AggressiveCount != 2 || page.SteadyCount != 0 {
@@ -432,7 +446,7 @@ func TestWatchListAndSettingsPersistence(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].Symbol != "SOLUSDT" {
 		t.Fatalf("the watch list must be replaced: %+v err %v", rows, err)
 	}
-	settings := domain.NotificationSettings{TelegramEnabled: true, TelegramToken: "123:secret", TelegramChatID: "@alerts", NotifyAlerts: false, NotifyAggressive: true, NotifySteady: false, OrderAlerts: false, OrderAggressive: true, OrderSteady: false, OrderAlertsClose: true, OrderAggressiveClose: false, OrderSteadyClose: true}
+	settings := domain.NotificationSettings{TelegramEnabled: true, TelegramToken: "123:secret", TelegramChatID: "@alerts", NotifyAlerts: false, NotifyAggressive: true, NotifySteady: false, NotifyValueArea: true, OrderAlerts: false, OrderAggressive: true, OrderSteady: false, OrderValueArea: true, OrderAlertsClose: true, OrderAggressiveClose: false, OrderSteadyClose: true, OrderValueAreaClose: true}
 	if err := store.SaveAlertSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +454,7 @@ func TestWatchListAndSettingsPersistence(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("the settings must be stored: %v %v", found, err)
 	}
-	if !stored.TelegramEnabled || stored.TelegramToken != "123:secret" || stored.TelegramChatID != "@alerts" || stored.NotifyAlerts || !stored.NotifyAggressive || stored.NotifySteady || stored.OrderAlerts || !stored.OrderAggressive || stored.OrderSteady || !stored.OrderAlertsClose || stored.OrderAggressiveClose || !stored.OrderSteadyClose {
+	if !stored.TelegramEnabled || stored.TelegramToken != "123:secret" || stored.TelegramChatID != "@alerts" || stored.NotifyAlerts || !stored.NotifyAggressive || stored.NotifySteady || !stored.NotifyValueArea || stored.OrderAlerts || !stored.OrderAggressive || stored.OrderSteady || !stored.OrderValueArea || !stored.OrderAlertsClose || stored.OrderAggressiveClose || !stored.OrderSteadyClose || !stored.OrderValueAreaClose {
 		t.Fatalf("the settings did not round trip: %+v", stored)
 	}
 	settings.TelegramEnabled = false

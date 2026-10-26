@@ -152,7 +152,7 @@ func (s *Service) AlertTimelineReplayedFiltered(ctx context.Context, symbol, kin
 	if limit < 1 || limit > 200 {
 		return page, false, errInvalidAlertTimelineLimit
 	}
-	if kind != "" && kind != "alert" && kind != domain.SignalAggressive && kind != domain.SignalSteady {
+	if kind != "" && kind != "alert" && kind != domain.SignalAggressive && kind != domain.SignalSteady && kind != domain.SignalValueArea {
 		return page, false, errInvalidAlertTimelineKind
 	}
 	if filter != "" && filter != "filtered" && filter != "unfiltered" {
@@ -200,6 +200,8 @@ func (s *Service) AlertTimelineReplayedFiltered(ctx context.Context, symbol, kin
 			page.AggressiveCount++
 		case domain.SignalSteady:
 			page.SteadyCount++
+		case domain.SignalValueArea:
+			page.ValueAreaCount++
 		}
 	}
 	filtered := make([]replayedTimelineRow, 0, len(selected))
@@ -211,7 +213,7 @@ func (s *Service) AlertTimelineReplayedFiltered(ctx context.Context, symbol, kin
 			filtered = append(filtered, row)
 		}
 	}
-	page.TotalCount = page.AlertCount + page.AggressiveCount + page.SteadyCount
+	page.TotalCount = page.AlertCount + page.AggressiveCount + page.SteadyCount + page.ValueAreaCount
 	switch kind {
 	case "alert":
 		page.TotalCount = page.AlertCount
@@ -219,6 +221,8 @@ func (s *Service) AlertTimelineReplayedFiltered(ctx context.Context, symbol, kin
 		page.TotalCount = page.AggressiveCount
 	case domain.SignalSteady:
 		page.TotalCount = page.SteadyCount
+	case domain.SignalValueArea:
+		page.TotalCount = page.ValueAreaCount
 	}
 	if len(filtered) > limit {
 		last := filtered[limit-1]

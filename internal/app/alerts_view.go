@@ -55,6 +55,7 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 	view.Alerts, view.AlertTotal = alerts.Rows, alerts.AlertCount
 	view.Signals, view.SignalTotal = signals.Rows, signals.SignalCount
 	view.AggressiveTotal, view.SteadyTotal = signals.AggressiveCount, signals.SteadyCount
+	view.ValueAreaTotal = signals.ValueAreaCount
 	oldest, err := rtm.store.AlertOldestTime(ctx)
 	if err != nil {
 		return view, err

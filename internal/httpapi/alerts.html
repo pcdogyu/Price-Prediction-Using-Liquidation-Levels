@@ -3,14 +3,14 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="app-base" content="{{BASE}}"><script src="{{BASE}}assets/theme.js"></script><title>报警 · 清算墙雷达</title><link rel="stylesheet" href="{{BASE}}assets/pages.css"><link rel="stylesheet" href="{{BASE}}assets/theme.css"><link rel="stylesheet" href="{{BASE}}assets/alerts.css"><script src="{{BASE}}assets/shared.js" defer></script><script src="{{BASE}}assets/alerts.js" defer></script></head>
 <body data-page="alerts">{{NAV}}
 <main class="workspace">
-  <header class="page-heading"><div><span class="kicker">BINANCE USDⓈ-M · LIQUIDATION ALERTS</span><h1>报警</h1><p id="alerts-subtitle">成交额前 100 币对 · 爆仓预警 · 预平仓 · 激进 / 稳健下单信号</p><p id="alerts-gamma-status" class="muted" role="status">ETHUSDT Gamma：读取中</p></div></header>
+  <header class="page-heading"><div><span class="kicker">BINANCE USDⓈ-M · LIQUIDATION ALERTS</span><h1>报警</h1><p id="alerts-subtitle">成交额前 100 币对 · 爆仓预警 · 预平仓 · 激进 / 稳健 / 价值区下单信号</p><p id="alerts-gamma-status" class="muted" role="status">ETHUSDT Gamma：读取中</p></div></header>
   <div id="alerts-error" class="error-box" role="alert" hidden></div>
   <section class="metric-grid six" id="alerts-metrics" aria-label="报警概要"></section>
   <section class="surface">
     <div class="section-head"><h2>预警与信号历史</h2><span id="alerts-history-status" class="muted" role="status">等待数据</span></div>
     <form id="alerts-filters" class="filter-bar">
       <label for="alerts-symbol">币对<input id="alerts-symbol" name="symbol" type="text" placeholder="全部或输入 DOGE" autocomplete="off" maxlength="32"></label>
-      <label for="alerts-kind">类型<select id="alerts-kind" name="kind"><option value="all">全部</option><option value="alert">预警</option><option value="aggressive">激进信号</option><option value="steady">稳健信号</option></select></label>
+      <label for="alerts-kind">类型<select id="alerts-kind" name="kind"><option value="all">全部</option><option value="alert">预警</option><option value="aggressive">激进信号</option><option value="steady">稳健信号</option><option value="value_area">价值区信号</option></select></label>
       <label for="alerts-filter">过滤<select id="alerts-filter" name="filter"><option value="" selected>全部</option><option value="unfiltered">未过滤</option><option value="filtered">过滤</option></select></label>
       <span class="muted alerts-page-size">每页 20 条</span>
       <button id="alerts-apply" type="submit">查询</button>
@@ -19,7 +19,7 @@
       <span id="alerts-count" class="muted"></span>
     </form>
     <div class="table-scroll"><table class="alerts-history-table"><thead><tr><th>时间（北京时间）</th><th>币对</th><th>记录类型</th><th>方向</th><th>爆仓额 / 阈值</th><th>过程 / 状态</th><th>参考价</th><th>下单</th><th>报警</th><th>通知</th></tr></thead><tbody id="alerts-history-rows"><tr><td colspan="10">尚无历史记录</td></tr></tbody></table></div>
-    <p class="muted alerts-note">公共市场库提供原始爆仓和行情数据；系统按当前登录租户的阈值和策略独立计算，并将预警、激进信号和稳健信号保存到当前账号的报警历史库。三类记录按发生时间统一排序，历史页仅展示最近 30 天，固定每页 20 条；更早记录仍按保留策略存储用于回测和审计。“顺延”表示预警后同方向继续爆仓并重算安静截止；“已过期”表示确认窗口内没有出现反向爆仓。雷达过滤阶段、开平仓权限和具体过滤理由显示在“过程 / 状态”中；仅平仓区记录仍保留历史和手动“触发下单”操作，但类型左侧明确显示“平仓区域预警信号过滤 / 激进信号过滤 / 稳健信号过滤”，不会发送自动下单信息。被报警层拦截的信号不会进入 TVBot 订单历史。阈值、通知和下单配置始终按当前登录租户隔离。</p>
+    <p class="muted alerts-note">公共市场库提供原始爆仓和行情数据；系统按当前登录租户的阈值和策略独立计算，并将预警、激进、稳健和价值区信号保存到当前账号的报警历史库。记录按发生时间统一排序，历史页仅展示最近 30 天，固定每页 20 条；更早记录仍按保留策略存储用于回测和审计。价值区信号只在价格从区间内严格穿越 VAL/VAH 时触发，回到价值区后重新武装；Gamma 大于 0 平反向仓后开仓，Gamma 小于 0 只平反向仓，Gamma 为 0、缺失、过期或 VAL/VAH 不可用时不生成信号。雷达过滤阶段、开平仓权限和具体过滤理由显示在“过程 / 状态”中；仅平仓区记录仍保留历史和手动“触发下单”操作，类型左侧会标明“平仓区域预警信号过滤 / 激进信号过滤 / 稳健信号过滤 / 价值区信号过滤”，不会发送自动开仓信息。被报警层拦截的信号不会进入 TVBot 订单历史。阈值、通知和下单配置始终按当前登录租户隔离。</p>
   </section>
   <section class="surface">
     <div class="section-head"><div><h2>报警回测（过去 2 周）</h2><p class="muted alerts-section-lead">按当前登录账号的报警参数，对预警、激进、稳健信号分别比较四种开仓区过滤。</p></div><span id="alerts-backtest-status" class="muted" role="status">尚未运行</span></div>
@@ -61,7 +61,7 @@
       <p class="muted">修改任一参数并切换焦点后自动保存并立即用于实时监控；两个服务端过滤开关默认开启，影响实时雷达、过去 7 天信号重算和 K 线回放；也可点击保存按钮。关闭某个开关只跳过对应的开仓区边界，Peak-Decay、价格吸收、深度爆仓配额、ATR、网格、Gamma 和开平仓类别开关仍生效。点击“信号重算”会按当前参数回放过去 7 天，重算时跳过 Peak-Decay，并通知已打开的币对图表刷新；实时监控和普通图表回放仍保留 Peak-Decay；历史预警和信号保留产生时的阈值与周期。</p>
     </form>
     <div class="alerts-strategy-switches">
-      <div class="section-head alerts-strategy-switch-head"><div><h3>策略开关</h3><p class="muted alerts-section-lead">三类实时信号分别控制平仓和开仓，可单独打开或关闭；BTCUSDT 使用 BTCUSDT Gamma，ETHUSDT 及其他币对使用 ETHUSDT Gamma。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>
+      <div class="section-head alerts-strategy-switch-head"><div><h3>策略开关</h3><p class="muted alerts-section-lead">四类实时信号分别控制平仓和开仓，可单独打开或关闭；价值区信号在价格从区间内穿越 VAL/VAH 时触发，BTCUSDT 使用 BTCUSDT Gamma，ETHUSDT 及其他币对使用 ETHUSDT Gamma。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>
     <form id="alerts-order-signal-settings">
       <div class="table-scroll">
         <table class="alerts-order-signal-table">
@@ -70,11 +70,12 @@
             <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-alert"></span>预警信号</th><td>首次达到爆仓阈值</td><td><label class="alerts-signal-toggle"><input id="alerts-order-alert-close" type="checkbox"><span>发送平仓</span></label></td><td><label class="alerts-signal-toggle"><input id="alerts-order-alert" type="checkbox"><span>发送开仓</span></label></td></tr>
             <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-aggressive"></span>激进信号</th><td>安静期结束，等待反向确认</td><td><label class="alerts-signal-toggle"><input id="alerts-order-aggressive-close" type="checkbox"><span>发送平仓</span></label></td><td><label class="alerts-signal-toggle"><input id="alerts-order-aggressive" type="checkbox"><span>发送开仓</span></label></td></tr>
             <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-steady"></span>稳健信号</th><td>反向爆仓确认完成</td><td><label class="alerts-signal-toggle"><input id="alerts-order-steady-close" type="checkbox"><span>发送平仓</span></label></td><td><label class="alerts-signal-toggle"><input id="alerts-order-steady" type="checkbox"><span>发送开仓</span></label></td></tr>
+            <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-steady"></span>价值区信号</th><td>VAL/VAH 穿越</td><td><label class="alerts-signal-toggle"><input id="alerts-order-value-area-close" type="checkbox"><span>发送平仓</span></label></td><td><label class="alerts-signal-toggle"><input id="alerts-order-value-area" type="checkbox"><span>发送开仓</span></label></td></tr>
           </tbody>
         </table>
       </div>
       <div class="alerts-order-signal-footer"><span id="alerts-order-signal-summary" class="muted">—</span><button id="alerts-order-signal-save" type="submit">保存策略开关</button></div>
-      <p class="muted alerts-note">每类实时信号按本页开关独立发送平仓和开仓指令。对应 Gamma 小于 0 时不会发送开仓 JSON，平仓是否发送仍由本页开关决定；历史记录中的“触发下单”仍可手动执行完整开仓。</p>
+      <p class="muted alerts-note">每类实时信号按本页开关独立发送平仓和开仓指令。价值区信号在 Gamma 小于 0 时只发送 close-only JSON，平仓是否发送仍由价值区平仓开关决定；历史记录中的“触发下单”会按信号保存的 open/close 效果执行。</p>
     </form>
     </div>
   </section>
@@ -85,6 +86,7 @@
       <label class="alerts-check"><input id="alerts-notify-alerts" type="checkbox"><span>爆仓预警</span></label>
       <label class="alerts-check"><input id="alerts-notify-aggressive" type="checkbox"><span>激进信号</span></label>
       <label class="alerts-check"><input id="alerts-notify-steady" type="checkbox"><span>稳健信号</span></label>
+      <label class="alerts-check"><input id="alerts-notify-value-area" type="checkbox"><span>价值区信号</span></label>
       <label for="alerts-token">Bot Token<input id="alerts-token" type="password" placeholder="留空保持现有 Token" autocomplete="new-password" maxlength="128"></label>
       <label for="alerts-chat">Chat ID<input id="alerts-chat" type="text" placeholder="@channel 或 -1001234567890" autocomplete="off" maxlength="64"></label>
       <div class="alerts-settings-actions"><button id="alerts-save" type="submit">保存设置</button><button id="alerts-test" type="button">发送测试消息</button></div>

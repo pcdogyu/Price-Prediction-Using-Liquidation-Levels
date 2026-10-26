@@ -25,15 +25,15 @@ CREATE INDEX IF NOT EXISTS trade_signals_time ON trade_signals(created_ts DESC,i
 CREATE INDEX IF NOT EXISTS trade_signals_kind ON trade_signals(kind,created_ts DESC);
 CREATE INDEX IF NOT EXISTS trade_signals_symbol ON trade_signals(symbol,created_ts DESC);
 CREATE TABLE IF NOT EXISTS alert_watch_symbols(symbol TEXT PRIMARY KEY,rank INTEGER NOT NULL,quote_volume_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS alert_settings(id INTEGER PRIMARY KEY CHECK(id=1),telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_settings(id INTEGER PRIMARY KEY CHECK(id=1),telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,notify_value_area INTEGER NOT NULL DEFAULT 1,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_value_area INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,order_value_area_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS alert_tenant_settings(tenant_id TEXT PRIMARY KEY,telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_tenant_settings(tenant_id TEXT PRIMARY KEY,telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,notify_value_area INTEGER NOT NULL DEFAULT 1,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_value_area INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,order_value_area_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY KEY,window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);`)
 	if err != nil {
 		return err
 	}
 	for _, table := range []string{"alert_settings", "alert_tenant_settings"} {
-		for _, column := range []string{"order_alerts", "order_aggressive", "order_steady", "order_alerts_close", "order_aggressive_close", "order_steady_close"} {
+		for _, column := range []string{"notify_value_area", "order_alerts", "order_aggressive", "order_steady", "order_value_area", "order_alerts_close", "order_aggressive_close", "order_steady_close", "order_value_area_close"} {
 			if s.hasColumn(ctx, table, column) {
 				continue
 			}
@@ -329,8 +329,8 @@ func (s *Store) MarkTradeSignalNotified(ctx context.Context, id, status, message
 	return err
 }
 
-// TradeSignals reads the signal history newest first. Kind accepts aggressive or
-// steady, empty reads both. Symbol uses the same case-insensitive substring
+// TradeSignals reads the signal history newest first. Kind accepts aggressive,
+// steady or value_area, empty reads all. Symbol uses the same case-insensitive substring
 // matching as LiquidationAlerts.
 func (s *Store) TradeSignals(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.SignalPage, error) {
 	out := domain.SignalPage{Rows: []domain.TradeSignal{}}
@@ -347,7 +347,7 @@ func (s *Store) TradeSignals(ctx context.Context, symbol, kind string, limit int
 		where += " AND instr(UPPER(symbol),UPPER(?))>0"
 		args = append(args, symbol)
 	}
-	if kind == domain.SignalAggressive || kind == domain.SignalSteady {
+	if kind == domain.SignalAggressive || kind == domain.SignalSteady || kind == domain.SignalValueArea {
 		where += " AND kind=?"
 		args = append(args, kind)
 	}
@@ -379,13 +379,13 @@ func (s *Store) TradeSignals(ctx context.Context, symbol, kind string, limit int
 		last := out.Rows[len(out.Rows)-1]
 		out.NextCursor = EncodeCursor(last.CreatedAt, last.ID)
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0) FROM trade_signals WHERE `+where, args...).Scan(&out.SignalCount, &out.AggressiveCount, &out.SteadyCount)
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0),COALESCE(SUM(kind='value_area'),0) FROM trade_signals WHERE `+where, args...).Scan(&out.SignalCount, &out.AggressiveCount, &out.SteadyCount, &out.ValueAreaCount)
 	return out, err
 }
 
 // AlertTimeline merges alert triggers and the signals produced from them into
 // one stable, newest-first cursor stream. kind accepts alert, aggressive,
-// steady, or an empty value for all three record types.
+// steady, value_area, or an empty value for all record types.
 func (s *Store) AlertTimeline(ctx context.Context, symbol, kind string, limit int, cursor string) (domain.AlertTimelinePage, error) {
 	return s.AlertTimelineSince(ctx, symbol, kind, limit, cursor, time.Time{})
 }
@@ -413,7 +413,7 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 	if err != nil {
 		return out, err
 	}
-	if kind != "" && kind != "alert" && kind != domain.SignalAggressive && kind != domain.SignalSteady {
+	if kind != "" && kind != "alert" && kind != domain.SignalAggressive && kind != domain.SignalSteady && kind != domain.SignalValueArea {
 		return out, errors.New("invalid timeline kind")
 	}
 	if filter != "" && filter != "filtered" && filter != "unfiltered" {
@@ -449,14 +449,14 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 		parts = append(parts, `SELECT 'alert' AS record_type,trigger_ts AS event_ts,'alert:'||id AS sort_id,payload FROM liquidation_alerts`+whereSQL(clauses))
 		args = append(args, partArgs...)
 	}
-	if kind == "" || kind == domain.SignalAggressive || kind == domain.SignalSteady {
+	if kind == "" || kind == domain.SignalAggressive || kind == domain.SignalSteady || kind == domain.SignalValueArea {
 		clauses := []string{}
 		partArgs := []any{}
 		if symbol != "" && symbol != "ALL" {
 			clauses = append(clauses, "instr(UPPER(symbol),UPPER(?))>0")
 			partArgs = append(partArgs, symbol)
 		}
-		if kind == domain.SignalAggressive || kind == domain.SignalSteady {
+		if kind == domain.SignalAggressive || kind == domain.SignalSteady || kind == domain.SignalValueArea {
 			clauses = append(clauses, "kind=?")
 			partArgs = append(partArgs, kind)
 		}
@@ -566,7 +566,7 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 	if len(signalCountWhereParts) > 0 {
 		signalCountWhere = " WHERE " + strings.Join(signalCountWhereParts, " AND ")
 	}
-	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0) FROM trade_signals`+signalCountWhere, signalCountArgs...).Scan(&out.AggressiveCount, &out.SteadyCount); err != nil {
+	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0),COALESCE(SUM(kind='value_area'),0) FROM trade_signals`+signalCountWhere, signalCountArgs...).Scan(&out.AggressiveCount, &out.SteadyCount, &out.ValueAreaCount); err != nil {
 		return out, err
 	}
 	switch kind {
@@ -576,8 +576,10 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 		out.TotalCount = out.AggressiveCount
 	case domain.SignalSteady:
 		out.TotalCount = out.SteadyCount
+	case domain.SignalValueArea:
+		out.TotalCount = out.ValueAreaCount
 	default:
-		out.TotalCount = out.AlertCount + out.AggressiveCount + out.SteadyCount
+		out.TotalCount = out.AlertCount + out.AggressiveCount + out.SteadyCount + out.ValueAreaCount
 	}
 	return out, nil
 }
@@ -585,6 +587,11 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 // SignalTotals reports the stored signal counts per kind.
 func (s *Store) SignalTotals(ctx context.Context) (total, aggressive, steady int64, err error) {
 	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0) FROM trade_signals`).Scan(&total, &aggressive, &steady)
+	return
+}
+
+func (s *Store) SignalTotalsWithValueArea(ctx context.Context) (total, aggressive, steady, valueArea int64, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0),COALESCE(SUM(kind='value_area'),0) FROM trade_signals`).Scan(&total, &aggressive, &steady, &valueArea)
 	return
 }
 
@@ -634,26 +641,26 @@ func (s *Store) WatchSymbols(ctx context.Context) ([]domain.WatchSymbol, error) 
 // bot token never leaves this function unmasked to other layers than the notifier.
 func (s *Store) AlertSettings(ctx context.Context) (domain.NotificationSettings, bool, error) {
 	var out domain.NotificationSettings
-	var enabled, alerts, aggressive, steady, orderAlerts, orderAggressive, orderSteady, orderAlertsClose, orderAggressiveClose, orderSteadyClose int
+	var enabled, alerts, aggressive, steady, valueArea, orderAlerts, orderAggressive, orderSteady, orderValueArea, orderAlertsClose, orderAggressiveClose, orderSteadyClose, orderValueAreaClose int
 	var token, chatID string
 	var updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,order_alerts,order_aggressive,order_steady,order_alerts_close,order_aggressive_close,order_steady_close,updated_ts FROM alert_settings WHERE id=1`).
-		Scan(&enabled, &token, &chatID, &alerts, &aggressive, &steady, &orderAlerts, &orderAggressive, &orderSteady, &orderAlertsClose, &orderAggressiveClose, &orderSteadyClose, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts FROM alert_settings WHERE id=1`).
+		Scan(&enabled, &token, &chatID, &alerts, &aggressive, &steady, &valueArea, &orderAlerts, &orderAggressive, &orderSteady, &orderValueArea, &orderAlertsClose, &orderAggressiveClose, &orderSteadyClose, &orderValueAreaClose, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
 	}
 	if err != nil {
 		return out, false, err
 	}
-	out = domain.NotificationSettings{TelegramEnabled: enabled != 0, TelegramToken: token, TelegramChatID: chatID, NotifyAlerts: alerts != 0, NotifyAggressive: aggressive != 0, NotifySteady: steady != 0, OrderAlerts: orderAlerts != 0, OrderAggressive: orderAggressive != 0, OrderSteady: orderSteady != 0, OrderAlertsClose: orderAlertsClose != 0, OrderAggressiveClose: orderAggressiveClose != 0, OrderSteadyClose: orderSteadyClose != 0, UpdatedAt: time.UnixMilli(updated).UTC()}
+	out = domain.NotificationSettings{TelegramEnabled: enabled != 0, TelegramToken: token, TelegramChatID: chatID, NotifyAlerts: alerts != 0, NotifyAggressive: aggressive != 0, NotifySteady: steady != 0, NotifyValueArea: valueArea != 0, OrderAlerts: orderAlerts != 0, OrderAggressive: orderAggressive != 0, OrderSteady: orderSteady != 0, OrderValueArea: orderValueArea != 0, OrderAlertsClose: orderAlertsClose != 0, OrderAggressiveClose: orderAggressiveClose != 0, OrderSteadyClose: orderSteadyClose != 0, OrderValueAreaClose: orderValueAreaClose != 0, UpdatedAt: time.UnixMilli(updated).UTC()}
 	return out, true, nil
 }
 
 // SaveAlertSettings stores the settings as the single row the alert page manages.
 func (s *Store) SaveAlertSettings(ctx context.Context, in domain.NotificationSettings) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_settings(id,telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,order_alerts,order_aggressive,order_steady,order_alerts_close,order_aggressive_close,order_steady_close,updated_ts) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,telegram_token=excluded.telegram_token,telegram_chat_id=excluded.telegram_chat_id,notify_alerts=excluded.notify_alerts,notify_aggressive=excluded.notify_aggressive,notify_steady=excluded.notify_steady,order_alerts=excluded.order_alerts,order_aggressive=excluded.order_aggressive,order_steady=excluded.order_steady,order_alerts_close=excluded.order_alerts_close,order_aggressive_close=excluded.order_aggressive_close,order_steady_close=excluded.order_steady_close,updated_ts=excluded.updated_ts`,
-		boolInt(in.TelegramEnabled), in.TelegramToken, in.TelegramChatID, boolInt(in.NotifyAlerts), boolInt(in.NotifyAggressive), boolInt(in.NotifySteady), boolInt(in.OrderAlerts), boolInt(in.OrderAggressive), boolInt(in.OrderSteady), boolInt(in.OrderAlertsClose), boolInt(in.OrderAggressiveClose), boolInt(in.OrderSteadyClose), time.Now().UTC().UnixMilli())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_settings(id,telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,telegram_token=excluded.telegram_token,telegram_chat_id=excluded.telegram_chat_id,notify_alerts=excluded.notify_alerts,notify_aggressive=excluded.notify_aggressive,notify_steady=excluded.notify_steady,notify_value_area=excluded.notify_value_area,order_alerts=excluded.order_alerts,order_aggressive=excluded.order_aggressive,order_steady=excluded.order_steady,order_value_area=excluded.order_value_area,order_alerts_close=excluded.order_alerts_close,order_aggressive_close=excluded.order_aggressive_close,order_steady_close=excluded.order_steady_close,order_value_area_close=excluded.order_value_area_close,updated_ts=excluded.updated_ts`,
+		boolInt(in.TelegramEnabled), in.TelegramToken, in.TelegramChatID, boolInt(in.NotifyAlerts), boolInt(in.NotifyAggressive), boolInt(in.NotifySteady), boolInt(in.NotifyValueArea), boolInt(in.OrderAlerts), boolInt(in.OrderAggressive), boolInt(in.OrderSteady), boolInt(in.OrderValueArea), boolInt(in.OrderAlertsClose), boolInt(in.OrderAggressiveClose), boolInt(in.OrderSteadyClose), boolInt(in.OrderValueAreaClose), time.Now().UTC().UnixMilli())
 	return err
 }
 
@@ -665,18 +672,18 @@ func (s *Store) AlertSettingsForTenant(ctx context.Context, tenantID string) (do
 		return s.AlertSettings(ctx)
 	}
 	var out domain.NotificationSettings
-	var enabled, alerts, aggressive, steady, orderAlerts, orderAggressive, orderSteady, orderAlertsClose, orderAggressiveClose, orderSteadyClose int
+	var enabled, alerts, aggressive, steady, valueArea, orderAlerts, orderAggressive, orderSteady, orderValueArea, orderAlertsClose, orderAggressiveClose, orderSteadyClose, orderValueAreaClose int
 	var token, chatID string
 	var updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,order_alerts,order_aggressive,order_steady,order_alerts_close,order_aggressive_close,order_steady_close,updated_ts FROM alert_tenant_settings WHERE tenant_id=?`, tenantID).
-		Scan(&enabled, &token, &chatID, &alerts, &aggressive, &steady, &orderAlerts, &orderAggressive, &orderSteady, &orderAlertsClose, &orderAggressiveClose, &orderSteadyClose, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts FROM alert_tenant_settings WHERE tenant_id=?`, tenantID).
+		Scan(&enabled, &token, &chatID, &alerts, &aggressive, &steady, &valueArea, &orderAlerts, &orderAggressive, &orderSteady, &orderValueArea, &orderAlertsClose, &orderAggressiveClose, &orderSteadyClose, &orderValueAreaClose, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
 	}
 	if err != nil {
 		return out, false, err
 	}
-	out = domain.NotificationSettings{TelegramEnabled: enabled != 0, TelegramToken: token, TelegramChatID: chatID, NotifyAlerts: alerts != 0, NotifyAggressive: aggressive != 0, NotifySteady: steady != 0, OrderAlerts: orderAlerts != 0, OrderAggressive: orderAggressive != 0, OrderSteady: orderSteady != 0, OrderAlertsClose: orderAlertsClose != 0, OrderAggressiveClose: orderAggressiveClose != 0, OrderSteadyClose: orderSteadyClose != 0, UpdatedAt: time.UnixMilli(updated).UTC()}
+	out = domain.NotificationSettings{TelegramEnabled: enabled != 0, TelegramToken: token, TelegramChatID: chatID, NotifyAlerts: alerts != 0, NotifyAggressive: aggressive != 0, NotifySteady: steady != 0, NotifyValueArea: valueArea != 0, OrderAlerts: orderAlerts != 0, OrderAggressive: orderAggressive != 0, OrderSteady: orderSteady != 0, OrderValueArea: orderValueArea != 0, OrderAlertsClose: orderAlertsClose != 0, OrderAggressiveClose: orderAggressiveClose != 0, OrderSteadyClose: orderSteadyClose != 0, OrderValueAreaClose: orderValueAreaClose != 0, UpdatedAt: time.UnixMilli(updated).UTC()}
 	return out, true, nil
 }
 
@@ -686,9 +693,9 @@ func (s *Store) SaveAlertSettingsForTenant(ctx context.Context, tenantID string,
 	if tenantID == "" {
 		return s.SaveAlertSettings(ctx, in)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_tenant_settings(tenant_id,telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,order_alerts,order_aggressive,order_steady,order_alerts_close,order_aggressive_close,order_steady_close,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(tenant_id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,telegram_token=excluded.telegram_token,telegram_chat_id=excluded.telegram_chat_id,notify_alerts=excluded.notify_alerts,notify_aggressive=excluded.notify_aggressive,notify_steady=excluded.notify_steady,order_alerts=excluded.order_alerts,order_aggressive=excluded.order_aggressive,order_steady=excluded.order_steady,order_alerts_close=excluded.order_alerts_close,order_aggressive_close=excluded.order_aggressive_close,order_steady_close=excluded.order_steady_close,updated_ts=excluded.updated_ts`,
-		tenantID, boolInt(in.TelegramEnabled), in.TelegramToken, in.TelegramChatID, boolInt(in.NotifyAlerts), boolInt(in.NotifyAggressive), boolInt(in.NotifySteady), boolInt(in.OrderAlerts), boolInt(in.OrderAggressive), boolInt(in.OrderSteady), boolInt(in.OrderAlertsClose), boolInt(in.OrderAggressiveClose), boolInt(in.OrderSteadyClose), time.Now().UTC().UnixMilli())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_tenant_settings(tenant_id,telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(tenant_id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,telegram_token=excluded.telegram_token,telegram_chat_id=excluded.telegram_chat_id,notify_alerts=excluded.notify_alerts,notify_aggressive=excluded.notify_aggressive,notify_steady=excluded.notify_steady,notify_value_area=excluded.notify_value_area,order_alerts=excluded.order_alerts,order_aggressive=excluded.order_aggressive,order_steady=excluded.order_steady,order_value_area=excluded.order_value_area,order_alerts_close=excluded.order_alerts_close,order_aggressive_close=excluded.order_aggressive_close,order_steady_close=excluded.order_steady_close,order_value_area_close=excluded.order_value_area_close,updated_ts=excluded.updated_ts`,
+		tenantID, boolInt(in.TelegramEnabled), in.TelegramToken, in.TelegramChatID, boolInt(in.NotifyAlerts), boolInt(in.NotifyAggressive), boolInt(in.NotifySteady), boolInt(in.NotifyValueArea), boolInt(in.OrderAlerts), boolInt(in.OrderAggressive), boolInt(in.OrderSteady), boolInt(in.OrderValueArea), boolInt(in.OrderAlertsClose), boolInt(in.OrderAggressiveClose), boolInt(in.OrderSteadyClose), boolInt(in.OrderValueAreaClose), time.Now().UTC().UnixMilli())
 	return err
 }
 

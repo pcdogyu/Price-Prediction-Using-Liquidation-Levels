@@ -38,6 +38,28 @@ func signalMessage(signal domain.TradeSignal) string {
 		if signal.ReferencePrice > 0 {
 			fmt.Fprintf(&b, "确认时价格：%s", formatPrice(signal.ReferencePrice))
 		}
+	case domain.SignalValueArea:
+		action := "VAL 买入"
+		if signal.Side == "short" {
+			action = "VAH 卖出"
+		}
+		if signal.PositionEffect == "close" {
+			if signal.Side == "long" {
+				action += " / 平空（只平反向仓）"
+			} else {
+				action += " / 平多（只平反向仓）"
+			}
+		} else {
+			action += "（平反向仓后开仓）"
+		}
+		fmt.Fprintf(&b, "📊 价值区信号 · %s %s\n", signal.Symbol, action)
+		fmt.Fprintf(&b, "价格穿越 %s：%s（VAL %s / VAH %s）\n", strings.ToUpper(signal.Boundary), formatPrice(signal.BoundaryPrice), formatPrice(signal.VAL), formatPrice(signal.VAH))
+		if signal.GammaValue != nil {
+			fmt.Fprintf(&b, "Gamma：%s（%s）\n", formatPrice(*signal.GammaValue), signal.GammaState)
+		}
+		if signal.ReferencePrice > 0 {
+			fmt.Fprintf(&b, "触发价：%s", formatPrice(signal.ReferencePrice))
+		}
 	default:
 		return "爆仓信号：" + signal.Symbol + " " + signal.Side
 	}

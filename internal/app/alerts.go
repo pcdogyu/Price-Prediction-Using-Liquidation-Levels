@@ -16,6 +16,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/notify"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/valuearea"
 )
 
 // alertRuntime owns the alert engine, the top volume watch list, persisted
@@ -23,6 +24,7 @@ import (
 type alertRuntime struct {
 	service                                     *Service
 	engine                                      *alert.Engine
+	valueArea                                   *valuearea.Engine
 	store                                       *store.Store
 	sourceStore                                 *store.Store
 	tenantID                                    string
@@ -94,7 +96,7 @@ func (s *Service) newAlertRuntime() *alertRuntime {
 	}
 	rtm := &alertRuntime{
 		service: s,
-		engine:  alert.New(cfg), store: s.store, log: s.log, cfg: cfg,
+		engine:  alert.New(cfg), valueArea: valuearea.New(), store: s.store, log: s.log, cfg: cfg,
 		sender:   notify.NewTelegram(s.cfg.TelegramAPIBase),
 		envToken: s.cfg.TelegramBotToken, envChat: s.cfg.TelegramChatID,
 		webhookURL: s.cfg.SteadyWebhookURL, webhookTokenNonce: s.cfg.SteadyWebhookTokenNonce,
@@ -123,12 +125,15 @@ func (r *alertRuntime) defaultSettings() domain.NotificationSettings {
 		NotifyAlerts:         true,
 		NotifyAggressive:     true,
 		NotifySteady:         true,
+		NotifyValueArea:      true,
 		OrderAlerts:          true,
 		OrderAggressive:      true,
 		OrderSteady:          true,
+		OrderValueArea:       true,
 		OrderAlertsClose:     true,
 		OrderAggressiveClose: true,
 		OrderSteadyClose:     true,
+		OrderValueAreaClose:  true,
 	}
 }
 
@@ -311,7 +316,73 @@ func (s *Service) startAlerts(ctx context.Context) {
 	go rtm.webhook.Start(ctx)
 	go rtm.topSymbolLoop(ctx)
 	go rtm.tickLoop(ctx)
+	go rtm.valueAreaLoop(ctx)
 	s.log.Info("liquidation alert engine started", "watch_symbols", rtm.engine.WatchCount(), "window", rtm.cfg.Window, "quiet", rtm.cfg.Quiet, "confirm", rtm.cfg.Confirm)
+}
+
+type valueAreaProfileCache struct {
+	profile domain.VolumeProfile
+	next    time.Time
+}
+
+// valueAreaLoop evaluates the independent VAL/VAH strategy from the same live
+// price stream and volume-profile sessions used by the bubble page.
+func (rtm *alertRuntime) valueAreaLoop(ctx context.Context) {
+	if rtm.service == nil {
+		return
+	}
+	ticks, cancel := rtm.service.SubscribePrices()
+	defer cancel()
+	profiles := make(map[string]valueAreaProfileCache)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case tick, ok := <-ticks:
+			if !ok || !rtm.service.backgroundSymbol(tick.Symbol) {
+				continue
+			}
+			symbol := strings.ToUpper(strings.TrimSpace(tick.Symbol))
+			entry := profiles[symbol]
+			if entry.next.IsZero() || !time.Now().UTC().Before(entry.next) {
+				fetchCtx, cancelFetch := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				profile, err := rtm.service.VolumeProfile(fetchCtx, symbol)
+				cancelFetch()
+				if err != nil {
+					rtm.log.Warn("value-area volume profile read failed", "symbol", symbol, "error", err)
+					profile = domain.VolumeProfile{Symbol: symbol, State: "unavailable"}
+				}
+				entry.profile = profile
+				entry.next = time.Now().UTC().Add(2 * time.Second)
+				profiles[symbol] = entry
+			}
+			gamma := rtm.service.alertGammaForSymbol(context.WithoutCancel(ctx), symbol)
+			signal, ok := rtm.valueArea.Process(tick, entry.profile, gamma)
+			if !ok {
+				continue
+			}
+			rtm.persistValueAreaSignal(context.WithoutCancel(ctx), signal, true)
+		}
+	}
+}
+
+func (rtm *alertRuntime) persistValueAreaSignal(ctx context.Context, signal domain.TradeSignal, allowNotify bool) {
+	if rtm.tenantID != "" {
+		signal.TenantID = rtm.tenantID
+	}
+	created, err := rtm.store.SaveTradeSignal(ctx, signal)
+	if err != nil {
+		rtm.log.Error("store value-area signal failed", "symbol", signal.Symbol, "error", err)
+		return
+	}
+	if !created {
+		return
+	}
+	status, message := rtm.submitSignal(signal, allowNotify)
+	rtm.submitSignalWebhook(signal, allowNotify)
+	if err = rtm.store.MarkTradeSignalNotified(ctx, signal.ID, status, message); err != nil && ctx.Err() == nil {
+		rtm.log.Warn("record value-area notification status failed", "id", signal.ID, "error", err)
+	}
 }
 
 // topSymbolLoop keeps the watch list in step with the 24 hour volume ranking.
@@ -499,7 +570,21 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 }
 
 func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNotify bool) {
-	if !allowNotify || (signal.Kind != domain.SignalAggressive && signal.Kind != domain.SignalSteady) {
+	if !allowNotify || (signal.Kind != domain.SignalAggressive && signal.Kind != domain.SignalSteady && signal.Kind != domain.SignalValueArea) {
+		return
+	}
+	if signal.Kind == domain.SignalValueArea && signal.PositionEffect == "close" {
+		if !rtm.orderCloseEnabled(signal.Kind) {
+			return
+		}
+		payload, err := buildValueAreaCloseWebhookPayload(signal, rtm.serviceConfig())
+		if err != nil {
+			rtm.log.Warn("value-area close webhook payload rejected", "symbol", signal.Symbol, "error", err)
+			return
+		}
+		if !rtm.webhook.Submit(notify.Task{Key: "signal-webhook|value_area|close|" + signal.ID, Text: string(payload)}) {
+			rtm.log.Warn("value-area close webhook delivery suppressed", "symbol", signal.Symbol)
+		}
 		return
 	}
 	// A radar decision that is not allowed to open must not emit any automatic
@@ -519,7 +604,11 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 		rtm.log.Warn("signal webhook payload rejected", "kind", signal.Kind, "symbol", signal.Symbol, "error", err)
 		return
 	}
-	if !rtm.webhook.Submit(notify.Task{Key: "signal-webhook|" + signal.Kind + "|" + signal.Symbol, Text: string(payload)}) {
+	key := "signal-webhook|" + signal.Kind + "|" + signal.Symbol
+	if signal.Kind == domain.SignalValueArea {
+		key += "|" + signal.ID
+	}
+	if !rtm.webhook.Submit(notify.Task{Key: key, Text: string(payload)}) {
 		rtm.log.Warn("signal webhook delivery suppressed", "kind", signal.Kind, "symbol", signal.Symbol)
 	}
 }
@@ -647,7 +736,7 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 			LiquidationSide: row.Side, CreatedAt: time.Now().UTC(), ReferencePrice: row.ReferencePrice,
 			AlertNotionalUSD: row.NotionalUSD, ThresholdUSD: row.ThresholdUSD, WindowMinutes: row.WindowMinutes,
 		}
-	case domain.SignalAggressive, domain.SignalSteady:
+	case domain.SignalAggressive, domain.SignalSteady, domain.SignalValueArea:
 		row, err := rtm.store.TradeSignalByID(ctx, recordID)
 		if err != nil {
 			return manualTriggerResult{}, err
@@ -655,17 +744,39 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 		signal = row
 		signal.CreatedAt = time.Now().UTC()
 	default:
-		return manualTriggerResult{}, errors.New("record type must be alert, aggressive or steady")
+		return manualTriggerResult{}, errors.New("record type must be alert, aggressive, steady or value_area")
 	}
 	if signal.Symbol == "" || signal.ReferencePrice <= 0 {
 		return manualTriggerResult{}, errors.New("record has no valid symbol or reference price")
 	}
-	payload, err := buildManualWebhookPayload(signal, rtm.serviceConfig())
+	var payloads [][]byte
+	var err error
+	if signal.Kind == domain.SignalValueArea && signal.PositionEffect == "close" {
+		var payload []byte
+		payload, err = buildValueAreaCloseWebhookPayload(signal, rtm.serviceConfig())
+		payloads = append(payloads, payload)
+	} else if signal.Kind == domain.SignalValueArea {
+		var preclose, payload []byte
+		preclose, err = buildPrecloseWebhookPayload(signal, rtm.serviceConfig())
+		if err == nil {
+			payload, err = buildValueAreaWebhookPayload(signal, rtm.serviceConfig(), true)
+		}
+		payloads = append(payloads, preclose, payload)
+	} else {
+		var payload []byte
+		payload, err = buildManualWebhookPayload(signal, rtm.serviceConfig())
+		payloads = append(payloads, payload)
+	}
 	if err != nil {
 		return manualTriggerResult{}, err
 	}
-	if err = rtm.webhookSender.Send(ctx, rtm.webhookURL, "", string(payload)); err != nil {
-		return manualTriggerResult{}, err
+	for _, payload := range payloads {
+		if len(payload) == 0 {
+			continue
+		}
+		if err = rtm.webhookSender.Send(ctx, rtm.webhookURL, "", string(payload)); err != nil {
+			return manualTriggerResult{}, err
+		}
 	}
 	cfg := rtm.serviceConfig()
 	return manualTriggerResult{
@@ -709,7 +820,7 @@ func (rtm *alertRuntime) notifyTelegramUsing(ctx context.Context, recordType, re
 		}
 		symbol, side, text = row.Symbol, row.TradeSide, alertMessage(row)
 		markerAt, referencePrice = row.TriggeredAt, row.ReferencePrice
-	case domain.SignalAggressive, domain.SignalSteady:
+	case domain.SignalAggressive, domain.SignalSteady, domain.SignalValueArea:
 		row, err := rtm.store.TradeSignalByID(ctx, recordID)
 		if err != nil {
 			return manualNotifyResult{}, err
@@ -717,7 +828,7 @@ func (rtm *alertRuntime) notifyTelegramUsing(ctx context.Context, recordType, re
 		symbol, side, text = row.Symbol, row.Side, signalMessage(row)
 		markerAt, referencePrice = row.CreatedAt, row.ReferencePrice
 	default:
-		return manualNotifyResult{}, errors.New("record type must be alert, aggressive or steady")
+		return manualNotifyResult{}, errors.New("record type must be alert, aggressive, steady or value_area")
 	}
 	if symbol == "" || text == "" {
 		return manualNotifyResult{}, errors.New("record has no valid Telegram message")
@@ -755,6 +866,8 @@ func (rtm *alertRuntime) categoryEnabled(category string) bool {
 		return rtm.settings.NotifyAggressive
 	case domain.SignalSteady:
 		return rtm.settings.NotifySteady
+	case domain.SignalValueArea:
+		return rtm.settings.NotifyValueArea
 	default:
 		return false
 	}
@@ -772,6 +885,8 @@ func (rtm *alertRuntime) orderSignalEnabled(category string) bool {
 		return rtm.settings.OrderAggressive
 	case domain.SignalSteady:
 		return rtm.settings.OrderSteady
+	case domain.SignalValueArea:
+		return rtm.settings.OrderValueArea
 	default:
 		return false
 	}
@@ -790,6 +905,8 @@ func (rtm *alertRuntime) orderCloseEnabled(category string) bool {
 		return rtm.settings.OrderAggressiveClose
 	case domain.SignalSteady:
 		return rtm.settings.OrderSteadyClose
+	case domain.SignalValueArea:
+		return rtm.settings.OrderValueAreaClose
 	default:
 		return false
 	}
@@ -805,7 +922,11 @@ func (rtm *alertRuntime) submitSignal(signal domain.TradeSignal, allowNotify boo
 	if !rtm.categoryEnabled(signal.Kind) {
 		return "muted", "Telegram 通知未启用或该类别已关闭"
 	}
-	task := notify.Task{Key: signal.Kind + "|" + signal.Symbol, Text: signalMessage(signal)}
+	key := signal.Kind + "|" + signal.Symbol
+	if signal.Kind == domain.SignalValueArea {
+		key += "|" + signal.ID
+	}
+	task := notify.Task{Key: key, Text: signalMessage(signal)}
 	if !rtm.notifier.Submit(task) {
 		return "suppressed", "已抑制：冷却期内、未配置或队列已满"
 	}
@@ -857,12 +978,15 @@ func (rtm *alertRuntime) updateSettings(ctx context.Context, in domain.Notificat
 		NotifyAlerts:         in.NotifyAlerts,
 		NotifyAggressive:     in.NotifyAggressive,
 		NotifySteady:         in.NotifySteady,
+		NotifyValueArea:      in.NotifyValueArea,
 		OrderAlerts:          in.OrderAlerts,
 		OrderAggressive:      in.OrderAggressive,
 		OrderSteady:          in.OrderSteady,
+		OrderValueArea:       in.OrderValueArea,
 		OrderAlertsClose:     in.OrderAlertsClose,
 		OrderAggressiveClose: in.OrderAggressiveClose,
 		OrderSteadyClose:     in.OrderSteadyClose,
+		OrderValueAreaClose:  in.OrderValueAreaClose,
 		TelegramChatID:       strings.TrimSpace(in.TelegramChatID),
 		TelegramToken:        strings.TrimSpace(rtm.settings.TelegramToken),
 	}
@@ -904,6 +1028,7 @@ func (rtm *alertRuntime) snapshotOrderSignalSettings() domain.OrderSignalSetting
 		Alerts: rtm.settings.OrderAlerts, Aggressive: rtm.settings.OrderAggressive,
 		Steady: rtm.settings.OrderSteady, AlertsClose: rtm.settings.OrderAlertsClose,
 		AggressiveClose: rtm.settings.OrderAggressiveClose, SteadyClose: rtm.settings.OrderSteadyClose,
+		ValueArea: rtm.settings.OrderValueArea, ValueAreaClose: rtm.settings.OrderValueAreaClose,
 		UpdatedAt: rtm.settings.UpdatedAt,
 	}
 }
@@ -913,6 +1038,7 @@ func (rtm *alertRuntime) updateOrderSignalSettings(ctx context.Context, in domai
 	out := rtm.settings
 	out.OrderAlerts, out.OrderAggressive, out.OrderSteady = in.Alerts, in.Aggressive, in.Steady
 	out.OrderAlertsClose, out.OrderAggressiveClose, out.OrderSteadyClose = in.AlertsClose, in.AggressiveClose, in.SteadyClose
+	out.OrderValueArea, out.OrderValueAreaClose = in.ValueArea, in.ValueAreaClose
 	out.UpdatedAt = time.Now().UTC()
 	rtm.settings = out
 	rtm.mu.Unlock()

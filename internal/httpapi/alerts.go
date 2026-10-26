@@ -125,7 +125,7 @@ func (s *Server) alertTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 	in.RecordType = strings.ToLower(strings.TrimSpace(in.RecordType))
 	in.RecordID = strings.TrimSpace(in.RecordID)
-	if (in.RecordType != "alert" && in.RecordType != domain.SignalAggressive && in.RecordType != domain.SignalSteady) || in.RecordID == "" || len(in.RecordID) > 256 {
+	if (in.RecordType != "alert" && in.RecordType != domain.SignalAggressive && in.RecordType != domain.SignalSteady && in.RecordType != domain.SignalValueArea) || in.RecordID == "" || len(in.RecordID) > 256 {
 		problem(w, http.StatusBadRequest, errors.New("record_type and record_id are invalid"))
 		return
 	}
@@ -157,7 +157,7 @@ func (s *Server) alertNotify(w http.ResponseWriter, r *http.Request) {
 	}
 	in.RecordType = strings.ToLower(strings.TrimSpace(in.RecordType))
 	in.RecordID = strings.TrimSpace(in.RecordID)
-	if (in.RecordType != "alert" && in.RecordType != domain.SignalAggressive && in.RecordType != domain.SignalSteady) || in.RecordID == "" || len(in.RecordID) > 256 {
+	if (in.RecordType != "alert" && in.RecordType != domain.SignalAggressive && in.RecordType != domain.SignalSteady && in.RecordType != domain.SignalValueArea) || in.RecordID == "" || len(in.RecordID) > 256 {
 		problem(w, http.StatusBadRequest, errors.New("record_type and record_id are invalid"))
 		return
 	}
@@ -186,8 +186,8 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 	if kind == "all" {
 		kind = ""
 	}
-	if kind != "" && kind != "alert" && kind != domain.SignalAggressive && kind != domain.SignalSteady {
-		problem(w, http.StatusBadRequest, fmt.Errorf("kind must be alert, aggressive, steady or all"))
+	if kind != "" && kind != "alert" && kind != domain.SignalAggressive && kind != domain.SignalSteady && kind != domain.SignalValueArea {
+		problem(w, http.StatusBadRequest, fmt.Errorf("kind must be alert, aggressive, steady, value_area or all"))
 		return
 	}
 	filter, err := alertTimelineFilter(query.Get("filter"))
@@ -309,8 +309,8 @@ func (s *Server) alertSignals(w http.ResponseWriter, r *http.Request) {
 	if kind == "" || kind == "all" {
 		kind = ""
 	}
-	if kind != "" && kind != domain.SignalAggressive && kind != domain.SignalSteady {
-		problem(w, http.StatusBadRequest, fmt.Errorf("kind must be aggressive, steady or all"))
+	if kind != "" && kind != domain.SignalAggressive && kind != domain.SignalSteady && kind != domain.SignalValueArea {
+		problem(w, http.StatusBadRequest, fmt.Errorf("kind must be aggressive, steady, value_area or all"))
 		return
 	}
 	if err = alertCursor(query.Get("cursor")); err != nil {

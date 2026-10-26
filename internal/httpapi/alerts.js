@@ -79,7 +79,7 @@
     return '<span class="muted alerts-radar-filter" title="' + escape(title) + '"> · ' + escape(summary) + '</span>';
   };
   const closeOnlyIgnored = row => !!(row && row.filter_applied && row.close_allowed && !row.open_allowed);
-  const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : '激进信号过滤';
+  const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : label === '价值区' ? '价值区信号过滤' : '激进信号过滤';
   const recordTypeLabel = (row, label) => {
     const tags = rowFilterTags(row).map(tag => '<span class="alerts-filter-tag alerts-filter-tag-' + tag + '">' + escape(filterTagLabels[tag]) + '</span>');
     const closeOnly = closeOnlyIgnored(row) ? '<span class="alerts-close-only-prefix">' + escape(closeOnlyFilterLabel(label)) + '</span>' : '';
@@ -172,9 +172,9 @@
     $('alerts-signal-progress-label').textContent = '信号重算失败';
   }
 
-  const backtestSignalLabels = { alert: '预警', aggressive: '激进', steady: '稳健' };
+  const backtestSignalLabels = { alert: '预警', aggressive: '激进', steady: '稳健', value_area: '价值区' };
   const backtestFilterLabels = { none: '无', vwap: 'VWAP', donchian: 'Donchian', vwap_donchian: 'VWAP + Donchian' };
-  const backtestSignalOrder = { alert: 0, aggressive: 1, steady: 2 };
+  const backtestSignalOrder = { alert: 0, aggressive: 1, steady: 2, value_area: 3 };
   const backtestFilterOrder = { none: 0, vwap: 1, donchian: 2, vwap_donchian: 3 };
   const backtestNumericSortKeys = new Set(['trades', 'additions', 'win_rate', 'profit_factor', 'max_drawdown_pct', 'final_equity']);
   const backtestPercent = value => Number.isFinite(Number(value)) ? Number(value).toFixed(2) + '%' : '—';
@@ -327,6 +327,7 @@
       ['预警总数', data.alert_total, ''],
       ['激进信号', data.aggressive_total, 'buy'],
       ['稳健信号', data.steady_total, 'buy'],
+      ['价值区信号', data.value_area_total, 'buy'],
       ['预警窗口', data.thresholds.window_minutes + ' 分钟', ''],
       ['安静期 / 确认窗口', data.thresholds.quiet_minutes + ' 分 / ' + data.thresholds.confirm_minutes + ' 分', '']
     ];
@@ -346,12 +347,17 @@
   }
 
   function signalCells(signal) {
-    const detail = signal.kind === 'steady'
-      ? '反向爆仓 ' + money(signal.opposite_usd) + ' · ' + (signal.opposite_count || 0) + ' 笔 · ' + span(signal.opposite_elapsed_seconds)
-      : '安静 ' + span(signal.quiet_elapsed_seconds) + ' · 顺延 ' + (signal.follow_ups || 0) + ' 次';
+    const valueArea = signal.kind === 'value_area';
+    const detail = valueArea
+      ? String(signal.boundary || '').toUpperCase() + ' 穿越 ' + price(signal.boundary_price) + ' · ' + (signal.position_effect === 'close' ? '只平反向仓' : '平反向仓后开仓') + ' · VAL ' + price(signal.val) + ' / VAH ' + price(signal.vah)
+      : signal.kind === 'steady'
+        ? '反向爆仓 ' + money(signal.opposite_usd) + ' · ' + (signal.opposite_count || 0) + ' 笔 · ' + span(signal.opposite_elapsed_seconds)
+        : '安静 ' + span(signal.quiet_elapsed_seconds) + ' · 顺延 ' + (signal.follow_ups || 0) + ' 次';
+    const label = valueArea ? '价值区' : signal.kind === 'steady' ? '稳健' : '激进';
+    const valueDirection = signal.side === 'long' ? 'VAL 买入' + (signal.position_effect === 'close' ? ' / 平空' : '') : 'VAH 卖出' + (signal.position_effect === 'close' ? ' / 平多' : '');
     return '<td>' + when(signal.created_at) + '</td><td>' + chartLink(signal.symbol) + '</td>' +
-      '<td class="' + (signal.kind === 'steady' ? 'buy' : 'warning') + '">' + recordTypeLabel(signal, signal.kind === 'steady' ? '稳健' : '激进') + '</td>' +
-      '<td' + directionClass(signal.side, historicalGammaIgnored(signal)) + '>' + escape(directionLabel(signal.side, historicalGammaIgnored(signal))) + '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span></td>' +
+      '<td class="' + (valueArea ? (signal.side === 'short' ? 'sell' : 'buy') : signal.kind === 'steady' ? 'buy' : 'warning') + '">' + recordTypeLabel(signal, label) + '</td>' +
+      '<td' + directionClass(signal.side, historicalGammaIgnored(signal)) + '>' + escape(valueArea ? valueDirection : directionLabel(signal.side, historicalGammaIgnored(signal))) + (valueArea ? '' : '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span>') + '</td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
       '<td>' + detail + radarFilterStatus(signal) + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
       '<td>' + escape(notifyLabels[signal.notify_status] || signal.notify_status || '未推送') + (signal.notify_error ? '<span class="muted" title="' + escape(signal.notify_error) + '"> ⓘ</span>' : '') + '</td>';
@@ -395,6 +401,7 @@
       $('alerts-notify-alerts').checked = !!settings.notify_alerts;
       $('alerts-notify-aggressive').checked = !!settings.notify_aggressive;
       $('alerts-notify-steady').checked = !!settings.notify_steady;
+      $('alerts-notify-value-area').checked = settings.notify_value_area !== false;
       settingsLoaded = true;
     }
     renderOrderSignalSettings(settings);
@@ -409,7 +416,9 @@
       [$('alerts-order-aggressive-close').checked, '激进平仓'],
       [$('alerts-order-aggressive').checked, '激进开仓'],
       [$('alerts-order-steady-close').checked, '稳健平仓'],
-      [$('alerts-order-steady').checked, '稳健开仓']
+      [$('alerts-order-steady').checked, '稳健开仓'],
+      [$('alerts-order-value-area-close').checked, '价值区平仓'],
+      [$('alerts-order-value-area').checked, '价值区开仓']
     ].filter(item => item[0]).map(item => item[1]);
     $('alerts-order-signal-summary').textContent = selected.length ? '已开启：' + selected.join('、') : '当前不自动发送下单信号';
   }
@@ -423,6 +432,8 @@
       $('alerts-order-aggressive').checked = !!settings.order_aggressive;
       $('alerts-order-steady-close').checked = !!settings.order_steady_close;
       $('alerts-order-steady').checked = !!settings.order_steady;
+      $('alerts-order-value-area-close').checked = settings.order_value_area_close !== false;
+      $('alerts-order-value-area').checked = settings.order_value_area !== false;
       orderSignalSettingsLoaded = true;
     }
     renderOrderSignalSummary();
@@ -450,7 +461,7 @@
     if (document.activeElement !== vwapFilter) vwapFilter.checked = settings.vwap_filter_enabled !== false;
     if (document.activeElement !== donchianFilter) donchianFilter.checked = settings.donchian_filter_enabled !== false;
     $('alerts-monitor-window').textContent = settings.window_minutes || 3;
-    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 100) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健下单信号';
+    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 100) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健 / 价值区下单信号';
     if (!strategyLoaded) strategyLoaded = true;
   }
 
@@ -506,7 +517,7 @@
       historyNextCursor = packet.next_cursor || '';
       timelineRows(historyRows);
       const sourceLabel = packet.replayed ? '过去 7 天按当前参数重算（跳过 Peak-Decay） · ' : '';
-      $('alerts-history-status').textContent = sourceLabel + '预警 ' + packet.alert_count + ' · 激进 ' + packet.aggressive_count + ' · 稳健 ' + packet.steady_count + ' · 共 ' + packet.total_count + ' 条';
+      $('alerts-history-status').textContent = sourceLabel + '预警 ' + packet.alert_count + ' · 激进 ' + packet.aggressive_count + ' · 稳健 ' + packet.steady_count + ' · 价值区 ' + packet.value_area_count + ' · 共 ' + packet.total_count + ' 条';
       $('alerts-count').textContent = '第 ' + (historyPage + 1) + ' 页 · 本页 ' + historyRows.length + ' 条';
       $('alerts-prev').disabled = historyPage === 0;
       $('alerts-next').disabled = !historyNextCursor;
@@ -526,12 +537,15 @@
       notify_alerts: $('alerts-notify-alerts').checked,
       notify_aggressive: $('alerts-notify-aggressive').checked,
       notify_steady: $('alerts-notify-steady').checked,
+      notify_value_area: $('alerts-notify-value-area').checked,
       order_alerts: $('alerts-order-alert').checked,
       order_aggressive: $('alerts-order-aggressive').checked,
       order_steady: $('alerts-order-steady').checked,
+      order_value_area: $('alerts-order-value-area').checked,
       order_alerts_close: $('alerts-order-alert-close').checked,
       order_aggressive_close: $('alerts-order-aggressive-close').checked,
       order_steady_close: $('alerts-order-steady-close').checked,
+      order_value_area_close: $('alerts-order-value-area-close').checked,
       telegram_chat_id: $('alerts-chat').value.trim()
     };
     const token = $('alerts-token').value.trim();
@@ -558,9 +572,11 @@
       order_alerts: $('alerts-order-alert').checked,
       order_aggressive: $('alerts-order-aggressive').checked,
       order_steady: $('alerts-order-steady').checked,
+      order_value_area: $('alerts-order-value-area').checked,
       order_alerts_close: $('alerts-order-alert-close').checked,
       order_aggressive_close: $('alerts-order-aggressive-close').checked,
-      order_steady_close: $('alerts-order-steady-close').checked
+      order_steady_close: $('alerts-order-steady-close').checked,
+      order_value_area_close: $('alerts-order-value-area-close').checked
     };
   }
 

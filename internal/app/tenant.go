@@ -164,6 +164,7 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 		go rtm.notifier.Start(startCtx)
 		go rtm.webhook.Start(startCtx)
 		go rtm.tickLoop(startCtx)
+		go rtm.valueAreaLoop(startCtx)
 	}
 	return rtm, nil
 }
@@ -274,7 +275,7 @@ func (s *Service) alertOrderSignalSettingsForContext(ctx context.Context) (domai
 	if err != nil {
 		return domain.OrderSignalSettings{}, err
 	}
-	return domain.OrderSignalSettings{Alerts: settings.OrderAlerts, Aggressive: settings.OrderAggressive, Steady: settings.OrderSteady, AlertsClose: settings.OrderAlertsClose, AggressiveClose: settings.OrderAggressiveClose, SteadyClose: settings.OrderSteadyClose, UpdatedAt: settings.UpdatedAt}, nil
+	return domain.OrderSignalSettings{Alerts: settings.OrderAlerts, Aggressive: settings.OrderAggressive, Steady: settings.OrderSteady, ValueArea: settings.OrderValueArea, AlertsClose: settings.OrderAlertsClose, AggressiveClose: settings.OrderAggressiveClose, SteadyClose: settings.OrderSteadyClose, ValueAreaClose: settings.OrderValueAreaClose, UpdatedAt: settings.UpdatedAt}, nil
 }
 
 func (s *Service) saveAlertOrderSignalSettingsForContext(ctx context.Context, in domain.OrderSignalSettings) (domain.OrderSignalSettings, error) {
@@ -420,7 +421,7 @@ func (rtm *alertRuntime) updateSettingsForTenant(ctx context.Context, tenantID s
 	if !found {
 		current = rtm.defaultSettings()
 	}
-	out := domain.NotificationSettings{TelegramEnabled: in.TelegramEnabled, NotifyAlerts: in.NotifyAlerts, NotifyAggressive: in.NotifyAggressive, NotifySteady: in.NotifySteady, OrderAlerts: in.OrderAlerts, OrderAggressive: in.OrderAggressive, OrderSteady: in.OrderSteady, OrderAlertsClose: in.OrderAlertsClose, OrderAggressiveClose: in.OrderAggressiveClose, OrderSteadyClose: in.OrderSteadyClose, TelegramChatID: strings.TrimSpace(in.TelegramChatID), TelegramToken: strings.TrimSpace(current.TelegramToken)}
+	out := domain.NotificationSettings{TelegramEnabled: in.TelegramEnabled, NotifyAlerts: in.NotifyAlerts, NotifyAggressive: in.NotifyAggressive, NotifySteady: in.NotifySteady, NotifyValueArea: in.NotifyValueArea, OrderAlerts: in.OrderAlerts, OrderAggressive: in.OrderAggressive, OrderSteady: in.OrderSteady, OrderValueArea: in.OrderValueArea, OrderAlertsClose: in.OrderAlertsClose, OrderAggressiveClose: in.OrderAggressiveClose, OrderSteadyClose: in.OrderSteadyClose, OrderValueAreaClose: in.OrderValueAreaClose, TelegramChatID: strings.TrimSpace(in.TelegramChatID), TelegramToken: strings.TrimSpace(current.TelegramToken)}
 	if out.TelegramChatID != "" && !notify.ValidChatID(out.TelegramChatID) {
 		return domain.NotificationSettings{}, errors.New("Telegram Chat ID 需为数字 ID 或 @频道名")
 	}
@@ -455,6 +456,7 @@ func (rtm *alertRuntime) updateOrderSignalSettingsForTenant(ctx context.Context,
 	}
 	settings.OrderAlerts, settings.OrderAggressive, settings.OrderSteady = in.Alerts, in.Aggressive, in.Steady
 	settings.OrderAlertsClose, settings.OrderAggressiveClose, settings.OrderSteadyClose = in.AlertsClose, in.AggressiveClose, in.SteadyClose
+	settings.OrderValueArea, settings.OrderValueAreaClose = in.ValueArea, in.ValueAreaClose
 	settings.UpdatedAt = time.Now().UTC()
 	if err := rtm.tenantConfigStore().SaveAlertSettingsForTenant(ctx, tenantID, settings); err != nil {
 		return domain.OrderSignalSettings{}, err
@@ -462,7 +464,7 @@ func (rtm *alertRuntime) updateOrderSignalSettingsForTenant(ctx context.Context,
 	rtm.mu.Lock()
 	rtm.settings = settings
 	rtm.mu.Unlock()
-	return domain.OrderSignalSettings{Alerts: settings.OrderAlerts, Aggressive: settings.OrderAggressive, Steady: settings.OrderSteady, AlertsClose: settings.OrderAlertsClose, AggressiveClose: settings.OrderAggressiveClose, SteadyClose: settings.OrderSteadyClose, UpdatedAt: settings.UpdatedAt}, nil
+	return domain.OrderSignalSettings{Alerts: settings.OrderAlerts, Aggressive: settings.OrderAggressive, Steady: settings.OrderSteady, ValueArea: settings.OrderValueArea, AlertsClose: settings.OrderAlertsClose, AggressiveClose: settings.OrderAggressiveClose, SteadyClose: settings.OrderSteadyClose, ValueAreaClose: settings.OrderValueAreaClose, UpdatedAt: settings.UpdatedAt}, nil
 }
 
 func (rtm *alertRuntime) updateStrategySettingsForTenant(ctx context.Context, tenantID string, in domain.AlertStrategySettings) (domain.AlertStrategySettings, error) {

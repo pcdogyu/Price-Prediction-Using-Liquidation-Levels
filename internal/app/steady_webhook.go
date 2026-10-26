@@ -11,26 +11,32 @@ import (
 )
 
 type steadyWebhookPayload struct {
-	SentAt          string  `json:"sent_at"`
-	TenantID        string  `json:"tenant_id,omitempty"`
-	APIID           string  `json:"api_id"`
-	TargetExchange  string  `json:"target_exchange"`
-	TradeEnv        string  `json:"trade_env"`
-	Action          string  `json:"action"`
-	PositionEffect  string  `json:"position_effect"`
-	PositionSide    string  `json:"position_side"`
-	Ticker          string  `json:"ticker"`
-	Coinpair        string  `json:"coinpair"`
-	Price           string  `json:"price"`
-	Exchange        string  `json:"exchange"`
-	Interval        string  `json:"interval"`
-	Condition       string  `json:"condition"`
-	Text            string  `json:"text"`
-	OrderIntent     string  `json:"order_intent"`
-	MinProfitSpread float64 `json:"min_profit_spread,omitempty"`
-	Source          string  `json:"source"`
-	TokenNonce      string  `json:"token_nonce"`
-	Token           string  `json:"token"`
+	SentAt          string   `json:"sent_at"`
+	TenantID        string   `json:"tenant_id,omitempty"`
+	APIID           string   `json:"api_id"`
+	TargetExchange  string   `json:"target_exchange"`
+	TradeEnv        string   `json:"trade_env"`
+	Action          string   `json:"action"`
+	PositionEffect  string   `json:"position_effect"`
+	PositionSide    string   `json:"position_side"`
+	Ticker          string   `json:"ticker"`
+	Coinpair        string   `json:"coinpair"`
+	Price           string   `json:"price"`
+	Exchange        string   `json:"exchange"`
+	Interval        string   `json:"interval"`
+	Condition       string   `json:"condition"`
+	Text            string   `json:"text"`
+	OrderIntent     string   `json:"order_intent"`
+	MinProfitSpread float64  `json:"min_profit_spread,omitempty"`
+	Boundary        string   `json:"boundary,omitempty"`
+	BoundaryPrice   float64  `json:"boundary_price,omitempty"`
+	VAL             float64  `json:"val,omitempty"`
+	VAH             float64  `json:"vah,omitempty"`
+	GammaValue      *float64 `json:"gamma_value,omitempty"`
+	GammaState      string   `json:"gamma_state,omitempty"`
+	Source          string   `json:"source"`
+	TokenNonce      string   `json:"token_nonce"`
+	Token           string   `json:"token"`
 }
 
 func buildSteadyWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
@@ -42,6 +48,9 @@ func buildManualWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]
 }
 
 func buildSignalWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
+	if signal.Kind == domain.SignalValueArea {
+		return buildValueAreaWebhookPayload(signal, cfg, false)
+	}
 	condition := "steady_liquidation_confirmation"
 	if signal.Kind == domain.SignalAggressive {
 		condition = "aggressive_liquidation_signal"
@@ -78,8 +87,34 @@ func buildPrecloseWebhookPayload(signal domain.TradeSignal, cfg config.Config) (
 		condition = "aggressive_liquidation_preclose"
 	case domain.SignalSteady:
 		condition = "steady_liquidation_preclose"
+	case domain.SignalValueArea:
+		condition = "value_area_preclose"
 	}
-	return buildPositionWebhookPayload(signal, cfg, condition, "liquidation_alert_preclose", action, "close", positionSide, intent)
+	source := "liquidation_alert_preclose"
+	if signal.Kind == domain.SignalValueArea {
+		source = "value_area_preclose"
+	}
+	return buildPositionWebhookPayload(signal, cfg, condition, source, action, "close", positionSide, intent)
+}
+
+func buildValueAreaWebhookPayload(signal domain.TradeSignal, cfg config.Config, manual bool) ([]byte, error) {
+	action, intent, err := steadyWebhookDirection(signal.Side)
+	if err != nil {
+		return nil, err
+	}
+	condition, source := "value_area_signal", "value_area_signal"
+	if manual {
+		condition, source = "value_area_manual", "value_area_manual"
+	}
+	return buildPositionWebhookPayload(signal, cfg, condition, source, action, "open", strings.ToLower(strings.TrimSpace(signal.Side)), intent)
+}
+
+func buildValueAreaCloseWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
+	action, positionSide, intent, err := steadyWebhookCloseDirection(signal.Side)
+	if err != nil {
+		return nil, err
+	}
+	return buildPositionWebhookPayload(signal, cfg, "value_area_close", "value_area_close", action, "close", positionSide, intent)
 }
 
 func buildPositionWebhookPayload(signal domain.TradeSignal, cfg config.Config, condition, source, action, effect, positionSide, intent string) ([]byte, error) {
@@ -98,7 +133,9 @@ func buildPositionWebhookPayload(signal domain.TradeSignal, cfg config.Config, c
 		Condition: condition, Text: intent,
 		OrderIntent: intent, Source: source,
 		MinProfitSpread: signal.MinProfitSpread,
-		TokenNonce:      cfg.SteadyWebhookTokenNonce, Token: cfg.SteadyWebhookToken,
+		Boundary:        signal.Boundary, BoundaryPrice: signal.BoundaryPrice,
+		VAL: signal.VAL, VAH: signal.VAH, GammaValue: signal.GammaValue, GammaState: signal.GammaState,
+		TokenNonce: cfg.SteadyWebhookTokenNonce, Token: cfg.SteadyWebhookToken,
 	}
 	return json.Marshal(payload)
 }

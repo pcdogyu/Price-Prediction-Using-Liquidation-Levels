@@ -11,6 +11,7 @@ import (
 const (
 	SignalAggressive = "aggressive"
 	SignalSteady     = "steady"
+	SignalValueArea  = "value_area"
 )
 
 // Alert cycle states. A radar cycle starts as watching/ARMED, becomes
@@ -162,6 +163,13 @@ type TradeSignal struct {
 	NotifyStatus                 string    `json:"notify_status,omitempty"`
 	NotifyError                  string    `json:"notify_error,omitempty"`
 	NotifiedAt                   time.Time `json:"notified_at,omitempty"`
+	PositionEffect               string    `json:"position_effect,omitempty"`
+	Boundary                     string    `json:"boundary,omitempty"`
+	BoundaryPrice                float64   `json:"boundary_price,omitempty"`
+	VAL                          float64   `json:"val,omitempty"`
+	VAH                          float64   `json:"vah,omitempty"`
+	GammaValue                   *float64  `json:"gamma_value,omitempty"`
+	GammaState                   string    `json:"gamma_state,omitempty"`
 }
 
 // WatchSymbol is one entry of the dynamic top volume watch list.
@@ -252,11 +260,12 @@ type SignalPage struct {
 	SignalCount     int64         `json:"signal_count"`
 	AggressiveCount int64         `json:"aggressive_count"`
 	SteadyCount     int64         `json:"steady_count"`
+	ValueAreaCount  int64         `json:"value_area_count"`
 	Gamma           AlertGamma    `json:"gamma"`
 }
 
 // AlertTimelineItem is one row in the unified alert and signal history. Type is
-// alert, aggressive or steady; exactly one of Alert and Signal is populated.
+// alert, aggressive, steady or value_area; exactly one of Alert and Signal is populated.
 type AlertTimelineItem struct {
 	Type    string            `json:"type"`
 	EventAt time.Time         `json:"event_at"`
@@ -274,6 +283,7 @@ type AlertTimelinePage struct {
 	AlertCount      int64               `json:"alert_count"`
 	AggressiveCount int64               `json:"aggressive_count"`
 	SteadyCount     int64               `json:"steady_count"`
+	ValueAreaCount  int64               `json:"value_area_count"`
 	Replayed        bool                `json:"replayed,omitempty"`
 	ReplayedAt      *time.Time          `json:"replayed_at,omitempty"`
 	Gamma           AlertGamma          `json:"gamma"`
@@ -404,6 +414,7 @@ type NotificationSettings struct {
 	NotifyAlerts     bool   `json:"notify_alerts"`
 	NotifyAggressive bool   `json:"notify_aggressive"`
 	NotifySteady     bool   `json:"notify_steady"`
+	NotifyValueArea  bool   `json:"notify_value_area"`
 	// OrderAlerts, OrderAggressive and OrderSteady are the opening switches. They
 	// retain their original JSON names for API compatibility.
 	OrderAlerts          bool      `json:"order_alerts"`
@@ -412,6 +423,8 @@ type NotificationSettings struct {
 	OrderAlertsClose     bool      `json:"order_alerts_close"`
 	OrderAggressiveClose bool      `json:"order_aggressive_close"`
 	OrderSteadyClose     bool      `json:"order_steady_close"`
+	OrderValueArea       bool      `json:"order_value_area"`
+	OrderValueAreaClose  bool      `json:"order_value_area_close"`
 	HasToken             bool      `json:"has_token"`
 	TokenMask            string    `json:"token_mask"`
 	TokenSource          string    `json:"token_source"`
@@ -428,6 +441,8 @@ type OrderSignalSettings struct {
 	AlertsClose     bool      `json:"order_alerts_close"`
 	AggressiveClose bool      `json:"order_aggressive_close"`
 	SteadyClose     bool      `json:"order_steady_close"`
+	ValueArea       bool      `json:"order_value_area"`
+	ValueAreaClose  bool      `json:"order_value_area_close"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
@@ -462,6 +477,7 @@ type AlertsView struct {
 	SignalTotal     int64              `json:"signal_total"`
 	AggressiveTotal int64              `json:"aggressive_total"`
 	SteadyTotal     int64              `json:"steady_total"`
+	ValueAreaTotal  int64              `json:"value_area_total"`
 	Notifications   NotificationStatus `json:"notifications"`
 	GeneratedAt     time.Time          `json:"generated_at"`
 }
