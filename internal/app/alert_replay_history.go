@@ -171,6 +171,12 @@ func (s *Service) AlertTimelineReplayedFiltered(ctx context.Context, symbol, kin
 	if !ready {
 		return page, false, nil
 	}
+	valueAreaRows, err := s.persistedValueAreaReplayRows(ctx, rtm, symbol, filter, replayedAt)
+	if err != nil {
+		return page, false, err
+	}
+	rows = appendUniqueReplayRows(rows, valueAreaRows)
+	sortReplayedTimelineRows(rows)
 
 	needle := strings.ToUpper(strings.TrimSpace(symbol))
 	selected := make([]replayedTimelineRow, 0, len(rows))
@@ -237,4 +243,58 @@ func (s *Service) AlertTimelineReplayedFiltered(ctx context.Context, symbol, kin
 	page.ReplayedAt = &replayedAt
 	page.Gamma = s.alertGammaForSymbol(ctx, symbol)
 	return page, true, nil
+}
+
+// persistedValueAreaReplayRows keeps the explicit alert replay from hiding live
+// VAL/VAH signals. The replay engine only reconstructs liquidation-driven rows;
+// value-area signals are price/profile-driven and are already persisted by the
+// live strategy, so merge the same seven-day window into the replayed timeline.
+func (s *Service) persistedValueAreaReplayRows(ctx context.Context, rtm *alertRuntime, symbol, filter string, replayedAt time.Time) ([]replayedTimelineRow, error) {
+	if rtm == nil || replayedAt.IsZero() {
+		return nil, nil
+	}
+	from := replayedAt.Add(-alertSignalRecalculationWindow)
+	cursor := ""
+	rows := []replayedTimelineRow{}
+	seen := map[string]struct{}{}
+	for {
+		page, err := rtm.store.AlertTimelineSinceFiltered(ctx, symbol, domain.SignalValueArea, filter, 200, cursor, from)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range page.Rows {
+			if item.Signal == nil {
+				continue
+			}
+			sortID := "signal:" + item.Signal.ID
+			if _, exists := seen[sortID]; exists {
+				continue
+			}
+			seen[sortID] = struct{}{}
+			rows = append(rows, replayedTimelineRow{item: item, sortID: sortID})
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	return rows, nil
+}
+
+func appendUniqueReplayRows(base, additions []replayedTimelineRow) []replayedTimelineRow {
+	if len(additions) == 0 {
+		return base
+	}
+	seen := make(map[string]struct{}, len(base)+len(additions))
+	for _, row := range base {
+		seen[row.sortID] = struct{}{}
+	}
+	for _, row := range additions {
+		if _, exists := seen[row.sortID]; exists {
+			continue
+		}
+		seen[row.sortID] = struct{}{}
+		base = append(base, row)
+	}
+	return base
 }

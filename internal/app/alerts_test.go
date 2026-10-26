@@ -306,6 +306,13 @@ func TestAlertSignalRecalculationUsesSevenDayWindow(t *testing.T) {
 	if err := st.InsertLiquidation(ctx, alertTestEvent("recalculate-long", "BTCUSDT", "long", base, 120000)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := st.SaveTradeSignal(ctx, domain.TradeSignal{
+		ID: "recalculate-value-area", AlertID: "value-area:recalculate-value-area", Symbol: "BTCUSDT",
+		Kind: domain.SignalValueArea, Side: "long", LiquidationSide: "long", CreatedAt: base.Add(30 * time.Minute),
+		ReferencePrice: 99, PositionEffect: "open", Boundary: "val", BoundaryPrice: 100, VAL: 100, VAH: 110,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	svc.alerts.applyWatch([]alert.WatchEntry{{Symbol: "BTCUSDT", Rank: 1}}, []domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1, UpdatedAt: base}}, base, "")
 
 	result, err := svc.RecalculateAlertSignalsForContext(ctx)
@@ -332,8 +339,12 @@ func TestAlertSignalRecalculationUsesSevenDayWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ready || !replayed.Replayed || replayed.AlertCount != int64(result.AlertCount) || replayed.TotalCount != int64(result.AlertCount+result.SignalCount) || len(replayed.Rows) != 1 {
+	if !ready || !replayed.Replayed || replayed.AlertCount != int64(result.AlertCount) || replayed.ValueAreaCount != 1 || replayed.TotalCount != int64(result.AlertCount+result.SignalCount+1) || len(replayed.Rows) != 1 {
 		t.Fatalf("recalculation must populate replayed history: ready=%v page=%+v result=%+v", ready, replayed, result)
+	}
+	merged, ready, err := svc.AlertTimelineReplayed(ctx, "BTCUSDT", domain.SignalValueArea, 20, "")
+	if err != nil || !ready || len(merged.Rows) != 1 || merged.ValueAreaCount != 1 || merged.Rows[0].Signal == nil || merged.Rows[0].Signal.ID != "recalculate-value-area" {
+		t.Fatalf("recalculation must retain persisted value-area history: ready=%v page=%+v err=%v", ready, merged, err)
 	}
 }
 
