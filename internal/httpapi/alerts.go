@@ -196,7 +196,7 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 	ctx := s.alertContext(r)
 	var page domain.AlertTimelinePage
 	if query.Get("replay") == "1" {
-		replayed, ready, replayErr := s.svc.AlertTimelineReplayed(ctx, symbol, kind, 20, query.Get("cursor"))
+		replayed, ready, replayErr := s.svc.AlertTimelineReplayed(ctx, symbol, kind, domain.AlertTimelinePageSize, query.Get("cursor"))
 		if replayErr != nil {
 			problem(w, http.StatusServiceUnavailable, replayErr)
 			return
@@ -204,10 +204,10 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 		if ready {
 			page = replayed
 		} else {
-			page, err = s.svc.AlertTimeline(ctx, symbol, kind, 20, query.Get("cursor"))
+			page, err = s.svc.AlertTimeline(ctx, symbol, kind, domain.AlertTimelinePageSize, query.Get("cursor"))
 		}
 	} else {
-		page, err = s.svc.AlertTimeline(ctx, symbol, kind, 20, query.Get("cursor"))
+		page, err = s.svc.AlertTimeline(ctx, symbol, kind, domain.AlertTimelinePageSize, query.Get("cursor"))
 	}
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)

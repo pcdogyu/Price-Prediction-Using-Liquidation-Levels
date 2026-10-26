@@ -356,7 +356,7 @@ func TestRecentLiquidationEventsAndAlertPruning(t *testing.T) {
 		t.Fatal("an invalid limit must be rejected")
 	}
 	for i := 0; i < 3; i++ {
-		at := base.AddDate(0, 0, -200+i)
+		at := base.AddDate(0, 0, -(domain.AlertRetentionDays+20)+i)
 		if _, err = store.SaveLiquidationAlert(ctx, alertRow("old"+string(rune('a'+i)), "BTCUSDT", "long", at, domain.AlertStateExpired)); err != nil {
 			t.Fatal(err)
 		}
@@ -370,15 +370,21 @@ func TestRecentLiquidationEventsAndAlertPruning(t *testing.T) {
 	if _, err = store.SaveTradeSignal(ctx, signalRow("freshs", "BTCUSDT", domain.SignalSteady, "long", base)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = store.SaveLiquidationAlert(ctx, alertRow("within-retention", "BTCUSDT", "long", base.AddDate(0, 0, -(domain.AlertRetentionDays-1)), domain.AlertStateExpired)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.SaveTradeSignal(ctx, signalRow("within-retentions", "BTCUSDT", domain.SignalSteady, "long", base.AddDate(0, 0, -(domain.AlertRetentionDays-1)))); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.PruneAlerts(ctx, base.AddDate(0, 0, -domain.AlertRetentionDays)); err != nil {
 		t.Fatal(err)
 	}
 	remaining, err := store.LiquidationAlerts(ctx, "", "", 50, "")
-	if err != nil || remaining.AlertCount != 1 || remaining.Rows[0].ID != "fresh" {
+	if err != nil || remaining.AlertCount != 2 || remaining.Rows[0].ID != "fresh" || remaining.Rows[1].ID != "within-retention" {
 		t.Fatalf("expired alerts must be pruned: %+v err %v", remaining, err)
 	}
 	signals, err := store.TradeSignals(ctx, "", "", 50, "")
-	if err != nil || signals.SignalCount != 1 || signals.Rows[0].ID != "freshs" {
+	if err != nil || signals.SignalCount != 2 || signals.Rows[0].ID != "freshs" || signals.Rows[1].ID != "within-retentions" {
 		t.Fatalf("expired signals must be pruned: %+v err %v", signals, err)
 	}
 }
