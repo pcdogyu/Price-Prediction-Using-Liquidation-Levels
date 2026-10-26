@@ -34,6 +34,8 @@ func TestCancelAllGateContractOrdersCancelsOnlyRequestedContract(t *testing.T) {
 			canceled = append(canceled, r.URL.Query().Get("contract"))
 			mu.Unlock()
 			_, _ = w.Write([]byte(`{"id":101,"contract":"BTC_USDT","status":"finished"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/futures/usdt/price_orders":
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Fatalf("unexpected Gate request %s %s", r.Method, r.URL.String())
 		}

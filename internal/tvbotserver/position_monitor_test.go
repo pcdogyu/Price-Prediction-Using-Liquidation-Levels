@@ -41,6 +41,8 @@ func TestPositionMonitorOKXStartsLimitCloseAtThresholds(t *testing.T) {
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":%q,"tickSz":"0.1","ctVal":"1","lotSz":"1","minSz":"1"}]}`, r.URL.Query().Get("instId"))))
 		case "/api/v5/market/ticker":
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":%q,"bidPx":"99.9","askPx":"100.1","last":"100","ts":"1784880000000"}]}`, r.URL.Query().Get("instId"))))
+		case "/api/v5/trade/orders-pending", "/api/v5/trade/orders-algo-pending":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		case "/api/v5/trade/order":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -125,6 +127,8 @@ func TestPositionMonitorBinanceStartsLimitCloseAtThresholds(t *testing.T) {
 		case "/fapi/v1/ticker/bookTicker":
 			symbol := r.URL.Query().Get("symbol")
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"symbol":%q,"bidPrice":"99.9","bidQty":"1","askPrice":"100.1","askQty":"1"}`, symbol)))
+		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
+			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -240,6 +244,8 @@ func TestPositionMonitorGateSubmitsFullMarketCloseAtThresholds(t *testing.T) {
 			} else {
 				_, _ = w.Write([]byte(`[]`))
 			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/futures/usdt/price_orders":
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v4/futures/usdt/orders/"):
 			contract := r.URL.Query().Get("contract")
 			mu.Lock()

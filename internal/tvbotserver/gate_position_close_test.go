@@ -61,6 +61,11 @@ func TestTVBotGateFullLimitPositionClose(t *testing.T) {
 			default:
 				t.Fatalf("unexpected order method: %s", r.Method)
 			}
+		case "/api/v4/futures/usdt/price_orders":
+			if r.Method != http.MethodGet {
+				t.Fatalf("unexpected Gate price order method: %s", r.Method)
+			}
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}
@@ -113,6 +118,11 @@ func TestTVBotGateMarketPositionCloseUsesRequiredTextPrefix(t *testing.T) {
 			default:
 				t.Fatalf("unexpected order method: %s", r.Method)
 			}
+		case "/api/v4/futures/usdt/price_orders":
+			if r.Method != http.MethodGet {
+				t.Fatalf("unexpected Gate price order method: %s", r.Method)
+			}
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}
@@ -162,6 +172,11 @@ func TestTVBotGatePartialLimitPositionCloseUsesReduceOnlySize(t *testing.T) {
 			default:
 				t.Fatalf("unexpected order method: %s", r.Method)
 			}
+		case "/api/v4/futures/usdt/price_orders":
+			if r.Method != http.MethodGet {
+				t.Fatalf("unexpected Gate price order method: %s", r.Method)
+			}
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}

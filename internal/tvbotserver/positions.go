@@ -1128,7 +1128,17 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 	if err != nil {
 		return err
 	}
-	for _, position := range openPositions(positions) {
+	open := openPositions(positions)
+	openInstIDs := make(map[string]struct{}, len(open))
+	for _, position := range open {
+		if instID := strings.ToUpper(strings.TrimSpace(position.InstID)); instID != "" {
+			openInstIDs[instID] = struct{}{}
+		}
+	}
+	if err := cancelOrphanOKXOrders(ctx, client, openInstIDs); err != nil && s.Logger != nil {
+		s.Logger.Warn("failed to cancel OKX orders for closed positions", "api_id", apiID, "error", err)
+	}
+	for _, position := range open {
 		ratio, ok := positionMonitorUPLRatio(position)
 		if !ok {
 			continue
@@ -1204,11 +1214,22 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 	if err != nil {
 		return err
 	}
+	open := make([]okx.Position, 0, len(positions))
+	openSymbols := make(map[string]struct{}, len(positions))
 	for _, raw := range positions {
 		position := binancePositionToOKX(raw)
 		if !isOpenPosition(position.Pos) {
 			continue
 		}
+		open = append(open, position)
+		if symbol := strings.ToUpper(strings.TrimSpace(position.InstID)); symbol != "" {
+			openSymbols[symbol] = struct{}{}
+		}
+	}
+	if err := cancelOrphanBinanceOrders(ctx, client, openSymbols); err != nil && s.Logger != nil {
+		s.Logger.Warn("failed to cancel Binance orders for closed positions", "api_id", apiID, "error", err)
+	}
+	for _, position := range open {
 		ratio, ok := positionMonitorUPLRatio(position)
 		if !ok {
 			continue
@@ -1284,11 +1305,33 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 	if err != nil {
 		return err
 	}
+	open := make([]struct {
+		raw      gate.Position
+		position okx.Position
+	}, 0, len(positions))
+	openContracts := make(map[string]struct{}, len(positions))
 	for _, raw := range positions {
 		position := gatePositionToOKX(raw)
 		if !isOpenPosition(position.Pos) {
 			continue
 		}
+		contract := firstNonEmpty(strings.TrimSpace(raw.Contract), position.InstID)
+		if contract == "" {
+			continue
+		}
+		contract = strings.ToUpper(contract)
+		open = append(open, struct {
+			raw      gate.Position
+			position okx.Position
+		}{raw: raw, position: position})
+		openContracts[contract] = struct{}{}
+	}
+	if err := cancelOrphanGateOrders(ctx, client, openContracts); err != nil && s.Logger != nil {
+		s.Logger.Warn("failed to cancel Gate orders for closed positions", "api_id", apiID, "error", err)
+	}
+	for _, item := range open {
+		raw := item.raw
+		position := item.position
 		ratio, ok := positionMonitorUPLRatio(position)
 		if !ok {
 			continue
@@ -1336,6 +1379,114 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 		}
 		if s.Logger != nil {
 			s.Logger.Info("Gate auto position close submitted", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "upl_ratio", ratio, "ord_id", ack.IDString())
+		}
+	}
+	return nil
+}
+
+// cancelOrphanOKXOrders removes all normal and algorithm orders for
+// instruments that no longer have an open position. Position-monitor close
+// watchers handle orders created by this process; this sweep also covers TP/SL
+// orders that were filled or closed by another process before the next scan.
+func cancelOrphanOKXOrders(ctx context.Context, client okx.Client, openInstIDs map[string]struct{}) error {
+	orders, _, err := client.PendingOrders(ctx, "SWAP")
+	if err != nil {
+		return fmt.Errorf("inspect OKX pending orders for closed positions failed: %w", err)
+	}
+	algoOrders, _, err := client.PendingAlgoOrders(ctx, "SWAP", "")
+	if err != nil {
+		return fmt.Errorf("inspect OKX algorithm orders for closed positions failed: %w", err)
+	}
+	orphanInstIDs := make(map[string]struct{})
+	add := func(instID string) {
+		instID = strings.ToUpper(strings.TrimSpace(instID))
+		if instID == "" {
+			return
+		}
+		if _, open := openInstIDs[instID]; !open {
+			orphanInstIDs[instID] = struct{}{}
+		}
+	}
+	for _, order := range orders {
+		add(order.InstID)
+	}
+	for _, order := range algoOrders {
+		add(order.InstID)
+	}
+	for instID := range orphanInstIDs {
+		if err := cancelAllOKXInstrumentOrders(ctx, client, instID); err != nil {
+			return fmt.Errorf("cancel OKX orders for closed instrument %s failed: %w", instID, err)
+		}
+	}
+	return nil
+}
+
+// cancelOrphanBinanceOrders removes all regular and algorithm orders for
+// symbols that no longer have an open position. A successful position-risk
+// response is required before this sweep is attempted by the caller.
+func cancelOrphanBinanceOrders(ctx context.Context, client binance.Client, openSymbols map[string]struct{}) error {
+	orders, err := client.OpenOrders(ctx, "")
+	if err != nil {
+		return fmt.Errorf("inspect Binance open orders for closed positions failed: %w", err)
+	}
+	algoOrders, err := client.OpenAlgoOrders(ctx, "")
+	if err != nil {
+		return fmt.Errorf("inspect Binance algorithm orders for closed positions failed: %w", err)
+	}
+	orphanSymbols := make(map[string]struct{})
+	add := func(symbol string) {
+		symbol = strings.ToUpper(strings.TrimSpace(symbol))
+		if symbol == "" {
+			return
+		}
+		if _, open := openSymbols[symbol]; !open {
+			orphanSymbols[symbol] = struct{}{}
+		}
+	}
+	for _, order := range orders {
+		add(order.Symbol)
+	}
+	for _, order := range algoOrders {
+		add(order.Symbol)
+	}
+	for symbol := range orphanSymbols {
+		if err := cancelAllBinanceSymbolOrders(ctx, client, symbol); err != nil {
+			return fmt.Errorf("cancel Binance orders for closed symbol %s failed: %w", symbol, err)
+		}
+	}
+	return nil
+}
+
+// cancelOrphanGateOrders removes ordinary and price-triggered orders for
+// contracts that no longer have an open position.
+func cancelOrphanGateOrders(ctx context.Context, client gate.Client, openContracts map[string]struct{}) error {
+	orders, err := client.OpenOrders(ctx, "")
+	if err != nil {
+		return fmt.Errorf("inspect Gate open orders for closed positions failed: %w", err)
+	}
+	priceOrders, err := client.OpenPriceTriggeredOrders(ctx, "")
+	if err != nil {
+		return fmt.Errorf("inspect Gate price-triggered orders for closed positions failed: %w", err)
+	}
+	orphanContracts := make(map[string]struct{})
+	add := func(contract string) {
+		contract = strings.ToUpper(strings.TrimSpace(contract))
+		if contract == "" {
+			return
+		}
+		if _, open := openContracts[contract]; !open {
+			orphanContracts[contract] = struct{}{}
+		}
+	}
+	for _, order := range orders {
+		add(order.Contract)
+	}
+	for _, order := range priceOrders {
+		add(order.Initial.Contract)
+	}
+	for contract := range orphanContracts {
+		if err := cancelAllGateContractOrders(ctx, client, contract); err != nil {
+			return fmt.Errorf("cancel Gate orders for closed contract %s failed: %w", contract, err)
 		}
 	}
 	return nil
@@ -1932,9 +2083,10 @@ func placeGateMarketPositionClose(ctx context.Context, cfg config.Config, client
 	})
 }
 
-// cancelAllGateContractOrders removes every currently open Gate order for the
-// contract before a manual close is submitted. The final read is intentional:
-// a close must not be sent while an entry or protection order is still live.
+// cancelAllGateContractOrders removes every currently open Gate normal and
+// price-triggered order for the contract before a close is submitted. The
+// final read is intentional: a close must not be sent while an entry or
+// protection order is still live.
 func cancelAllGateContractOrders(ctx context.Context, client gate.Client, contract string) error {
 	contract = strings.ToUpper(strings.TrimSpace(contract))
 	if contract == "" {
@@ -1956,6 +2108,15 @@ func cancelAllGateContractOrders(ctx context.Context, client gate.Client, contra
 			return fmt.Errorf("cancel Gate order %s for %s failed: %w", orderID, contract, err)
 		}
 	}
+	priceOrders, err := client.OpenPriceTriggeredOrders(ctx, contract)
+	if err != nil {
+		return fmt.Errorf("inspect Gate price-triggered orders for %s failed: %w", contract, err)
+	}
+	if len(priceOrders) > 0 {
+		if _, err := client.CancelAllPriceTriggeredOrders(ctx, contract); err != nil {
+			return fmt.Errorf("cancel Gate price-triggered orders for %s failed: %w", contract, err)
+		}
+	}
 
 	orders, err = client.OpenOrders(ctx, contract)
 	if err != nil {
@@ -1967,8 +2128,12 @@ func cancelAllGateContractOrders(ctx context.Context, client gate.Client, contra
 			remaining++
 		}
 	}
-	if remaining != 0 {
-		return fmt.Errorf("Gate orders remain for %s after cancellation (%d); close was not submitted", contract, remaining)
+	priceOrders, err = client.OpenPriceTriggeredOrders(ctx, contract)
+	if err != nil {
+		return fmt.Errorf("verify Gate price-triggered orders for %s failed: %w", contract, err)
+	}
+	if remaining != 0 || len(priceOrders) != 0 {
+		return fmt.Errorf("Gate orders remain for %s after cancellation (normal=%d, algorithm=%d); close was not submitted", contract, remaining, len(priceOrders))
 	}
 	return nil
 }

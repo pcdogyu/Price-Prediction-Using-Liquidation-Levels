@@ -734,6 +734,19 @@ func (c Client) OpenPriceTriggeredOrders(ctx context.Context, contract string) (
 	return out, err
 }
 
+// CancelAllPriceTriggeredOrders cancels all open Gate futures auto orders,
+// optionally limited to one contract. Gate exposes these TP/SL orders through
+// a separate endpoint from ordinary futures orders.
+func (c Client) CancelAllPriceTriggeredOrders(ctx context.Context, contract string) ([]PriceTriggeredOrder, error) {
+	q := url.Values{}
+	if strings.TrimSpace(contract) != "" {
+		q.Set("contract", contract)
+	}
+	var out []PriceTriggeredOrder
+	err := c.Do(ctx, http.MethodDelete, "/futures/usdt/price_orders", q, nil, true, &out)
+	return out, err
+}
+
 func (c Client) CancelOrder(ctx context.Context, contract, orderID string) (Order, error) {
 	var out Order
 	err := c.Do(ctx, http.MethodDelete, "/futures/usdt/orders/"+url.PathEscape(strings.TrimSpace(orderID)), url.Values{"contract": []string{strings.TrimSpace(contract)}}, nil, true, &out)
