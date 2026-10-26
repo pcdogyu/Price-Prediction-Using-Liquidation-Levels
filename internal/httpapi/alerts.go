@@ -93,7 +93,7 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/timeline", getOnly(s.alertTimeline))
 	mux.HandleFunc("/api/v1/alerts/chart-signals", getOnly(s.alertChartSignals))
 	mux.HandleFunc("/api/v1/alerts/recalculate", postOnly(s.alertRecalculate))
-	mux.HandleFunc("/api/v1/alerts/backtest", postOnly(s.alertBacktest))
+	mux.HandleFunc("/api/v1/alerts/backtest", s.alertBacktest)
 	mux.HandleFunc("/api/v1/alerts/klines", getOnly(s.alertKlines))
 	mux.HandleFunc("/api/v1/alerts/liquidation-delta", getOnly(s.alertLiquidationDelta))
 	mux.HandleFunc("/api/v1/alerts/settings", s.alertSettings)
@@ -447,13 +447,35 @@ func (s *Server) alertRecalculate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) alertBacktest(w http.ResponseWriter, r *http.Request) {
-	report, err := s.svc.AlertBacktestForContext(s.alertContext(r))
+	ctx := s.alertContext(r)
+	var status app.AlertBacktestStatus
+	var err error
+	switch r.Method {
+	case http.MethodPost:
+		status, err = s.svc.StartAlertBacktestForContext(ctx)
+	case http.MethodGet:
+		status, err = s.svc.AlertBacktestStatusForContext(ctx, r.URL.Query().Get("job_id"))
+	default:
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+		problem(w, http.StatusMethodNotAllowed, fmt.Errorf("method must be GET or POST"))
+		return
+	}
 	if err != nil {
-		problem(w, http.StatusServiceUnavailable, err)
+		if errors.Is(err, app.ErrAlertBacktestNotFound) {
+			problem(w, http.StatusNotFound, err)
+		} else {
+			problem(w, http.StatusServiceUnavailable, err)
+		}
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, report)
+	code := http.StatusOK
+	if status.Status == "running" {
+		code = http.StatusAccepted
+	} else if status.Status == "failed" {
+		code = http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, status)
 }
 
 func alertChartReplayHours(raw string) (int, error) {

@@ -50,6 +50,9 @@ type alertRuntime struct {
 	replayTimeline []replayedTimelineRow
 	replayTo       time.Time
 	replayReady    bool
+
+	backtestMu  sync.Mutex
+	backtestJob *alertBacktestJob
 }
 
 // alertNotifyCooldown suppresses repeated messages for the same symbol and signal

@@ -2,11 +2,111 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
+
+var ErrAlertBacktestNotFound = errors.New("alert backtest job not found")
+
+// AlertBacktestStatus is the short-poll response used by the alerts page. The
+// actual replay runs outside the request context because a two-week raw replay
+// can take longer than the reverse proxy's request timeout.
+type AlertBacktestStatus struct {
+	JobID  string                      `json:"job_id"`
+	Status string                      `json:"status"`
+	Report *domain.AlertBacktestReport `json:"report,omitempty"`
+	Error  string                      `json:"error,omitempty"`
+}
+
+type alertBacktestJob struct {
+	id          string
+	status      string
+	report      domain.AlertBacktestReport
+	err         string
+	completedAt time.Time
+}
+
+func (j *alertBacktestJob) snapshot() AlertBacktestStatus {
+	status := AlertBacktestStatus{JobID: j.id, Status: j.status, Error: j.err}
+	if j.status == "completed" {
+		report := j.report
+		status.Report = &report
+	}
+	return status
+}
+
+func newAlertBacktestJobID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err == nil {
+		return hex.EncodeToString(raw[:])
+	}
+	return fmt.Sprintf("%x", time.Now().UnixNano())
+}
+
+// StartAlertBacktestForContext starts or reuses the current tenant's one active
+// replay. Completed reports are kept briefly so a page reload does not launch
+// another expensive scan immediately.
+func (s *Service) StartAlertBacktestForContext(ctx context.Context) (AlertBacktestStatus, error) {
+	rtm, err := s.alertRuntimeForContext(ctx)
+	if err != nil {
+		return AlertBacktestStatus{}, err
+	}
+	rtm.backtestMu.Lock()
+	now := time.Now().UTC()
+	if existing := rtm.backtestJob; existing != nil {
+		if existing.status == "running" || (existing.status == "completed" && now.Sub(existing.completedAt) < 10*time.Minute) {
+			status := existing.snapshot()
+			rtm.backtestMu.Unlock()
+			return status, nil
+		}
+	}
+	job := &alertBacktestJob{id: newAlertBacktestJobID(), status: "running"}
+	rtm.backtestJob = job
+	status := job.snapshot()
+	rtm.backtestMu.Unlock()
+
+	go func() {
+		// Keep the tenant value but let the replay finish after the browser or
+		// proxy closes the original request.
+		report, replayErr := s.AlertBacktestForContext(context.WithoutCancel(ctx))
+		rtm.backtestMu.Lock()
+		defer rtm.backtestMu.Unlock()
+		if rtm.backtestJob != job {
+			return
+		}
+		job.completedAt = time.Now().UTC()
+		if replayErr != nil {
+			job.status = "failed"
+			job.err = replayErr.Error()
+			return
+		}
+		job.status = "completed"
+		job.report = report
+	}()
+	return status, nil
+}
+
+// AlertBacktestStatusForContext returns only the job belonging to the current
+// tenant, so an opaque job ID cannot be used to read another tenant's report.
+func (s *Service) AlertBacktestStatusForContext(ctx context.Context, jobID string) (AlertBacktestStatus, error) {
+	rtm, err := s.alertRuntimeForContext(ctx)
+	if err != nil {
+		return AlertBacktestStatus{}, err
+	}
+	rtm.backtestMu.Lock()
+	defer rtm.backtestMu.Unlock()
+	if rtm.backtestJob == nil || strings.TrimSpace(jobID) == "" || rtm.backtestJob.id != strings.TrimSpace(jobID) {
+		return AlertBacktestStatus{}, ErrAlertBacktestNotFound
+	}
+	return rtm.backtestJob.snapshot(), nil
+}
 
 const (
 	alertBacktestWindow        = 14 * 24 * time.Hour

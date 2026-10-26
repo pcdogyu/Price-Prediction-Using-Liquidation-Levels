@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/app"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/observability"
@@ -350,17 +351,31 @@ func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
 	srv, st := alertTestServer(t)
 	defer st.Close()
 	w := serveAlert(srv, http.MethodPost, "/api/v1/alerts/backtest", nil)
-	if w.Code != http.StatusOK {
+	if w.Code != http.StatusOK && w.Code != http.StatusAccepted {
 		t.Fatalf("backtest status=%d body=%s", w.Code, w.Body.String())
 	}
-	var report domain.AlertBacktestReport
-	if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil {
+	var status app.AlertBacktestStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
+	for attempt := 0; status.Status == "running" && attempt < 50; attempt++ {
+		time.Sleep(10 * time.Millisecond)
+		poll := serveAlert(srv, http.MethodGet, "/api/v1/alerts/backtest?job_id="+url.QueryEscape(status.JobID), nil)
+		if poll.Code != http.StatusOK && poll.Code != http.StatusAccepted {
+			t.Fatalf("backtest poll status=%d body=%s", poll.Code, poll.Body.String())
+		}
+		if err := json.Unmarshal(poll.Body.Bytes(), &status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if status.Status != "completed" || status.Report == nil {
+		t.Fatalf("backtest job did not complete: %+v", status)
+	}
+	report := *status.Report
 	if report.WindowDays != 14 || report.HoldingMinutes != 15 || len(report.Rows) != 12 {
 		t.Fatalf("unexpected backtest report: %+v", report)
 	}
-	if got := serveAlert(srv, http.MethodGet, "/api/v1/alerts/backtest", nil).Code; got != http.StatusMethodNotAllowed {
+	if got := serveAlert(srv, http.MethodGet, "/api/v1/alerts/backtest", nil).Code; got != http.StatusNotFound {
 		t.Fatalf("GET backtest status=%d", got)
 	}
 }

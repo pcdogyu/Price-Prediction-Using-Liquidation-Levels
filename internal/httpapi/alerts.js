@@ -192,8 +192,26 @@
     try {
       const response = await fetch(base + 'api/v1/alerts/backtest', { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
       const packet = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
-      renderBacktest(packet);
+      if (!response.ok && response.status !== 202) throw new Error(packet.detail || 'HTTP ' + response.status);
+      let result = packet;
+      if (packet.status === 'running') {
+        $('alerts-backtest-status').textContent = '回测已在后台运行，等待计算完成…';
+        for (let attempt = 0; attempt < 600; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          const poll = await fetch(base + 'api/v1/alerts/backtest?job_id=' + encodeURIComponent(packet.job_id), { cache: 'no-store', credentials: 'same-origin' });
+          const update = await poll.json().catch(() => ({}));
+          if (!poll.ok && poll.status !== 202) throw new Error(update.detail || 'HTTP ' + poll.status);
+          if (update.status === 'running') {
+            $('alerts-backtest-status').textContent = '回测计算中… 已完成后台读取，等待信号评分';
+            continue;
+          }
+          result = update;
+          break;
+        }
+        if (result.status === 'running') throw new Error('后台回测等待超时');
+      }
+      if (result.status === 'failed') throw new Error(result.error || '后台回测失败');
+      renderBacktest(result.report || result);
       clearError();
     } catch (caught) {
       $('alerts-backtest-status').textContent = '回测失败';
