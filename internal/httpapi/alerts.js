@@ -417,8 +417,8 @@
       [$('alerts-order-aggressive').checked, '激进开仓'],
       [$('alerts-order-steady-close').checked, '稳健平仓'],
       [$('alerts-order-steady').checked, '稳健开仓'],
-      [$('alerts-order-value-area-close').checked, '价值区平仓'],
-      [$('alerts-order-value-area').checked, '价值区开仓']
+      [$('alerts-order-value-area-close').checked, '交易所刷单平仓'],
+      [$('alerts-order-value-area').checked, '交易所刷单开仓']
     ].filter(item => item[0]).map(item => item[1]);
     $('alerts-order-signal-summary').textContent = selected.length ? '已开启：' + selected.join('、') : '当前不自动发送下单信号';
   }
