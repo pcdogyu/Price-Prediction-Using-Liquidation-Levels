@@ -19,54 +19,6 @@ type TopMenuItem struct {
 	Href  string
 }
 
-type tvbotViewRoute struct {
-	Slug  string
-	Tab   string
-	Label string
-}
-
-var tvbotViewRoutes = []tvbotViewRoute{
-	{Slug: "dashboard", Tab: "dashboard", Label: "资金"},
-	{Slug: "system", Tab: "system", Label: "系统信息"},
-	{Slug: "positions", Tab: "positions", Label: "持仓"},
-	{Slug: "analysis", Tab: "analysis", Label: "订单分析"},
-	{Slug: "symbols", Tab: "symbols", Label: "币对配置"},
-	{Slug: "config", Tab: "config", Label: "订单配置"},
-	{Slug: "api-keys", Tab: "apiKeys", Label: "API Key"},
-	{Slug: "order-settings", Tab: "orderSettings", Label: "下单设置"},
-	{Slug: "template", Tab: "template", Label: "告警模板"},
-	{Slug: "orders", Tab: "orders", Label: "信号"},
-	{Slug: "trade-monitor", Tab: "tradeMonitor", Label: "成交监听"},
-	{Slug: "menu-settings", Tab: "menuSettings", Label: "菜单设置"},
-	{Slug: "upgrade", Tab: "upgrade", Label: "升级"},
-}
-
-func tvbotViewRouteForPath(path string) (tvbotViewRoute, bool) {
-	const prefix = "/view/"
-	if !strings.HasPrefix(path, prefix) {
-		return tvbotViewRoute{}, false
-	}
-	slug := strings.TrimSuffix(strings.TrimPrefix(path, prefix), "/")
-	if slug == "" || strings.Contains(slug, "/") {
-		return tvbotViewRoute{}, false
-	}
-	for _, route := range tvbotViewRoutes {
-		if route.Slug == slug {
-			return route, true
-		}
-	}
-	return tvbotViewRoute{}, false
-}
-
-func tvbotViewPath(tab string) string {
-	for _, route := range tvbotViewRoutes {
-		if route.Tab == tab {
-			return "/tvbot/view/" + route.Slug
-		}
-	}
-	return "/tvbot/view/dashboard"
-}
-
 func (b BuildInfo) FooterText() string {
 	return "Code by Yuhao@jiansutech.com - " +
 		formatBuildTime(b.CommitTime) + " - " +
@@ -138,16 +90,6 @@ func defaultTopMenu() []TopMenuItem {
 		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall"},
 		{Key: "market-info", Title: "市场信息", Href: "/market-info"},
 		{Key: "options", Title: "期权", Href: "/options"},
-		{Key: "orders", Title: "信号", Href: "/tvbot/view/orders"},
-		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions"},
-		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis"},
-		{Key: "symbols", Title: "币对配置", Href: "/tvbot/view/symbols"},
-		{Key: "config", Title: "订单配置", Href: "/tvbot/view/config"},
-		{Key: "api-keys", Title: "API Key", Href: "/tvbot/view/api-keys"},
-		{Key: "order-settings", Title: "下单设置", Href: "/tvbot/view/order-settings"},
-		{Key: "template", Title: "告警模板", Href: "/tvbot/view/template"},
-		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot/view/trade-monitor"},
-		{Key: "upgrade", Title: "升级", Href: "/tvbot/view/upgrade"},
 		{Key: "system-info", Title: "系统信息", Href: "/system"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu"},
 		{Key: "system", Title: "用户管理", Href: "/admin"},
@@ -171,10 +113,8 @@ func renderTVBotHTMLWithTenantMenuAndUser(info BuildInfo, r *http.Request, menu 
 	assets := `<meta name="app-base" content="` + html.EscapeString(link("/")) + `"><script src="` + html.EscapeString(link("/assets/theme.js")) + `"></script><link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `"><script src="` + html.EscapeString(link("/assets/shared.js")) + `" defer></script>`
 	page := strings.Replace(tvbotHTML, "</head>", assets+"</head>", 1)
 	currentTab := ""
-	if path := strings.TrimPrefix(r.URL.Path, "/tvbot"); path != r.URL.Path {
-		if route, ok := tvbotViewRouteForPath(path); ok {
-			currentTab = route.Tab
-		}
+	if strings.TrimSuffix(r.URL.Path, "/") == "/system" {
+		currentTab = "system"
 	}
 	active := func(item TopMenuItem) bool {
 		tab := topMenuTab(item)
@@ -182,7 +122,7 @@ func renderTVBotHTMLWithTenantMenuAndUser(info BuildInfo, r *http.Request, menu 
 	}
 	username = strings.TrimSpace(username)
 	page = strings.Replace(page, "{{HOME_LINK}}", html.EscapeString(link("/alerts")), 1)
-	page = strings.Replace(page, "{{UNIFIED_NAV}}", RenderTVBotNav(menu, link, active, username, link("/auth/logout")), 1)
+	page = strings.Replace(page, "{{UNIFIED_NAV}}", RenderUnifiedNav(menu, link, active, username, link("/auth/logout")), 1)
 	page = strings.Replace(page, "{{SHARED_LOGS}}", RenderSharedLogsDialog(), 1)
 	if tenantID = strings.TrimSpace(tenantID); tenantID != "" {
 		// tenant IDs are generated from URL-safe base64 usernames, so they are
@@ -195,10 +135,6 @@ func renderTVBotHTMLWithTenantMenuAndUser(info BuildInfo, r *http.Request, menu 
 }
 
 func topMenuTab(item TopMenuItem) string {
-	path := strings.TrimPrefix(item.Href, "/tvbot")
-	if route, ok := tvbotViewRouteForPath(path); ok {
-		return route.Tab
-	}
 	if item.Href == "/system" {
 		return "system"
 	}
@@ -3547,7 +3483,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function syncActiveTabAfterMenuSettings() {
-      const pathTab = tabFromViewPath();
+      const pathTab = tabFromRoute();
       const active = activeTabID();
       if (!pathTab && !menuSettingsSynced) {
         menuSettingsSynced = true;
@@ -3569,7 +3505,7 @@ const tvbotHTML = `<!doctype html>
       const nav = document.querySelector("nav");
       if (!nav) return;
       if (nav.dataset.unifiedMenu === "true") {
-        syncOrderInfoVisibility(activeTabID() || tabFromViewPath() || "dashboard");
+        syncOrderInfoVisibility(activeTabID() || tabFromRoute() || "dashboard");
         return;
       }
       const known = {};
@@ -3771,38 +3707,17 @@ const tvbotHTML = `<!doctype html>
       box.hidden = tabID !== "orderSettings";
     }
 
-    const tvbotViewTabBySlug = {
-      dashboard: "dashboard",
-      system: "system",
-      positions: "positions",
-      analysis: "analysis",
-      symbols: "symbols",
-      config: "config",
-      "api-keys": "apiKeys",
-      "order-settings": "orderSettings",
-      template: "template",
-      orders: "orders",
-      "trade-monitor": "tradeMonitor",
-      "menu-settings": "menuSettings",
-      upgrade: "upgrade"
-    };
-
-    function tabFromViewPath() {
-      const marker = "/tvbot/view/";
-      const start = location.pathname.indexOf(marker);
-      if (start >= 0) {
-        const slug = location.pathname.slice(start + marker.length).split("/")[0];
-        if (tvbotViewTabBySlug[slug]) return tvbotViewTabBySlug[slug];
-      }
+    function tabFromRoute() {
+      const requested = new URLSearchParams(location.search).get("tab");
+      if (requested && $(requested)) return requested;
       const path = location.pathname.replace(/\/+$/, "");
       return path.endsWith("/system") ? "system" : "";
     }
 
-    function tvbotViewURL(slug) {
-      const marker = "/tvbot/";
-      const start = location.pathname.indexOf(marker);
-      const base = start >= 0 ? location.pathname.slice(0, start) + "/tvbot" : "/tvbot";
-      return new URL(base + "/view/" + slug, window.location.origin);
+    function tvbotPageURL(tab) {
+      const url = new URL("/tvbot", window.location.origin);
+      if (tab) url.searchParams.set("tab", tab);
+      return url;
     }
 
     function activateTab(tabID) {
@@ -3862,7 +3777,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function initialTab() {
-      const fromPath = tabFromViewPath();
+      const fromPath = tabFromRoute();
       const pathButton = tabButton(fromPath);
       if (fromPath && pathButton && !pathButton.hidden && $(fromPath)) return fromPath;
       return effectiveDefaultTab();
@@ -5216,7 +5131,7 @@ const tvbotHTML = `<!doctype html>
       params.set("coinpair", String(button.dataset.templateSymbol || "").trim());
       params.set("direction", "both");
       params.set("price_source", "close");
-      const url = tvbotViewURL("template");
+      const url = tvbotPageURL("template");
       url.search = params.toString();
       return url.toString();
     }
@@ -7551,7 +7466,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function applyTemplateQueryParams() {
-      if (tabFromViewPath() !== "template") return;
+      if (tabFromRoute() !== "template") return;
       const params = new URLSearchParams(location.search);
       const symbol = String(params.get("coinpair") || "").trim();
       if (!symbol) return;

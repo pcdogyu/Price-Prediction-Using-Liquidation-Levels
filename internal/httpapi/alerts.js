@@ -515,7 +515,7 @@
       const exchange = String(packet.target_exchange || '').toLowerCase();
       const exchangeLabel = exchange === 'gate' ? 'Gate' : exchange === 'okx' ? 'OKX' : exchange === 'binance' ? 'Binance' : '配置目标交易所';
       const envLabel = packet.trade_env === 'live' ? '实盘' : '模拟盘';
-      const ordersURL = base + 'tvbot/view/orders' + (exchange ? '?exchange=' + encodeURIComponent(exchange) : '');
+      const ordersURL = base + 'tvbot?tab=orders' + (exchange ? '&exchange=' + encodeURIComponent(exchange) : '');
       success('下单信号已发送到 ' + escape(exchangeLabel) + ' ' + escape(envLabel) + '。订单历史按交易所分开，请刷新对应页面查看。 <a href="' + escape(ordersURL) + '">打开订单历史</a>');
     } catch (caught) {
       button.disabled = false;

@@ -10,7 +10,7 @@ function bootTheme({ stored = 'light', remoteTheme = 'dark', fetchError = false,
   const local = new Map([['liquidation.theme', stored]]);
   const root = { dataset: {} };
   const window = {
-    location: { href: 'https://example.test/liquidation/tvbot/view/dashboard', pathname: '/liquidation/tvbot/view/dashboard' },
+    location: { href: 'https://example.test/liquidation/tvbot?tab=dashboard', pathname: '/liquidation/tvbot' },
     dispatchEvent() {},
     addEventListener() {}
   };

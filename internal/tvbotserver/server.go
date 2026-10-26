@@ -615,6 +615,10 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 		s.handleTVBotLogout(w, r)
 		return
 	}
+	if strings.HasPrefix(path, "/view/") {
+		writeError(w, http.StatusNotFound, "not_found", "the legacy /tvbot/view/* pages have been retired")
+		return
+	}
 	if s.RequireUnifiedUser != nil {
 		require := s.RequireUnifiedUser
 		if requiresAdminEndpoint(path, r) {
@@ -638,18 +642,6 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s = scoped
-	}
-	if strings.HasPrefix(path, "/view/") {
-		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "tvbot view pages only accept GET")
-			return
-		}
-		if _, ok := tvbotViewRouteForPath(path); !ok {
-			writeError(w, http.StatusNotFound, "not_found", "unknown /tvbot view")
-			return
-		}
-		writeHTML(w, http.StatusOK, s.renderTVBotHTML(r))
-		return
 	}
 	if path == "" || path == "/" {
 		if r.Method != http.MethodGet {

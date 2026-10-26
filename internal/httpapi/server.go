@@ -217,7 +217,7 @@ func (s *Server) systemPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request := r.Clone(r.Context())
-	request.URL.Path = "/tvbot/view/system"
+	request.URL.Path = "/tvbot"
 	request.URL.RawPath = ""
 	request.RequestURI = request.URL.RequestURI()
 	s.tvbot.ServeHTTP(w, request)
@@ -776,13 +776,11 @@ func (s *Server) authorize(next http.Handler) http.Handler {
 	})
 }
 
-// isTVBotPage identifies the server-rendered TVBot navigation pages. These
-// routes must redirect to the unified login page even when a direct browser
-// navigation arrives without an Accept or Sec-Fetch-Dest header. API routes
-// under /tvbot remain content-negotiated so programmatic callers still receive
-// JSON 401 responses.
+// isTVBotPage identifies the remaining server-rendered TVBot entry page. API
+// routes under /tvbot remain content-negotiated so programmatic callers still
+// receive JSON 401 responses.
 func isTVBotPage(path string) bool {
-	return path == "/tvbot" || path == "/tvbot/" || strings.HasPrefix(path, "/tvbot/view/")
+	return path == "/tvbot" || path == "/tvbot/"
 }
 
 func localProbe(r *http.Request) bool {

@@ -57,7 +57,7 @@ func TestSecurityHeadersPermitOnlyEmbeddedCharts(t *testing.T) {
 		{path: "/alerts/chart?position=1", frameOption: "SAMEORIGIN", frameAncestors: "frame-ancestors 'self'"},
 		{path: "/alerts/chart?symbol=BTCUSDT", frameOption: "DENY", frameAncestors: "frame-ancestors 'none'"},
 		{path: "/bubbles", frameOption: "DENY", frameAncestors: "frame-ancestors 'none'"},
-		{path: "/tvbot/view/positions", frameOption: "DENY", frameAncestors: "frame-ancestors 'none'"},
+		{path: "/tvbot?tab=positions", frameOption: "DENY", frameAncestors: "frame-ancestors 'none'"},
 	}
 	for _, tc := range cases {
 		r := httptest.NewRequest(http.MethodGet, tc.path, nil)
@@ -334,9 +334,8 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	for _, path := range []string{"/tvbot/view/dashboard", "/tvbot/view/positions", "/tvbot/view/trade-monitor", "/tvbot/view/symbols", "/tvbot/view/upgrade"} {
 		page := httptest.NewRecorder()
 		srv.http.Handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, path, nil))
-		want := "/liquidation/?next=" + url.QueryEscape(path)
-		if page.Code != http.StatusFound || page.Header().Get("Location") != want {
-			t.Fatalf("direct TVBot page %s redirect status=%d location=%s body=%s", path, page.Code, page.Header().Get("Location"), page.Body.String())
+		if page.Code != http.StatusUnauthorized {
+			t.Fatalf("retired TVBot page %s status=%d location=%s body=%s", path, page.Code, page.Header().Get("Location"), page.Body.String())
 		}
 	}
 	r = httptest.NewRequest(http.MethodPost, "/api/v1/coinglass/capture", nil)

@@ -8,7 +8,7 @@ import (
 )
 
 func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
-	req := httptest.NewRequest("GET", "/tvbot/view/positions", nil)
+	req := httptest.NewRequest("GET", "/tvbot", nil)
 	req.Header.Set("X-Forwarded-Prefix", "/liquidation")
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, req)
 
@@ -37,9 +37,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`class="nav-system-trigger header-action"`,
 		`交易所信息`,
 		`href="/liquidation/alerts"`,
-		`data-tab="positions" href="/liquidation/tvbot/view/positions"`,
 		`href="/liquidation/admin">用户管理`,
-		`data-tab="apiKeys" href="/liquidation/tvbot/view/api-keys"`,
 		`href="/liquidation/admin"`,
 		`id="nav-theme"`,
 		`id="nav-logs" type="button">程序日志</button>`,
@@ -68,6 +66,9 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 	if strings.Contains(page, `href="/liquidation/tvbot/view/dashboard"`) {
 		t.Fatal("funding dashboard should not be exposed in the top navigation")
+	}
+	if strings.Contains(page, `/liquidation/tvbot/view/`) {
+		t.Fatal("retired TVBot view routes should not be exposed in the top navigation")
 	}
 	saveButton := strings.Index(page, `id="save-api-keys"`)
 	testButton := strings.Index(page, `id="test-api-keys"`)
@@ -131,7 +132,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 }
 
 func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
-	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/analysis", nil))
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	entryColumn := strings.Index(page, `{ id: "entry_time", title: "开仓时间"`)
 	exitColumn := strings.Index(page, `{ id: "exit_time", title: "平仓时间"`)
 	if entryColumn < 0 || exitColumn < 0 || entryColumn >= exitColumn {
@@ -168,7 +169,7 @@ func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 }
 
 func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
-	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/positions", nil))
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{
 		`cell: (row) => positionSymbolCell(row)`,
 		`function positionSymbolCell(row)`,
@@ -229,7 +230,7 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 }
 
 func TestRenderTVBotPositionsFormatsFractionalEpochSeconds(t *testing.T) {
-	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/positions", nil))
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{
 		`const epoch = Number(raw);`,
 		`Math.abs(epoch) < 1e12 ? epoch * 1000 : epoch`,
@@ -242,7 +243,7 @@ func TestRenderTVBotPositionsFormatsFractionalEpochSeconds(t *testing.T) {
 }
 
 func TestRenderTVBotPositionsShowsOverallReturn(t *testing.T) {
-	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/positions", nil))
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	metricsStart := strings.Index(page, `<div class="analysis-metrics position-metrics">`)
 	if metricsStart < 0 {
 		t.Fatalf("position summary metrics are missing: start=%d", metricsStart)
@@ -277,7 +278,7 @@ func TestRenderTVBotPositionsShowsOverallReturn(t *testing.T) {
 }
 
 func TestRenderTVBotHTMLShowsCurrentUserBeforeLogout(t *testing.T) {
-	req := httptest.NewRequest("GET", "/tvbot/view/dashboard", nil)
+	req := httptest.NewRequest("GET", "/tvbot", nil)
 	req.Header.Set("X-Forwarded-Prefix", "/liquidation")
 	page := (&Server{
 		BuildInfo: BuildInfo{CommitHash: "test"},
@@ -321,30 +322,17 @@ func TestTVBotThemeStylesUseSemanticSurfaceColors(t *testing.T) {
 	}
 }
 
-func TestRenderTVBotHTMLAppliesThemeAssetsToEveryViewRoute(t *testing.T) {
-	for _, item := range defaultTopMenu() {
-		tab := topMenuTab(item)
-		if tab == "" {
-			continue
-		}
-		req := httptest.NewRequest("GET", tvbotViewPath(tab), nil)
-		page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, req)
+func TestRenderTVBotHTMLAppliesThemeAssetsToRemainingEntryRoutes(t *testing.T) {
+	for _, path := range []string{"/tvbot", "/system"} {
+		page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", path, nil))
 		if !strings.Contains(page, `src="/assets/theme.js"`) || !strings.Contains(page, `href="/assets/theme.css"`) {
-			t.Fatalf("view %s is missing shared theme assets", tab)
-		}
-		menuItem := strings.Index(page, `data-tab="`+tab+`"`)
-		menuItemEnd := menuItem + 240
-		if menuItemEnd > len(page) {
-			menuItemEnd = len(page)
-		}
-		if menuItem < 0 || !strings.Contains(page[menuItem:menuItemEnd], `aria-current="page"`) {
-			t.Fatalf("view %s is not marked active in the unified menu", tab)
+			t.Fatalf("route %s is missing shared theme assets", path)
 		}
 	}
 }
 
 func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
-	req := httptest.NewRequest("GET", "/tvbot/view/dashboard", nil)
+	req := httptest.NewRequest("GET", "/tvbot", nil)
 	req.Header.Set("X-Forwarded-Prefix", "/liquidation")
 	page := renderTVBotHTMLWithMenu(BuildInfo{CommitHash: "test"}, req, []TopMenuItem{
 		{Key: "overview", Title: "资金", Href: "/tvbot/view/dashboard"},
@@ -371,7 +359,7 @@ func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
 }
 
 func TestRenderTVBotOrderHistoryLocalizesExchangeErrors(t *testing.T) {
-	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/orders", nil))
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{
 		`function orderHistoryMarketScope(errorDetails)`,
 		`function orderHistoryErrorText(order)`,
@@ -390,7 +378,7 @@ func TestRenderTVBotOrderHistoryLocalizesExchangeErrors(t *testing.T) {
 }
 
 func TestRenderTVBotDashboardUsesFundingPeriods(t *testing.T) {
-	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot/view/dashboard", nil))
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{
 		`<h2>资金</h2>`,
 		`后台每 5 分钟采集一次三家交易所余额并生成权益数据点（Gate 含持仓浮盈浮亏）`,

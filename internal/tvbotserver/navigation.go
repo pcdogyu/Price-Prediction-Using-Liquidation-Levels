@@ -12,7 +12,7 @@ import (
 func RenderTopMenuLinks(items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool) string {
 	var out strings.Builder
 	for _, item := range items {
-		if isSystemMenuItem(item) || isFundingMenuItem(item) || !validTopMenuItem(item) {
+		if isSystemMenuItem(item) || isRetiredTVBotViewItem(item) || !validTopMenuItem(item) {
 			continue
 		}
 		renderTopMenuLink(&out, item, link, active(item))
@@ -26,7 +26,7 @@ func RenderTopMenuLinks(items []TopMenuItem, link func(string) string, active fu
 func RenderSystemMenu(items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool) string {
 	systemItems := make([]TopMenuItem, 0, 4)
 	for _, item := range items {
-		if isSystemMenuItem(item) && validTopMenuItem(item) {
+		if isSystemMenuItem(item) && !isRetiredTVBotViewItem(item) && validTopMenuItem(item) {
 			systemItems = append(systemItems, item)
 		}
 	}
@@ -74,13 +74,6 @@ func RenderUnifiedNav(items []TopMenuItem, link func(string) string, active func
 	return renderUnifiedNav("", items, link, active, username, logoutPath)
 }
 
-// RenderTVBotNav is kept as a compatibility wrapper for callers that render
-// TVBot pages. Every authenticated page now uses the same navigation markup
-// and responsive behavior as the alerts page.
-func RenderTVBotNav(items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool, username, logoutPath string) string {
-	return RenderUnifiedNav(items, link, active, username, logoutPath)
-}
-
 func renderUnifiedNav(classSuffix string, items []TopMenuItem, link func(string) string, active func(TopMenuItem) bool, username, logoutPath string) string {
 	var out strings.Builder
 	tvbotLayout := classSuffix == " tvbot-nav"
@@ -116,11 +109,11 @@ func RenderSharedLogsDialog() string {
 
 func isSystemMenuItem(item TopMenuItem) bool {
 	switch item.Key {
-	case "system-info", "menu", "system", "trade-monitor", "upgrade":
+	case "system-info", "menu", "system":
 		return true
 	}
 	switch item.Href {
-	case "/system", "/menu", "/admin", "/tvbot/view/trade-monitor", "/tvbot/view/upgrade":
+	case "/system", "/menu", "/admin":
 		return true
 	default:
 		return false
@@ -131,8 +124,8 @@ func validTopMenuItem(item TopMenuItem) bool {
 	return strings.TrimSpace(item.Href) != "" && strings.HasPrefix(item.Href, "/")
 }
 
-func isFundingMenuItem(item TopMenuItem) bool {
-	return item.Key == "overview" || item.Href == "/tvbot/view/dashboard"
+func isRetiredTVBotViewItem(item TopMenuItem) bool {
+	return strings.HasPrefix(strings.TrimSpace(item.Href), "/tvbot/view/")
 }
 
 func renderTopMenuLink(out *strings.Builder, item TopMenuItem, link func(string) string, active bool) {
@@ -141,9 +134,6 @@ func renderTopMenuLink(out *strings.Builder, item TopMenuItem, link func(string)
 		out.WriteString(` data-tab="` + html.EscapeString(tab) + `"`)
 	}
 	out.WriteString(` href="` + html.EscapeString(link(item.Href)) + `"`)
-	if item.Key == "positions" || item.Href == "/tvbot/view/positions" {
-		out.WriteString(` data-position-link="true"`)
-	}
 	if active {
 		out.WriteString(` aria-current="page"`)
 	}

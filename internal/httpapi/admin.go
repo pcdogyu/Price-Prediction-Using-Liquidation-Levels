@@ -47,16 +47,6 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall", Group: "liquidation"},
 		{Key: "market-info", Title: "市场信息", Href: "/market-info", Group: "liquidation"},
 		{Key: "options", Title: "期权", Href: "/options", Group: "liquidation"},
-		{Key: "orders", Title: "信号", Href: "/tvbot/view/orders", Group: "trading"},
-		{Key: "positions", Title: "持仓", Href: "/tvbot/view/positions", Group: "trading"},
-		{Key: "analysis", Title: "订单分析", Href: "/tvbot/view/analysis", Group: "trading"},
-		{Key: "symbols", Title: "币对配置", Href: "/tvbot/view/symbols", Group: "trading"},
-		{Key: "config", Title: "订单配置", Href: "/tvbot/view/config", Group: "trading"},
-		{Key: "api-keys", Title: "API Key", Href: "/tvbot/view/api-keys", Group: "trading"},
-		{Key: "order-settings", Title: "下单设置", Href: "/tvbot/view/order-settings", Group: "trading"},
-		{Key: "template", Title: "告警模板", Href: "/tvbot/view/template", Group: "trading"},
-		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot/view/trade-monitor", Group: "trading"},
-		{Key: "upgrade", Title: "升级", Href: "/tvbot/view/upgrade", Group: "admin"},
 		{Key: "system-info", Title: "系统信息", Href: "/system", Group: "admin"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"},
 		{Key: "system", Title: "用户管理", Href: "/admin", Group: "admin"},
@@ -71,8 +61,7 @@ var legacyDefaultAdminMenuKeys = []string{
 
 var canonicalDefaultAdminMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-	"orders", "positions", "analysis", "symbols", "config", "api-keys",
-	"order-settings", "template", "trade-monitor", "upgrade", "system-info", "menu", "system",
+	"system-info", "menu", "system",
 }
 
 var legacyCanonicalDefaultAdminMenuKeys = []string{
@@ -95,8 +84,7 @@ var legacyOrdersFirstAdminMenuKeys = []string{
 
 var canonicalPersonalMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-	"orders", "positions", "analysis", "symbols", "config", "api-keys",
-	"order-settings", "template", "trade-monitor", "upgrade", "system-info",
+	"system-info",
 }
 
 var legacyCanonicalPersonalMenuKeys = []string{
@@ -193,11 +181,11 @@ func reorderMenuKeys(menu []adminMenuItem, legacyKeys, canonicalKeys []string) (
 	return ordered, true
 }
 
-func removeFundingMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
+func removeRetiredTVBotMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	filtered := make([]adminMenuItem, 0, len(menu))
 	changed := false
 	for _, item := range menu {
-		if item.Key == "overview" || item.Href == "/tvbot/view/dashboard" {
+		if isRetiredTVBotMenuItem(item) {
 			changed = true
 			continue
 		}
@@ -206,21 +194,18 @@ func removeFundingMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	return filtered, changed
 }
 
+func isRetiredTVBotMenuItem(item adminMenuItem) bool {
+	switch item.Key {
+	case "overview", "orders", "positions", "analysis", "symbols", "config", "api-keys", "order-settings", "template", "trade-monitor", "upgrade":
+		return true
+	}
+	href := strings.TrimSpace(item.Href)
+	return strings.HasPrefix(href, "/tvbot/view/")
+}
+
 func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	migrated := append([]adminMenuItem(nil), menu...)
 	changed := false
-	tradingRoutes := map[string]string{
-		"overview":       "/tvbot/view/dashboard",
-		"positions":      "/tvbot/view/positions",
-		"orders":         "/tvbot/view/orders",
-		"analysis":       "/tvbot/view/analysis",
-		"trade-monitor":  "/tvbot/view/trade-monitor",
-		"symbols":        "/tvbot/view/symbols",
-		"api-keys":       "/tvbot/view/api-keys",
-		"order-settings": "/tvbot/view/order-settings",
-		"template":       "/tvbot/view/template",
-		"config":         "/tvbot/view/config",
-	}
 	for i := range migrated {
 		if migrated[i].Key == "system" || migrated[i].Href == "/admin" || migrated[i].Title == "系统管理" {
 			updated := adminMenuItem{Key: "system", Title: "用户管理", Href: "/admin", Group: "admin"}
@@ -238,23 +223,9 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 			}
 			continue
 		}
-		if migrated[i].Key == "orders" || migrated[i].Href == "/tvbot/view/orders" {
-			if migrated[i].Title != "信号" {
-				migrated[i].Title = "信号"
-				changed = true
-			}
-		}
-		if migrated[i].Key == "upgrade" && migrated[i].Href == "/upgrade" {
-			migrated[i].Href = "/tvbot/view/upgrade"
-			changed = true
-		}
-		if href, ok := tradingRoutes[migrated[i].Key]; ok && (migrated[i].Href == "/tvbot" || migrated[i].Href == "/tvbot/" || strings.HasPrefix(migrated[i].Href, "/tvbot#")) {
-			migrated[i].Href = href
-			changed = true
-		}
 	}
 	finish := func(menu []adminMenuItem, reordered bool) ([]adminMenuItem, bool) {
-		filtered, removed := removeFundingMenuItems(menu)
+		filtered, removed := removeRetiredTVBotMenuItems(menu)
 		return filtered, reordered || removed
 	}
 	if reordered, ok := reorderLegacyDefaultAdminMenu(migrated); ok {

@@ -1205,7 +1205,7 @@
     syncIntervals();
     $('kline-symbol-input').value = state.symbol;
     $('kline-symbol-label').textContent = state.symbol || '—';
-    $('kline-back').href = standalonePositionMode ? base + 'tvbot/view/positions' : base + 'alerts';
+    $('kline-back').href = standalonePositionMode ? base + 'tvbot?tab=positions' : base + 'alerts';
     $('kline-back').textContent = standalonePositionMode ? '← 返回持仓' : '← 返回报警';
     if (!state.symbol) {
       $('kline-title').textContent = '币对 K 线';
