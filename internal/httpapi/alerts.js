@@ -107,6 +107,21 @@
   function success(message) { const node = $('alerts-error'); node.classList.add('success'); node.innerHTML = message; node.hidden = false; }
   function clearError() { const node = $('alerts-error'); node.classList.remove('success'); node.hidden = true; }
 
+  // Reverse proxies can return an HTML error page when the service is busy or
+  // temporarily unavailable. Never feed that page directly to JSON.parse:
+  // report the HTTP failure and response shape so the user sees the real cause.
+  async function readJSON(response) {
+    const text = await response.text();
+    if (!text.trim()) return {};
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      const html = contentType.includes('text/html') || /^\s*<!doctype\s+html|^\s*<html[\s>]/i.test(text);
+      throw new Error('HTTP ' + response.status + '：服务器返回了' + (html ? ' HTML 错误页' : '非 JSON 响应'));
+    }
+  }
+
   // The recalculation endpoint currently returns one response after all pairs
   // finish. Animate the client-side waiting state to 99%, then reserve 100%
   // for the confirmed successful response.
@@ -191,7 +206,7 @@
     $('alerts-backtest-status').textContent = '正在读取过去 2 周报警并计算…';
     try {
       const response = await fetch(base + 'api/v1/alerts/backtest', { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
-      const packet = await response.json().catch(() => ({}));
+      const packet = await readJSON(response);
       if (!response.ok && response.status !== 202) throw new Error(packet.detail || 'HTTP ' + response.status);
       let result = packet;
       if (packet.status === 'running') {
@@ -199,7 +214,7 @@
         for (let attempt = 0; attempt < 600; attempt++) {
           await new Promise(resolve => setTimeout(resolve, 2000));
           const poll = await fetch(base + 'api/v1/alerts/backtest?job_id=' + encodeURIComponent(packet.job_id), { cache: 'no-store', credentials: 'same-origin' });
-          const update = await poll.json().catch(() => ({}));
+          const update = await readJSON(poll);
           if (!poll.ok && poll.status !== 202) throw new Error(update.detail || 'HTTP ' + poll.status);
           if (update.status === 'running') {
             $('alerts-backtest-status').textContent = '回测计算中… 已完成后台读取，等待信号评分';
@@ -362,7 +377,7 @@
     try {
       const response = await fetch(base + 'api/v1/alerts', { cache: 'no-store', credentials: 'same-origin' });
       if (response.status === 401) { location.assign(base); return; }
-      const packet = await response.json();
+      const packet = await readJSON(response);
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       if (current !== overviewSequence) return;
       const data = packet.data;
@@ -398,7 +413,7 @@
     try {
       const response = await fetch(base + 'api/v1/alerts/timeline?' + params, { cache: 'no-store', credentials: 'same-origin' });
       if (response.status === 401) { location.assign(base); return; }
-      const packet = await response.json();
+      const packet = await readJSON(response);
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       if (current !== historySequence) return;
       historyRows = packet.rows || [];
@@ -479,7 +494,7 @@
     $('alerts-strategy-status').textContent = automatic ? '正在自动保存报警参数…' : '正在保存报警参数…';
     try {
       const response = await fetch(base + 'api/v1/alerts/strategy-settings', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(strategySettingsBody()) });
-      const packet = await response.json().catch(() => ({}));
+      const packet = await readJSON(response);
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       renderStrategySettings(packet);
       $('alerts-strategy-status').textContent = automatic ? '报警参数已自动保存并立即生效' : '报警参数已保存并立即生效';
@@ -517,7 +532,7 @@
     $('alerts-strategy-status').textContent = '正在重算过去 7 天信号（跳过 Peak-Decay）…';
     try {
       const response = await fetch(base + 'api/v1/alerts/recalculate', { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
-      const packet = await response.json().catch(() => ({}));
+      const packet = await readJSON(response);
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       const recalculatedAt = packet.recalculated_at || new Date().toISOString();
       try { localStorage.setItem(SIGNAL_RECALCULATE_STORAGE, recalculatedAt); } catch (_) { /* private mode still refreshes this page */ }
@@ -547,7 +562,7 @@
     $('alerts-order-signal-status').textContent = '正在保存下单信号设置…';
     try {
       const response = await fetch(base + 'api/v1/alerts/order-settings', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(orderSignalSettingsBody()) });
-      const packet = await response.json().catch(() => ({}));
+      const packet = await readJSON(response);
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       renderOrderSignalSettings(packet);
       $('alerts-order-signal-status').textContent = '下单信号设置已保存并立即生效';
@@ -566,7 +581,7 @@
     $('alerts-notify-status').textContent = '正在保存设置…';
     try {
       const response = await fetch(base + 'api/v1/alerts/settings', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settingsBody()) });
-      const packet = await response.json().catch(() => ({}));
+      const packet = await readJSON(response);
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       $('alerts-token').value = '';
       renderSettings(packet);
@@ -586,7 +601,7 @@
     $('alerts-notify-status').textContent = '正在发送测试消息…';
     try {
       const response = await fetch(base + 'api/v1/alerts/settings/test', { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
-      const packet = await response.json().catch(() => ({}));
+      const packet = await readJSON(response);
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       $('alerts-notify-status').textContent = '测试消息已送达，请在 Telegram 查看';
       clearError();
@@ -604,7 +619,7 @@
     button.textContent = '下单中';
     try {
       const response = await fetch(base + 'api/v1/alerts/trigger', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ record_type: button.dataset.triggerType, record_id: button.dataset.triggerId }) });
-      const packet = await response.json().catch(() => ({}));
+      const packet = await readJSON(response);
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       button.textContent = original;
       button.disabled = false;
@@ -626,7 +641,7 @@
     button.textContent = '发送中';
     try {
       const response = await fetch(base + 'api/v1/alerts/notify', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ record_type: button.dataset.triggerType, record_id: button.dataset.triggerId }) });
-      const packet = await response.json().catch(() => ({}));
+      const packet = await readJSON(response);
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       button.textContent = '已发送';
       clearError();

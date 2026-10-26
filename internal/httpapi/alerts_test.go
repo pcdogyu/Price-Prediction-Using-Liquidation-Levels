@@ -118,6 +118,9 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "api/v1/alerts/backtest") || !strings.Contains(script, "runBacktest") || !strings.Contains(script, "params.set('replay', '1')") || !strings.Contains(script, "historyReplayed") || !strings.Contains(script, "过去 7 天") || !strings.Contains(script, "signal-recalculate") || !strings.Contains(script, "startSignalProgress") || !strings.Contains(script, "finishSignalProgress") || !strings.Contains(script, "Math.min(99") || !strings.Contains(script, "setSignalProgress(100") {
 		t.Fatal("the alerts script must expose the 7-day signal recalculation")
 	}
+	if !strings.Contains(script, "async function readJSON(response)") || !strings.Contains(script, "HTML 错误页") || strings.Contains(script, "response.json()") {
+		t.Fatal("the alerts script must handle non-JSON proxy responses without exposing a JSON parser error")
+	}
 	if strings.Contains(body, `id="alerts-order-alerts"`) || strings.Contains(script, "alerts-order-alerts") {
 		t.Fatal("the legacy alert opening toggle must not be presented")
 	}
