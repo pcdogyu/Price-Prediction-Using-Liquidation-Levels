@@ -50,6 +50,43 @@ func (rtm *alertRuntime) alertChartSignalsWithConfig(ctx context.Context, symbol
 }
 
 func (rtm *alertRuntime) alertChartSignalsWithConfigAt(ctx context.Context, symbol string, cfg alert.Config, generatedAt, since time.Time) (domain.AlertChartSignals, error) {
+	events, candles, err := rtm.alertChartReplayData(ctx, symbol, cfg, generatedAt, since)
+	if err != nil {
+		return domain.AlertChartSignals{}, err
+	}
+	return rtm.replayAlertChartSignals(ctx, symbol, cfg, generatedAt, since, events, candles), nil
+}
+
+// alertChartReplayData reads the raw event and candle windows once. Historical
+// reports replay the same source data under several filter configurations, so
+// keeping the I/O separate avoids four identical SQLite range scans per pair.
+func (rtm *alertRuntime) alertChartReplayData(ctx context.Context, symbol string, cfg alert.Config, generatedAt, since time.Time) ([]domain.LiquidationEvent, []domain.Candle, error) {
+	if generatedAt.IsZero() {
+		generatedAt = time.Now().UTC()
+	}
+	if since.IsZero() {
+		since = generatedAt.Add(-alertChartReplayDays * 24 * time.Hour)
+	}
+	if since.After(generatedAt) {
+		since = generatedAt
+	}
+	source := rtm.sourceStore
+	if source == nil {
+		source = rtm.store
+	}
+	events, err := source.LiquidationEventsForSymbol(ctx, symbol, since, alertChartReplayLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	historyMinutes := alertMarketHistoryMinutes(cfg)
+	candles, err := source.CandlesRange(ctx, symbol, since.Add(-time.Duration(historyMinutes)*time.Minute), generatedAt.Add(time.Minute))
+	if err != nil {
+		return nil, nil, err
+	}
+	return events, candles, nil
+}
+
+func (rtm *alertRuntime) replayAlertChartSignals(ctx context.Context, symbol string, cfg alert.Config, generatedAt, since time.Time, events []domain.LiquidationEvent, candles []domain.Candle) domain.AlertChartSignals {
 	replayHours := int(generatedAt.Sub(since).Hours())
 	if replayHours < 1 {
 		replayHours = 1
@@ -62,22 +99,6 @@ func (rtm *alertRuntime) alertChartSignalsWithConfigAt(ctx context.Context, symb
 		Signals:     []domain.TradeSignal{},
 		ReplayHours: replayHours,
 		GeneratedAt: generatedAt,
-	}
-	source := rtm.sourceStore
-	if source == nil {
-		source = rtm.store
-	}
-	events, err := source.LiquidationEventsForSymbol(ctx, symbol, since, alertChartReplayLimit)
-	if err != nil {
-		return view, err
-	}
-	period := cfg.VWAPPeriodMinutes
-	if period <= 0 {
-		period = 240
-	}
-	candles, err := source.CandlesRange(ctx, symbol, since.Add(-time.Duration(alertMarketHistoryMinutes(cfg))*time.Minute), generatedAt.Add(time.Minute))
-	if err != nil {
-		return view, err
 	}
 
 	replay := alert.New(cfg)
@@ -125,7 +146,7 @@ func (rtm *alertRuntime) alertChartSignalsWithConfigAt(ctx context.Context, symb
 		}
 		return view.Signals[i].CreatedAt.After(view.Signals[j].CreatedAt)
 	})
-	return view, nil
+	return view
 }
 
 // alertChartZone calculates the same latest 1m VWAP boundaries used by the

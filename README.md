@@ -15,7 +15,7 @@
 - 32 个不依赖未来数据的特征（包含 VAL/VAH 距离、价值区宽度及缺失标志）、60 分钟三分类标签、Go/Gonum 多项逻辑回归、L2 正则和温度校准。
 - 4 组扩展窗口回测、60 分钟隔离区、类别先验基线、Log Loss、Brier Score 和 ECE。
 - JSON API、SSE、Prometheus 文本指标、健康检查和内嵌网页仪表盘。
-- 报警页：成交额前 100 币对的 3 分钟爆仓窗口监控、激进/稳健下单信号、1 年预警与信号留存及 Telegram 推送。
+- 报警页：成交额前 100 币对的 3 分钟爆仓窗口监控、激进/稳健下单信号、1 年预警与信号留存及 Telegram 推送；支持按当前登录租户参数回放过去 2 周，比较预警、激进、稳健与无过滤/VWAP/Donchian/VWAP + Donchian 四种开仓区组合，按 15 分钟持有输出交易数、加仓次数、胜率、盈利因子、最大回撤和最终权益。
 - 自动下单 webhook：预警、激进信号和稳健信号落库后异步发送 TradingView 风格 JSON 到 `APP_STEADY_WEBHOOK_URL`；默认目标为 `https://tvbot.lmitis.com/tvorder`，默认使用 Binance demo 市场，API ID 留空时由 tvbot 使用当前激活的 Binance API。三类实时信号都可在报警页分别配置平仓和开仓开关；开启的动作才会自动发送，关闭动作不影响历史记录、Telegram 通知或手动触发下单。只配置 `APP_STEADY_WEBHOOK_TOKEN_NONCE` 与 `APP_STEADY_WEBHOOK_TOKEN` 后启用，凭据不写入数据库或日志；每个币对和信号类型保留 5 分钟发送抑制。
 - 币对 K 线页：报警页币对名点击后在新标签页打开该币对 K 线，九档周期、拖动平移、滚轮缩放并叠加下单信号标记；持仓详情中同一根 K 线、同一方向的多个开仓或平仓会合并为一个标记，合并的平仓标记显示次数。
 
@@ -67,6 +67,7 @@ GET /api/v1/alerts/history?symbol=BTCUSDT&side=long&limit=50&cursor=<cursor>
 GET /api/v1/alerts/signals?symbol=BTCUSDT&kind=steady&limit=50&cursor=<cursor>
 GET /api/v1/alerts/timeline?symbol=BTCUSDT&kind=all&cursor=<cursor>
 GET /api/v1/alerts/chart-signals?symbol=BTCUSDT
+POST /api/v1/alerts/backtest
 GET /api/v1/alerts/klines?symbol=DOGEUSDT&interval=15m&limit=300&before=<RFC3339>
 GET|POST /api/v1/alerts/settings
 GET|POST /api/v1/alerts/order-settings

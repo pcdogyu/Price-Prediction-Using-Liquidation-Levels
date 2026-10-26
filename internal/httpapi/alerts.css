@@ -12,6 +12,7 @@
 .alerts-row-active:hover{background:var(--selected-bg)}
 .alerts-note{margin-top:10px;overflow-wrap:anywhere}
 .alerts-note code{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--text)}
+.alerts-backtest-actions{display:flex;justify-content:flex-end;margin:14px 0 8px}.alerts-backtest-table{min-width:860px}.alerts-backtest-table th,.alerts-backtest-table td{padding:11px 12px;text-align:right;white-space:nowrap}.alerts-backtest-table th:first-child,.alerts-backtest-table td:first-child,.alerts-backtest-table th:nth-child(2),.alerts-backtest-table td:nth-child(2){text-align:left}.alerts-backtest-table tbody tr+tr{border-top:1px solid var(--line)}
 #alerts-symbol{width:150px}
 .alerts-symbol-link{color:var(--link);text-decoration:underline;text-underline-offset:2px;font-weight:650;white-space:nowrap}
 .alerts-symbol-link:hover,.alerts-symbol-link:focus-visible{color:var(--text);background:var(--hover-bg);border-radius:5px}

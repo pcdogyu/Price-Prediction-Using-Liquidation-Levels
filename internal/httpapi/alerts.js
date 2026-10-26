@@ -101,7 +101,7 @@
   };
 
   const SIGNAL_RECALCULATE_STORAGE = 'liquidation.alerts.signal-recalculate';
-  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', historyReplayed = (() => { try { return !!localStorage.getItem(SIGNAL_RECALCULATE_STORAGE); } catch (_) { return false; } })(), settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false, signalProgressTimer = 0, signalProgressValue = 1;
+  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', historyReplayed = (() => { try { return !!localStorage.getItem(SIGNAL_RECALCULATE_STORAGE); } catch (_) { return false; } })(), settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false, signalProgressTimer = 0, signalProgressValue = 1, backtestBusy = false;
 
   function error(message) { const node = $('alerts-error'); node.classList.remove('success'); node.textContent = message; node.hidden = false; }
   function success(message) { const node = $('alerts-error'); node.classList.add('success'); node.innerHTML = message; node.hidden = false; }
@@ -155,6 +155,54 @@
     panel.classList.remove('is-complete');
     panel.classList.add('is-error');
     $('alerts-signal-progress-label').textContent = '信号重算失败';
+  }
+
+  const backtestSignalLabels = { alert: '预警', aggressive: '激进', steady: '稳健' };
+  const backtestFilterLabels = { none: '无', vwap: 'VWAP', donchian: 'Donchian', vwap_donchian: 'VWAP + Donchian' };
+  const backtestPercent = value => Number.isFinite(Number(value)) ? Number(value).toFixed(2) + '%' : '—';
+  const backtestFactor = value => Number(value) > 0 ? Number(value).toFixed(2) : '—';
+  const backtestEquity = value => Number.isFinite(Number(value)) ? '$' + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+
+  function renderBacktest(report) {
+    const rows = Array.isArray(report && report.rows) ? report.rows : [];
+    $('alerts-backtest-rows').innerHTML = rows.length ? rows.map(row => '<tr>' +
+      '<td>' + escape(backtestSignalLabels[row.signal] || row.signal || '—') + '</td>' +
+      '<td>' + escape(backtestFilterLabels[row.filter] || row.filter || '—') + '</td>' +
+      '<td>' + escape(String(row.trades ?? 0)) + '</td>' +
+      '<td>' + escape(String(row.additions ?? 0)) + '</td>' +
+      '<td>' + escape(backtestPercent(row.win_rate)) + '</td>' +
+      '<td>' + escape(backtestFactor(row.profit_factor)) + '</td>' +
+      '<td>' + escape(backtestPercent(row.max_drawdown_pct)) + '</td>' +
+      '<td>' + escape(backtestEquity(row.final_equity)) + '</td>' +
+      '</tr>').join('') : '<tr><td colspan="8">没有可评分的历史信号</td></tr>';
+    const symbols = Number(report && report.symbol_count) || 0;
+    const days = Number(report && report.window_days) || 14;
+    const holding = Number(report && report.holding_minutes) || 15;
+    $('alerts-backtest-status').textContent = '过去 ' + days + ' 天回测完成 · ' + symbols + ' 个币对 · 持有 ' + holding + ' 分钟 · 生成 ' + when(report && report.generated_at);
+    $('alerts-backtest-note').textContent = '回测采用信号参考价入场、' + holding + ' 分钟持有；初始权益 $' + Number(report.initial_equity || 100000).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + '，每笔基准仓位 $' + Number(report.entry_notional_usd || 10000).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + '，顺延次数按每次 $' + Number(report.add_on_notional_usd || 5000).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' 加仓计。不计手续费、滑点和资金费；没有完整持有 K 线的末端信号不计入交易数。';
+  }
+
+  async function runBacktest() {
+    if (backtestBusy) return;
+    const button = $('alerts-backtest-run');
+    backtestBusy = true;
+    button.disabled = true;
+    button.textContent = '回测中…';
+    $('alerts-backtest-status').textContent = '正在读取过去 2 周报警并计算…';
+    try {
+      const response = await fetch(base + 'api/v1/alerts/backtest', { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
+      const packet = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
+      renderBacktest(packet);
+      clearError();
+    } catch (caught) {
+      $('alerts-backtest-status').textContent = '回测失败';
+      error('报警回测失败：' + caught.message);
+    } finally {
+      backtestBusy = false;
+      button.disabled = false;
+      button.textContent = '回测 2 周';
+    }
   }
 
   function metrics(data) {
@@ -580,6 +628,7 @@
   ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes', 'alerts-vwap-range-hours', 'alerts-vwap-min-drawdown', 'alerts-vwap-donchian'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
   ['alerts-vwap-filter', 'alerts-donchian-filter'].forEach(id => $(id).addEventListener('change', () => { void saveStrategySettings(null, true); }));
   $('alerts-signal-recalculate').addEventListener('click', recalculateSignals);
+  $('alerts-backtest-run').addEventListener('click', runBacktest);
   $('alerts-order-signal-settings').addEventListener('submit', saveOrderSignalSettings);
   ['alerts-order-alert-close', 'alerts-order-alert', 'alerts-order-aggressive-close', 'alerts-order-aggressive', 'alerts-order-steady-close', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));
   $('alerts-test').addEventListener('click', testSettings);
@@ -591,6 +640,7 @@
   });
   loadOverview();
   loadHistory('', 0, historyReplayed);
+  void runBacktest();
   setInterval(() => { if (!document.hidden) { loadOverview(); if (historyPage === 0 && !historyBusy) loadHistory('', 0, historyReplayed); } }, 5000);
 })();
 

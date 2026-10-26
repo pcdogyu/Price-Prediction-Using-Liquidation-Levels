@@ -346,6 +346,25 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 	}
 }
 
+func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
+	srv, st := alertTestServer(t)
+	defer st.Close()
+	w := serveAlert(srv, http.MethodPost, "/api/v1/alerts/backtest", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("backtest status=%d body=%s", w.Code, w.Body.String())
+	}
+	var report domain.AlertBacktestReport
+	if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.WindowDays != 14 || report.HoldingMinutes != 15 || len(report.Rows) != 12 {
+		t.Fatalf("unexpected backtest report: %+v", report)
+	}
+	if got := serveAlert(srv, http.MethodGet, "/api/v1/alerts/backtest", nil).Code; got != http.StatusMethodNotAllowed {
+		t.Fatalf("GET backtest status=%d", got)
+	}
+}
+
 // TestAlertHistoryEndpoints covers filtering and pagination for both stored feeds, plus
 // the query validation the page relies on.
 func TestAlertHistoryEndpoints(t *testing.T) {

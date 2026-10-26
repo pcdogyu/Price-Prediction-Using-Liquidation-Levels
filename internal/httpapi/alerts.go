@@ -93,6 +93,7 @@ func (s *Server) registerAlerts(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/timeline", getOnly(s.alertTimeline))
 	mux.HandleFunc("/api/v1/alerts/chart-signals", getOnly(s.alertChartSignals))
 	mux.HandleFunc("/api/v1/alerts/recalculate", postOnly(s.alertRecalculate))
+	mux.HandleFunc("/api/v1/alerts/backtest", postOnly(s.alertBacktest))
 	mux.HandleFunc("/api/v1/alerts/klines", getOnly(s.alertKlines))
 	mux.HandleFunc("/api/v1/alerts/liquidation-delta", getOnly(s.alertLiquidationDelta))
 	mux.HandleFunc("/api/v1/alerts/settings", s.alertSettings)
@@ -443,6 +444,16 @@ func (s *Server) alertRecalculate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) alertBacktest(w http.ResponseWriter, r *http.Request) {
+	report, err := s.svc.AlertBacktestForContext(s.alertContext(r))
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, report)
 }
 
 func alertChartReplayHours(raw string) (int, error) {
