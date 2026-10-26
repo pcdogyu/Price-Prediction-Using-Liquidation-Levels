@@ -21,6 +21,12 @@
     <p class="muted alerts-note">公共市场库提供原始爆仓和行情数据；系统按当前登录租户的阈值和策略独立计算，并将预警、激进信号和稳健信号保存到当前账号的报警历史库。三类记录按发生时间统一排序。“顺延”表示预警后同方向继续爆仓并重算安静截止；“已过期”表示确认窗口内没有出现反向爆仓。雷达过滤阶段、开平仓权限和具体过滤理由显示在“过程 / 状态”中；仅平仓区记录仍保留历史和手动“触发下单”操作，但类型左侧明确显示“平仓区域预警信号过滤 / 激进信号过滤 / 稳健信号过滤”，不会发送自动下单信息。被报警层拦截的信号不会进入 TVBot 订单历史。阈值、通知和下单配置始终按当前登录租户隔离。</p>
   </section>
   <section class="surface">
+    <div class="section-head"><div><h2>报警回测（过去 2 周）</h2><p class="muted alerts-section-lead">按当前登录账号的报警参数，对预警、激进、稳健信号分别比较四种开仓区过滤。</p></div><span id="alerts-backtest-status" class="muted" role="status">尚未运行</span></div>
+    <div class="alerts-backtest-actions"><button id="alerts-backtest-run" type="button">回测 2 周</button></div>
+    <div class="table-scroll"><table class="alerts-backtest-table"><thead><tr><th>信号</th><th>过滤条件</th><th>交易数</th><th>加仓次数</th><th>胜率</th><th>盈利因子</th><th>最大回撤</th><th>最终权益</th></tr></thead><tbody id="alerts-backtest-rows"><tr><td colspan="8">点击“回测 2 周”开始</td></tr></tbody></table></div>
+    <p id="alerts-backtest-note" class="muted alerts-note">回测采用信号参考价入场、15 分钟持有；初始权益 $100,000，每笔基准仓位 $10,000，顺延次数按每次 $5,000 加仓计。不计手续费、滑点和资金费；没有完整持有 K 线的末端信号不计入交易数。</p>
+  </section>
+  <section class="surface">
     <div class="section-head"><h2>报警参数</h2><span id="alerts-strategy-status" class="muted" role="status">读取参数</span></div>
     <form id="alerts-strategy-settings" class="alerts-settings">
       <label for="alerts-threshold-btc">BTCUSDT 阈值（USD）<input id="alerts-threshold-btc" type="number" min="1000" max="1000000000" step="1000" inputmode="decimal"></label>
@@ -37,10 +43,10 @@
       </div>
       <div class="alerts-settings-actions"><button id="alerts-strategy-save" type="submit">保存报警参数</button><button id="alerts-signal-recalculate" type="button">信号重算</button></div>
       <div id="alerts-signal-progress" class="alerts-signal-progress" hidden aria-live="polite">
-        <div class="alerts-signal-progress-head"><span id="alerts-signal-progress-label">过去 48 小时信号重算进度</span><output id="alerts-signal-progress-value">1%</output></div>
-        <div id="alerts-signal-progress-track" class="alerts-signal-progress-track" role="progressbar" aria-label="过去 48 小时信号重算进度" aria-valuemin="1" aria-valuemax="100" aria-valuenow="1"><span id="alerts-signal-progress-fill"></span></div>
+        <div class="alerts-signal-progress-head"><span id="alerts-signal-progress-label">过去 7 天信号重算进度</span><output id="alerts-signal-progress-value">1%</output></div>
+        <div id="alerts-signal-progress-track" class="alerts-signal-progress-track" role="progressbar" aria-label="过去 7 天信号重算进度" aria-valuemin="1" aria-valuemax="100" aria-valuenow="1"><span id="alerts-signal-progress-fill"></span></div>
       </div>
-      <p class="muted">修改任一参数并切换焦点后自动保存并立即用于实时监控；两个服务端过滤开关默认开启，影响实时雷达、过去 48 小时信号重算和 K 线回放；也可点击保存按钮。关闭某个开关只跳过对应的开仓区边界，Peak-Decay、价格吸收、深度爆仓配额、ATR、网格、Gamma 和开平仓类别开关仍生效。点击“信号重算”会按当前参数回放过去 48 小时，重算时跳过 Peak-Decay，并通知已打开的币对图表刷新；实时监控和普通图表回放仍保留 Peak-Decay；历史预警和信号保留产生时的阈值与周期。</p>
+      <p class="muted">修改任一参数并切换焦点后自动保存并立即用于实时监控；两个服务端过滤开关默认开启，影响实时雷达、过去 7 天信号重算和 K 线回放；也可点击保存按钮。关闭某个开关只跳过对应的开仓区边界，Peak-Decay、价格吸收、深度爆仓配额、ATR、网格、Gamma 和开平仓类别开关仍生效。点击“信号重算”会按当前参数回放过去 7 天，重算时跳过 Peak-Decay，并通知已打开的币对图表刷新；实时监控和普通图表回放仍保留 Peak-Decay；历史预警和信号保留产生时的阈值与周期。</p>
     </form>
     <div class="alerts-strategy-switches">
       <div class="section-head alerts-strategy-switch-head"><div><h3>策略开关</h3><p class="muted alerts-section-lead">三类实时信号分别控制平仓和开仓，可单独打开或关闭；BTCUSDT 使用 BTCUSDT Gamma，ETHUSDT 及其他币对使用 ETHUSDT Gamma。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>

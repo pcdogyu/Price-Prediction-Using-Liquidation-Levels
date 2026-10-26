@@ -120,7 +120,7 @@ func (s *Service) AlertChartSignals(ctx context.Context, symbol string) (domain.
 
 // AlertChartSignalsForContextWindow replays one symbol with the current
 // tenant strategy and a bounded history window. It is used by the explicit
-// signal-recalculation action so the chart can show the freshly replayed 48h
+// signal-recalculation action so the chart can show the freshly replayed 7-day
 // result without changing the persisted audit trail.
 func (s *Service) AlertChartSignalsForContextWindow(ctx context.Context, symbol string, window time.Duration) (domain.AlertChartSignals, error) {
 	rtm, err := s.alertRuntimeForContext(ctx)
@@ -134,10 +134,10 @@ func (s *Service) AlertChartSignalsForContextWindow(ctx context.Context, symbol 
 	return rtm.AlertChartSignalsWithConfigSince(ctx, symbol, cfg, time.Now().UTC().Add(-window))
 }
 
-const alertSignalRecalculationWindow = 48 * time.Hour
+const alertSignalRecalculationWindow = 7 * 24 * time.Hour
 
 // RecalculateAlertSignalsForContext performs an in-memory replay for every
-// currently monitored pair over the last 48 hours. Historical alert and signal
+// currently monitored pair over the last 7 days. Historical alert and signal
 // rows remain unchanged because they are the audit trail for past parameters.
 func (s *Service) RecalculateAlertSignalsForContext(ctx context.Context) (domain.AlertSignalRecalculation, error) {
 	rtm, err := s.alertRuntimeForContext(ctx)

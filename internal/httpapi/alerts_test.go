@@ -114,8 +114,8 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "api/v1/alerts/order-settings") || !strings.Contains(script, "保存下单信号设置") {
 		t.Fatal("the alerts script must expose order signal category settings")
 	}
-	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "params.set('replay', '1')") || !strings.Contains(script, "historyReplayed") || !strings.Contains(script, "过去 48 小时") || !strings.Contains(script, "signal-recalculate") || !strings.Contains(script, "startSignalProgress") || !strings.Contains(script, "finishSignalProgress") || !strings.Contains(script, "Math.min(99") || !strings.Contains(script, "setSignalProgress(100") {
-		t.Fatal("the alerts script must expose the 48h signal recalculation")
+	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "params.set('replay', '1')") || !strings.Contains(script, "historyReplayed") || !strings.Contains(script, "过去 7 天") || !strings.Contains(script, "signal-recalculate") || !strings.Contains(script, "startSignalProgress") || !strings.Contains(script, "finishSignalProgress") || !strings.Contains(script, "Math.min(99") || !strings.Contains(script, "setSignalProgress(100") {
+		t.Fatal("the alerts script must expose the 7-day signal recalculation")
 	}
 	if strings.Contains(body, `id="alerts-order-alerts"`) || strings.Contains(script, "alerts-order-alerts") {
 		t.Fatal("the legacy alert opening toggle must not be presented")
@@ -312,9 +312,9 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 	if chart.Code != http.StatusOK || !strings.Contains(chart.Body.String(), `"btc_usd":300000`) || !strings.Contains(chart.Body.String(), `"window_minutes":5`) {
 		t.Fatalf("chart signals must expose the saved strategy settings: %d %s", chart.Code, chart.Body.String())
 	}
-	chart48 := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=BTCUSDT&window_hours=48", nil)
-	if chart48.Code != http.StatusOK || !strings.Contains(chart48.Body.String(), `"replay_hours":48`) {
-		t.Fatalf("chart signals must expose the requested 48h replay window: %d %s", chart48.Code, chart48.Body.String())
+	chart168 := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=BTCUSDT&window_hours=168", nil)
+	if chart168.Code != http.StatusOK || !strings.Contains(chart168.Body.String(), `"replay_hours":168`) {
+		t.Fatalf("chart signals must expose the requested 7d replay window: %d %s", chart168.Code, chart168.Body.String())
 	}
 	badChart := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=bad-symbol", nil)
 	if badChart.Code != http.StatusBadRequest {
@@ -332,8 +332,8 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	recalculated := serveAlert(srv, http.MethodPost, "/api/v1/alerts/recalculate", nil)
-	if recalculated.Code != http.StatusOK || !strings.Contains(recalculated.Body.String(), `"window_hours":48`) {
-		t.Fatalf("48h signal recalculation status=%d body=%s", recalculated.Code, recalculated.Body.String())
+	if recalculated.Code != http.StatusOK || !strings.Contains(recalculated.Body.String(), `"window_hours":168`) {
+		t.Fatalf("7d signal recalculation status=%d body=%s", recalculated.Code, recalculated.Body.String())
 	}
 	replayed := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?symbol=BTCUSDT&replay=1", nil)
 	var replayedPage domain.AlertTimelinePage
@@ -622,7 +622,7 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 			t.Fatalf("the chart script must not contain removed peak-decay display logic %q", removed)
 		}
 	}
-	for _, want := range []string{"window_hours", "signalReplayWindowHours = positionMode ? 0 : 48", "STORE_SIGNAL_RECALCULATE", "过去 48 小时重算", "addEventListener('storage'", "drawRadarZones", "historicalRadarZones", "radarZones", "rawShownSignals", "vwapZoneAt", "donchianAllowsSignal", "upper_open_price", "anchorPrice", "dragPriceRange", "Math.round(baseHeight * 1.1)", "STORE_ZONES", "STORE_DONCHIAN", "仅平仓区"} {
+	for _, want := range []string{"window_hours", "SIGNAL_REPLAY_WINDOW_HOURS = 7 * 24", "signalReplayWindowHours = positionMode ? 0 : SIGNAL_REPLAY_WINDOW_HOURS", "STORE_SIGNAL_RECALCULATE", "过去 7 天重算", "addEventListener('storage'", "drawRadarZones", "historicalRadarZones", "radarZones", "rawShownSignals", "vwapZoneAt", "donchianAllowsSignal", "upper_open_price", "anchorPrice", "dragPriceRange", "Math.round(baseHeight * 1.1)", "STORE_ZONES", "STORE_DONCHIAN", "仅平仓区"} {
 		if !strings.Contains(chartScript, want) {
 			t.Fatalf("the chart must refresh after signal recalculation with %q", want)
 		}

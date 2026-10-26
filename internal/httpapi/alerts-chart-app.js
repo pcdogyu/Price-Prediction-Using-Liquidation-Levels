@@ -41,8 +41,9 @@
   };
   // The standalone alert chart must be useful when opened directly from a URL.
   // Relying only on the alert-page localStorage event made a fresh tab request
-  // the short default window and hide the 48h signal replay entirely.
-  let dims = null, colors = {}, scales = null, signalReplayWindowHours = positionMode ? 0 : 48;
+  // the short default window and hide the 7-day signal replay entirely.
+  const SIGNAL_REPLAY_WINDOW_HOURS = 7 * 24;
+  let dims = null, colors = {}, scales = null, signalReplayWindowHours = positionMode ? 0 : SIGNAL_REPLAY_WINDOW_HOURS;
 
   const step = () => K.intervalMs(state.interval);
   const newestCandle = () => state.candles.length ? state.candles[state.candles.length - 1] : null;
@@ -421,7 +422,7 @@
       state.radarZone = packet.zone && packet.zone.ready ? packet.zone : null;
       state.signalThreshold = state.symbol === 'BTCUSDT' ? thresholds.btc_usd : state.symbol === 'ETHUSDT' ? thresholds.eth_usd : thresholds.other_usd;
       state.signalWindowMinutes = Number(thresholds.window_minutes) || 0;
-      state.signalReplayText = Number(packet.replay_hours) === 48 ? '过去 48 小时重算' : '按当前参数回放';
+      state.signalReplayText = Number(packet.replay_hours) === SIGNAL_REPLAY_WINDOW_HOURS ? '过去 7 天重算' : '按当前参数回放';
       renderSignalStatus();
       clearError();
     } catch (error) {
@@ -1199,7 +1200,7 @@
   function bindSignalRecalculation() {
     window.addEventListener('storage', event => {
       if (event.key !== STORE_SIGNAL_RECALCULATE || !event.newValue || positionMode) return;
-      signalReplayWindowHours = 48;
+      signalReplayWindowHours = SIGNAL_REPLAY_WINDOW_HOURS;
       loadChartSignals();
     });
   }

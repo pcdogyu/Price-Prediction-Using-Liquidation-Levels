@@ -298,7 +298,7 @@ func TestAlertChartSignalsExposeVWAPZone(t *testing.T) {
 	}
 }
 
-func TestAlertSignalRecalculationUses48HourWindow(t *testing.T) {
+func TestAlertSignalRecalculationUsesSevenDayWindow(t *testing.T) {
 	ctx := context.Background()
 	svc, _, st := alertTestService(t, "chart-recalculate.db")
 	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
@@ -312,7 +312,7 @@ func TestAlertSignalRecalculationUses48HourWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.WindowHours != 48 || result.SymbolCount != 1 || result.From.IsZero() || result.To.IsZero() || result.RecalculatedAt.IsZero() {
+	if result.WindowHours != 7*24 || result.SymbolCount != 1 || result.From.IsZero() || result.To.IsZero() || result.RecalculatedAt.IsZero() {
 		t.Fatalf("unexpected recalculation result = %+v", result)
 	}
 	if result.AlertCount != 1 {
@@ -321,12 +321,12 @@ func TestAlertSignalRecalculationUses48HourWindow(t *testing.T) {
 	if result.SignalCount != 1 {
 		t.Fatalf("recalculation should produce the ready signal without peak-decay = %+v", result)
 	}
-	view, err := svc.AlertChartSignalsForContextWindow(ctx, "BTCUSDT", 48*time.Hour)
+	view, err := svc.AlertChartSignalsForContextWindow(ctx, "BTCUSDT", 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.ReplayHours != 48 || len(view.Alerts) != 1 {
-		t.Fatalf("the chart window should be 48h = %+v", view)
+	if view.ReplayHours != 7*24 || len(view.Alerts) != 1 {
+		t.Fatalf("the chart window should be 7d = %+v", view)
 	}
 	replayed, ready, err := svc.AlertTimelineReplayed(ctx, "BTCUSDT", "", 1, "")
 	if err != nil {
