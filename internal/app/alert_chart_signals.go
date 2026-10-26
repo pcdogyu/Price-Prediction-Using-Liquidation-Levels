@@ -184,7 +184,11 @@ func replayAlertChartMarkets(events []domain.LiquidationEvent, cfg alert.Config,
 		if start < 0 {
 			start = 0
 		}
-		markets[index] = buildLiquidationMarketContextWithDonchian(event, cfg, candles[start:candleEnd], high, low, ready, true)
+		if cfg.SkipPeakDecay {
+			markets[index] = buildReplayLiquidationMarketContext(event, cfg, candles[start:candleEnd], high, low, ready)
+		} else {
+			markets[index] = buildLiquidationMarketContextWithDonchian(event, cfg, candles[start:candleEnd], high, low, ready, true)
+		}
 	}
 	return markets
 }

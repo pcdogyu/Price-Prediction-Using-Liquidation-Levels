@@ -241,6 +241,64 @@ func buildLiquidationMarketContextWithDonchian(event domain.LiquidationEvent, cf
 		CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: rangeReady, DonchianComputed: true}
 }
 
+// buildReplayLiquidationMarketContext shares the immutable candle window among
+// historical event contexts. The general builder copies and overlays each
+// event's candle for live/chart semantics; retaining those copies for a large
+// replay creates unnecessary allocation and garbage-collection pressure.
+func buildReplayLiquidationMarketContext(event domain.LiquidationEvent, cfg alert.Config, rows []domain.Candle, high, low float64, rangeReady bool) alert.MarketContext {
+	period := cfg.VWAPPeriodMinutes
+	if period <= 0 {
+		period = 240
+	}
+	if len(rows) == 0 {
+		return alert.MarketContext{Price: event.Price}
+	}
+	bucket := event.EventTime.UTC().Truncate(time.Minute)
+	end := len(rows)
+	for end > 0 && rows[end-1].Time.After(bucket) {
+		end--
+	}
+	if end == 0 {
+		return alert.MarketContext{Price: event.Price}
+	}
+	rows = rows[:end]
+	price := event.Price
+	if price <= 0 {
+		price = rows[len(rows)-1].Close
+	}
+	current := rows[len(rows)-1]
+	lastClose := current.Close
+	if current.Time.Equal(bucket) {
+		lastClose = price
+		current.Close = price
+		if current.High < price {
+			current.High = price
+		}
+		if current.Low <= 0 || current.Low > price {
+			current.Low = price
+		}
+	} else if current.Time.Before(bucket) {
+		lastClose = price
+		current = domain.Candle{Exchange: "binance", Symbol: event.Symbol, Time: bucket, Open: price, High: price, Low: price, Close: price}
+	}
+	if len(rows) < period {
+		return alert.MarketContext{Price: price, Candles: rows, CurrentCandle: current}
+	}
+	vwap, sigma, z, vwapReady := alert.VWAPZScoreWithLastClose(rows, period, price, lastClose)
+	atr := alert.ATR(rows, cfg.ATRPeriod)
+	if rangeReady {
+		if price > high {
+			high = price
+		}
+		if low <= 0 || price < low {
+			low = price
+		}
+	}
+	return alert.MarketContext{Ready: true, Price: price, Candles: rows, VWAP: vwap, Sigma: sigma, ZScore: z, VWAPReady: vwapReady,
+		CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: rangeReady, DonchianComputed: true,
+		ATR: atr, ATRReady: true}
+}
+
 func alertMarketHistoryMinutes(cfg alert.Config) int {
 	period := cfg.VWAPPeriodMinutes
 	if period <= 0 {

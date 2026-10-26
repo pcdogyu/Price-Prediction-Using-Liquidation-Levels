@@ -34,6 +34,8 @@ type MarketContext struct {
 	DonchianLow           float64
 	DonchianReady         bool
 	DonchianComputed      bool
+	ATR                   float64
+	ATRReady              bool
 }
 
 // FilterDecision is persisted with every context-aware alert/signal so an
@@ -71,13 +73,27 @@ type FilterDecision struct {
 // equal weights only when all supplied volumes are zero, which keeps synthetic
 // tests useful without silently discarding real volume data.
 func VWAPZScore(candles []domain.Candle, period int, price float64) (vwap, sigma, z float64, ok bool) {
+	return vwapZScore(candles, period, price, 0, false)
+}
+
+// VWAPZScoreWithLastClose applies a replay event price to the current candle
+// without copying the full candle window for every event.
+func VWAPZScoreWithLastClose(candles []domain.Candle, period int, price, lastClose float64) (vwap, sigma, z float64, ok bool) {
+	return vwapZScore(candles, period, price, lastClose, true)
+}
+
+func vwapZScore(candles []domain.Candle, period int, price, lastClose float64, overrideLastClose bool) (vwap, sigma, z float64, ok bool) {
 	if period <= 0 || price <= 0 || len(candles) < period {
 		return 0, 0, 0, false
 	}
 	window := candles[len(candles)-period:]
 	weight := 0.0
-	for _, candle := range window {
-		if candle.Close <= 0 {
+	for index, candle := range window {
+		close := candle.Close
+		if overrideLastClose && index == len(window)-1 && lastClose > 0 {
+			close = lastClose
+		}
+		if close <= 0 {
 			continue
 		}
 		w := candle.VolumeUSD
@@ -85,13 +101,17 @@ func VWAPZScore(candles []domain.Candle, period int, price float64) (vwap, sigma
 			w = 0
 		}
 		weight += w
-		vwap += candle.Close * w
+		vwap += close * w
 	}
 	volumeWeighted := weight > 0
 	if !volumeWeighted {
-		for _, candle := range window {
-			if candle.Close > 0 {
-				vwap += candle.Close
+		for index, candle := range window {
+			close := candle.Close
+			if overrideLastClose && index == len(window)-1 && lastClose > 0 {
+				close = lastClose
+			}
+			if close > 0 {
+				vwap += close
 				weight++
 			}
 		}
@@ -101,8 +121,12 @@ func VWAPZScore(candles []domain.Candle, period int, price float64) (vwap, sigma
 	}
 	vwap /= weight
 	varianceWeight := 0.0
-	for _, candle := range window {
-		if candle.Close <= 0 {
+	for index, candle := range window {
+		close := candle.Close
+		if overrideLastClose && index == len(window)-1 && lastClose > 0 {
+			close = lastClose
+		}
+		if close <= 0 {
 			continue
 		}
 		w := candle.VolumeUSD
@@ -114,7 +138,7 @@ func VWAPZScore(candles []domain.Candle, period int, price float64) (vwap, sigma
 		if !volumeWeighted {
 			w = 1
 		}
-		varianceWeight += w * (candle.Close - vwap) * (candle.Close - vwap)
+		varianceWeight += w * (close - vwap) * (close - vwap)
 	}
 	if varianceWeight <= 0 {
 		return vwap, 0, 0, false
@@ -436,7 +460,10 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 		d.DeepQuotaUSD = baseThreshold * cfg.DeepQuotaMultiplier
 	}
 	d.CumulativeLongUSD = state.longLiqCumulative
-	atr := ATR(ctx.Candles, cfg.ATRPeriod)
+	atr := ctx.ATR
+	if !ctx.ATRReady {
+		atr = ATR(ctx.Candles, cfg.ATRPeriod)
+	}
 	if state.highWaterPrice > 0 && atr > 0 {
 		d.DrawdownATR = (state.highWaterPrice - price) / atr
 	}
