@@ -3464,7 +3464,7 @@ const tvbotHTML = `<!doctype html>
 
     function tabVisible(tabID) {
       const button = tabButton(tabID);
-      return !!button && !button.hidden && !!$(tabID);
+      return !!$(tabID) && (!button || !button.hidden);
     }
 
     function firstVisibleTab() {
@@ -3715,7 +3715,8 @@ const tvbotHTML = `<!doctype html>
     }
 
     function tvbotPageURL(tab) {
-      const url = new URL("/tvbot", window.location.origin);
+      const appBase = (document.querySelector('meta[name="app-base"]') || {}).content || "/";
+      const url = new URL("tvbot", new URL(appBase, window.location.origin));
       if (tab) url.searchParams.set("tab", tab);
       return url;
     }
@@ -3724,15 +3725,16 @@ const tvbotHTML = `<!doctype html>
       let target = tabID || "dashboard";
       let button = tabButton(target);
       let section = $(target);
-      if (!button || button.hidden || !section) {
+      const routeTab = tabFromRoute();
+      if ((!button || button.hidden || !section) && routeTab !== target) {
         target = firstVisibleTab();
         button = tabButton(target);
         section = $(target);
       }
       document.querySelectorAll("nav a[data-tab]").forEach((b) => b.removeAttribute("aria-current"));
       document.querySelectorAll("main section").forEach((s) => s.classList.remove("active"));
-      if (button && section) {
-        button.setAttribute("aria-current", "page");
+      if (section) {
+        if (button) button.setAttribute("aria-current", "page");
         section.classList.add("active");
       }
       syncOrderInfoVisibility(target);
@@ -3778,8 +3780,7 @@ const tvbotHTML = `<!doctype html>
 
     function initialTab() {
       const fromPath = tabFromRoute();
-      const pathButton = tabButton(fromPath);
-      if (fromPath && pathButton && !pathButton.hidden && $(fromPath)) return fromPath;
+      if (fromPath && tabVisible(fromPath)) return fromPath;
       return effectiveDefaultTab();
     }
 
