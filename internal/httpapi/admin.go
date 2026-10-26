@@ -39,14 +39,8 @@ type adminMenuItem struct {
 	Group string `json:"group"`
 }
 
-func defaultAdminMenu() []adminMenuItem {
+func defaultTVBotMenuItems() []adminMenuItem {
 	return []adminMenuItem{
-		{Key: "alerts", Title: "报警", Href: "/alerts", Group: "liquidation"},
-		{Key: "bubbles", Title: "气泡图", Href: "/bubbles", Group: "liquidation"},
-		{Key: "liquidations", Title: "清算历史", Href: "/liquidations", Group: "liquidation"},
-		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall", Group: "liquidation"},
-		{Key: "market-info", Title: "市场信息", Href: "/market-info", Group: "liquidation"},
-		{Key: "options", Title: "期权", Href: "/options", Group: "liquidation"},
 		{Key: "orders", Title: "信号", Href: "/tvbot?tab=orders", Group: "trading"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot?tab=positions", Group: "trading"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot?tab=analysis", Group: "trading"},
@@ -57,10 +51,24 @@ func defaultAdminMenu() []adminMenuItem {
 		{Key: "template", Title: "告警模板", Href: "/tvbot?tab=template", Group: "trading"},
 		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot?tab=tradeMonitor", Group: "trading"},
 		{Key: "upgrade", Title: "升级", Href: "/tvbot?tab=upgrade", Group: "admin"},
-		{Key: "system-info", Title: "系统信息", Href: "/system", Group: "admin"},
-		{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"},
-		{Key: "system", Title: "用户管理", Href: "/admin", Group: "admin"},
 	}
+}
+
+func defaultAdminMenu() []adminMenuItem {
+	menu := []adminMenuItem{
+		{Key: "alerts", Title: "报警", Href: "/alerts", Group: "liquidation"},
+		{Key: "bubbles", Title: "气泡图", Href: "/bubbles", Group: "liquidation"},
+		{Key: "liquidations", Title: "清算历史", Href: "/liquidations", Group: "liquidation"},
+		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall", Group: "liquidation"},
+		{Key: "market-info", Title: "市场信息", Href: "/market-info", Group: "liquidation"},
+		{Key: "options", Title: "期权", Href: "/options", Group: "liquidation"},
+	}
+	menu = append(menu, defaultTVBotMenuItems()...)
+	return append(menu,
+		adminMenuItem{Key: "system-info", Title: "系统信息", Href: "/system", Group: "admin"},
+		adminMenuItem{Key: "menu", Title: "菜单管理", Href: "/menu", Group: "admin"},
+		adminMenuItem{Key: "system", Title: "用户管理", Href: "/admin", Group: "admin"},
+	)
 }
 
 var legacyDefaultAdminMenuKeys = []string{
@@ -320,6 +328,34 @@ func ensureAdminMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	return menu, true
 }
 
+func ensureTVBotMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
+	present := make(map[string]struct{}, len(menu))
+	for _, item := range menu {
+		present[item.Key] = struct{}{}
+	}
+	missing := make([]adminMenuItem, 0)
+	for _, item := range defaultTVBotMenuItems() {
+		if _, ok := present[item.Key]; !ok {
+			missing = append(missing, item)
+		}
+	}
+	if len(missing) == 0 {
+		return menu, false
+	}
+	insertAt := len(menu)
+	for i, item := range menu {
+		if item.Group == "admin" || item.Key == "system-info" || item.Key == "menu" || item.Key == "system" {
+			insertAt = i
+			break
+		}
+	}
+	restored := make([]adminMenuItem, 0, len(menu)+len(missing))
+	restored = append(restored, menu[:insertAt]...)
+	restored = append(restored, missing...)
+	restored = append(restored, menu[insertAt:]...)
+	return restored, true
+}
+
 func (s *Server) menuUsername(r *http.Request) (string, bool) {
 	if r == nil || !s.auth.Enabled() {
 		return "", false
@@ -353,11 +389,12 @@ func (s *Server) menuForRequest(r *http.Request) []adminMenuItem {
 		return menu
 	}
 	userMenu, migrated := migrateAdminMenu(userMenu)
+	userMenu, restored := ensureTVBotMenuItems(userMenu)
 	userMenu, normalized := ensureAdminMenuItems(userMenu)
 	if validateMenu(userMenu) != nil {
 		return menu
 	}
-	if migrated || normalized {
+	if migrated || restored || normalized {
 		if normalizedPayload, marshalErr := json.Marshal(userMenu); marshalErr == nil {
 			_ = s.userStore.SaveUserMenu(r.Context(), username, normalizedPayload)
 		}
@@ -572,6 +609,9 @@ func (s *Server) adminMenu(w http.ResponseWriter, r *http.Request) {
 	if err := decodeAdminJSON(w, r, &req); err != nil {
 		return
 	}
+	req.Menu, _ = migrateAdminMenu(req.Menu)
+	req.Menu, _ = ensureTVBotMenuItems(req.Menu)
+	req.Menu, _ = ensureAdminMenuItems(req.Menu)
 	if err := validateMenu(req.Menu); err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return

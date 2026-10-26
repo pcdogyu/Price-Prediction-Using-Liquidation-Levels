@@ -72,8 +72,9 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 				var menu []adminMenuItem
 				if json.Unmarshal(payload, &menu) == nil {
 					menu, migrated := migrateAdminMenu(menu)
+					menu, restored := ensureTVBotMenuItems(menu)
 					menu, normalized := ensureAdminMenuItems(menu)
-					migrated = migrated || normalized
+					migrated = migrated || restored || normalized
 					if validateMenu(menu) == nil {
 						s.menu = menu
 						if migrated {

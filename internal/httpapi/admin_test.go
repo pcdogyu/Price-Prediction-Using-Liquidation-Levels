@@ -70,6 +70,33 @@ func TestDefaultAdminMenuUsesRequestedTopOrder(t *testing.T) {
 	}
 }
 
+func TestEnsureTVBotMenuItemsRestoresPersistedShortMenu(t *testing.T) {
+	short := []adminMenuItem{
+		{Key: "alerts", Title: "报警", Href: "/alerts", Group: "liquidation"},
+		{Key: "options", Title: "期权", Href: "/options", Group: "liquidation"},
+		{Key: "system-info", Title: "系统信息", Href: "/system", Group: "admin"},
+	}
+	restored, changed := ensureTVBotMenuItems(short)
+	if !changed || len(restored) != len(short)+len(defaultTVBotMenuItems()) {
+		t.Fatalf("short menu should restore TVBot items: changed=%v menu=%#v", changed, restored)
+	}
+	if restored[2].Key != "orders" || restored[len(restored)-1].Key != "system-info" {
+		t.Fatalf("restored TVBot menu should be inserted before system items: %#v", restored)
+	}
+	for _, item := range defaultTVBotMenuItems() {
+		found := false
+		for _, candidate := range restored {
+			if candidate.Key == item.Key && candidate.Href == item.Href {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("restored menu is missing %q", item.Key)
+		}
+	}
+}
+
 func TestMigrateAdminMenuReordersLegacyDefaultOnly(t *testing.T) {
 	legacy := make([]adminMenuItem, 0, len(legacyDefaultAdminMenuKeys))
 	for _, key := range legacyDefaultAdminMenuKeys {
