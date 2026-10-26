@@ -32,8 +32,8 @@
       <label for="alerts-vwap-donchian">VWAP Donchian 分位（%）<input id="alerts-vwap-donchian" type="number" min="1" max="49" step="1" inputmode="numeric"></label>
       <div class="alerts-filter-switches" aria-label="服务端开仓区过滤">
         <span class="muted alerts-filter-switch-label">服务端过滤</span>
-        <label class="alerts-check"><input id="alerts-vwap-filter" type="checkbox"><span>VWAP过滤</span></label>
-        <label class="alerts-check"><input id="alerts-donchian-filter" type="checkbox"><span>Donchian过滤</span></label>
+        <label class="alerts-check alerts-toggle"><input id="alerts-vwap-filter" type="checkbox" class="alerts-toggle-input"><span class="alerts-toggle-track" aria-hidden="true"></span><span>VWAP过滤</span></label>
+        <label class="alerts-check alerts-toggle"><input id="alerts-donchian-filter" type="checkbox" class="alerts-toggle-input"><span class="alerts-toggle-track" aria-hidden="true"></span><span>Donchian过滤</span></label>
       </div>
       <div class="alerts-settings-actions"><button id="alerts-strategy-save" type="submit">保存报警参数</button><button id="alerts-signal-recalculate" type="button">信号重算</button></div>
       <div id="alerts-signal-progress" class="alerts-signal-progress" hidden aria-live="polite">

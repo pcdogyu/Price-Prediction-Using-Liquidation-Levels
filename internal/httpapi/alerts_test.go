@@ -93,6 +93,12 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "alerts-trigger") || !strings.Contains(script, "api/v1/alerts/trigger") {
 		t.Fatal("the alerts script must expose the manual order trigger")
 	}
+	css := serveAlert(srv, http.MethodGet, "/assets/alerts.css", nil).Body.String()
+	for _, want := range []string{"alerts-toggle-input", "alerts-toggle-track", ".alerts-toggle-input:checked + .alerts-toggle-track", ".alerts-toggle-track::after"} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("the server-side filter controls must use sliding toggles: missing %q", want)
+		}
+	}
 	if !strings.Contains(script, "alerts-close-only-prefix") || !strings.Contains(script, "closeOnlyIgnored") {
 		t.Fatal("the alerts script must mark close-only history records")
 	}
