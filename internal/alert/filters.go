@@ -37,6 +37,7 @@ type FilterDecision struct {
 	CloseAllowed            bool
 	Ready                   bool
 	Reason                  string
+	FilterTags              []string
 	VWAP                    float64
 	Sigma                   float64
 	ZScore                  float64
@@ -154,14 +155,30 @@ func DonchianRange(candles []domain.Candle, rangeMinutes int) (high, low float64
 // VWAPZoneBounds combines the short VWAP band with the long Donchian range.
 // A true overlap means the requested opening zones have no safe separation;
 // callers must then keep the whole range close-only.
+func vwapFilterBounds(cfg Config, vwap, sigma float64) (greenUpper, redLower float64, ok bool) {
+	if vwap <= 0 || sigma <= 0 || cfg.VWAPZScore <= 0 {
+		return 0, 0, false
+	}
+	return vwap - cfg.VWAPZScore*sigma, vwap + cfg.VWAPZScore*sigma, true
+}
+
+func donchianFilterBounds(cfg Config, high, low float64) (greenUpper, redLower float64, ok bool) {
+	if high <= 0 || low <= 0 || high < low || cfg.VWAPMinDrawdown <= 0 || cfg.VWAPMinDrawdown >= 1 || cfg.VWAPDonchianFraction <= 0 || cfg.VWAPDonchianFraction >= .5 {
+		return 0, 0, false
+	}
+	greenUpper = math.Min(high*(1-cfg.VWAPMinDrawdown), low+cfg.VWAPDonchianFraction*(high-low))
+	redLower = math.Max(low*(1+cfg.VWAPMinDrawdown), high-cfg.VWAPDonchianFraction*(high-low))
+	return greenUpper, redLower, true
+}
+
 func VWAPZoneBounds(cfg Config, vwap, sigma, high, low float64) (greenUpper, redLower float64, overlap, ok bool) {
-	if vwap <= 0 || sigma <= 0 || high <= 0 || low <= 0 || high < low || cfg.VWAPZScore <= 0 || cfg.VWAPMinDrawdown <= 0 || cfg.VWAPDonchianFraction <= 0 {
+	vwapGreen, vwapRed, vwapOK := vwapFilterBounds(cfg, vwap, sigma)
+	donGreen, donRed, donOK := donchianFilterBounds(cfg, high, low)
+	if !vwapOK || !donOK {
 		return 0, 0, false, false
 	}
-	greenUpper = math.Min(vwap-cfg.VWAPZScore*sigma, high*(1-cfg.VWAPMinDrawdown))
-	greenUpper = math.Min(greenUpper, low+cfg.VWAPDonchianFraction*(high-low))
-	redLower = math.Max(vwap+cfg.VWAPZScore*sigma, low*(1+cfg.VWAPMinDrawdown))
-	redLower = math.Max(redLower, high-cfg.VWAPDonchianFraction*(high-low))
+	greenUpper = math.Min(vwapGreen, donGreen)
+	redLower = math.Max(vwapRed, donRed)
 	return greenUpper, redLower, greenUpper >= redLower, true
 }
 
@@ -228,7 +245,7 @@ func scaledThreshold(base float64, layers int, slope float64) float64 {
 }
 
 func filterDecision(cfg Config, side string, ctx MarketContext, state symbolState, baseThreshold float64) FilterDecision {
-	d := FilterDecision{Applied: true, MinProfitSpread: cfg.MinProfitSpread}
+	d := FilterDecision{Applied: true, MinProfitSpread: cfg.MinProfitSpread, FilterTags: []string{}}
 	price := ctx.Price
 	if price <= 0 {
 		price = ctx.CurrentCandle.Close
@@ -237,65 +254,158 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 		d.Reason = "market_context_unavailable"
 		return d
 	}
-	period := cfg.VWAPPeriodMinutes
-	var vwapOK bool
-	d.VWAP, d.Sigma, d.ZScore, vwapOK = VWAPZScore(ctx.Candles, period, price)
-	if !vwapOK {
-		d.Reason = "vwap_zscore_unavailable"
-		return d
-	}
 
+	// Compute both data sets when available so the history/chart payload remains
+	// useful, but only require data for components whose server-side switch is on.
+	var vwapOK bool
+	d.VWAP, d.Sigma, d.ZScore, vwapOK = VWAPZScore(ctx.Candles, cfg.VWAPPeriodMinutes, price)
 	threshold := cfg.VWAPZScore
-	high := d.ZScore > threshold
-	low := d.ZScore < -threshold
+	high := vwapOK && d.ZScore > threshold
+	low := vwapOK && d.ZScore < -threshold
 	rangeHigh, rangeLow, rangeReady := ctx.DonchianHigh, ctx.DonchianLow, ctx.DonchianReady
 	if !rangeReady {
 		rangeHigh, rangeLow, rangeReady = DonchianRange(ctx.Candles, cfg.VWAPRangeMinutes)
 	}
 	d.DonchianHigh, d.DonchianLow, d.DonchianReady = rangeHigh, rangeLow, rangeReady
-	zoneReady := false
-	if rangeReady {
-		d.GreenZoneUpper, d.RedZoneLower, d.BoundaryOverlap, zoneReady = VWAPZoneBounds(cfg, d.VWAP, d.Sigma, rangeHigh, rangeLow)
+
+	vwapGreen, vwapRed, vwapBoundsReady := vwapFilterBounds(cfg, d.VWAP, d.Sigma)
+	donGreen, donRed, donBoundsReady := donchianFilterBounds(cfg, rangeHigh, rangeLow)
+	vwapReady := !cfg.VWAPFilterEnabled || (vwapOK && vwapBoundsReady)
+	donchianReady := !cfg.DonchianFilterEnabled || (rangeReady && donBoundsReady)
+	zoneReady := true
+	greenUpper, redLower := 0.0, 0.0
+	if cfg.VWAPFilterEnabled {
+		if vwapReady {
+			greenUpper, redLower = vwapGreen, vwapRed
+		} else {
+			zoneReady = false
+		}
 	}
-	// Both directions must fail closed when the opening boundaries are not
-	// computable. In particular, treating a missing red boundary as zero would
-	// make every positive price look like a valid short-entry price.
-	openingZoneReady := rangeReady && zoneReady && d.GreenZoneUpper > 0 && d.RedZoneLower > 0
+	if cfg.DonchianFilterEnabled {
+		if donchianReady {
+			if cfg.VWAPFilterEnabled {
+				greenUpper = math.Min(greenUpper, donGreen)
+				redLower = math.Max(redLower, donRed)
+			} else {
+				greenUpper, redLower = donGreen, donRed
+			}
+		} else {
+			zoneReady = false
+		}
+	}
+	if cfg.VWAPFilterEnabled || cfg.DonchianFilterEnabled {
+		d.GreenZoneUpper, d.RedZoneLower = greenUpper, redLower
+		d.BoundaryOverlap = zoneReady && greenUpper >= redLower
+	} else {
+		// Both server-side zone filters are disabled: keep the other radar gates
+		// active and allow every price through this opening-zone stage.
+		zoneReady = true
+	}
+	openingZoneReady := zoneReady && (!cfg.VWAPFilterEnabled || vwapReady) && (!cfg.DonchianFilterEnabled || donchianReady)
+	if cfg.VWAPFilterEnabled || cfg.DonchianFilterEnabled {
+		openingZoneReady = openingZoneReady && d.GreenZoneUpper > 0 && d.RedZoneLower > 0
+	}
+
+	addTag := func(tag string) {
+		for _, existing := range d.FilterTags {
+			if existing == tag {
+				return
+			}
+		}
+		d.FilterTags = append(d.FilterTags, tag)
+	}
+	longVWAPBlocked := cfg.VWAPFilterEnabled && (!vwapReady || price > vwapGreen)
+	shortVWAPBlocked := cfg.VWAPFilterEnabled && (!vwapReady || price < vwapRed)
+	longDonchianBlocked := cfg.DonchianFilterEnabled && (!donchianReady || price > donGreen)
+	shortDonchianBlocked := cfg.DonchianFilterEnabled && (!donchianReady || price < donRed)
+
 	// High: short-liquidation opens short; long-liquidation only closes short.
 	// Middle: neither side opens; the liquidation direction may close the
 	// profitable opposite position. Low is the mirror image for long entries.
 	side = strings.ToLower(strings.TrimSpace(side))
 	if side == "long" {
-		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && price <= d.GreenZoneUpper
+		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && (!cfg.VWAPFilterEnabled || price <= vwapGreen) && (!cfg.DonchianFilterEnabled || price <= donGreen)
 		d.CloseAllowed = !d.OpenAllowed
-		if !rangeReady {
-			d.Reason = "donchian_range_unavailable_long_liquidation_close_only"
-		} else if !zoneReady {
-			d.Reason = "vwap_zone_unavailable_long_liquidation_close_only"
+		if !vwapReady && cfg.VWAPFilterEnabled {
+			addTag("vwap")
+			d.Reason = "vwap_zscore_unavailable_long_liquidation_close_only"
+		} else if !donchianReady && cfg.DonchianFilterEnabled {
+			addTag("donchian")
+			if !rangeReady {
+				d.Reason = "donchian_range_unavailable_long_liquidation_close_only"
+			} else {
+				d.Reason = "vwap_zone_unavailable_long_liquidation_close_only"
+			}
 		} else if d.BoundaryOverlap {
+			if cfg.VWAPFilterEnabled {
+				addTag("vwap")
+			}
+			if cfg.DonchianFilterEnabled {
+				addTag("donchian")
+			}
 			d.Reason = "vwap_donchian_zone_overlap_long_liquidation_close_only"
 		} else if d.OpenAllowed {
-			d.Reason = "low_zscore_long_liquidation_open_long"
-		} else if high {
-			d.Reason = "high_zscore_long_liquidation_close_only"
+			if !cfg.VWAPFilterEnabled && !cfg.DonchianFilterEnabled {
+				d.Reason = "zone_filters_disabled_long_liquidation_open_long"
+			} else if low {
+				d.Reason = "low_zscore_long_liquidation_open_long"
+			} else {
+				d.Reason = "donchian_long_liquidation_open_long"
+			}
 		} else {
-			d.Reason = "neutral_zscore_long_liquidation_close_only"
+			if longVWAPBlocked {
+				addTag("vwap")
+			}
+			if longDonchianBlocked {
+				addTag("donchian")
+			}
+			if high {
+				d.Reason = "high_zscore_long_liquidation_close_only"
+			} else {
+				d.Reason = "neutral_zscore_long_liquidation_close_only"
+			}
 		}
 	} else if side == "short" {
-		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && price >= d.RedZoneLower
+		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && (!cfg.VWAPFilterEnabled || price >= vwapRed) && (!cfg.DonchianFilterEnabled || price >= donRed)
 		d.CloseAllowed = !d.OpenAllowed
-		if !rangeReady {
-			d.Reason = "donchian_range_unavailable_short_liquidation_close_only"
-		} else if !zoneReady {
-			d.Reason = "vwap_zone_unavailable_short_liquidation_close_only"
+		if !vwapReady && cfg.VWAPFilterEnabled {
+			addTag("vwap")
+			d.Reason = "vwap_zscore_unavailable_short_liquidation_close_only"
+		} else if !donchianReady && cfg.DonchianFilterEnabled {
+			addTag("donchian")
+			if !rangeReady {
+				d.Reason = "donchian_range_unavailable_short_liquidation_close_only"
+			} else {
+				d.Reason = "vwap_zone_unavailable_short_liquidation_close_only"
+			}
 		} else if d.BoundaryOverlap {
+			if cfg.VWAPFilterEnabled {
+				addTag("vwap")
+			}
+			if cfg.DonchianFilterEnabled {
+				addTag("donchian")
+			}
 			d.Reason = "vwap_donchian_zone_overlap_short_liquidation_close_only"
 		} else if d.OpenAllowed {
-			d.Reason = "high_zscore_short_liquidation_open_short"
-		} else if low {
-			d.Reason = "low_zscore_short_liquidation_close_only"
+			if !cfg.VWAPFilterEnabled && !cfg.DonchianFilterEnabled {
+				d.Reason = "zone_filters_disabled_short_liquidation_open_short"
+			} else if high {
+				d.Reason = "high_zscore_short_liquidation_open_short"
+			} else {
+				d.Reason = "donchian_short_liquidation_open_short"
+			}
 		} else {
-			d.Reason = "neutral_zscore_short_liquidation_close_only"
+			if shortVWAPBlocked {
+				addTag("vwap")
+			}
+			if shortDonchianBlocked {
+				addTag("donchian")
+			}
+			if low {
+				d.Reason = "low_zscore_short_liquidation_close_only"
+			} else {
+				d.Reason = "neutral_zscore_short_liquidation_close_only"
+			}
 		}
 	} else {
 		d.Reason = "unsupported_liquidation_side"

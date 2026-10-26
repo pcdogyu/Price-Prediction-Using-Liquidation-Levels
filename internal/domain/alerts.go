@@ -87,6 +87,7 @@ type LiquidationAlert struct {
 	OpenAllowed                  bool      `json:"open_allowed,omitempty"`
 	CloseAllowed                 bool      `json:"close_allowed,omitempty"`
 	FilterReason                 string    `json:"filter_reason,omitempty"`
+	FilterTags                   []string  `json:"filter_tags"`
 	VWAPZScore                   float64   `json:"vwap_z_score,omitempty"`
 	DonchianHigh                 float64   `json:"donchian_high,omitempty"`
 	DonchianLow                  float64   `json:"donchian_low,omitempty"`
@@ -139,6 +140,7 @@ type TradeSignal struct {
 	OpenAllowed                  bool      `json:"open_allowed,omitempty"`
 	CloseAllowed                 bool      `json:"close_allowed,omitempty"`
 	FilterReason                 string    `json:"filter_reason,omitempty"`
+	FilterTags                   []string  `json:"filter_tags"`
 	VWAPZScore                   float64   `json:"vwap_z_score,omitempty"`
 	DonchianHigh                 float64   `json:"donchian_high,omitempty"`
 	DonchianLow                  float64   `json:"donchian_low,omitempty"`
@@ -189,45 +191,49 @@ type AlertMonitor struct {
 // Quiet/confirmation periods remain deployment settings because changing them
 // alters the lifecycle of already-open alert cycles.
 type AlertStrategySettings struct {
-	WindowMinutes      int       `json:"window_minutes"`
-	BTCUSD             float64   `json:"btc_usd"`
-	ETHUSD             float64   `json:"eth_usd"`
-	OtherUSD           float64   `json:"other_usd"`
-	VWAPRangeHours     int       `json:"vwap_range_hours"`
-	VWAPMinDrawdownPct float64   `json:"vwap_min_drawdown_pct"`
-	VWAPDonchianPct    float64   `json:"vwap_donchian_pct"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	WindowMinutes         int       `json:"window_minutes"`
+	BTCUSD                float64   `json:"btc_usd"`
+	ETHUSD                float64   `json:"eth_usd"`
+	OtherUSD              float64   `json:"other_usd"`
+	VWAPRangeHours        int       `json:"vwap_range_hours"`
+	VWAPMinDrawdownPct    float64   `json:"vwap_min_drawdown_pct"`
+	VWAPDonchianPct       float64   `json:"vwap_donchian_pct"`
+	VWAPFilterEnabled     bool      `json:"vwap_filter_enabled"`
+	DonchianFilterEnabled bool      `json:"donchian_filter_enabled"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 // AlertThresholds describes the effective strategy parameters.
 type AlertThresholds struct {
-	WindowMinutes       int     `json:"window_minutes"`
-	QuietMinutes        int     `json:"quiet_minutes"`
-	ConfirmMinutes      int     `json:"confirm_minutes"`
-	RefreshMinutes      int     `json:"refresh_minutes"`
-	TopSymbols          int     `json:"top_symbols"`
-	BTCUSD              float64 `json:"btc_usd"`
-	ETHUSD              float64 `json:"eth_usd"`
-	OtherUSD            float64 `json:"other_usd"`
-	FollowUpMinimumUSD  float64 `json:"follow_up_minimum_usd"`
-	OppositeMinimumUSD  float64 `json:"opposite_minimum_usd"`
-	VWAPPeriodMinutes   int     `json:"vwap_period_minutes"`
-	VWAPZScore          float64 `json:"vwap_z_score_threshold"`
-	VWAPRangeHours      int     `json:"vwap_range_hours"`
-	VWAPMinDrawdownPct  float64 `json:"vwap_min_drawdown_pct"`
-	VWAPDonchianPct     float64 `json:"vwap_donchian_pct"`
-	PeakDecaySeconds    int     `json:"peak_decay_seconds"`
-	PeakDecayRatio      float64 `json:"peak_decay_ratio"`
-	AbsorptionWickRatio float64 `json:"absorption_wick_ratio"`
-	DeepQuotaUSD        float64 `json:"deep_quota_usd"`
-	DeepQuotaMultiplier float64 `json:"deep_quota_multiplier"`
-	ATRPeriod           int     `json:"atr_period"`
-	DeepDrawdownATR     float64 `json:"deep_drawdown_atr"`
-	MinProfitSpread     float64 `json:"min_profit_spread"`
-	GridStep0Price      float64 `json:"grid_step0_price"`
-	GridStep0Pct        float64 `json:"grid_step0_pct"`
-	GridStepMultiplier  float64 `json:"grid_step_multiplier"`
-	GridThresholdSlope  float64 `json:"grid_threshold_slope"`
+	WindowMinutes         int     `json:"window_minutes"`
+	QuietMinutes          int     `json:"quiet_minutes"`
+	ConfirmMinutes        int     `json:"confirm_minutes"`
+	RefreshMinutes        int     `json:"refresh_minutes"`
+	TopSymbols            int     `json:"top_symbols"`
+	BTCUSD                float64 `json:"btc_usd"`
+	ETHUSD                float64 `json:"eth_usd"`
+	OtherUSD              float64 `json:"other_usd"`
+	FollowUpMinimumUSD    float64 `json:"follow_up_minimum_usd"`
+	OppositeMinimumUSD    float64 `json:"opposite_minimum_usd"`
+	VWAPPeriodMinutes     int     `json:"vwap_period_minutes"`
+	VWAPZScore            float64 `json:"vwap_z_score_threshold"`
+	VWAPRangeHours        int     `json:"vwap_range_hours"`
+	VWAPMinDrawdownPct    float64 `json:"vwap_min_drawdown_pct"`
+	VWAPDonchianPct       float64 `json:"vwap_donchian_pct"`
+	VWAPFilterEnabled     bool    `json:"vwap_filter_enabled"`
+	DonchianFilterEnabled bool    `json:"donchian_filter_enabled"`
+	PeakDecaySeconds      int     `json:"peak_decay_seconds"`
+	PeakDecayRatio        float64 `json:"peak_decay_ratio"`
+	AbsorptionWickRatio   float64 `json:"absorption_wick_ratio"`
+	DeepQuotaUSD          float64 `json:"deep_quota_usd"`
+	DeepQuotaMultiplier   float64 `json:"deep_quota_multiplier"`
+	ATRPeriod             int     `json:"atr_period"`
+	DeepDrawdownATR       float64 `json:"deep_drawdown_atr"`
+	MinProfitSpread       float64 `json:"min_profit_spread"`
+	GridStep0Price        float64 `json:"grid_step0_price"`
+	GridStep0Pct          float64 `json:"grid_step0_pct"`
+	GridStepMultiplier    float64 `json:"grid_step_multiplier"`
+	GridThresholdSlope    float64 `json:"grid_threshold_slope"`
 }
 
 // AlertPage and SignalPage are cursor paginated history pages.

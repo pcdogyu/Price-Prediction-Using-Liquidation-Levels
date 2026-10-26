@@ -23,7 +23,7 @@ func TestTenantAlertSettingsAreIsolated(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveAlertStrategySettingsForContext(alice, domain.AlertStrategySettings{WindowMinutes: 7, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 150000}); err != nil {
+	if _, err := svc.SaveAlertStrategySettingsForContext(alice, domain.AlertStrategySettings{WindowMinutes: 7, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 150000, VWAPFilterEnabled: false, DonchianFilterEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -38,7 +38,7 @@ func TestTenantAlertSettingsAreIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bobStrategy.WindowMinutes == 7 || bobStrategy.BTCUSD == 300000 {
+	if bobStrategy.WindowMinutes == 7 || bobStrategy.BTCUSD == 300000 || !bobStrategy.VWAPFilterEnabled || !bobStrategy.DonchianFilterEnabled {
 		t.Fatalf("bob inherited alice strategy: %+v", bobStrategy)
 	}
 
@@ -53,7 +53,7 @@ func TestTenantAlertSettingsAreIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if aliceStrategy.WindowMinutes != 7 || aliceStrategy.BTCUSD != 300000 {
+	if aliceStrategy.WindowMinutes != 7 || aliceStrategy.BTCUSD != 300000 || aliceStrategy.VWAPFilterEnabled || !aliceStrategy.DonchianFilterEnabled {
 		t.Fatalf("alice strategy did not round trip: %+v", aliceStrategy)
 	}
 }

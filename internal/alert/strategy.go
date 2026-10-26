@@ -58,9 +58,15 @@ type Config struct {
 	VWAPRangeMinutes     int
 	VWAPMinDrawdown      float64
 	VWAPDonchianFraction float64
-	PeakDecayWindow      time.Duration
-	PeakDecayRatio       float64
-	AbsorptionWickRatio  float64
+	// These switches control the corresponding opening-zone component. The
+	// marker preserves true zero-value Config defaults while allowing an
+	// explicit false value from persisted strategy settings.
+	VWAPFilterEnabled     bool
+	DonchianFilterEnabled bool
+	FilterSettingsSet     bool
+	PeakDecayWindow       time.Duration
+	PeakDecayRatio        float64
+	AbsorptionWickRatio   float64
 	// SkipPeakDecay is used only by explicit historical signal recalculation.
 	// It keeps the market/VWAP/position filters but does not wait for the
 	// context-aware peak-decay or price-absorption gates.
@@ -79,38 +85,46 @@ type Config struct {
 // Defaults returns the production strategy configuration.
 func Defaults() Config {
 	return Config{
-		Window:               3 * time.Minute,
-		Quiet:                10 * time.Minute,
-		Confirm:              30 * time.Minute,
-		Refresh:              10 * time.Minute,
-		BTCUSD:               300000,
-		ETHUSD:               200000,
-		OtherUSD:             100000,
-		FollowUpMinimumUSD:   0,
-		OppositeMinimumUSD:   0,
-		TopSymbols:           domain.AlertTopSymbolsDefault,
-		VWAPPeriodMinutes:    240,
-		VWAPZScore:           0.8,
-		VWAPRangeMinutes:     24 * 60,
-		VWAPMinDrawdown:      0.022,
-		VWAPDonchianFraction: 0.35,
-		PeakDecayWindow:      30 * time.Second,
-		PeakDecayRatio:       0.4,
-		AbsorptionWickRatio:  0.35,
-		DeepQuotaUSD:         0,
-		DeepQuotaMultiplier:  2,
-		ATRPeriod:            60,
-		DeepDrawdownATR:      1.5,
-		MinProfitSpread:      0.007,
-		GridStep0Price:       0,
-		GridStep0Pct:         0.003,
-		GridStepMultiplier:   1.4,
-		GridThresholdSlope:   0.5,
+		Window:                3 * time.Minute,
+		Quiet:                 10 * time.Minute,
+		Confirm:               30 * time.Minute,
+		Refresh:               10 * time.Minute,
+		BTCUSD:                300000,
+		ETHUSD:                200000,
+		OtherUSD:              100000,
+		FollowUpMinimumUSD:    0,
+		OppositeMinimumUSD:    0,
+		TopSymbols:            domain.AlertTopSymbolsDefault,
+		VWAPPeriodMinutes:     240,
+		VWAPZScore:            0.8,
+		VWAPRangeMinutes:      24 * 60,
+		VWAPMinDrawdown:       0.022,
+		VWAPDonchianFraction:  0.35,
+		VWAPFilterEnabled:     true,
+		DonchianFilterEnabled: true,
+		FilterSettingsSet:     true,
+		PeakDecayWindow:       30 * time.Second,
+		PeakDecayRatio:        0.4,
+		AbsorptionWickRatio:   0.35,
+		DeepQuotaUSD:          0,
+		DeepQuotaMultiplier:   2,
+		ATRPeriod:             60,
+		DeepDrawdownATR:       1.5,
+		MinProfitSpread:       0.007,
+		GridStep0Price:        0,
+		GridStep0Pct:          0.003,
+		GridStepMultiplier:    1.4,
+		GridThresholdSlope:    0.5,
 	}
 }
 
 func (c Config) withDefaults() Config {
 	d := Defaults()
+	if !c.FilterSettingsSet {
+		c.VWAPFilterEnabled = d.VWAPFilterEnabled
+		c.DonchianFilterEnabled = d.DonchianFilterEnabled
+		c.FilterSettingsSet = true
+	}
 	if c.Window <= 0 {
 		c.Window = d.Window
 	}
@@ -211,33 +225,35 @@ func (c Config) ThresholdFor(symbol string) float64 {
 // Thresholds publishes the effective parameters for the alert page.
 func (c Config) Thresholds() domain.AlertThresholds {
 	return domain.AlertThresholds{
-		WindowMinutes:       int(c.Window / time.Minute),
-		QuietMinutes:        int(c.Quiet / time.Minute),
-		ConfirmMinutes:      int(c.Confirm / time.Minute),
-		RefreshMinutes:      int(c.Refresh / time.Minute),
-		TopSymbols:          c.TopSymbols,
-		BTCUSD:              c.BTCUSD,
-		ETHUSD:              c.ETHUSD,
-		OtherUSD:            c.OtherUSD,
-		FollowUpMinimumUSD:  c.FollowUpMinimumUSD,
-		OppositeMinimumUSD:  c.OppositeMinimumUSD,
-		VWAPPeriodMinutes:   c.VWAPPeriodMinutes,
-		VWAPZScore:          c.VWAPZScore,
-		VWAPRangeHours:      c.VWAPRangeMinutes / 60,
-		VWAPMinDrawdownPct:  c.VWAPMinDrawdown * 100,
-		VWAPDonchianPct:     c.VWAPDonchianFraction * 100,
-		PeakDecaySeconds:    int(c.PeakDecayWindow / time.Second),
-		PeakDecayRatio:      c.PeakDecayRatio,
-		AbsorptionWickRatio: c.AbsorptionWickRatio,
-		DeepQuotaUSD:        c.DeepQuotaUSD,
-		DeepQuotaMultiplier: c.DeepQuotaMultiplier,
-		ATRPeriod:           c.ATRPeriod,
-		DeepDrawdownATR:     c.DeepDrawdownATR,
-		MinProfitSpread:     c.MinProfitSpread,
-		GridStep0Price:      c.GridStep0Price,
-		GridStep0Pct:        c.GridStep0Pct,
-		GridStepMultiplier:  c.GridStepMultiplier,
-		GridThresholdSlope:  c.GridThresholdSlope,
+		WindowMinutes:         int(c.Window / time.Minute),
+		QuietMinutes:          int(c.Quiet / time.Minute),
+		ConfirmMinutes:        int(c.Confirm / time.Minute),
+		RefreshMinutes:        int(c.Refresh / time.Minute),
+		TopSymbols:            c.TopSymbols,
+		BTCUSD:                c.BTCUSD,
+		ETHUSD:                c.ETHUSD,
+		OtherUSD:              c.OtherUSD,
+		FollowUpMinimumUSD:    c.FollowUpMinimumUSD,
+		OppositeMinimumUSD:    c.OppositeMinimumUSD,
+		VWAPPeriodMinutes:     c.VWAPPeriodMinutes,
+		VWAPZScore:            c.VWAPZScore,
+		VWAPRangeHours:        c.VWAPRangeMinutes / 60,
+		VWAPMinDrawdownPct:    c.VWAPMinDrawdown * 100,
+		VWAPDonchianPct:       c.VWAPDonchianFraction * 100,
+		VWAPFilterEnabled:     c.VWAPFilterEnabled,
+		DonchianFilterEnabled: c.DonchianFilterEnabled,
+		PeakDecaySeconds:      int(c.PeakDecayWindow / time.Second),
+		PeakDecayRatio:        c.PeakDecayRatio,
+		AbsorptionWickRatio:   c.AbsorptionWickRatio,
+		DeepQuotaUSD:          c.DeepQuotaUSD,
+		DeepQuotaMultiplier:   c.DeepQuotaMultiplier,
+		ATRPeriod:             c.ATRPeriod,
+		DeepDrawdownATR:       c.DeepDrawdownATR,
+		MinProfitSpread:       c.MinProfitSpread,
+		GridStep0Price:        c.GridStep0Price,
+		GridStep0Pct:          c.GridStep0Pct,
+		GridStepMultiplier:    c.GridStepMultiplier,
+		GridThresholdSlope:    c.GridThresholdSlope,
 	}
 }
 
@@ -789,6 +805,7 @@ func applyDecisionToSignal(signal *domain.TradeSignal, decision FilterDecision) 
 	signal.OpenAllowed = decision.OpenAllowed
 	signal.CloseAllowed = decision.CloseAllowed
 	signal.FilterReason = decision.Reason
+	signal.FilterTags = append([]string{}, decision.FilterTags...)
 	signal.VWAPZScore = decision.ZScore
 	signal.DonchianHigh = decision.DonchianHigh
 	signal.DonchianLow = decision.DonchianLow
@@ -878,6 +895,7 @@ func (c *cycle) view(cfg Config, symbol string) domain.LiquidationAlert {
 		out.OpenAllowed = c.decision.OpenAllowed
 		out.CloseAllowed = c.decision.CloseAllowed
 		out.FilterReason = c.decision.Reason
+		out.FilterTags = append([]string{}, c.decision.FilterTags...)
 		out.VWAPZScore = c.decision.ZScore
 		out.DonchianHigh = c.decision.DonchianHigh
 		out.DonchianLow = c.decision.DonchianLow

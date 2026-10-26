@@ -258,7 +258,7 @@ func TestSeedReplayIsIdempotent(t *testing.T) {
 func TestZeroConfigKeepsProductionDefaults(t *testing.T) {
 	engine := testEngine(t, Config{}, "BTCUSDT")
 	got := engine.Config()
-	if got.Window != 3*time.Minute || got.Quiet != 10*time.Minute || got.Confirm != 30*time.Minute || got.BTCUSD != 300000 || got.ETHUSD != 200000 || got.OtherUSD != 100000 || got.VWAPRangeMinutes != 1440 || got.VWAPMinDrawdown != .022 || got.VWAPDonchianFraction != .35 {
+	if got.Window != 3*time.Minute || got.Quiet != 10*time.Minute || got.Confirm != 30*time.Minute || got.BTCUSD != 300000 || got.ETHUSD != 200000 || got.OtherUSD != 100000 || got.VWAPRangeMinutes != 1440 || got.VWAPMinDrawdown != .022 || got.VWAPDonchianFraction != .35 || !got.VWAPFilterEnabled || !got.DonchianFilterEnabled {
 		t.Fatalf("zero values must fall back to the documented defaults: %+v", got)
 	}
 	thresholds := engine.Thresholds()
@@ -298,6 +298,77 @@ func TestRadarMiddleZoneBlocksBothOpeningDirections(t *testing.T) {
 	short := filterDecision(cfg, "short", ctx, symbolState{}, 100)
 	if short.OpenAllowed || !short.CloseAllowed {
 		t.Fatalf("middle zone must keep short liquidation close-only: %+v", short)
+	}
+}
+
+func TestRadarZoneFilterSwitchesAreIndependentAndCanonical(t *testing.T) {
+	candles := radarCandles(98, 100, 102)
+	ctx := radarShortContext(100, candles)
+
+	cases := []struct {
+		name     string
+		vwap     bool
+		donchian bool
+		wantOpen bool
+		wantTags string
+	}{
+		{name: "both enabled", vwap: true, donchian: true, wantTags: "vwap,donchian"},
+		{name: "only vwap", vwap: true, donchian: false, wantTags: "vwap"},
+		{name: "only donchian", vwap: false, donchian: true, wantTags: "donchian"},
+		{name: "both disabled", vwap: false, donchian: false, wantOpen: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Defaults()
+			cfg.VWAPPeriodMinutes = 3
+			cfg.VWAPRangeMinutes = 3
+			cfg.VWAPFilterEnabled, cfg.DonchianFilterEnabled = tc.vwap, tc.donchian
+			cfg.FilterSettingsSet = true
+			decision := filterDecision(cfg, "short", ctx, symbolState{}, 100)
+			if decision.OpenAllowed != tc.wantOpen {
+				t.Fatalf("open allowed = %v, want %v: %+v", decision.OpenAllowed, tc.wantOpen, decision)
+			}
+			if got := strings.Join(decision.FilterTags, ","); got != tc.wantTags {
+				t.Fatalf("filter tags = %q, want %q: %+v", got, tc.wantTags, decision)
+			}
+		})
+	}
+}
+
+func TestRadarDisabledComponentIgnoresMissingData(t *testing.T) {
+	validDonchian := MarketContext{
+		Ready: true, Price: 100, Candles: radarCandles(100, 101),
+		CurrentCandle: domain.Candle{Time: testStart, Close: 100},
+		DonchianHigh:  102, DonchianLow: 98, DonchianReady: true,
+	}
+	cfg := Defaults()
+	cfg.VWAPFilterEnabled = false
+	cfg.DonchianFilterEnabled = true
+	cfg.FilterSettingsSet = true
+	donchianOnly := filterDecision(cfg, "short", validDonchian, symbolState{}, 100)
+	if donchianOnly.OpenAllowed || strings.Join(donchianOnly.FilterTags, ",") != "donchian" {
+		t.Fatalf("missing VWAP data must not add a VWAP tag: %+v", donchianOnly)
+	}
+
+	validVWAP := radarShortContext(100, radarCandles(98, 100, 102))
+	validVWAP.DonchianReady = false
+	validVWAP.DonchianHigh, validVWAP.DonchianLow = 0, 0
+	cfg.VWAPFilterEnabled = true
+	cfg.DonchianFilterEnabled = false
+	vwapOnly := filterDecision(cfg, "short", validVWAP, symbolState{}, 100)
+	if vwapOnly.OpenAllowed || strings.Join(vwapOnly.FilterTags, ",") != "vwap" {
+		t.Fatalf("missing Donchian data must not add a Donchian tag: %+v", vwapOnly)
+	}
+}
+
+func TestRadarRiskBlockDoesNotAddZoneFilterTags(t *testing.T) {
+	cfg := Defaults()
+	cfg.VWAPFilterEnabled = false
+	cfg.DonchianFilterEnabled = false
+	cfg.FilterSettingsSet = true
+	decision := filterDecision(cfg, "long", radarContext(100, radarCandles(98, 100, 102)), symbolState{}, 100)
+	if decision.OpenAllowed || len(decision.FilterTags) != 0 || !strings.Contains(decision.Reason, "deep_liquidation_quota_or_atr_not_ready") {
+		t.Fatalf("non-zone risk block must not carry VWAP/Donchian tags: %+v", decision)
 	}
 }
 

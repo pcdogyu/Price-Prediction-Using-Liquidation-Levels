@@ -37,6 +37,9 @@ func (s *Service) alertStrategyConfigForContext(ctx context.Context, rtm *alertR
 			cfg.VWAPRangeMinutes = strategy.VWAPRangeHours * 60
 			cfg.VWAPMinDrawdown = strategy.VWAPMinDrawdownPct / 100
 			cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
+			cfg.VWAPFilterEnabled = strategy.VWAPFilterEnabled
+			cfg.DonchianFilterEnabled = strategy.DonchianFilterEnabled
+			cfg.FilterSettingsSet = true
 		}
 	}
 	return cfg, nil

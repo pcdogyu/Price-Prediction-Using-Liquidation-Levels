@@ -48,6 +48,25 @@
     exponential_long_grid_not_ready: '多单指数网格间距未达标',
     unsupported_liquidation_side: '不支持的爆仓方向'
   };
+  const filterTagLabels = { vwap: 'VWAP过滤', donchian: 'Donchian过滤' };
+  const canonicalFilterTags = tags => ['vwap', 'donchian'].filter(tag => Array.isArray(tags) && tags.includes(tag));
+  const legacyFilterTags = row => {
+    if (!row || row.filter_tags !== undefined && row.filter_tags !== null) return [];
+    if (!row.filter_applied || row.open_allowed) return [];
+    const reason = String(row.filter_reason || '');
+    const tags = [];
+    if (/(vwap_zscore_unavailable|vwap_zone_unavailable)/.test(reason)) tags.push('vwap');
+    if (/donchian_range_unavailable/.test(reason)) tags.push('donchian');
+    if (/vwap_donchian_zone_overlap/.test(reason) || /(high_zscore|low_zscore|neutral_zscore)/.test(reason)) {
+      tags.push('vwap', 'donchian');
+    }
+    return canonicalFilterTags(tags);
+  };
+  const rowFilterTags = row => {
+    if (!row) return [];
+    if (Array.isArray(row.filter_tags)) return canonicalFilterTags(row.filter_tags);
+    return legacyFilterTags(row);
+  };
   const radarFilterStatus = row => {
     if (!row || !row.filter_applied) return '';
     const raw = String(row.filter_reason || '').trim();
@@ -61,7 +80,12 @@
   };
   const closeOnlyIgnored = row => !!(row && row.filter_applied && row.close_allowed && !row.open_allowed);
   const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : '激进信号过滤';
-  const recordTypeLabel = (row, label) => (closeOnlyIgnored(row) ? '<span class="alerts-close-only-prefix">' + escape(closeOnlyFilterLabel(label)) + ' · </span>' : '') + escape(label);
+  const recordTypeLabel = (row, label) => {
+    const tags = rowFilterTags(row).map(tag => '<span class="alerts-filter-tag alerts-filter-tag-' + tag + '">' + escape(filterTagLabels[tag]) + '</span>');
+    const closeOnly = closeOnlyIgnored(row) ? '<span class="alerts-close-only-prefix">' + escape(closeOnlyFilterLabel(label)) + '</span>' : '';
+    const prefix = tags.concat(closeOnly ? [closeOnly] : []).join(' · ');
+    return (prefix ? prefix + ' · ' : '') + escape(label);
+  };
   // Every pair name links to its own K-line page in a new tab, so the alert page
   // keeps its scroll position and filters while the chart opens beside it.
   const chartLink = symbol => '<a class="alerts-symbol-link" target="_blank" rel="noopener" href="' + base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '" title="在新标签页打开 ' + escape(symbol) + ' K线">' + escape(symbol) + '</a>';
@@ -257,6 +281,10 @@
       const input = $(id);
       if (document.activeElement !== input && Number.isFinite(Number(value))) input.value = value;
     }
+    const vwapFilter = $('alerts-vwap-filter');
+    const donchianFilter = $('alerts-donchian-filter');
+    if (document.activeElement !== vwapFilter) vwapFilter.checked = settings.vwap_filter_enabled !== false;
+    if (document.activeElement !== donchianFilter) donchianFilter.checked = settings.donchian_filter_enabled !== false;
     $('alerts-monitor-window').textContent = settings.window_minutes || 3;
     $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 100) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健下单信号';
     if (!strategyLoaded) strategyLoaded = true;
@@ -355,7 +383,9 @@
       window_minutes: Number($('alerts-window-minutes').value),
       vwap_range_hours: Number($('alerts-vwap-range-hours').value),
       vwap_min_drawdown_pct: Number($('alerts-vwap-min-drawdown').value),
-      vwap_donchian_pct: Number($('alerts-vwap-donchian').value)
+      vwap_donchian_pct: Number($('alerts-vwap-donchian').value),
+      vwap_filter_enabled: $('alerts-vwap-filter').checked,
+      donchian_filter_enabled: $('alerts-donchian-filter').checked
     };
   }
 
@@ -548,6 +578,7 @@
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
   ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes', 'alerts-vwap-range-hours', 'alerts-vwap-min-drawdown', 'alerts-vwap-donchian'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
+  ['alerts-vwap-filter', 'alerts-donchian-filter'].forEach(id => $(id).addEventListener('change', () => { void saveStrategySettings(null, true); }));
   $('alerts-signal-recalculate').addEventListener('click', recalculateSignals);
   $('alerts-order-signal-settings').addEventListener('submit', saveOrderSignalSettings);
   ['alerts-order-alert-close', 'alerts-order-alert', 'alerts-order-aggressive-close', 'alerts-order-aggressive', 'alerts-order-steady-close', 'alerts-order-steady'].forEach(id => $(id).addEventListener('change', renderOrderSignalSummary));

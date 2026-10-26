@@ -30,12 +30,17 @@
       <label for="alerts-vwap-range-hours">VWAP Donchian 窗口（小时）<input id="alerts-vwap-range-hours" type="number" min="12" max="24" step="1" inputmode="numeric"></label>
       <label for="alerts-vwap-min-drawdown">VWAP 最小回撤（%）<input id="alerts-vwap-min-drawdown" type="number" min="0.1" max="20" step="0.1" inputmode="decimal"></label>
       <label for="alerts-vwap-donchian">VWAP Donchian 分位（%）<input id="alerts-vwap-donchian" type="number" min="1" max="49" step="1" inputmode="numeric"></label>
+      <div class="alerts-filter-switches" aria-label="服务端开仓区过滤">
+        <span class="muted alerts-filter-switch-label">服务端过滤</span>
+        <label class="alerts-check"><input id="alerts-vwap-filter" type="checkbox"><span>VWAP过滤</span></label>
+        <label class="alerts-check"><input id="alerts-donchian-filter" type="checkbox"><span>Donchian过滤</span></label>
+      </div>
       <div class="alerts-settings-actions"><button id="alerts-strategy-save" type="submit">保存报警参数</button><button id="alerts-signal-recalculate" type="button">信号重算</button></div>
       <div id="alerts-signal-progress" class="alerts-signal-progress" hidden aria-live="polite">
         <div class="alerts-signal-progress-head"><span id="alerts-signal-progress-label">过去 48 小时信号重算进度</span><output id="alerts-signal-progress-value">1%</output></div>
         <div id="alerts-signal-progress-track" class="alerts-signal-progress-track" role="progressbar" aria-label="过去 48 小时信号重算进度" aria-valuemin="1" aria-valuemax="100" aria-valuenow="1"><span id="alerts-signal-progress-fill"></span></div>
       </div>
-      <p class="muted">修改任一参数并切换焦点后自动保存并立即用于实时监控；也可点击保存按钮。绿色接多区上沿取 VWAP 下界、24 小时高点最小回撤线和 Donchian 分位线的最小值；红色开空区下线取对应三项的最大值。点击“信号重算”会按当前参数回放过去 48 小时，重算时跳过 Peak-Decay，并通知已打开的币对图表刷新；实时监控和普通图表回放仍保留 Peak-Decay；历史预警和信号保留产生时的阈值与周期。</p>
+      <p class="muted">修改任一参数并切换焦点后自动保存并立即用于实时监控；两个服务端过滤开关默认开启，影响实时雷达、过去 48 小时信号重算和 K 线回放；也可点击保存按钮。关闭某个开关只跳过对应的开仓区边界，Peak-Decay、价格吸收、深度爆仓配额、ATR、网格、Gamma 和开平仓类别开关仍生效。点击“信号重算”会按当前参数回放过去 48 小时，重算时跳过 Peak-Decay，并通知已打开的币对图表刷新；实时监控和普通图表回放仍保留 Peak-Decay；历史预警和信号保留产生时的阈值与周期。</p>
     </form>
     <div class="alerts-strategy-switches">
       <div class="section-head alerts-strategy-switch-head"><div><h3>策略开关</h3><p class="muted alerts-section-lead">三类实时信号分别控制平仓和开仓，可单独打开或关闭；BTCUSDT 使用 BTCUSDT Gamma，ETHUSDT 及其他币对使用 ETHUSDT Gamma。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>

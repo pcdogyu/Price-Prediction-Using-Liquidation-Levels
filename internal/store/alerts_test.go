@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -124,6 +125,39 @@ func TestLiquidationAlertRoundTripAndPagination(t *testing.T) {
 	oldest, err := store.AlertOldestTime(ctx)
 	if err != nil || !oldest.Equal(base) {
 		t.Fatalf("oldest alert: %v err %v", oldest, err)
+	}
+}
+
+func TestAlertStrategyMigrationDefaultsNewFiltersOn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-alerts.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,updated_ts INTEGER NOT NULL);
+CREATE TABLE alert_tenant_strategy_settings(tenant_id TEXT PRIMARY KEY,window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,updated_ts INTEGER NOT NULL);
+INSERT INTO alert_strategy_settings(id,window_minutes,btc_usd,eth_usd,other_usd,updated_ts) VALUES(1,3,300000,200000,100000,1);
+INSERT INTO alert_tenant_strategy_settings(tenant_id,window_minutes,btc_usd,eth_usd,other_usd,updated_ts) VALUES('alice',3,300000,200000,100000,1);`)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	global, found, err := store.AlertStrategySettings(ctx)
+	if err != nil || !found || !global.VWAPFilterEnabled || !global.DonchianFilterEnabled {
+		t.Fatalf("legacy global strategy filters must default on: %+v found=%v err=%v", global, found, err)
+	}
+	tenant, found, err := store.AlertStrategySettingsForTenant(ctx, "alice")
+	if err != nil || !found || !tenant.VWAPFilterEnabled || !tenant.DonchianFilterEnabled {
+		t.Fatalf("legacy tenant strategy filters must default on: %+v found=%v err=%v", tenant, found, err)
 	}
 }
 
@@ -282,12 +316,12 @@ func TestWatchListAndSettingsPersistence(t *testing.T) {
 	if err != nil || stored.TelegramEnabled || stored.TelegramToken != "123:secret" {
 		t.Fatalf("the settings row must be updated in place: %+v err %v", stored, err)
 	}
-	strategy := domain.AlertStrategySettings{WindowMinutes: 5, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 100000}
+	strategy := domain.AlertStrategySettings{WindowMinutes: 5, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 100000, VWAPFilterEnabled: true, DonchianFilterEnabled: true}
 	if err := store.SaveAlertStrategySettings(ctx, strategy); err != nil {
 		t.Fatal(err)
 	}
 	storedStrategy, found, err := store.AlertStrategySettings(ctx)
-	if err != nil || !found || storedStrategy.WindowMinutes != 5 || storedStrategy.ETHUSD != 200000 || storedStrategy.OtherUSD != 100000 {
+	if err != nil || !found || storedStrategy.WindowMinutes != 5 || storedStrategy.ETHUSD != 200000 || storedStrategy.OtherUSD != 100000 || !storedStrategy.VWAPFilterEnabled || !storedStrategy.DonchianFilterEnabled {
 		t.Fatalf("the strategy settings did not round trip: %+v found=%v err=%v", storedStrategy, found, err)
 	}
 }

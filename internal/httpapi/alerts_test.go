@@ -57,7 +57,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "报警参数", "策略开关", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "平仓区域预警信号过滤", "激进信号过滤", "稳健信号过滤", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`} {
+	for _, want := range []string{"预警与信号历史", "报警参数", "策略开关", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "平仓区域预警信号过滤", "激进信号过滤", "稳健信号过滤", "VWAP过滤", "Donchian过滤", "服务端过滤", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`, `id="alerts-vwap-filter" type="checkbox"`, `id="alerts-donchian-filter" type="checkbox"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -95,6 +95,9 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	if !strings.Contains(script, "alerts-close-only-prefix") || !strings.Contains(script, "closeOnlyIgnored") {
 		t.Fatal("the alerts script must mark close-only history records")
+	}
+	if !strings.Contains(script, "filter_tags") || !strings.Contains(script, "VWAP过滤") || !strings.Contains(script, "Donchian过滤") || !strings.Contains(script, "legacyFilterTags") {
+		t.Fatal("the alerts script must render VWAP/Donchian history tags")
 	}
 	if !strings.Contains(script, "api/v1/alerts/notify") || !strings.Contains(script, "触发报价") {
 		t.Fatal("the alerts script must expose the manual Telegram alert trigger")
@@ -281,18 +284,22 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 	defer st.Close()
 
 	initial := serveAlert(srv, http.MethodGet, "/api/v1/alerts/strategy-settings", nil)
-	if initial.Code != http.StatusOK || !strings.Contains(initial.Body.String(), `"window_minutes":3`) || !strings.Contains(initial.Body.String(), `"eth_usd":200000`) || !strings.Contains(initial.Body.String(), `"other_usd":100000`) {
+	if initial.Code != http.StatusOK || !strings.Contains(initial.Body.String(), `"window_minutes":3`) || !strings.Contains(initial.Body.String(), `"eth_usd":200000`) || !strings.Contains(initial.Body.String(), `"other_usd":100000`) || !strings.Contains(initial.Body.String(), `"vwap_filter_enabled":true`) || !strings.Contains(initial.Body.String(), `"donchian_filter_enabled":true`) {
 		t.Fatalf("default strategy settings status=%d body=%s", initial.Code, initial.Body.String())
 	}
-	saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":5,"btc_usd":300000,"eth_usd":200000,"other_usd":100000,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30}`))
-	if saved.Code != http.StatusOK || !strings.Contains(saved.Body.String(), `"window_minutes":5`) || !strings.Contains(saved.Body.String(), `"vwap_range_hours":18`) || !strings.Contains(saved.Body.String(), `"vwap_min_drawdown_pct":2.5`) || !strings.Contains(saved.Body.String(), `"vwap_donchian_pct":30`) {
+	saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":5,"btc_usd":300000,"eth_usd":200000,"other_usd":100000,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30,"vwap_filter_enabled":false,"donchian_filter_enabled":true}`))
+	if saved.Code != http.StatusOK || !strings.Contains(saved.Body.String(), `"window_minutes":5`) || !strings.Contains(saved.Body.String(), `"vwap_range_hours":18`) || !strings.Contains(saved.Body.String(), `"vwap_min_drawdown_pct":2.5`) || !strings.Contains(saved.Body.String(), `"vwap_donchian_pct":30`) || !strings.Contains(saved.Body.String(), `"vwap_filter_enabled":false`) || !strings.Contains(saved.Body.String(), `"donchian_filter_enabled":true`) {
 		t.Fatalf("saved strategy settings status=%d body=%s", saved.Code, saved.Body.String())
+	}
+	legacy := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":5,"btc_usd":300000,"eth_usd":200000,"other_usd":100000,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30}`))
+	if legacy.Code != http.StatusOK || !strings.Contains(legacy.Body.String(), `"vwap_filter_enabled":false`) || !strings.Contains(legacy.Body.String(), `"donchian_filter_enabled":true`) {
+		t.Fatalf("legacy strategy settings submission must preserve switches: status=%d body=%s", legacy.Code, legacy.Body.String())
 	}
 	view, err := srv.svc.Alerts(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Thresholds.WindowMinutes != 5 || view.Thresholds.ETHUSD != 200000 || view.Thresholds.OtherUSD != 100000 || view.Thresholds.VWAPRangeHours != 18 || view.Thresholds.VWAPMinDrawdownPct != 2.5 || view.Thresholds.VWAPDonchianPct != 30 {
+	if view.Thresholds.WindowMinutes != 5 || view.Thresholds.ETHUSD != 200000 || view.Thresholds.OtherUSD != 100000 || view.Thresholds.VWAPRangeHours != 18 || view.Thresholds.VWAPMinDrawdownPct != 2.5 || view.Thresholds.VWAPDonchianPct != 30 || view.Thresholds.VWAPFilterEnabled || !view.Thresholds.DonchianFilterEnabled {
 		t.Fatalf("live strategy settings = %+v", view.Thresholds)
 	}
 	chart := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=BTCUSDT", nil)

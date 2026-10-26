@@ -233,6 +233,11 @@ func (s *Server) alertOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	view.Thresholds.WindowMinutes = strategy.WindowMinutes
 	view.Thresholds.BTCUSD, view.Thresholds.ETHUSD, view.Thresholds.OtherUSD = strategy.BTCUSD, strategy.ETHUSD, strategy.OtherUSD
+	view.Thresholds.VWAPRangeHours = strategy.VWAPRangeHours
+	view.Thresholds.VWAPMinDrawdownPct = strategy.VWAPMinDrawdownPct
+	view.Thresholds.VWAPDonchianPct = strategy.VWAPDonchianPct
+	view.Thresholds.VWAPFilterEnabled = strategy.VWAPFilterEnabled
+	view.Thresholds.DonchianFilterEnabled = strategy.DonchianFilterEnabled
 	view.Method = domain.AlertMonitorMethod(view.Thresholds.WindowMinutes, view.Thresholds.RefreshMinutes, view.Thresholds.TopSymbols)
 	w.Header().Set("Cache-Control", "no-store")
 	settings, settingsErr := s.svc.AlertSettingsForContext(ctx)
@@ -646,12 +651,35 @@ func (s *Server) alertStrategySettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusMethodNotAllowed, fmt.Errorf("method must be GET or POST"))
 		return
 	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<10))
+	if err != nil {
+		problem(w, http.StatusBadRequest, fmt.Errorf("strategy settings body must be JSON: %w", err))
+		return
+	}
 	var in domain.AlertStrategySettings
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 8<<10))
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&in); err != nil {
 		problem(w, http.StatusBadRequest, fmt.Errorf("strategy settings body must be JSON: %w", err))
 		return
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		problem(w, http.StatusBadRequest, fmt.Errorf("strategy settings body must be a JSON object: %w", err))
+		return
+	}
+	current, err := s.svc.AlertStrategySettingsForContext(ctx)
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	// Older alert pages do not send the two new booleans. Keep the effective
+	// value in that case; an explicitly supplied false remains a real update.
+	if _, ok := fields["vwap_filter_enabled"]; !ok {
+		in.VWAPFilterEnabled = current.VWAPFilterEnabled
+	}
+	if _, ok := fields["donchian_filter_enabled"]; !ok {
+		in.DonchianFilterEnabled = current.DonchianFilterEnabled
 	}
 	stored, err := s.svc.SaveAlertStrategySettingsForContext(ctx, in)
 	if err != nil {

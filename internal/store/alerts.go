@@ -26,9 +26,9 @@ CREATE INDEX IF NOT EXISTS trade_signals_kind ON trade_signals(kind,created_ts D
 CREATE INDEX IF NOT EXISTS trade_signals_symbol ON trade_signals(symbol,created_ts DESC);
 CREATE TABLE IF NOT EXISTS alert_watch_symbols(symbol TEXT PRIMARY KEY,rank INTEGER NOT NULL,quote_volume_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_settings(id INTEGER PRIMARY KEY CHECK(id=1),telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_tenant_settings(tenant_id TEXT PRIMARY KEY,telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY KEY,window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,updated_ts INTEGER NOT NULL);`)
+CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY KEY,window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);`)
 	if err != nil {
 		return err
 	}
@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY
 			{"vwap_range_hours", "INTEGER NOT NULL DEFAULT 24"},
 			{"vwap_min_drawdown_pct", "REAL NOT NULL DEFAULT 2.2"},
 			{"vwap_donchian_pct", "REAL NOT NULL DEFAULT 35"},
+			{"vwap_filter_enabled", "INTEGER NOT NULL DEFAULT 1"},
+			{"donchian_filter_enabled", "INTEGER NOT NULL DEFAULT 1"},
 		} {
 			if s.hasColumn(ctx, table, column.name) {
 				continue
@@ -538,10 +540,10 @@ ON CONFLICT(tenant_id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,
 // strategy form. A missing row means the environment/default values are active.
 func (s *Store) AlertStrategySettings(ctx context.Context) (domain.AlertStrategySettings, bool, error) {
 	var out domain.AlertStrategySettings
-	var window int
+	var window, vwapFilter, donchianFilter int
 	var updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,updated_ts FROM alert_strategy_settings WHERE id=1`).
-		Scan(&window, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &out.VWAPRangeHours, &out.VWAPMinDrawdownPct, &out.VWAPDonchianPct, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,updated_ts FROM alert_strategy_settings WHERE id=1`).
+		Scan(&window, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &out.VWAPRangeHours, &out.VWAPMinDrawdownPct, &out.VWAPDonchianPct, &vwapFilter, &donchianFilter, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
 	}
@@ -549,6 +551,8 @@ func (s *Store) AlertStrategySettings(ctx context.Context) (domain.AlertStrategy
 		return out, false, err
 	}
 	out.WindowMinutes = window
+	out.VWAPFilterEnabled = vwapFilter != 0
+	out.DonchianFilterEnabled = donchianFilter != 0
 	out.UpdatedAt = time.UnixMilli(updated).UTC()
 	return out, true, nil
 }
@@ -556,9 +560,9 @@ func (s *Store) AlertStrategySettings(ctx context.Context) (domain.AlertStrategy
 // SaveAlertStrategySettings stores the editable threshold and rolling-window
 // parameters as a single row.
 func (s *Store) SaveAlertStrategySettings(ctx context.Context, in domain.AlertStrategySettings) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_strategy_settings(id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,updated_ts) VALUES(1,?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,vwap_range_hours=excluded.vwap_range_hours,vwap_min_drawdown_pct=excluded.vwap_min_drawdown_pct,vwap_donchian_pct=excluded.vwap_donchian_pct,updated_ts=excluded.updated_ts`,
-		in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, in.VWAPRangeHours, in.VWAPMinDrawdownPct, in.VWAPDonchianPct, time.Now().UTC().UnixMilli())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_strategy_settings(id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,updated_ts) VALUES(1,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,vwap_range_hours=excluded.vwap_range_hours,vwap_min_drawdown_pct=excluded.vwap_min_drawdown_pct,vwap_donchian_pct=excluded.vwap_donchian_pct,vwap_filter_enabled=excluded.vwap_filter_enabled,donchian_filter_enabled=excluded.donchian_filter_enabled,updated_ts=excluded.updated_ts`,
+		in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, in.VWAPRangeHours, in.VWAPMinDrawdownPct, in.VWAPDonchianPct, boolInt(in.VWAPFilterEnabled), boolInt(in.DonchianFilterEnabled), time.Now().UTC().UnixMilli())
 	return err
 }
 
@@ -570,9 +574,10 @@ func (s *Store) AlertStrategySettingsForTenant(ctx context.Context, tenantID str
 		return s.AlertStrategySettings(ctx)
 	}
 	var out domain.AlertStrategySettings
+	var vwapFilter, donchianFilter int
 	var updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,updated_ts FROM alert_tenant_strategy_settings WHERE tenant_id=?`, tenantID).
-		Scan(&out.WindowMinutes, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &out.VWAPRangeHours, &out.VWAPMinDrawdownPct, &out.VWAPDonchianPct, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,updated_ts FROM alert_tenant_strategy_settings WHERE tenant_id=?`, tenantID).
+		Scan(&out.WindowMinutes, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &out.VWAPRangeHours, &out.VWAPMinDrawdownPct, &out.VWAPDonchianPct, &vwapFilter, &donchianFilter, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
 	}
@@ -580,6 +585,8 @@ func (s *Store) AlertStrategySettingsForTenant(ctx context.Context, tenantID str
 		return out, false, err
 	}
 	out.UpdatedAt = time.UnixMilli(updated).UTC()
+	out.VWAPFilterEnabled = vwapFilter != 0
+	out.DonchianFilterEnabled = donchianFilter != 0
 	return out, true, nil
 }
 
@@ -589,9 +596,9 @@ func (s *Store) SaveAlertStrategySettingsForTenant(ctx context.Context, tenantID
 	if tenantID == "" {
 		return s.SaveAlertStrategySettings(ctx, in)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_tenant_strategy_settings(tenant_id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,updated_ts) VALUES(?,?,?,?,?,?,?,?,?)
-ON CONFLICT(tenant_id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,vwap_range_hours=excluded.vwap_range_hours,vwap_min_drawdown_pct=excluded.vwap_min_drawdown_pct,vwap_donchian_pct=excluded.vwap_donchian_pct,updated_ts=excluded.updated_ts`,
-		tenantID, in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, in.VWAPRangeHours, in.VWAPMinDrawdownPct, in.VWAPDonchianPct, time.Now().UTC().UnixMilli())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_tenant_strategy_settings(tenant_id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(tenant_id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,vwap_range_hours=excluded.vwap_range_hours,vwap_min_drawdown_pct=excluded.vwap_min_drawdown_pct,vwap_donchian_pct=excluded.vwap_donchian_pct,vwap_filter_enabled=excluded.vwap_filter_enabled,donchian_filter_enabled=excluded.donchian_filter_enabled,updated_ts=excluded.updated_ts`,
+		tenantID, in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, in.VWAPRangeHours, in.VWAPMinDrawdownPct, in.VWAPDonchianPct, boolInt(in.VWAPFilterEnabled), boolInt(in.DonchianFilterEnabled), time.Now().UTC().UnixMilli())
 	return err
 }
 

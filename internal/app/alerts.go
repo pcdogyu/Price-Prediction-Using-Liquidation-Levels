@@ -58,33 +58,36 @@ const alertNotifyCooldown = 5 * time.Minute
 
 func (s *Service) newAlertRuntime() *alertRuntime {
 	cfg := alert.Config{
-		Window:               s.cfg.AlertWindow,
-		Quiet:                s.cfg.AlertQuiet,
-		Confirm:              s.cfg.AlertConfirm,
-		Refresh:              s.cfg.AlertRefresh,
-		BTCUSD:               s.cfg.AlertThresholdBTCUSD,
-		ETHUSD:               s.cfg.AlertThresholdETHUSD,
-		OtherUSD:             s.cfg.AlertThresholdOtherUSD,
-		FollowUpMinimumUSD:   s.cfg.AlertFollowUpMinimumUSD,
-		OppositeMinimumUSD:   s.cfg.AlertOppositeMinimumUSD,
-		TopSymbols:           s.cfg.AlertTopSymbols,
-		VWAPPeriodMinutes:    s.cfg.AlertVWAPPeriodMinutes,
-		VWAPZScore:           s.cfg.AlertVWAPZScore,
-		VWAPRangeMinutes:     s.cfg.AlertVWAPRangeHours * 60,
-		VWAPMinDrawdown:      s.cfg.AlertVWAPMinDrawdownPct / 100,
-		VWAPDonchianFraction: s.cfg.AlertVWAPDonchianPct / 100,
-		PeakDecayWindow:      s.cfg.AlertPeakDecayWindow,
-		PeakDecayRatio:       s.cfg.AlertPeakDecayRatio,
-		AbsorptionWickRatio:  s.cfg.AlertAbsorptionWickRatio,
-		DeepQuotaUSD:         s.cfg.AlertDeepQuotaUSD,
-		DeepQuotaMultiplier:  s.cfg.AlertDeepQuotaMultiplier,
-		ATRPeriod:            s.cfg.AlertATRPeriod,
-		DeepDrawdownATR:      s.cfg.AlertDeepDrawdownATR,
-		MinProfitSpread:      s.cfg.AlertMinProfitSpread,
-		GridStep0Price:       s.cfg.AlertGridStep0Price,
-		GridStep0Pct:         s.cfg.AlertGridStep0Pct,
-		GridStepMultiplier:   s.cfg.AlertGridStepMultiplier,
-		GridThresholdSlope:   s.cfg.AlertGridThresholdSlope,
+		Window:                s.cfg.AlertWindow,
+		Quiet:                 s.cfg.AlertQuiet,
+		Confirm:               s.cfg.AlertConfirm,
+		Refresh:               s.cfg.AlertRefresh,
+		BTCUSD:                s.cfg.AlertThresholdBTCUSD,
+		ETHUSD:                s.cfg.AlertThresholdETHUSD,
+		OtherUSD:              s.cfg.AlertThresholdOtherUSD,
+		FollowUpMinimumUSD:    s.cfg.AlertFollowUpMinimumUSD,
+		OppositeMinimumUSD:    s.cfg.AlertOppositeMinimumUSD,
+		TopSymbols:            s.cfg.AlertTopSymbols,
+		VWAPPeriodMinutes:     s.cfg.AlertVWAPPeriodMinutes,
+		VWAPZScore:            s.cfg.AlertVWAPZScore,
+		VWAPRangeMinutes:      s.cfg.AlertVWAPRangeHours * 60,
+		VWAPMinDrawdown:       s.cfg.AlertVWAPMinDrawdownPct / 100,
+		VWAPDonchianFraction:  s.cfg.AlertVWAPDonchianPct / 100,
+		VWAPFilterEnabled:     true,
+		DonchianFilterEnabled: true,
+		FilterSettingsSet:     true,
+		PeakDecayWindow:       s.cfg.AlertPeakDecayWindow,
+		PeakDecayRatio:        s.cfg.AlertPeakDecayRatio,
+		AbsorptionWickRatio:   s.cfg.AlertAbsorptionWickRatio,
+		DeepQuotaUSD:          s.cfg.AlertDeepQuotaUSD,
+		DeepQuotaMultiplier:   s.cfg.AlertDeepQuotaMultiplier,
+		ATRPeriod:             s.cfg.AlertATRPeriod,
+		DeepDrawdownATR:       s.cfg.AlertDeepDrawdownATR,
+		MinProfitSpread:       s.cfg.AlertMinProfitSpread,
+		GridStep0Price:        s.cfg.AlertGridStep0Price,
+		GridStep0Pct:          s.cfg.AlertGridStep0Pct,
+		GridStepMultiplier:    s.cfg.AlertGridStepMultiplier,
+		GridThresholdSlope:    s.cfg.AlertGridThresholdSlope,
 	}
 	rtm := &alertRuntime{
 		service: s,
@@ -193,13 +196,15 @@ func fillStrategyVWAPDefaults(in, current domain.AlertStrategySettings) domain.A
 
 func strategySettingsFromConfig(cfg alert.Config) domain.AlertStrategySettings {
 	return domain.AlertStrategySettings{
-		WindowMinutes:      int(cfg.Window / time.Minute),
-		BTCUSD:             cfg.BTCUSD,
-		ETHUSD:             cfg.ETHUSD,
-		OtherUSD:           cfg.OtherUSD,
-		VWAPRangeHours:     cfg.VWAPRangeMinutes / 60,
-		VWAPMinDrawdownPct: cfg.VWAPMinDrawdown * 100,
-		VWAPDonchianPct:    cfg.VWAPDonchianFraction * 100,
+		WindowMinutes:         int(cfg.Window / time.Minute),
+		BTCUSD:                cfg.BTCUSD,
+		ETHUSD:                cfg.ETHUSD,
+		OtherUSD:              cfg.OtherUSD,
+		VWAPRangeHours:        cfg.VWAPRangeMinutes / 60,
+		VWAPMinDrawdownPct:    cfg.VWAPMinDrawdown * 100,
+		VWAPDonchianPct:       cfg.VWAPDonchianFraction * 100,
+		VWAPFilterEnabled:     cfg.VWAPFilterEnabled,
+		DonchianFilterEnabled: cfg.DonchianFilterEnabled,
 	}
 }
 
@@ -227,6 +232,9 @@ func (rtm *alertRuntime) restoreStrategySettings(ctx context.Context) {
 	cfg.VWAPRangeMinutes = stored.VWAPRangeHours * 60
 	cfg.VWAPMinDrawdown = stored.VWAPMinDrawdownPct / 100
 	cfg.VWAPDonchianFraction = stored.VWAPDonchianPct / 100
+	cfg.VWAPFilterEnabled = stored.VWAPFilterEnabled
+	cfg.DonchianFilterEnabled = stored.DonchianFilterEnabled
+	cfg.FilterSettingsSet = true
 	rtm.engine.UpdateConfig(cfg)
 }
 
@@ -251,6 +259,9 @@ func (rtm *alertRuntime) updateStrategySettings(ctx context.Context, in domain.A
 	cfg.VWAPRangeMinutes = in.VWAPRangeHours * 60
 	cfg.VWAPMinDrawdown = in.VWAPMinDrawdownPct / 100
 	cfg.VWAPDonchianFraction = in.VWAPDonchianPct / 100
+	cfg.VWAPFilterEnabled = in.VWAPFilterEnabled
+	cfg.DonchianFilterEnabled = in.DonchianFilterEnabled
+	cfg.FilterSettingsSet = true
 	rtm.engine.UpdateConfig(cfg)
 	return rtm.snapshotStrategySettings(), nil
 }

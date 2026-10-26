@@ -106,6 +106,9 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 		cfg.VWAPRangeMinutes = strategy.VWAPRangeHours * 60
 		cfg.VWAPMinDrawdown = strategy.VWAPMinDrawdownPct / 100
 		cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
+		cfg.VWAPFilterEnabled = strategy.VWAPFilterEnabled
+		cfg.DonchianFilterEnabled = strategy.DonchianFilterEnabled
+		cfg.FilterSettingsSet = true
 		rtm.engine.UpdateConfig(cfg)
 	} else if s.isLegacyAlertTenant(tenantID) {
 		legacy, legacyFound, legacyErr := s.store.AlertStrategySettings(ctx)
@@ -121,6 +124,9 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 			cfg.VWAPRangeMinutes = legacy.VWAPRangeHours * 60
 			cfg.VWAPMinDrawdown = legacy.VWAPMinDrawdownPct / 100
 			cfg.VWAPDonchianFraction = legacy.VWAPDonchianPct / 100
+			cfg.VWAPFilterEnabled = legacy.VWAPFilterEnabled
+			cfg.DonchianFilterEnabled = legacy.DonchianFilterEnabled
+			cfg.FilterSettingsSet = true
 			rtm.engine.UpdateConfig(cfg)
 			if err := s.store.SaveAlertStrategySettingsForTenant(ctx, tenantID, legacy); err != nil {
 				_ = tenantStore.Close()
@@ -218,6 +224,9 @@ func (s *Service) AlertChartSignalsForContext(ctx context.Context, symbol string
 		cfg.VWAPRangeMinutes = strategy.VWAPRangeHours * 60
 		cfg.VWAPMinDrawdown = strategy.VWAPMinDrawdownPct / 100
 		cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
+		cfg.VWAPFilterEnabled = strategy.VWAPFilterEnabled
+		cfg.DonchianFilterEnabled = strategy.DonchianFilterEnabled
+		cfg.FilterSettingsSet = true
 	}
 	return s.alerts.AlertChartSignalsWithConfig(ctx, symbol, cfg)
 }
@@ -461,6 +470,9 @@ func (rtm *alertRuntime) updateStrategySettingsForTenant(ctx context.Context, te
 	cfg.VWAPRangeMinutes = in.VWAPRangeHours * 60
 	cfg.VWAPMinDrawdown = in.VWAPMinDrawdownPct / 100
 	cfg.VWAPDonchianFraction = in.VWAPDonchianPct / 100
+	cfg.VWAPFilterEnabled = in.VWAPFilterEnabled
+	cfg.DonchianFilterEnabled = in.DonchianFilterEnabled
+	cfg.FilterSettingsSet = true
 	rtm.engine.UpdateConfig(cfg)
 	return in, nil
 }

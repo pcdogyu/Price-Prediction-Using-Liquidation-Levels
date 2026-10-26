@@ -49,6 +49,15 @@ def timeline_fixture():
         elif index == 4:
             target = item["alert"] if kind == "alert" else item["signal"]
             target.update({"filter_applied": True, "open_allowed": False, "close_allowed": False})
+        if index == 0:
+            target = item["alert"] if kind == "alert" else item["signal"]
+            target["filter_tags"] = ["vwap", "donchian"]
+        elif index == 1:
+            target = item["alert"] if kind == "alert" else item["signal"]
+            target["filter_tags"] = ["vwap"]
+        elif index == 2:
+            target = item["alert"] if kind == "alert" else item["signal"]
+            target["filter_tags"] = ["donchian"]
         rows.append(item)
     return rows
 
@@ -96,6 +105,9 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows")).to_contain_text("预警")
     expect(page.locator("#alerts-history-rows")).to_contain_text("激进")
     expect(page.locator("#alerts-history-rows")).to_contain_text("稳健")
+    expect(page.locator("#alerts-history-rows")).to_contain_text("VWAP过滤")
+    expect(page.locator("#alerts-history-rows")).to_contain_text("Donchian过滤")
+    expect(page.locator("#alerts-history-rows").locator("tr").nth(0).locator("td").nth(2)).to_contain_text("VWAP过滤 · Donchian过滤")
     expect(page.locator(".alerts-close-only-prefix")).to_have_count(3)
     expect(page.locator(".alerts-order-trigger")).to_have_count(20)
     expect(page.get_by_text("策略开关", exact=True)).to_be_visible()
@@ -115,7 +127,7 @@ with sync_playwright() as playwright:
     page.locator("#alerts-apply").click()
     expect(page.locator("#alerts-history-rows tr")).to_have_count(9)
     expect(page.locator("#alerts-count")).to_have_text("第 1 页 · 本页 9 条")
-    expect(page.locator("#alerts-history-rows td:nth-child(3)")).to_have_text(["预警"] * 9)
+    expect(page.locator("#alerts-history-rows td:nth-child(3)")).to_contain_text(["预警"] * 9)
 
     for width in (1440, 390):
         page.set_viewport_size({"width": width, "height": 1100})
