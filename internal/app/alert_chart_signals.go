@@ -114,7 +114,7 @@ func (rtm *alertRuntime) replayAlertChartSignals(ctx context.Context, symbol str
 		}
 	}
 	for _, event := range events {
-		market := buildLiquidationMarketContext(event, cfg, candles)
+		market := replayLiquidationMarketContext(event, cfg, candles)
 		replay.UpdateMarketContext(symbol, market)
 		collect(replay.Tick(event.EventTime))
 		collect(replay.ObserveWithContext(event, market))
@@ -123,7 +123,7 @@ func (rtm *alertRuntime) replayAlertChartSignals(ctx context.Context, symbol str
 	// a chart opened after a quiet period shows the same pending aggressive signal
 	// that the live engine would emit on its next tick.
 	if len(events) > 0 {
-		market := buildLiquidationMarketContext(domain.LiquidationEvent{Symbol: symbol, EventTime: generatedAt}, cfg, candles)
+		market := replayLiquidationMarketContext(domain.LiquidationEvent{Symbol: symbol, EventTime: generatedAt}, cfg, candles)
 		replay.UpdateMarketContext(symbol, market)
 		collect(replay.Tick(view.GeneratedAt))
 	}
@@ -147,6 +147,23 @@ func (rtm *alertRuntime) replayAlertChartSignals(ctx context.Context, symbol str
 		return view.Signals[i].CreatedAt.After(view.Signals[j].CreatedAt)
 	})
 	return view
+}
+
+// replayLiquidationMarketContext narrows the immutable candle history before
+// applying the event-price overlay. Replay events are oldest-first, but a
+// binary search keeps a sparse two-week backtest from scanning the full candle
+// history backwards for every liquidation.
+func replayLiquidationMarketContext(event domain.LiquidationEvent, cfg alert.Config, candles []domain.Candle) alert.MarketContext {
+	bucket := event.EventTime.UTC().Truncate(time.Minute)
+	end := sort.Search(len(candles), func(index int) bool {
+		return candles[index].Time.After(bucket)
+	})
+	historyMinutes := alertMarketHistoryMinutes(cfg)
+	start := end - historyMinutes
+	if start < 0 {
+		start = 0
+	}
+	return buildLiquidationMarketContext(event, cfg, candles[start:end])
 }
 
 // alertChartZone calculates the same latest 1m VWAP boundaries used by the
