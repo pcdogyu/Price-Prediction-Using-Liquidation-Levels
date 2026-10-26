@@ -32,7 +32,7 @@
     candles: [], alerts: [], signals: [], liquidationDelta: [], tradeMarkers: [], hits: [],
     view: { start: 0, end: 0 }, yLow: 0, yHigh: 1, yManual: false,
     hasMore: true, nextBefore: '', newest: 0, atLatest: true, newData: false, keepSpan: 0,
-    loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false, loadingLiquidationDelta: false, liquidationDeltaError: '',
+    loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false, loadingLiquidationDelta: false, liquidationDeltaError: '', signalThreshold: 0, signalWindowMinutes: 0, signalReplayText: '按当前参数回放',
     drag: null, hoverCandle: null, hoverMarker: null,
     radarConfig: { periodMinutes: 240, zScoreThreshold: .8, rangeMinutes: 1440, minDrawdown: .022, donchianFraction: .35 }, radarZone: null,
     liquidationDeltaHover: null, liquidationDeltaWindow: null, liquidationDeltaPending: false, liquidationDeltaRequestTimer: 0, liquidationDeltaRequestSequence: 0, liquidationDeltaAbortController: null,
@@ -122,6 +122,13 @@
   function showError(message) { $('kline-error').textContent = message; $('kline-error').hidden = false; }
   function clearError() { $('kline-error').hidden = true; $('kline-error').textContent = ''; }
   function note(message) { void message; }
+
+  function renderSignalStatus() {
+    const parameterText = '当前参数：' + money(state.signalThreshold) + ' · ' + (state.signalWindowMinutes || '—') + ' 分钟周期';
+    const filterText = state.toggles.donchian ? ' · Donchian 过滤后' : ' · 未过滤';
+    $('kline-signal-status').textContent = state.signalReplayText + ' ' + state.signals.filter(donchianAllowsSignal).length + ' 条' + filterText + ' · ' + parameterText;
+    $('kline-alert-status').textContent = state.signalReplayText + ' ' + shownAlerts().length + ' 条' + filterText + ' · 每 15 秒刷新';
+  }
 
   function deltaText(value) {
     if (!finite(value)) return '—';
@@ -405,13 +412,10 @@
         donchianFraction: (Number(thresholds.vwap_donchian_pct) || 35) / 100
       };
       state.radarZone = packet.zone && packet.zone.ready ? packet.zone : null;
-      const threshold = state.symbol === 'BTCUSDT' ? thresholds.btc_usd : state.symbol === 'ETHUSDT' ? thresholds.eth_usd : thresholds.other_usd;
-      const parameterText = '当前参数：' + money(threshold) + ' · ' + (thresholds.window_minutes || '—') + ' 分钟周期';
-      const replayText = Number(packet.replay_hours) === 48 ? '过去 48 小时重算' : '按当前参数回放';
-      const filteredSignalCount = state.signals.filter(donchianAllowsSignal).length;
-      const filterText = state.toggles.donchian ? ' · Donchian 过滤后' : ' · 未过滤';
-      $('kline-signal-status').textContent = replayText + ' ' + filteredSignalCount + ' 条' + filterText + ' · ' + parameterText;
-      $('kline-alert-status').textContent = replayText + ' ' + shownAlerts().length + ' 条' + filterText + ' · 每 15 秒刷新';
+      state.signalThreshold = state.symbol === 'BTCUSDT' ? thresholds.btc_usd : state.symbol === 'ETHUSDT' ? thresholds.eth_usd : thresholds.other_usd;
+      state.signalWindowMinutes = Number(thresholds.window_minutes) || 0;
+      state.signalReplayText = Number(packet.replay_hours) === 48 ? '过去 48 小时重算' : '按当前参数回放';
+      renderSignalStatus();
       clearError();
     } catch (error) {
       $('kline-signal-status').textContent = '当前参数信号读取失败：' + error.message;
@@ -1166,6 +1170,7 @@
       box.addEventListener('change', () => {
         state.toggles[toggle] = box.checked;
         remember(key, box.checked);
+        if (toggle === 'donchian' && state.signals.length) renderSignalStatus();
         note(statusText());
         renderSignals();
         draw();

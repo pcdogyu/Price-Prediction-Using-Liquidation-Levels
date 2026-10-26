@@ -12,6 +12,8 @@ test('the chart uses an independent Donchian filter switch for close-only signal
   assert.match(chartApp, /K\.filterAlerts\(state\.alerts\)\.filter\(donchianAllowsSignal\)/);
   assert.match(chartApp, /if \(!state\.toggles\.donchian\) return true/);
   assert.match(chartApp, /STORE_DONCHIAN/);
+  assert.match(chartApp, /function renderSignalStatus\(\)/);
+  assert.match(chartApp, /if \(toggle === 'donchian' && state\.signals\.length\) renderSignalStatus\(\)/);
   assert.match(chartApp, /state\.toggles\.donchian && K\.closeOnlyIgnored/);
   assert.match(chartApp, /Object\.assign\(\{\}, signal, \{ filter_applied: false \}\)/);
   assert.match(chartApp, /kline-close-only-label/);
