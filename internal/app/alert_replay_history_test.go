@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -37,11 +38,16 @@ func TestReplayedTimelineUnfilteredExcludesGammaIgnoredRows(t *testing.T) {
 			row:  replayedTimelineRow{item: domain.AlertTimelineItem{Signal: &domain.TradeSignal{FilterApplied: true, GammaIgnored: true}}},
 			want: true,
 		},
+		{
+			name: "gamma ignored row is classified as filtered",
+			row:  replayedTimelineRow{item: domain.AlertTimelineItem{Alert: &domain.LiquidationAlert{GammaIgnored: true}}},
+			want: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			filter := "unfiltered"
-			if tc.name == "filtered gamma ignored row remains in filtered view" {
+			if strings.HasPrefix(tc.name, "filtered") || tc.name == "gamma ignored row is classified as filtered" {
 				filter = "filtered"
 			}
 			if got := replayedTimelineFilterMatch(tc.row, filter); got != tc.want {

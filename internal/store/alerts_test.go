@@ -378,11 +378,11 @@ func TestAlertTimelineFilterState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(filtered.Rows) != 2 || filtered.TotalCount != 2 || filtered.AlertCount != 1 || filtered.AggressiveCount != 1 || filtered.SteadyCount != 0 {
+	if len(filtered.Rows) != 4 || filtered.TotalCount != 4 || filtered.AlertCount != 2 || filtered.AggressiveCount != 2 || filtered.SteadyCount != 0 {
 		t.Fatalf("filtered timeline counts are wrong: %+v", filtered)
 	}
 	for _, row := range filtered.Rows {
-		if (row.Alert != nil && !row.Alert.FilterApplied) || (row.Signal != nil && !row.Signal.FilterApplied) {
+		if (row.Alert != nil && !row.Alert.FilterApplied && !row.Alert.GammaIgnored) || (row.Signal != nil && !row.Signal.FilterApplied && !row.Signal.GammaIgnored) {
 			t.Fatalf("filtered timeline returned an unfiltered row: %+v", row)
 		}
 	}

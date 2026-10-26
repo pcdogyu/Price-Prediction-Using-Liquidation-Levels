@@ -427,12 +427,11 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 	}
 	filterClause := ""
 	if filter == "filtered" {
-		filterClause = "COALESCE(json_extract(payload,'$.filter_applied'),0)=1"
+		filterClause = "(COALESCE(json_extract(payload,'$.filter_applied'),0)=1 OR COALESCE(json_extract(payload,'$.gamma_ignored'),0)=1)"
 	} else if filter == "unfiltered" {
 		// Gamma-ignored opening records are filtered decisions too, even when
 		// the radar filter flag itself is false. Keep them out of the explicit
-		// "unfiltered" view so that it only shows signals available for normal
-		// processing.
+		// "unfiltered" view while leaving them visible in the "filtered" view.
 		filterClause = "COALESCE(json_extract(payload,'$.filter_applied'),0)=0 AND COALESCE(json_extract(payload,'$.gamma_ignored'),0)=0"
 	}
 	parts := []string{}

@@ -132,7 +132,7 @@ func replayedTimelineFilterMatch(row replayedTimelineRow, filter string) bool {
 		filtered = row.item.Signal.FilterApplied
 		gammaIgnored = row.item.Signal.GammaIgnored
 	}
-	return (filter == "filtered" && filtered) || (filter == "unfiltered" && !filtered && !gammaIgnored)
+	return (filter == "filtered" && (filtered || gammaIgnored)) || (filter == "unfiltered" && !filtered && !gammaIgnored)
 }
 
 // AlertTimelineReplayed returns the last successful explicit signal replay. It
