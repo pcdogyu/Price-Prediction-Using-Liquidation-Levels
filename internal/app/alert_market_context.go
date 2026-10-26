@@ -215,8 +215,9 @@ func buildLiquidationMarketContext(event domain.LiquidationEvent, cfg alert.Conf
 	}
 	current := rows[len(rows)-1]
 	high, low, rangeReady := alert.DonchianRange(rows, cfg.VWAPRangeMinutes)
-	return alert.MarketContext{Ready: true, Price: price, Candles: rows, CurrentCandle: current,
-		DonchianHigh: high, DonchianLow: low, DonchianReady: rangeReady}
+	vwap, sigma, z, vwapReady := alert.VWAPZScore(rows, period, price)
+	return alert.MarketContext{Ready: true, Price: price, Candles: rows, VWAP: vwap, Sigma: sigma, ZScore: z, VWAPReady: vwapReady,
+		CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: rangeReady}
 }
 
 func alertMarketHistoryMinutes(cfg alert.Config) int {

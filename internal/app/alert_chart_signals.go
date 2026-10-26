@@ -87,6 +87,11 @@ func (rtm *alertRuntime) alertChartReplayData(ctx context.Context, symbol string
 }
 
 func (rtm *alertRuntime) replayAlertChartSignals(ctx context.Context, symbol string, cfg alert.Config, generatedAt, since time.Time, events []domain.LiquidationEvent, candles []domain.Candle) domain.AlertChartSignals {
+	markets := replayAlertChartMarkets(events, cfg, candles)
+	return rtm.replayAlertChartSignalsWithMarkets(ctx, symbol, cfg, generatedAt, since, events, markets, candles)
+}
+
+func (rtm *alertRuntime) replayAlertChartSignalsWithMarkets(ctx context.Context, symbol string, cfg alert.Config, generatedAt, since time.Time, events []domain.LiquidationEvent, markets []alert.MarketContext, candles []domain.Candle) domain.AlertChartSignals {
 	replayHours := int(generatedAt.Sub(since).Hours())
 	if replayHours < 1 {
 		replayHours = 1
@@ -113,8 +118,13 @@ func (rtm *alertRuntime) replayAlertChartSignals(ctx context.Context, symbol str
 			signalsByID[row.ID] = row
 		}
 	}
-	for _, event := range events {
-		market := replayLiquidationMarketContext(event, cfg, candles)
+	for index, event := range events {
+		market := alert.MarketContext{}
+		if index < len(markets) {
+			market = markets[index]
+		} else {
+			market = replayLiquidationMarketContext(event, cfg, candles)
+		}
 		replay.UpdateMarketContext(symbol, market)
 		collect(replay.Tick(event.EventTime))
 		collect(replay.ObserveWithContext(event, market))
@@ -147,6 +157,14 @@ func (rtm *alertRuntime) replayAlertChartSignals(ctx context.Context, symbol str
 		return view.Signals[i].CreatedAt.After(view.Signals[j].CreatedAt)
 	})
 	return view
+}
+
+func replayAlertChartMarkets(events []domain.LiquidationEvent, cfg alert.Config, candles []domain.Candle) []alert.MarketContext {
+	markets := make([]alert.MarketContext, len(events))
+	for index, event := range events {
+		markets[index] = replayLiquidationMarketContext(event, cfg, candles)
+	}
+	return markets
 }
 
 // replayLiquidationMarketContext narrows the immutable candle history before

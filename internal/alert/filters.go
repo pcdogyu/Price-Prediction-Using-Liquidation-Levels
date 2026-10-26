@@ -13,9 +13,15 @@ import (
 // remain deterministic in unit tests and can fail closed when live market data is
 // unavailable.
 type MarketContext struct {
-	Ready                 bool
-	Price                 float64
-	Candles               []domain.Candle
+	Ready   bool
+	Price   float64
+	Candles []domain.Candle
+	// VWAP fields are optional replay-time cache values. A live caller can
+	// leave VWAPReady false and filterDecision will calculate them from Candles.
+	VWAP                  float64
+	Sigma                 float64
+	ZScore                float64
+	VWAPReady             bool
 	CurrentCandle         domain.Candle
 	LongAvgPrice          float64
 	ShortAvgPrice         float64
@@ -258,7 +264,11 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 	// Compute both data sets when available so the history/chart payload remains
 	// useful, but only require data for components whose server-side switch is on.
 	var vwapOK bool
-	d.VWAP, d.Sigma, d.ZScore, vwapOK = VWAPZScore(ctx.Candles, cfg.VWAPPeriodMinutes, price)
+	if ctx.VWAPReady {
+		d.VWAP, d.Sigma, d.ZScore, vwapOK = ctx.VWAP, ctx.Sigma, ctx.ZScore, true
+	} else {
+		d.VWAP, d.Sigma, d.ZScore, vwapOK = VWAPZScore(ctx.Candles, cfg.VWAPPeriodMinutes, price)
+	}
 	threshold := cfg.VWAPZScore
 	high := vwapOK && d.ZScore > threshold
 	low := vwapOK && d.ZScore < -threshold

@@ -85,12 +85,13 @@ func (s *Service) AlertBacktestForContext(ctx context.Context) (domain.AlertBack
 		if replayErr != nil {
 			return domain.AlertBacktestReport{}, replayErr
 		}
+		markets := replayAlertChartMarkets(events, cfg, candles)
 		for _, filter := range alertBacktestFilters {
 			replayCfg := cfg
 			replayCfg.VWAPFilterEnabled = filter.vwap
 			replayCfg.DonchianFilterEnabled = filter.donchian
 			replayCfg.FilterSettingsSet = true
-			view := rtm.replayAlertChartSignals(ctx, symbol, replayCfg, to, from, events, candles)
+			view := rtm.replayAlertChartSignalsWithMarkets(ctx, symbol, replayCfg, to, from, events, markets, candles)
 			for _, row := range view.Alerts {
 				if !backtestEntryAllowed(row.FilterApplied, row.OpenAllowed) {
 					continue
