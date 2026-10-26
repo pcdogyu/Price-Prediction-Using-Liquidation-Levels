@@ -79,7 +79,7 @@
     return '<span class="muted alerts-radar-filter" title="' + escape(title) + '"> · ' + escape(summary) + '</span>';
   };
   const closeOnlyIgnored = row => !!(row && row.filter_applied && row.close_allowed && !row.open_allowed);
-  const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : label === '价值区' ? '价值区信号过滤' : '激进信号过滤';
+  const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : label === '交易所刷单' ? '交易所刷单策略过滤' : '激进信号过滤';
   const recordTypeLabel = (row, label) => {
     const tags = rowFilterTags(row).map(tag => '<span class="alerts-filter-tag alerts-filter-tag-' + tag + '">' + escape(filterTagLabels[tag]) + '</span>');
     const closeOnly = closeOnlyIgnored(row) ? '<span class="alerts-close-only-prefix">' + escape(closeOnlyFilterLabel(label)) + '</span>' : '';
@@ -172,7 +172,7 @@
     $('alerts-signal-progress-label').textContent = '信号重算失败';
   }
 
-  const backtestSignalLabels = { alert: '预警', aggressive: '激进', steady: '稳健', value_area: '价值区' };
+  const backtestSignalLabels = { alert: '预警', aggressive: '激进', steady: '稳健', value_area: '交易所刷单' };
   const backtestFilterLabels = { none: '无', vwap: 'VWAP', donchian: 'Donchian', vwap_donchian: 'VWAP + Donchian' };
   const backtestSignalOrder = { alert: 0, aggressive: 1, steady: 2, value_area: 3 };
   const backtestFilterOrder = { none: 0, vwap: 1, donchian: 2, vwap_donchian: 3 };
@@ -327,7 +327,7 @@
       ['预警总数', data.alert_total, ''],
       ['激进信号', data.aggressive_total, 'buy'],
       ['稳健信号', data.steady_total, 'buy'],
-      ['价值区信号', data.value_area_total, 'buy'],
+      ['交易所刷单', data.value_area_total, 'buy'],
       ['预警窗口', data.thresholds.window_minutes + ' 分钟', ''],
       ['安静期 / 确认窗口', data.thresholds.quiet_minutes + ' 分 / ' + data.thresholds.confirm_minutes + ' 分', '']
     ];
@@ -353,13 +353,13 @@
       : signal.kind === 'steady'
         ? '反向爆仓 ' + money(signal.opposite_usd) + ' · ' + (signal.opposite_count || 0) + ' 笔 · ' + span(signal.opposite_elapsed_seconds)
         : '安静 ' + span(signal.quiet_elapsed_seconds) + ' · 顺延 ' + (signal.follow_ups || 0) + ' 次';
-    const label = valueArea ? '价值区' : signal.kind === 'steady' ? '稳健' : '激进';
+    const label = valueArea ? '交易所刷单' : signal.kind === 'steady' ? '稳健' : '激进';
     const valueDirection = signal.side === 'long' ? 'VAL 买入' + (signal.position_effect === 'close' ? ' / 平空' : '') : 'VAH 卖出' + (signal.position_effect === 'close' ? ' / 平多' : '');
     return '<td>' + when(signal.created_at) + '</td><td>' + chartLink(signal.symbol) + '</td>' +
       '<td class="' + (valueArea ? (signal.side === 'short' ? 'sell' : 'buy') : signal.kind === 'steady' ? 'buy' : 'warning') + '">' + recordTypeLabel(signal, label) + '</td>' +
       '<td' + directionClass(signal.side, historicalGammaIgnored(signal)) + '>' + escape(valueArea ? valueDirection : directionLabel(signal.side, historicalGammaIgnored(signal))) + (valueArea ? '' : '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span>') + '</td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
-      '<td>' + detail + radarFilterStatus(signal) + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
+      '<td>' + detail + (valueArea ? '<span class="muted"> · VAL/VAH 来回刷</span>' : '') + radarFilterStatus(signal) + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
       '<td>' + escape(notifyLabels[signal.notify_status] || signal.notify_status || '未推送') + (signal.notify_error ? '<span class="muted" title="' + escape(signal.notify_error) + '"> ⓘ</span>' : '') + '</td>';
   }
 
@@ -461,7 +461,7 @@
     if (document.activeElement !== vwapFilter) vwapFilter.checked = settings.vwap_filter_enabled !== false;
     if (document.activeElement !== donchianFilter) donchianFilter.checked = settings.donchian_filter_enabled !== false;
     $('alerts-monitor-window').textContent = settings.window_minutes || 3;
-    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 100) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健 / 价值区下单信号';
+    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 100) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健 / 交易所刷单下单信号';
     if (!strategyLoaded) strategyLoaded = true;
   }
 
@@ -517,7 +517,7 @@
       historyNextCursor = packet.next_cursor || '';
       timelineRows(historyRows);
       const sourceLabel = packet.replayed ? '过去 7 天按当前参数重算（跳过 Peak-Decay） · ' : '';
-      $('alerts-history-status').textContent = sourceLabel + '预警 ' + packet.alert_count + ' · 激进 ' + packet.aggressive_count + ' · 稳健 ' + packet.steady_count + ' · 价值区 ' + packet.value_area_count + ' · 共 ' + packet.total_count + ' 条';
+      $('alerts-history-status').textContent = sourceLabel + '预警 ' + packet.alert_count + ' · 激进 ' + packet.aggressive_count + ' · 稳健 ' + packet.steady_count + ' · 交易所刷单 ' + packet.value_area_count + ' · 共 ' + packet.total_count + ' 条';
       $('alerts-count').textContent = '第 ' + (historyPage + 1) + ' 页 · 本页 ' + historyRows.length + ' 条';
       $('alerts-prev').disabled = historyPage === 0;
       $('alerts-next').disabled = !historyNextCursor;

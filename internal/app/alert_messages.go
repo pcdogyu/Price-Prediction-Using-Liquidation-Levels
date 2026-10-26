@@ -52,7 +52,7 @@ func signalMessage(signal domain.TradeSignal) string {
 		} else {
 			action += "（平反向仓后开仓）"
 		}
-		fmt.Fprintf(&b, "📊 价值区信号 · %s %s\n", signal.Symbol, action)
+		fmt.Fprintf(&b, "🔁 交易所刷单 · %s %s\n", signal.Symbol, action)
 		fmt.Fprintf(&b, "价格穿越 %s：%s（VAL %s / VAH %s）\n", strings.ToUpper(signal.Boundary), formatPrice(signal.BoundaryPrice), formatPrice(signal.VAL), formatPrice(signal.VAH))
 		if signal.GammaValue != nil {
 			fmt.Fprintf(&b, "Gamma：%s（%s）\n", formatPrice(*signal.GammaValue), signal.GammaState)
