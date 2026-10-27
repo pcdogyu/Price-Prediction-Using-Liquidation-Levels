@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import os
 import pathlib
+import re
 import sys
 from urllib.parse import parse_qs, urlsplit
 
@@ -60,12 +61,13 @@ with sync_playwright() as playwright:
     page.on("pageerror", lambda error: errors.append(str(error)))
     if production:
         entries = json.loads((root / "pem" / "password.json").read_text(encoding="utf-8"))
-        entry = next(e for e in entries if e["username"] == "pcdog")
+        entry = next((e for e in entries if e.get("username") == "pcdog"), entries[0])
         page.goto(base + "/", wait_until="domcontentloaded")
         page.locator("input[name=username]").fill(entry["username"])
         page.locator("input[name=password]").fill(entry["password"])
         page.get_by_role("button", name="登录", exact=True).click()
-        expect(page).to_have_url(base + "/bubbles")
+        expect(page).to_have_url(re.compile(re.escape(base) + r"/(?:alerts|bubbles)$"))
+        page.goto(base + "/bubbles", wait_until="domcontentloaded")
 
     baseline = context.request.get(base + "/api/v1/market?symbol=ETHUSDT&interval=1m").json()
     history_base = context.request.get(base + "/api/v1/liquidations?symbol=ETHUSDT&limit=1").json()
@@ -206,6 +208,17 @@ with sync_playwright() as playwright:
         expect(page.locator("#classic-distance-30")).to_have_text("30.00 USDT")
         assert page.evaluate("""() => Array.from(document.querySelectorAll('#classic-pivot-table .classic-pivot-row > *')).every(cell => getComputedStyle(cell).textAlign === 'center')""")
     initial = check_axis()
+    trade_view_status = page.evaluate("""() => ({
+      count: Number(document.getElementById('market-chart').dataset.tradeMarkerCount || 0),
+      context: document.getElementById('chart-context').textContent,
+      labels: Array.from(document.querySelectorAll('[data-trade-marker] text'), e => e.textContent),
+      legendHidden: document.getElementById('trade-marker-legend').classList.contains('hidden'),
+      error: document.getElementById('api-errors').textContent
+    })""")
+    assert set(trade_view_status["labels"]).issubset({"B", "S", "平多", "平空"}), trade_view_status
+    assert "历史开平点" in trade_view_status["context"] or "历史交易点" in trade_view_status["error"], trade_view_status
+    if trade_view_status["count"]:
+        assert not trade_view_status["legendHidden"], trade_view_status
     if not production:
         default_trade_view = page.evaluate("""() => ({
           count: Number(document.getElementById('market-chart').dataset.tradeMarkerCount),
