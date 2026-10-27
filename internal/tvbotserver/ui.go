@@ -4000,47 +4000,62 @@ const tvbotHTML = `<!doctype html>
 
     async function loadAnalysisPositions(forceRefresh) {
       const results = await Promise.all(positionExchanges.map((exchange) => loadPositionExchange(exchange, !!forceRefresh)));
-      const rows = [];
-      results.forEach((result) => {
-        const exchange = normalizeExchange(result.exchange);
-        const apiID = result.api_id || "";
-        (Array.isArray(result.positions) ? result.positions : []).forEach((row) => {
-          const view = Object.assign({}, row, { _exchange: exchange, _api_id: apiID });
-          rememberSymbolPrecision(exchange, view);
-          rows.push(view);
-        });
-      });
-      state.analysisPositions = {
-        ok: results.some((result) => result.ok),
-        count: rows.length,
-        refreshed_at: combinedRefreshedAt(results),
-        exchanges: results,
-        positions: rows
-      };
+      const snapshot = positionSnapshot(results);
+      state.analysisPositions = snapshot;
+      syncActivePositionSnapshot(snapshot);
       state.analysisPositionsError = combinedErrors(results);
     }
 
     async function loadPositions(forceRefresh) {
       const results = await Promise.all([loadPositionExchange(activeExchange(), !!forceRefresh)]);
+      const snapshot = positionSnapshot(results);
+      state.positions = snapshot;
+      syncAnalysisPositionSnapshot(snapshot);
+      state.positionsError = combinedErrors(results);
+      renderPositions();
+    }
+
+    function positionSnapshot(results) {
+      const exchanges = [];
       const rows = [];
-      results.forEach((result) => {
-        const exchange = normalizeExchange(result.exchange);
-        const apiID = result.api_id || "";
-        (Array.isArray(result.positions) ? result.positions : []).forEach((row) => {
+      (Array.isArray(results) ? results : []).forEach((result) => {
+        const exchange = normalizeExchange(result && result.exchange);
+        const apiID = result && result.api_id || "";
+        const exchangeRows = (Array.isArray(result && result.positions) ? result.positions : []).map((row) => {
           const view = Object.assign({}, row, { _exchange: exchange, _api_id: apiID });
           rememberSymbolPrecision(exchange, view);
           rows.push(view);
+          return view;
         });
+        exchanges.push(Object.assign({}, result, { exchange, positions: exchangeRows }));
       });
-      state.positions = {
-        ok: results.some((result) => result.ok),
+      return {
+        ok: exchanges.some((result) => result.ok),
         count: rows.length,
-        refreshed_at: combinedRefreshedAt(results),
-        exchanges: results,
+        refreshed_at: combinedRefreshedAt(exchanges),
+        exchanges,
         positions: rows
       };
-      state.positionsError = combinedErrors(results);
-      renderPositions();
+    }
+
+    function syncActivePositionSnapshot(snapshot) {
+      if (!snapshot || !Array.isArray(snapshot.exchanges)) return;
+      const exchange = activeExchange();
+      const result = snapshot.exchanges.find((item) => normalizeExchange(item && item.exchange) === exchange);
+      if (!result) return;
+      state.positions = positionSnapshot([result]);
+    }
+
+    function syncAnalysisPositionSnapshot(snapshot) {
+      if (!snapshot || !Array.isArray(snapshot.exchanges) || !state.analysisPositions) return;
+      const exchange = activeExchange();
+      const result = snapshot.exchanges.find((item) => normalizeExchange(item && item.exchange) === exchange);
+      if (!result) return;
+      const exchanges = state.analysisPositions.exchanges.slice();
+      const index = exchanges.findIndex((item) => normalizeExchange(item && item.exchange) === exchange);
+      if (index < 0) return;
+      exchanges[index] = result;
+      state.analysisPositions = positionSnapshot(exchanges);
     }
 
     async function loadPendingOrders() {

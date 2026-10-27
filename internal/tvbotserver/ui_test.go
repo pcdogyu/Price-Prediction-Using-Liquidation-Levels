@@ -448,6 +448,22 @@ func TestRenderTVBotDashboardUsesFundingPeriods(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotSharesLivePositionSnapshotAcrossTabs(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
+	for _, want := range []string{
+		`function positionSnapshot(results)`,
+		`const snapshot = positionSnapshot(results);`,
+		`syncActivePositionSnapshot(snapshot);`,
+		`syncAnalysisPositionSnapshot(snapshot);`,
+		`state.positions = positionSnapshot([result]);`,
+		`state.analysisPositions = positionSnapshot(exchanges);`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("positions and order analysis should share one live snapshot, missing %q", want)
+		}
+	}
+}
+
 func TestTVBotSystemInfoSeparatesDashboardBalance(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/system", nil))
 	dashboardStart := strings.Index(page, `<section id="dashboard"`)
