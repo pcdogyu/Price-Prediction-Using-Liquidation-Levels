@@ -56,6 +56,12 @@ const tradeExchangeLabel = value => {
   if (exchange === 'okx') return 'OKX';
   return '交易所';
 };
+const tradeExchangeSummary = markers => {
+  const exchanges = [...new Set((Array.isArray(markers) ? markers : [])
+    .map(marker => normalizeTradeExchange(marker && marker.exchange))
+    .filter(Boolean))];
+  return exchanges.length ? exchanges.map(tradeExchangeLabel).join('/') : '账户';
+};
 let symbol = 'ETHUSDT';
 const initialSymbolButton = document.querySelector('button[data-symbol].active');
 if (initialSymbolButton) symbol = initialSymbolButton.dataset.symbol;
@@ -67,8 +73,13 @@ const tradeView = {
   requestedSymbol: requestedTradeSymbol,
   focusAt: window.BubbleChart.tradeTime(tradeQuery.get('focus_at')),
   markers: [],
+  referenceMarkers: [],
+  historyRows: [],
+  historyLoaded: false,
+  historyLoading: false,
+  historyError: '',
   enabled: false,
-  error: requestedTradeSymbolRaw && !requestedTradeSymbol ? 'URL 中的交易币对格式不受支持' : ''
+  referenceError: requestedTradeSymbolRaw && !requestedTradeSymbol ? 'URL 中的交易币对格式不受支持' : ''
 };
 let refreshing = false;
 let refreshSequence = 0;
@@ -81,6 +92,7 @@ let logEntries = [];
 let captureStateHoldUntil = 0;
 
 const api = path => new URL('api/v1/' + path, document.baseURI).toString();
+const tvbotAPI = path => new URL('tvbot/' + path, document.baseURI).toString();
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const moneyFormat = Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const compactFormat = Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 });
@@ -131,6 +143,54 @@ async function json(path, options = {}) {
   return body;
 }
 
+async function tvbotJSON(path, options = {}) {
+  const response = await fetch(tvbotAPI(path), { cache: 'no-store', credentials: 'same-origin', ...options });
+  if (response.status === 401) throw new Error('TVBot历史交易暂不可用（未登录或登录已过期）');
+  let body = null;
+  try { body = await response.json(); } catch (_) { /* handled below */ }
+  if (!response.ok) throw new Error('HTTP ' + response.status + ' · ' + (body?.detail || response.statusText || '请求失败'));
+  return body;
+}
+
+function tradeMarkerKey(marker) {
+  return [
+    normalizeTradeExchange(marker && marker.exchange),
+    String(marker && marker.symbol || ''),
+    String(marker && marker.side || ''),
+    String(marker && marker.phase || ''),
+    String(marker && marker.time || ''),
+    String(marker && marker.price || ''),
+    String(marker && marker.order_id || ''),
+    String(marker && marker.trade_id || '')
+  ].join('|');
+}
+
+function mergeTradeMarkers(...groups) {
+  const merged = new Map();
+  groups.flat().forEach(marker => {
+    if (!marker || !Number.isFinite(marker.time) || !Number.isFinite(marker.price)) return;
+    const key = tradeMarkerKey(marker);
+    const previous = merged.get(key);
+    if (!previous) {
+      merged.set(key, marker);
+      return;
+    }
+    merged.set(key, Object.assign({}, previous, marker, { selected: previous.selected || marker.selected === true }));
+  });
+  return Array.from(merged.values()).sort((a, b) => a.time - b.time || String(a.id || '').localeCompare(String(b.id || '')));
+}
+
+function refreshTradeMarkers() {
+  const historyMarkers = window.BubbleChart.normalizeTradeMarkers(tradeView.historyRows, symbol);
+  const referenceMarkers = tradeView.referenceMarkers.filter(marker => marker.symbol === symbol);
+  tradeView.markers = mergeTradeMarkers(historyMarkers, referenceMarkers);
+  tradeView.enabled = tradeView.historyLoaded || tradeView.markers.length > 0;
+}
+
+function tradeViewError() {
+  return [tradeView.referenceError, tradeView.historyError].filter(Boolean).join('；');
+}
+
 function loadTradeView() {
   if (!tradeView.ref) return;
   const storageKey = 'tvbot.analysisChart.' + tradeView.ref;
@@ -156,12 +216,12 @@ function loadTradeView() {
     payload = null;
   }
   if (!payload || !Array.isArray(payload.rows)) {
-    tradeView.error = '交易点引用不存在或已过期，请从交易分析表重新打开';
+    tradeView.referenceError = '交易点引用不存在或已过期，请从交易分析表重新打开';
     return;
   }
   const payloadExchange = normalizeTradeExchange(payload.exchange);
   if (tradeView.exchange && payloadExchange && tradeView.exchange !== payloadExchange) {
-    tradeView.error = '交易点引用与 URL 交易所不一致';
+    tradeView.referenceError = '交易点引用与 URL 交易所不一致';
     return;
   }
   if (!tradeView.exchange && payloadExchange) tradeView.exchange = payloadExchange;
@@ -170,25 +230,46 @@ function loadTradeView() {
     : payload.rows;
   const payloadSymbol = window.BubbleChart.normalizeMarketSymbol(payload.symbol);
   if (!payloadSymbol) {
-    tradeView.error = '交易引用中的币对无法转换为 Binance USDT K 线币对';
+    tradeView.referenceError = '交易引用中的币对无法转换为 Binance USDT K 线币对';
     return;
   }
   if (!tradeView.requestedSymbol && payloadSymbol) {
     symbol = payloadSymbol;
   }
   if (tradeView.requestedSymbol && payloadSymbol && tradeView.requestedSymbol !== payloadSymbol) {
-    tradeView.error = '交易点引用与 URL 币对不一致';
+    tradeView.referenceError = '交易点引用与 URL 币对不一致';
     return;
   }
   const focus = window.BubbleChart.tradeTime(payload.focus_at || tradeQuery.get('focus_at'));
   if (Number.isFinite(focus)) tradeView.focusAt = focus;
   const selectedKey = String(payload.selected_key || '');
-  tradeView.markers = window.BubbleChart.normalizeTradeMarkers(scopedRows, symbol, selectedKey);
-  tradeView.enabled = true;
-  if (!tradeView.markers.length) tradeView.error = '该交易引用没有可定位的有效开平仓价格或时间';
+  tradeView.referenceMarkers = window.BubbleChart.normalizeTradeMarkers(scopedRows, symbol, selectedKey);
+  refreshTradeMarkers();
+  if (!tradeView.referenceMarkers.length) tradeView.referenceError = '该交易引用没有可定位的有效开平仓价格或时间';
 }
 
 loadTradeView();
+
+async function loadHistoricalTradeView() {
+  if (embeddedChart || tradeView.historyLoaded || tradeView.historyLoading) return;
+  tradeView.historyLoading = true;
+  tradeView.historyError = '';
+  showFailures(lastFailures);
+  try {
+    const packet = await tvbotJSON('analysis?price_days=1&pnl_days=30');
+    if (!Array.isArray(packet?.position_trades)) throw new Error('历史交易响应无效');
+    tradeView.historyRows = packet.position_trades;
+    tradeView.historyLoaded = true;
+    refreshTradeMarkers();
+  } catch (error) {
+    if (error?.name !== 'AbortError') tradeView.historyError = error.message || '历史交易数据不可用';
+  } finally {
+    tradeView.historyLoading = false;
+    refreshTradeMarkers();
+    if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+    showFailures(lastFailures);
+  }
+}
 
 function catalogSymbol(value) {
   const raw = String(value || '').trim().toUpperCase();
@@ -214,10 +295,9 @@ function activateSymbol(next) {
   const input = $('symbol-search');
   if (input) input.value = symbol;
   cache.signal = cache.map = cache.market = cache.volume = null;
-  tradeView.enabled = false;
-  tradeView.markers = [];
+  refreshTradeMarkers();
   tradeView.focusAt = NaN;
-  tradeView.error = '';
+  tradeView.referenceError = '';
   resetChartState();
   refresh(true);
 }
@@ -238,7 +318,7 @@ async function loadSymbolCatalog() {
     }
     if (state) state.textContent = symbolCatalog.length + ' 个可交易 USDT 永续';
     if (tradeView.requestedSymbol && !symbolCatalog.some(item => window.BubbleChart.normalizeMarketSymbol(item.symbol) === symbol)) {
-      tradeView.error = 'Binance 不支持 ' + symbol + ' 永续 K 线，交易分析表不受影响';
+      tradeView.referenceError = 'Binance 不支持 ' + symbol + ' 永续 K 线，交易分析表不受影响';
     }
   } catch (error) {
     if (state) state.textContent = '币对目录暂不可用，仍可使用已配置币对';
@@ -637,6 +717,7 @@ function tradeMarkerTip(marker) {
   if (marker.quantity) details.push('成交量 ' + marker.quantity);
   if (marker.notional_usdt) details.push('名义USDT金额 ' + marker.notional_usdt);
   if (marker.margin_usdt) details.push('保证金USDT金额 ' + marker.margin_usdt);
+  if (marker.collapsed_count > 1) details.push('同K线合并 ' + marker.collapsed_count + '个点位');
   if (marker.fill_pnl) details.push('成交盈亏 ' + marker.fill_pnl);
   if (marker.net_pnl) details.push('净盈亏 ' + marker.net_pnl);
   if (marker.fee) details.push('手续费 ' + marker.fee + (marker.fee_ccy ? ' ' + marker.fee_ccy : ''));
@@ -644,7 +725,9 @@ function tradeMarkerTip(marker) {
 }
 
 function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top, plotBottom) {
-  const layout = window.BubbleChart.tradeMarkerPlacements(markers, range, scale, y, { left, right: candleRight, top, bottom: plotBottom });
+  const interval = intervalMilliseconds[chart.interval] || 900000;
+  const collapsed = window.BubbleChart.collapseTradeMarkers(markers, interval);
+  const layout = window.BubbleChart.tradeMarkerPlacements(collapsed, range, scale, y, { left, right: candleRight, top, bottom: plotBottom });
   layout.markers.forEach(({ marker, x, priceY, labelX, labelCenterY, labelBelow, labelText, labelWidth }) => {
     const long = marker.side === 'long';
     const closing = marker.phase === 'exit';
@@ -791,7 +874,11 @@ function draw(view, map, signal, volume) {
   const tradeMarkers = tradeView.enabled ? drawTradeMarkers(plot, tradeView.markers, range, timeScale, y, left, candleRight, top, plotBottom) : { visible: 0, outside: 0 };
   svg.setAttribute('data-bubble-count', bubbles.points.length);
   svg.setAttribute('data-trade-marker-count', tradeMarkers.visible);
-  const tradeText = tradeView.enabled ? ' · ' + tradeExchangeLabel(tradeView.exchange || tradeView.markers[0]?.exchange) + '交易点 屏内 ' + tradeMarkers.visible + '个' + (tradeMarkers.outside ? ' · 视野外 ' + tradeMarkers.outside + '个' : '') : '';
+  const tradeText = tradeView.historyLoading && !tradeView.historyLoaded
+    ? ' · 历史开平点加载中'
+    : tradeView.enabled
+      ? ' · 历史开平点 ' + tradeExchangeSummary(tradeView.markers) + ' 共 ' + tradeView.markers.length + '个 · 屏内 ' + tradeMarkers.visible + '个 · 视野外 ' + tradeMarkers.outside + '个'
+      : '';
   const liquidationFilterText = chart.liquidationMinimumUSD > 0 ? ' · 金额≥$' + compact(chart.liquidationMinimumUSD) : '';
   $('chart-context').textContent = context + liquidationFilterText + ' · 窗口已加载 ' + windowLiquidations.length + '笔 · 屏内气泡 ' + bubbles.points.length + '笔' + (bubbles.outside ? ' · 价格视野外 ' + bubbles.outside + '笔' : '') + tradeText + ' · ' + loadState;
   if (!embeddedChart && bins.length) {
@@ -902,7 +989,8 @@ function bindTips(svg) {
 function showFailures(failures) {
   const all = [...failures];
   if (streamError) all.push('实时推送 · ' + streamError);
-  if (tradeView.error) all.push(tradeExchangeLabel(tradeView.exchange) + '交易点 · ' + tradeView.error);
+  const tradeError = tradeViewError();
+  if (tradeError) all.push('历史交易点 · ' + tradeError);
   $('api-errors').textContent = all.length ? '数据接口异常：\n' + all.join('\n') : '';
   $('api-errors').classList.toggle('hidden', all.length === 0);
 }
@@ -1459,6 +1547,7 @@ $('chart-latest').addEventListener('click', () => {
   chart.newData = false;
   tradeView.focusAt = NaN;
   $('new-data').classList.add('hidden');
+  resetChartState();
   refresh(true);
 });
 $('chart-reset').addEventListener('click', () => {
@@ -1496,7 +1585,10 @@ if (!embeddedChart) installChartSizeControls();
 if (!embeddedChart) installChartInteractions();
 if (embeddedChart) installEmbeddedChartInteractions();
 if (embeddedChart) refresh(true);
-else loadSymbolCatalog().finally(() => refresh(true));
+else {
+  loadHistoricalTradeView();
+  loadSymbolCatalog().finally(() => refresh(true));
+}
 setInterval(() => refresh(false), 10000);
 setInterval(updateCoinGlassCountdown, 1000);
 setInterval(() => { if (!$('log-drawer').classList.contains('hidden') && $('log-auto').checked) loadLogs(false); }, 5000);

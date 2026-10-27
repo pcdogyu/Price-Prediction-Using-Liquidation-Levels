@@ -49,8 +49,8 @@ test('trade markers preserve take-profit, stop-loss and manual/automatic labels'
   ], 'ETHUSDT');
   const layout = B.tradeMarkerPlacements(markers, [1900, 2300], { start: 0, end: Date.parse('2026-01-01T03:00:00Z'), x: () => 150 }, price => (2300 - price) / 2, { left: 0, right: 300, top: 0, bottom: 300 });
   assert.deepEqual(markers.map(item => [item.operation, item.operation_source]), [['take_profit', 'auto'], ['stop_loss', 'manual']]);
-  assert.equal(layout.markers[0].labelText, '多平');
-  assert.equal(layout.markers[1].labelText, '空平');
+  assert.equal(layout.markers[0].labelText, '平多');
+  assert.equal(layout.markers[1].labelText, '平空');
 });
 
 test('collapseTradeMarkers shows one opening or closing action per direction and candle', () => {
@@ -74,9 +74,9 @@ test('collapseTradeMarkers shows one opening or closing action per direction and
   assert.equal(collapsed[1].operation, 'close');
   assert.equal(collapsed[1].operation_source, '');
   const layout = B.tradeMarkerPlacements([collapsed[1]], [1900, 2300], { start: 0, end: Date.parse('2026-01-01T01:00:00Z'), x: () => 150 }, () => 100, { left: 0, right: 300, top: 0, bottom: 300 });
-  assert.equal(layout.markers[0].labelText, '多平×3');
+  assert.equal(layout.markers[0].labelText, '平多×3');
   const shortLayout = B.tradeMarkerPlacements([{ ...collapsed[1], side: 'short' }], [1900, 2300], { start: 0, end: Date.parse('2026-01-01T01:00:00Z'), x: () => 150 }, () => 100, { left: 0, right: 300, top: 0, bottom: 300 });
-  assert.equal(shortLayout.markers[0].labelText, '空平×3');
+  assert.equal(shortLayout.markers[0].labelText, '平空×3');
 });
 
 test('opening markers use B below long candles and S above short candles', () => {

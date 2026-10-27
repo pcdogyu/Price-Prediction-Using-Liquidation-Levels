@@ -142,7 +142,7 @@
       // Closing markers use the compact direction labels requested by the
       // position view; detailed operation/source data remains in the tooltip.
       const collapsedLabel = closing && marker.collapsed_count > 1 ? '×' + marker.collapsed_count : '';
-      const labelText = closing ? (long ? '多平' : '空平') + collapsedLabel : (long ? 'B' : 'S');
+      const labelText = closing ? (long ? '平多' : '平空') + collapsedLabel : (long ? 'B' : 'S');
       const labelWidth = labelText.length * 11 + 12;
       const labelBelow = closing ? !long : long;
       const direction = labelBelow ? 1 : -1;

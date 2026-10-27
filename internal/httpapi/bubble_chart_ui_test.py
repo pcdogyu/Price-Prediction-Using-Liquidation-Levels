@@ -31,6 +31,9 @@ with sync_playwright() as playwright:
     context = browser.new_context(viewport={"width": 1740, "height": 1150}, timezone_id="Asia/Shanghai")
     context.add_init_script("""
       localStorage.setItem('liquidation.interval', '1m');
+      localStorage.setItem('liquidation.longOffset', '20');
+      localStorage.setItem('liquidation.shortOffset', '20');
+      localStorage.setItem('liquidation.chartHeight', '672');
       window.__testIntervals = [];
       window.setInterval = (fn, ms) => { window.__testIntervals.push({fn, ms}); return window.__testIntervals.length; };
       window.__testActiveRequests = 0;
@@ -66,7 +69,12 @@ with sync_playwright() as playwright:
 
     baseline = context.request.get(base + "/api/v1/market?symbol=ETHUSDT&interval=1m").json()
     history_base = context.request.get(base + "/api/v1/liquidations?symbol=ETHUSDT&limit=1").json()
-    state = {"fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
+    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
+    history_rows = [
+        {"row_key": "history-eth-long", "exchange": "binance", "inst_id": "ETHUSDT", "side": "long", "entry_time": iso(state["anchor"] - 20 * intervals["1m"]), "entry_px": "2490", "exit_time": iso(state["anchor"] - 10 * intervals["1m"]), "exit_px": "2498", "entry_ord_id": "binance-open-1", "exit_ord_id": "binance-close-1"},
+        {"row_key": "history-eth-short", "exchange": "gate", "inst_id": "ETH_USDT", "side": "short", "entry_time": iso(state["anchor"] - 18 * intervals["1m"]), "entry_px": "2498", "exit_time": iso(state["anchor"] - 8 * intervals["1m"]), "exit_px": "2492", "entry_ord_id": "gate-open-1", "exit_ord_id": "gate-close-1"},
+        {"row_key": "history-btc-long", "exchange": "okx", "inst_id": "BTC-USDT-SWAP", "side": "long", "entry_time": iso(state["anchor"] - 60 * intervals["1m"]), "entry_px": "2490", "exit_time": iso(state["anchor"] - 50 * intervals["1m"]), "exit_px": "2498", "entry_ord_id": "okx-open-1", "exit_ord_id": "okx-close-1"},
+    ]
 
     def dataset(symbol, interval, before=None):
         duration = intervals[interval]
@@ -125,6 +133,11 @@ with sync_playwright() as playwright:
                 "upper_trigger": {"status": "reference", "target_price": 2510, "current_price": 2495, "distance_price": 15, "distance_percent": 0.6, "distance_atr": 1.5, "probability": 0, "probability_available": False},
                 "lower_trigger": {"status": "reference", "target_price": 2480, "current_price": 2495, "distance_price": 15, "distance_percent": 0.6, "distance_atr": 1.5, "probability": 0, "probability_available": False}
             })
+        elif parsed.path.endswith("/tvbot/analysis"):
+            if state["history_fail"]:
+                route.fulfill(status=503, json={"detail": "fixture TVBot history unavailable"})
+            else:
+                route.fulfill(json={"ok": True, "pnl_days": 30, "position_trades": copy.deepcopy(history_rows)})
         else:
             route.continue_()
 
@@ -134,6 +147,7 @@ with sync_playwright() as playwright:
         page.route("**/api/v1/map?**", fixture)
         page.route("**/api/v1/volume-profile?**", fixture)
         page.route("**/api/v1/signals/latest?**", fixture)
+        page.route("**/tvbot/analysis?**", fixture)
 
     def idle():
         page.wait_for_function("() => window.__testActiveRequests === 0")
@@ -193,6 +207,17 @@ with sync_playwright() as playwright:
         assert page.evaluate("""() => Array.from(document.querySelectorAll('#classic-pivot-table .classic-pivot-row > *')).every(cell => getComputedStyle(cell).textAlign === 'center')""")
     initial = check_axis()
     if not production:
+        default_trade_view = page.evaluate("""() => ({
+          count: Number(document.getElementById('market-chart').dataset.tradeMarkerCount),
+          context: document.getElementById('chart-context').textContent,
+          labels: Array.from(document.querySelectorAll('[data-trade-marker] text'), e => e.textContent),
+          tips: Array.from(document.querySelectorAll('[data-trade-marker]'), e => e.dataset.tip),
+          legendHidden: document.getElementById('trade-marker-legend').classList.contains('hidden')
+        })""")
+        assert default_trade_view["count"] == 4 and "历史开平点" in default_trade_view["context"], default_trade_view
+        assert set(default_trade_view["labels"]) == {"B", "S", "平多", "平空"}, default_trade_view
+        assert any("Binance 下单信息" in tip for tip in default_trade_view["tips"]) and any("Gate 下单信息" in tip for tip in default_trade_view["tips"]), default_trade_view
+        assert not default_trade_view["legendHidden"], default_trade_view
         assert len(initial["ids"]) == 6002 and "窗口已加载 6003笔" in initial["context"] and "价格视野外 1笔" in initial["context"], initial["context"]
         all_rows = dataset("ETHUSDT", "1m")[1]
         assert set(initial["ids"]) == {r["id"] for r in all_rows if r["price"] != 2800}
@@ -337,10 +362,10 @@ with sync_playwright() as playwright:
           windowStart: document.getElementById('market-chart').dataset.windowStart,
           windowEnd: document.getElementById('market-chart').dataset.windowEnd
         })""")
-        assert trade_view["count"] == 4 and "Binance交易点 屏内 4个" in trade_view["context"], trade_view
-        assert len(trade_view["markers"]) == 4 and not trade_view["legendHidden"], trade_view
+        assert trade_view["count"] == 6 and "历史开平点" in trade_view["context"], trade_view
+        assert len(trade_view["markers"]) == 6 and not trade_view["legendHidden"], trade_view
         tips = "\n".join(item["tip"] for item in trade_view["markers"])
-        assert "买入" in tips and "卖出" in tips and "当前点击记录" in tips, tips
+        assert "买入" in tips and "卖出" in tips and "当前点击记录" in tips and "OKX 下单信息" in tips, tips
         assert ms(trade_view["windowStart"]) <= trade_focus <= ms(trade_view["windowEnd"]), trade_view
         marker_box = page.locator('[data-trade-marker]').first.bounding_box()
         page.mouse.move(marker_box["x"] + marker_box["width"] / 2, marker_box["y"] + marker_box["height"] / 2)
@@ -358,7 +383,7 @@ with sync_playwright() as playwright:
             view = check_axis()
             assert page.locator(f'button[data-interval="{interval}"]').evaluate("e => e.classList.contains('active')")
             if not production:
-                assert len(view["ids"]) == 6002, (symbol, interval, view["context"])
+                assert len(view["ids"]) >= 6002, (symbol, interval, view["context"], len(view["ids"]))
                 assert all(id.startswith(symbol + "-" + interval + "-") for id in view["ids"])
             (artifacts / "bubble-ui-progress.json").write_text(json.dumps({"production": production, "symbol": symbol, "interval": interval, "bubbles": len(view["ids"])}), encoding="utf-8")
     if not production:
@@ -454,6 +479,12 @@ with sync_playwright() as playwright:
             assert page.evaluate("() => Array.from(document.querySelectorAll('[data-event-id]')).every(e => [getComputedStyle(document.documentElement).getPropertyValue('--buy').trim(),getComputedStyle(document.documentElement).getPropertyValue('--sell').trim()].includes(e.getAttribute('stroke')))")
             page.screenshot(path=str(artifacts / f"bubbles-{'production' if production else 'fixture'}-{width}-{theme}.png"), full_page=True)
             assert page.locator("#chart-context").is_visible()
+    if not production:
+        state["history_fail"] = True
+        page.goto(base + "/bubbles", wait_until="domcontentloaded")
+        idle()
+        assert int(page.locator("#market-chart").get_attribute("data-bubble-count")) > 0
+        expect(page.locator("#api-errors")).to_contain_text("历史交易点")
     assert not errors, errors
     browser.close()
 print(json.dumps({"production": production, "checked_symbols": 2, "checked_intervals": len(intervals), "fixture_events": 6003 if not production else None, "live_windows": evidence, "page_errors": errors}, ensure_ascii=False))

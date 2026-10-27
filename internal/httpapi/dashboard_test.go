@@ -150,6 +150,24 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		}
 	}
 	for _, marker := range []string{
+		"tvbotAPI",
+		"analysis?price_days=1&pnl_days=30",
+		"position_trades",
+		"历史开平点",
+		"tradeView.historyRows",
+		"tradeView.referenceMarkers",
+		"collapseTradeMarkers",
+	} {
+		if !strings.Contains(string(dashboardJS), marker) {
+			t.Fatalf("bubble chart script missing historical trade marker support %q", marker)
+		}
+	}
+	for _, marker := range []string{"B</b> 开多", "S</b> 开空", "平多</b>", "平空</b>"} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("bubble chart legend missing historical trade label %q", marker)
+		}
+	}
+	for _, marker := range []string{
 		"window.visualViewport?.addEventListener",
 		"new ResizeObserver",
 		"requestAnimationFrame(fitBubbleChartViewport)",
