@@ -59,6 +59,19 @@ def timeline_fixture():
             target = item["alert"] if kind == "alert" else item["signal"]
             target["filter_tags"] = ["donchian"]
         rows.append(item)
+    rows.insert(5, {
+        "type": "value_area",
+        "event_at": (now - datetime.timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+        "signal": {
+            "id": "va-gamma-negative", "symbol": "ETHUSDT", "kind": "value_area", "side": "short",
+            "liquidation_side": "short", "created_at": (now - datetime.timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            "alert_notional_usd": 0, "threshold_usd": 0, "reference_price": 3200,
+            "notify_status": "muted", "gamma_ignored": True, "gamma_value": -0.12,
+            "gamma_state": "ok", "filter_applied": False, "open_allowed": False,
+            "close_allowed": True, "position_effect": "close", "boundary": "vah",
+            "boundary_price": 3200, "val": 3150, "vah": 3200,
+        },
+    })
     return rows
 
 
@@ -107,8 +120,9 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows")).to_contain_text("稳健")
     expect(page.locator("#alerts-history-rows")).to_contain_text("VWAP过滤")
     expect(page.locator("#alerts-history-rows")).to_contain_text("Donchian过滤")
+    expect(page.locator("#alerts-history-rows")).to_contain_text("交易所刷单策略过滤")
     expect(page.locator("#alerts-history-rows").locator("tr").nth(0).locator("td").nth(2)).to_contain_text("VWAP过滤 · Donchian过滤")
-    expect(page.locator(".alerts-close-only-prefix")).to_have_count(3)
+    expect(page.locator(".alerts-close-only-prefix")).to_have_count(4)
     expect(page.locator(".alerts-order-trigger")).to_have_count(20)
     expect(page.get_by_text("策略开关", exact=True)).to_be_visible()
     expect(page.locator("#alerts-history-rows")).to_contain_text("做多 gamma忽略")
@@ -116,8 +130,8 @@ with sync_playwright() as playwright:
     expect(page.get_by_text("ETHUSDT Gamma：-0.123450", exact=False)).to_be_visible()
 
     page.locator("#alerts-next").click()
-    expect(page.locator("#alerts-history-rows tr")).to_have_count(5)
-    expect(page.locator("#alerts-count")).to_have_text("第 2 页 · 本页 5 条")
+    expect(page.locator("#alerts-history-rows tr")).to_have_count(6)
+    expect(page.locator("#alerts-count")).to_have_text("第 2 页 · 本页 6 条")
     expect(page.locator("#alerts-prev")).to_be_enabled()
     expect(page.locator("#alerts-next")).to_be_disabled()
     page.locator("#alerts-prev").click()

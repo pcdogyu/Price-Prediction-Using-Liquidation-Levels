@@ -1731,7 +1731,7 @@ const tvbotHTML = `<!doctype html>
           <div class="dashboard-order-stats">
             <div class="section-head" style="margin:12px 0 8px"><h3>历史订单统计</h3><span class="muted" id="overview-okx-order-stats-status">-</span></div>
             <div class="analysis-metrics">
-              <div class="analysis-card"><div class="label">净盈亏</div><div class="value" id="overview-okx-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">已平仓净盈亏</div><div class="value" id="overview-okx-net-pnl">-</div></div>
               <div class="analysis-card"><div class="label">胜率</div><div class="value" id="overview-okx-win-rate">-</div></div>
               <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="overview-okx-profit-factor">-</div></div>
               <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="overview-okx-payoff-ratio">-</div></div>
@@ -1758,7 +1758,7 @@ const tvbotHTML = `<!doctype html>
           <div class="dashboard-order-stats">
             <div class="section-head" style="margin:12px 0 8px"><h3>历史订单统计</h3><span class="muted" id="overview-binance-order-stats-status">-</span></div>
             <div class="analysis-metrics">
-              <div class="analysis-card"><div class="label">净盈亏</div><div class="value" id="overview-binance-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">已平仓净盈亏</div><div class="value" id="overview-binance-net-pnl">-</div></div>
               <div class="analysis-card"><div class="label">胜率</div><div class="value" id="overview-binance-win-rate">-</div></div>
               <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="overview-binance-profit-factor">-</div></div>
               <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="overview-binance-payoff-ratio">-</div></div>
@@ -1785,7 +1785,7 @@ const tvbotHTML = `<!doctype html>
           <div class="dashboard-order-stats">
             <div class="section-head" style="margin:12px 0 8px"><h3>历史订单统计</h3><span class="muted" id="overview-gate-order-stats-status">-</span></div>
             <div class="analysis-metrics">
-              <div class="analysis-card"><div class="label">净盈亏</div><div class="value" id="overview-gate-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">已平仓净盈亏</div><div class="value" id="overview-gate-net-pnl">-</div></div>
               <div class="analysis-card"><div class="label">胜率</div><div class="value" id="overview-gate-win-rate">-</div></div>
               <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="overview-gate-profit-factor">-</div></div>
               <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="overview-gate-payoff-ratio">-</div></div>
@@ -1927,7 +1927,7 @@ const tvbotHTML = `<!doctype html>
           </div>
           <div class="analysis-exchange-block balance-pnl-block">
             <div class="analysis-metrics">
-              <div class="analysis-card"><div class="label">净盈亏</div><div class="value" id="analysis-okx-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">已平仓净盈亏</div><div class="value" id="analysis-okx-net-pnl">-</div></div>
               <div class="analysis-card"><div class="label">胜率</div><div class="value" id="analysis-okx-win-rate">-</div></div>
               <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="analysis-okx-profit-factor">-</div></div>
               <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="analysis-okx-payoff-ratio">-</div></div>
@@ -1964,7 +1964,7 @@ const tvbotHTML = `<!doctype html>
           </div>
           <div class="analysis-exchange-block balance-pnl-block">
             <div class="analysis-metrics">
-              <div class="analysis-card"><div class="label">净盈亏</div><div class="value" id="analysis-binance-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">已平仓净盈亏</div><div class="value" id="analysis-binance-net-pnl">-</div></div>
               <div class="analysis-card"><div class="label">胜率</div><div class="value" id="analysis-binance-win-rate">-</div></div>
               <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="analysis-binance-profit-factor">-</div></div>
               <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="analysis-binance-payoff-ratio">-</div></div>
@@ -1999,7 +1999,7 @@ const tvbotHTML = `<!doctype html>
           </div>
           <div class="analysis-exchange-block balance-pnl-block">
             <div class="analysis-metrics">
-              <div class="analysis-card"><div class="label">净盈亏</div><div class="value" id="analysis-gate-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">已平仓净盈亏</div><div class="value" id="analysis-gate-net-pnl">-</div></div>
               <div class="analysis-card"><div class="label">胜率</div><div class="value" id="analysis-gate-win-rate">-</div></div>
               <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="analysis-gate-profit-factor">-</div></div>
               <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="analysis-gate-payoff-ratio">-</div></div>
@@ -4314,10 +4314,17 @@ const tvbotHTML = `<!doctype html>
         const status = $(prefix + "-order-stats-status");
         const fields = ["net-pnl", "win-rate", "profit-factor", "payoff-ratio", "trades", "turnover", "fees", "position-count", "position-upl"];
         if (!state.dashboardAnalysis) {
+          const positionSummary = analysisPositionSummary(exchange);
           fields.forEach((field) => {
             const element = $(prefix + "-" + field);
             if (element) {
-              element.textContent = "-";
+              if (field === "position-count") {
+                element.textContent = positionSummary.ready ? asText(positionSummary.count) : "-";
+              } else if (field === "position-upl") {
+                element.textContent = positionSummary.ready ? analysisAmountText(positionSummary.upl) : "-";
+              } else {
+                element.textContent = "-";
+              }
               if (field === "position-upl") element.className = "value";
             }
           });
@@ -5785,6 +5792,7 @@ const tvbotHTML = `<!doctype html>
     function renderAnalysisExchangeStats(exchange, errorText) {
       const normalized = normalizeExchange(exchange);
       const prefix = normalized === "binance" ? "analysis-binance" : (normalized === "gate" ? "analysis-gate" : "analysis-okx");
+      const positionSummary = analysisPositionSummary(normalized);
       if (errorText) {
         $(prefix + "-net-pnl").textContent = "-";
         $(prefix + "-win-rate").textContent = "-";
@@ -5793,13 +5801,12 @@ const tvbotHTML = `<!doctype html>
         $(prefix + "-trades").textContent = "-";
         $(prefix + "-turnover").textContent = "-";
         $(prefix + "-fees").textContent = "-";
-        $(prefix + "-position-count").textContent = "-";
-        $(prefix + "-position-upl").textContent = "-";
-        $(prefix + "-position-upl").className = "value";
+        $(prefix + "-position-count").textContent = positionSummary.ready ? asText(positionSummary.count) : "-";
+        $(prefix + "-position-upl").textContent = positionSummary.ready ? analysisAmountText(positionSummary.upl) : "-";
+        $(prefix + "-position-upl").className = ["value", positionSummary.ready ? signedToneClass(positionSummary.upl) : ""].filter(Boolean).join(" ");
         return;
       }
       const summary = analysisExchangeSummary(normalized);
-      const positionSummary = analysisPositionSummary(normalized);
       $(prefix + "-net-pnl").textContent = analysisAmountText(summary.net_pnl);
       $(prefix + "-win-rate").textContent = formatPct(summary.win_rate);
       $(prefix + "-profit-factor").textContent = formatFactor(summary);
@@ -5824,11 +5831,17 @@ const tvbotHTML = `<!doctype html>
     }
 
     function analysisPositionSummary(exchange) {
-      const rows = analysisPositionRows(exchange);
+      const normalized = normalizeExchange(exchange);
+      const response = state.analysisPositions;
+      const exchangeResult = response && Array.isArray(response.exchanges)
+        ? response.exchanges.find((result) => normalizeExchange(result && result.exchange) === normalized)
+        : null;
+      const ready = !!(exchangeResult && exchangeResult.ok);
+      const rows = ready ? analysisPositionRows(normalized) : [];
       return {
-        ready: !!state.analysisPositions,
+        ready: ready,
         count: rows.length,
-        upl: positionSum(rows, "upl")
+        upl: ready ? positionSum(rows, "upl") : null
       };
     }
 

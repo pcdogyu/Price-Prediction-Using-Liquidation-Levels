@@ -78,7 +78,9 @@
     const title = raw || summary;
     return '<span class="muted alerts-radar-filter" title="' + escape(title) + '"> · ' + escape(summary) + '</span>';
   };
-  const closeOnlyIgnored = row => !!(row && row.filter_applied && row.close_allowed && !row.open_allowed);
+  // Gamma-negative value-area signals are close-only decisions too, even though
+  // they do not pass through the radar filter and therefore have filter_applied=false.
+  const closeOnlyIgnored = row => !!(row && (row.filter_applied || row.gamma_ignored) && row.close_allowed && !row.open_allowed);
   const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : label === '交易所刷单' ? '交易所刷单策略过滤' : '激进信号过滤';
   const recordTypeLabel = (row, label) => {
     const tags = rowFilterTags(row).map(tag => '<span class="alerts-filter-tag alerts-filter-tag-' + tag + '">' + escape(filterTagLabels[tag]) + '</span>');
