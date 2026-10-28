@@ -71,7 +71,7 @@ func (s *Server) runTradeFillMonitorOnce(ctx context.Context) {
 			s.Logger.Warn("failed to sync Binance trade lifecycles", "error", err)
 		}
 	}
-	symbols := s.tradeMonitorBinanceSymbols(cfg, now, lookback)
+	symbols := s.tradeMonitorBinanceSymbols(now, lookback)
 	if len(symbols) == 0 {
 		return
 	}
@@ -374,7 +374,7 @@ func (s *Server) ensureRecentBinanceTradeLifecycles(cfg config.Config, now time.
 	return nil
 }
 
-func (s *Server) tradeMonitorBinanceSymbols(cfg config.Config, now time.Time, lookback time.Duration) []string {
+func (s *Server) tradeMonitorBinanceSymbols(now time.Time, lookback time.Duration) []string {
 	seen := map[string]bool{}
 	add := func(symbol string) {
 		symbol = strings.ToUpper(strings.TrimSpace(symbol))
@@ -386,13 +386,20 @@ func (s *Server) tradeMonitorBinanceSymbols(cfg config.Config, now time.Time, lo
 		}
 		seen[symbol] = true
 	}
-	for key, sym := range cfg.Symbols {
-		if symbol, ok := deriveBinanceAnalysisSymbol(sym.Coinpair, key, sym.InstID); ok {
-			add(symbol)
-		}
-	}
 	if s.Orders != nil {
 		cutoff := now.Add(-lookback)
+		// The global symbol catalog can contain hundreds of instruments. It is
+		// a configuration/UI allow-list, not a reason to call Binance userTrades
+		// for every symbol every poll. Lifecycle/order records are the durable
+		// set of symbols that can actually have fills to reconcile.
+		if lifecycles, err := s.Orders.ListTradeLifecycles(storage.TradeMonitorFilter{Exchange: trading.ExchangeBinance}, 1000); err == nil {
+			for _, lifecycle := range lifecycles {
+				if lifecycle.UpdatedAt.Before(cutoff) && lifecycle.CreatedAt.Before(cutoff) {
+					continue
+				}
+				add(lifecycle.Symbol)
+			}
+		}
 		for _, rec := range s.Orders.List(10000) {
 			if rec.UpdatedAt.Before(cutoff) && rec.AcceptedAt.Before(cutoff) {
 				continue
