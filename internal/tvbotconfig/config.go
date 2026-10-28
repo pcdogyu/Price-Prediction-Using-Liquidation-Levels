@@ -556,6 +556,15 @@ func (c *Config) Normalize() {
 }
 
 func (c Config) Validate() error {
+	return c.validate(true)
+}
+
+// validate checks the runtime settings and, when requested, the symbol
+// metadata. Older configuration files may contain a symbol entry that was
+// collected before its exchange metadata was available. Such an entry must
+// not prevent unrelated settings, such as order settings, from being saved;
+// replacing the symbol map still uses the strict validation path.
+func (c Config) validate(validateSymbols bool) error {
 	switch c.Trading.Env {
 	case EnvDemo, EnvLive:
 	default:
@@ -648,12 +657,14 @@ func (c Config) Validate() error {
 	if c.Trading.PositionMonitor.StopLossPct <= 0 {
 		return errors.New("position_monitor.stop_loss_pct must be positive")
 	}
-	for key, sym := range c.Symbols {
-		if sym.Coinpair == "" || sym.InstID == "" {
-			return fmt.Errorf("symbol %q requires coinpair and inst_id", key)
-		}
-		if sym.CtVal <= 0 || sym.LotSz <= 0 || sym.MinSz <= 0 {
-			return fmt.Errorf("symbol %q requires positive ct_val, lot_sz and min_sz", key)
+	if validateSymbols {
+		for key, sym := range c.Symbols {
+			if sym.Coinpair == "" || sym.InstID == "" {
+				return fmt.Errorf("symbol %q requires coinpair and inst_id", key)
+			}
+			if sym.CtVal <= 0 || sym.LotSz <= 0 || sym.MinSz <= 0 {
+				return fmt.Errorf("symbol %q requires positive ct_val, lot_sz and min_sz", key)
+			}
 		}
 	}
 	if !hasVisibleMenuSettings(c.UI.MenuItems) {

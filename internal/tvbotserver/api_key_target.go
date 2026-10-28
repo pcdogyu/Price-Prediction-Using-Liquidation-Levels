@@ -21,7 +21,7 @@ func (s *Server) syncAPIKeyTradeTarget(exchange, env, apiID string, active bool)
 	}
 	if active {
 		if s.ConfigStore != nil {
-			if _, err := s.ConfigStore.Update(func(cfg *tvbotconfig.Config) error {
+			if _, err := s.ConfigStore.UpdateSettings(func(cfg *tvbotconfig.Config) error {
 				cfg.Trading.TargetExchange = exchange
 				cfg.Trading.TargetAPIID = apiID
 				cfg.Trading.TargetTradeEnv = env
@@ -42,7 +42,7 @@ func (s *Server) syncAPIKeyTradeTarget(exchange, env, apiID string, active bool)
 	if tvbottrading.NormalizeExchange(current.TargetExchange) != exchange || strings.TrimSpace(current.TargetTradeEnv) != env {
 		return nil
 	}
-	_, err := s.ConfigStore.Update(func(cfg *tvbotconfig.Config) error {
+	_, err := s.ConfigStore.UpdateSettings(func(cfg *tvbotconfig.Config) error {
 		cfg.Trading.TargetExchange = ""
 		cfg.Trading.TargetAPIID = ""
 		cfg.Trading.TargetTradeEnv = ""

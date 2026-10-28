@@ -963,6 +963,27 @@ func TestTVBotConfigSavesOrderType(t *testing.T) {
 	}
 }
 
+func TestTVBotConfigSavesOrderSettingsWithIncompleteLegacySymbol(t *testing.T) {
+	srv := newTestServer(t)
+	cfg := srv.ConfigStore.Get()
+	cfg.Symbols["BLUEBIRDUSDT"] = config.SymbolConfig{Coinpair: "BLUEBIRDUSDT"}
+	srv.ConfigStore = config.NewStore("", cfg)
+
+	req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"order_amount_usdt":1234}}`)))
+	req.SetBasicAuth("admin", "Admin123")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("order settings should save despite incomplete legacy symbol: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := srv.ConfigStore.Get().Trading.OrderAmountUSDT; got != 1234 {
+		t.Fatalf("order amount was not saved: %v", got)
+	}
+	if _, ok := srv.ConfigStore.Get().Symbols["BLUEBIRDUSDT"]; !ok {
+		t.Fatal("unrelated settings update should preserve the legacy symbol entry")
+	}
+}
+
 func TestTVBotConfigSavesMarketTurnoverScopeAndRejectsInvalidValue(t *testing.T) {
 	srv := newTestServer(t)
 	for _, scope := range []string{"top5", "top10", "top20", "top50", "top100", "top200", "top500", "all"} {

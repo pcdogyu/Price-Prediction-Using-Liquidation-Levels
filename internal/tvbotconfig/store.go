@@ -31,6 +31,17 @@ func (s *Store) Get() Config {
 }
 
 func (s *Store) Update(fn func(*Config) error) (Config, error) {
+	return s.update(fn, true)
+}
+
+// UpdateSettings saves settings that do not replace the symbol catalog. It
+// tolerates incomplete legacy symbol entries so an unrelated setting can be
+// repaired or changed before the catalog itself is fixed through Update.
+func (s *Store) UpdateSettings(fn func(*Config) error) (Config, error) {
+	return s.update(fn, false)
+}
+
+func (s *Store) update(fn func(*Config) error, validateSymbols bool) (Config, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.cfg
@@ -44,7 +55,7 @@ func (s *Store) Update(fn func(*Config) error) (Config, error) {
 		return Config{}, err
 	}
 	next.Normalize()
-	if err := next.Validate(); err != nil {
+	if err := next.validate(validateSymbols); err != nil {
 		return Config{}, err
 	}
 	if s.path != "" {

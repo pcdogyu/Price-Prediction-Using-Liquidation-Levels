@@ -1168,7 +1168,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		previous := s.ConfigStore.Get()
-		cfg, err := s.ConfigStore.Update(func(c *config.Config) error {
+		cfg, err := s.ConfigStore.UpdateSettings(func(c *config.Config) error {
 			applyConfigPatch(c, patch)
 			return nil
 		})

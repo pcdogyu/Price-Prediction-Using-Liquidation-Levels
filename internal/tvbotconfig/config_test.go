@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -339,6 +340,29 @@ func TestStoreClonesIgnoredCoinpairs(t *testing.T) {
 	got.Trading.CoinpairWhitelist[0] = "MUTATED"
 	if current := store.Get().Trading.CoinpairWhitelist; !reflect.DeepEqual(current, []string{"BTC"}) {
 		t.Fatalf("Get shared coinpair whitelist: %#v", current)
+	}
+}
+
+func TestStoreSettingsUpdateToleratesIncompleteLegacySymbol(t *testing.T) {
+	cfg := Default()
+	cfg.Symbols["BLUEBIRDUSDT"] = SymbolConfig{Coinpair: "BLUEBIRDUSDT"}
+	store := NewStore("", cfg)
+
+	if _, err := store.UpdateSettings(func(next *Config) error {
+		next.Trading.OrderAmountUSDT = 1234
+		return nil
+	}); err != nil {
+		t.Fatalf("unrelated settings update should tolerate incomplete legacy symbol: %v", err)
+	}
+	if got := store.Get().Trading.OrderAmountUSDT; got != 1234 {
+		t.Fatalf("order amount was not saved: %v", got)
+	}
+
+	if _, err := store.Update(func(next *Config) error {
+		next.Trading.Leverage = 10
+		return nil
+	}); err == nil || !strings.Contains(err.Error(), `symbol "BLUEBIRDUSDT" requires coinpair and inst_id`) {
+		t.Fatalf("strict symbol validation should remain active, err=%v", err)
 	}
 }
 
