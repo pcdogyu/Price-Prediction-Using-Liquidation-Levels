@@ -810,6 +810,12 @@ const tvbotHTML = `<!doctype html>
       gap: 6px;
       flex-wrap: wrap;
     }
+    .position-action-label {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 36px;
+      white-space: nowrap;
+    }
     .position-percent-close-btn,
     .position-percent-open-btn {
       width: 36px;
@@ -1473,10 +1479,10 @@ const tvbotHTML = `<!doctype html>
       outline: 2px solid var(--accent);
       outline-offset: -2px;
     }
-    .positions-table .pos-exchange-col { width: 4.8%; }
+    .positions-table .pos-exchange-col { width: 3.84%; }
     .positions-table .pos-symbol-col { width: 7.8%; }
-    .positions-table .pos-side-col { width: 6.8%; }
-    .positions-table .pos-strategy-col { width: 7.2%; }
+    .positions-table .pos-side-col { width: 5.44%; }
+    .positions-table .pos-strategy-col { width: 5.76%; }
     .positions-table .pos-size-col { width: 6.1%; }
     .positions-table .pos-price-col { width: 5.6%; }
     .positions-table .pos-margin-col { width: 5.9%; }
@@ -1485,7 +1491,7 @@ const tvbotHTML = `<!doctype html>
     .positions-table .pos-pnl-col { width: 6.5%; }
     .positions-table .pos-rate-col { width: 5.2%; }
     .positions-table .pos-entry-time-col { width: 8.1%; }
-    .positions-table .pos-holding-time-col { width: 6.6%; }
+    .positions-table .pos-holding-time-col { width: 5.94%; }
     .positions-table .pos-actions-col { width: 23.3%; }
     .pending-order-table {
       min-width: 1360px;
@@ -5725,9 +5731,10 @@ const tvbotHTML = `<!doctype html>
         { label: "75%", ratio: "0.75" }
       ].map((item) => '<button class="btn small position-percent-close-btn" type="button" data-position-close="limit" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="限价平仓 ' + item.label + '，60秒后市价兜底"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
       return '<td><div class="position-action-groups">' +
-        '<div class="position-actions position-action-group position-open-actions">' + openPercentButtons + '</div>' +
+        '<div class="position-actions position-action-group position-open-actions">' +
+        '<span class="position-action-label">增仓</span>' + openPercentButtons + '</div>' +
         '<div class="position-actions position-action-group position-close-actions">' +
-        closePercentButtons +
+        '<span class="position-action-label">平仓</span>' + closePercentButtons +
         '<button class="btn small danger" type="button" data-position-close="market"' + baseAttrs + (busy ? " disabled" : "") + '>市价平仓</button>' +
         '<button class="btn small" type="button" data-position-close="limit"' + baseAttrs + (busy ? " disabled" : "") + '>限价平仓</button>' +
         '</div>' +

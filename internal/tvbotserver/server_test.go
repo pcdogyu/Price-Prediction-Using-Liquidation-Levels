@@ -224,6 +224,11 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte(`{ label: "10%", ratio: "0.1" }`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`data-position-ratio`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-percent-close-btn")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("position-action-label")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(".positions-table .pos-exchange-col { width: 3.84%; }")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(".positions-table .pos-side-col { width: 5.44%; }")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(".positions-table .pos-strategy-col { width: 5.76%; }")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(".positions-table .pos-holding-time-col { width: 5.94%; }")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("width: 36px")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("border-radius: 999px")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("font-size: 7px")) ||
@@ -914,7 +919,7 @@ func TestPositionActionsExcludeProtectionButtons(t *testing.T) {
 			t.Fatalf("position action cell should not include %q", removed)
 		}
 	}
-	for _, kept := range []string{"data-position-ratio", "data-position-open=\"market\"", "position-open-actions", "position-close-actions", "data-position-close=\"market\"", "data-position-close=\"limit\""} {
+	for _, kept := range []string{"data-position-ratio", "data-position-open=\"market\"", "position-open-actions", "position-close-actions", "data-position-close=\"market\"", "data-position-close=\"limit\"", ">增仓</span>", ">平仓</span>"} {
 		if !strings.Contains(actions, kept) {
 			t.Fatalf("position action cell should retain %q", kept)
 		}
