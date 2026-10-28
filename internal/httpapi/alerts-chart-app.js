@@ -16,6 +16,7 @@
   const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_ZONES = 'liquidation.kline.zones', STORE_DONCHIAN = 'liquidation.kline.donchian', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000, LIQUIDATION_DELTA_REFRESH_MS = 15000, LIQUIDATION_DELTA_DEBOUNCE_MS = 250;
   const RADAR_WARMUP_MAX_PAGES = 4;
+  const RADAR_RANGE_MIN_HOURS = 12, RADAR_RANGE_MAX_HOURS = 24, RADAR_DRAWDOWN_MIN_PCT = .1, RADAR_DRAWDOWN_MAX_PCT = 20, RADAR_DONCHIAN_MIN_PCT = 1, RADAR_DONCHIAN_MAX_PCT = 49;
   const FILTERED_SIGNAL_ALPHA = .2;
   const KLINE_HEIGHT_SCALE = 1.20, LIQUIDATION_DELTA_HEIGHT_SCALE = 1.15;
   const CHART_MARGIN_TOP = 18, CHART_MARGIN_BOTTOM = 42, CHART_SECTION_GAP = 12;
@@ -34,7 +35,7 @@
     candles: [], alerts: [], signals: [], liquidationDelta: [], tradeMarkers: [], hits: [],
     view: { start: 0, end: 0 }, yLow: 0, yHigh: 1, yManual: false,
     hasMore: true, nextBefore: '', newest: 0, atLatest: true, newData: false, keepSpan: 0,
-    loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false, loadingLiquidationDelta: false, liquidationDeltaError: '', signalThreshold: 0, signalWindowMinutes: 0, signalReplayText: '按当前参数回放',
+    loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false, loadingLiquidationDelta: false, strategyLoading: false, strategySaving: false, strategySettings: null, liquidationDeltaError: '', signalThreshold: 0, signalWindowMinutes: 0, signalReplayText: '按当前参数回放',
     drag: null, hoverCandle: null, hoverMarker: null,
     radarConfig: { periodMinutes: 240, zScoreThreshold: .8, rangeMinutes: 1440, minDrawdown: .022, donchianFraction: .35 }, radarZone: null,
     liquidationDeltaHover: null, liquidationDeltaWindow: null, liquidationDeltaPending: false, liquidationDeltaRequestTimer: 0, liquidationDeltaRequestSequence: 0, liquidationDeltaAbortController: null,
@@ -127,6 +128,116 @@
 
   function showError(message) { $('kline-error').textContent = message; $('kline-error').hidden = false; }
   function clearError() { $('kline-error').hidden = true; $('kline-error').textContent = ''; }
+  function radarSettingsStatus(message, kind = '') {
+    const node = $('kline-radar-status');
+    if (!node) return;
+    node.textContent = message;
+    node.classList.toggle('success', kind === 'success');
+    node.classList.toggle('error', kind === 'error');
+  }
+
+  function renderRadarSettings(settings) {
+    if (!settings) return;
+    const fields = [
+      ['kline-vwap-range-hours', settings.vwap_range_hours],
+      ['kline-vwap-min-drawdown', settings.vwap_min_drawdown_pct],
+      ['kline-vwap-donchian', settings.vwap_donchian_pct]
+    ];
+    for (const [id, value] of fields) {
+      const input = $(id);
+      if (input && document.activeElement !== input && Number.isFinite(Number(value))) input.value = value;
+    }
+    const fill = $('kline-zones');
+    if (fill) fill.checked = state.toggles.zones;
+  }
+
+  function radarInputValues() {
+    return {
+      vwap_range_hours: Number($('kline-vwap-range-hours').value),
+      vwap_min_drawdown_pct: Number($('kline-vwap-min-drawdown').value),
+      vwap_donchian_pct: Number($('kline-vwap-donchian').value)
+    };
+  }
+
+  function validateRadarInputValues(values) {
+    if (!Number.isFinite(values.vwap_range_hours) || values.vwap_range_hours < RADAR_RANGE_MIN_HOURS || values.vwap_range_hours > RADAR_RANGE_MAX_HOURS) {
+      throw new Error('VWAP Donchian 窗口需在 12 到 24 小时之间');
+    }
+    if (!Number.isFinite(values.vwap_min_drawdown_pct) || values.vwap_min_drawdown_pct < RADAR_DRAWDOWN_MIN_PCT || values.vwap_min_drawdown_pct > RADAR_DRAWDOWN_MAX_PCT) {
+      throw new Error('VWAP 最小回撤需在 0.1% 到 20% 之间');
+    }
+    if (!Number.isFinite(values.vwap_donchian_pct) || values.vwap_donchian_pct < RADAR_DONCHIAN_MIN_PCT || values.vwap_donchian_pct > RADAR_DONCHIAN_MAX_PCT) {
+      throw new Error('VWAP Donchian 分位需在 1% 到 49% 之间');
+    }
+  }
+
+  function applyTenantRadarSettings(settings) {
+    state.strategySettings = settings;
+    const rangeHours = Number(settings && settings.vwap_range_hours);
+    const drawdown = Number(settings && settings.vwap_min_drawdown_pct);
+    const fraction = Number(settings && settings.vwap_donchian_pct);
+    if (Number.isFinite(rangeHours) && rangeHours > 0) state.radarConfig.rangeMinutes = rangeHours * 60;
+    if (Number.isFinite(drawdown) && drawdown > 0) state.radarConfig.minDrawdown = drawdown / 100;
+    if (Number.isFinite(fraction) && fraction > 0) state.radarConfig.donchianFraction = fraction / 100;
+    historicalZoneCacheKey = '';
+    historicalZoneCache = [];
+    renderRadarSettings(settings);
+  }
+
+  async function loadTenantRadarSettings() {
+    if (state.strategyLoading) return;
+    state.strategyLoading = true;
+    radarSettingsStatus('读取参数');
+    try {
+      const settings = await json('api/v1/alerts/strategy-settings');
+      applyTenantRadarSettings(settings);
+      radarSettingsStatus('已读取');
+    } catch (error) {
+      radarSettingsStatus('读取失败', 'error');
+    } finally {
+      state.strategyLoading = false;
+    }
+  }
+
+  async function saveTenantRadarSettings(event) {
+    event.preventDefault();
+    if (state.strategySaving) return;
+    const values = radarInputValues();
+    try {
+      validateRadarInputValues(values);
+    } catch (error) {
+      radarSettingsStatus(error.message, 'error');
+      return;
+    }
+    if (!state.strategySettings) {
+      await loadTenantRadarSettings();
+      if (!state.strategySettings) return;
+    }
+    state.strategySaving = true;
+    const button = $('kline-radar-apply');
+    if (button) button.disabled = true;
+    radarSettingsStatus('正在保存');
+    try {
+      const body = Object.assign({}, state.strategySettings, values);
+      delete body.updated_at;
+      const storedSettings = await json('api/v1/alerts/strategy-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      state.radarZone = null;
+      applyTenantRadarSettings(storedSettings);
+      await loadRadarWarmupHistory();
+      if (!positionMode) await loadChartSignals();
+      else draw();
+      radarSettingsStatus('已保存并生效', 'success');
+    } catch (error) {
+      radarSettingsStatus('保存失败：' + error.message, 'error');
+    } finally {
+      state.strategySaving = false;
+      if (button) button.disabled = false;
+    }
+  }
   function note(message) { void message; }
 
   function renderSignalStatus() {
@@ -423,7 +534,7 @@
     parts.push(shownAlerts().length + ' 个预警');
     parts.push(shownSignals().length + ' 个下单信号');
     const zone = currentRadarZone();
-    if (!state.toggles.zones) parts.push('VWAP 分区已隐藏');
+    if (!state.toggles.zones) parts.push('VWAP 颜色填充已隐藏');
     else if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 + Donchian ' + (zone.range_hours || state.radarConfig.rangeMinutes / 60) + ' 小时 · 历史三分区 ' + historicalRadarZones().length + ' 根 · 高于 ' + priceText(zone.red_zone_lower || zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.green_zone_upper || zone.lower_open_price) + ' 接多 · 中间仅平仓' + (zone.boundary_overlap ? ' · 边界重叠，禁止开仓' : ''));
     else parts.push('VWAP 开仓区计算中');
     parts.push(state.toggles.donchian ? 'Donchian 信号过滤开启' : 'Donchian 信号过滤关闭');
@@ -771,7 +882,6 @@
   }
 
   function drawRadarZones(ctx, x, y, plot, priceBottom, intervalStep) {
-    if (!state.toggles.zones) return;
     const zones = historicalRadarZones();
     const fallback = currentRadarZone();
     const fill = (left, right, top, bottom, colour, alpha) => {
@@ -785,6 +895,7 @@
       const redLower = zone && (finite(zone.red_zone_lower) ? zone.red_zone_lower : zone.upper_open_price);
       const greenUpper = zone && (finite(zone.green_zone_upper) ? zone.green_zone_upper : zone.lower_open_price);
       if (!zone || !finite(redLower) || !finite(greenUpper)) return;
+      if (!state.toggles.zones) return;
       if (zone.boundary_overlap || redLower <= greenUpper) {
         fill(left, right, plot.top, priceBottom, colors.warning, .09);
         return;
@@ -1317,6 +1428,7 @@
         draw();
       });
     }
+    $('kline-radar-settings').addEventListener('submit', saveTenantRadarSettings);
     $('kline-latest').addEventListener('click', goLatest);
     $('kline-reset').addEventListener('click', resetView);
     $('kline-refresh').addEventListener('click', () => { loadCandles(); loadChartSignals(); scheduleLiquidationDelta(true); });
@@ -1335,7 +1447,7 @@
     });
   }
 
-  function boot() {
+  async function boot() {
     void loadPositionTradeMarkers();
     buildIntervals();
     bindControls();
@@ -1359,6 +1471,7 @@
     $('kline-title').textContent = state.symbol + ' K 线';
     document.title = state.symbol + ' K线 · 持仓详情';
     note('正在读取 ' + state.symbol + ' ' + state.interval + ' K 线');
+    await loadTenantRadarSettings();
     loadCandles();
     if (!positionMode) loadChartSignals();
     setInterval(() => { if (!document.hidden && !state.drag) loadCandles(); }, CANDLE_REFRESH_MS);

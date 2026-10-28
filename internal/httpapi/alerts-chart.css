@@ -6,6 +6,13 @@
 .kline-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-bottom:12px}
 .kline-intervals{display:flex;gap:5px;flex-wrap:wrap}
 .kline-intervals button{padding:6px 12px;border-radius:8px;font-size:12px;white-space:nowrap}
+.kline-radar-settings{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap;color:var(--muted);font-size:12px}
+.kline-radar-settings label:not(.alerts-check){display:flex;align-items:center;gap:5px;white-space:nowrap}
+.kline-radar-settings input[type=number]{width:66px;padding:6px 7px}
+.kline-radar-settings button{padding:7px 12px;border-radius:8px;font-size:12px;white-space:nowrap}
+.kline-radar-status{min-width:72px;color:var(--muted);white-space:nowrap}
+.kline-radar-status.success{color:var(--buy)}
+.kline-radar-status.error{color:var(--sell)}
 .kline-jump{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
 .kline-jump input{width:150px;padding:7px 10px}
 .kline-jump button{padding:7px 12px;font-size:12px;border-radius:8px}
@@ -36,7 +43,7 @@
 #kline-chart{display:block;width:100%}
 .kline-tooltip{position:absolute;z-index:5;pointer-events:none;max-width:280px;padding:8px 10px;border:1px solid var(--strong-line);border-radius:10px;background:var(--tooltip-bg);color:var(--text);font-size:12px;line-height:1.5}
 .kline-signal-table{min-width:660px}
-@media(max-width:900px){.kline-actions{margin-left:0;width:100%}}
+@media(max-width:900px){.kline-actions,.kline-radar-settings{margin-left:0;width:100%}}
 
 /* Position detail embeds use this page as a deliberately small chart surface.
    The modal already owns the symbol title, so keep only the period buttons and

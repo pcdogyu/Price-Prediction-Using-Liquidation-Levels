@@ -216,6 +216,26 @@ test('filtered chart signals are painted faintly and remain in the display rows'
   assert.match(chartApp, /已过滤（淡显）/);
   assert.match(chartHTML, /已过滤信号（80%透明）/);
 });
+
+test('all K-line variants expose tenant VWAP/Donchian controls in the period toolbar', () => {
+  assert.match(chartHTML, /id="kline-radar-settings"/);
+  assert.match(chartHTML, /id="kline-zones"[^>]*>.*VWAP 颜色填充/);
+  assert.match(chartHTML, /id="kline-vwap-range-hours"/);
+  assert.match(chartHTML, /id="kline-vwap-min-drawdown"/);
+  assert.match(chartHTML, /id="kline-vwap-donchian"/);
+  assert.match(chartHTML, /id="kline-radar-apply"[^>]*>应用并保存/);
+  assert.doesNotMatch(chartApp, /position-chart-standalone.*kline-radar-settings.*display:none/);
+});
+
+test('chart settings load and save the tenant strategy without changing filter switches', () => {
+  assert.match(chartApp, /api\/v1\/alerts\/strategy-settings/);
+  assert.match(chartApp, /vwap_range_hours: Number\(\$\('kline-vwap-range-hours'\)\.value\)/);
+  assert.match(chartApp, /vwap_min_drawdown_pct: Number\(\$\('kline-vwap-min-drawdown'\)\.value\)/);
+  assert.match(chartApp, /vwap_donchian_pct: Number\(\$\('kline-vwap-donchian'\)\.value\)/);
+  assert.match(chartApp, /Object\.assign\(\{\}, state\.strategySettings, values\)/);
+  assert.match(chartApp, /delete body\.updated_at/);
+  assert.match(chartApp, /await loadRadarWarmupHistory\(\)/);
+});
 test('niceTicks stays inside the range and terminates', () => {
   assert.deepEqual(K.niceTicks(0, 10, 5), [0, 2, 4, 6, 8, 10]);
   assert.deepEqual(K.niceTicks(5, 5, 5), []);

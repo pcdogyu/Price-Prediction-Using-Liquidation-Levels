@@ -23,5 +23,14 @@ test('the chart uses an independent Donchian filter switch for close-only signal
   assert.match(chartHTML, /平仓区域信号过滤/);
   assert.match(chartHTML, /过滤掉的下单信号仍会保留/);
   assert.match(chartHTML, /id="kline-donchian"/);
-  assert.match(chartHTML, /VWAP 分区开关只控制图中的分区显示，不负责 Donchian 信号过滤/);
+  assert.match(chartHTML, /VWAP 颜色填充开关只控制图中的背景填色，不负责 Donchian 信号过滤/);
+});
+
+test('turning off VWAP fill keeps the historical boundary lines and labels', () => {
+  assert.match(chartApp, /if \(!state\.toggles\.zones\) return;/);
+  assert.match(chartApp, /historyLine\('red_zone_lower'/);
+  assert.match(chartApp, /historyLine\('green_zone_upper'/);
+  assert.match(chartApp, /historyLine\('vwap'/);
+  assert.match(chartApp, /label\('开仓区 · 高位开空'/);
+  assert.match(chartApp, /label\('仅平仓区'/);
 });
