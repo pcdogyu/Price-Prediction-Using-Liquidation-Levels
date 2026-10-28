@@ -98,6 +98,7 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`data-balance-minutes="480"`,
 		`data-balance-minutes="720"`,
 		`data-balance-minutes="1440"`,
+		`balanceWindowMinutes: 1440`,
 		`data-balance-minutes="2880"`,
 		`data-balance-minutes="4320"`,
 		`data-balance-minutes="10080"`,

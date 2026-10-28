@@ -2425,7 +2425,7 @@ const tvbotHTML = `<!doctype html>
       dashboardBalanceWindowMinutes: 1440,
       dashboardAnalysis: null,
       dashboardAnalysisError: "",
-      balanceWindowMinutes: 720,
+      balanceWindowMinutes: 1440,
       analysisPositions: null,
       analysisPositionsError: "",
       positions: null,
