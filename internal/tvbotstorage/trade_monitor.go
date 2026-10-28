@@ -173,6 +173,34 @@ func (s *OrderStore) UpsertBinanceFills(fills []BinanceFill, fetchedAt time.Time
 	return inserted, tx.Commit()
 }
 
+// ListBinanceFills returns fills already persisted by the Binance user stream.
+// Analysis uses this local source while the stream is active, avoiding a
+// repeated UserTrades REST scan for data the process already owns.
+func (s *OrderStore) ListBinanceFills(apiID string, since time.Time) ([]BinanceFill, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("sqlite database is not configured")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(`SELECT api_id,symbol,trade_id,order_id,side,position_side,price,qty,quote_qty,realized_pnl,commission,commission_asset,buyer,maker,fill_time,raw_json FROM binance_fills WHERE api_id=? AND fill_time>=? ORDER BY fill_time,trade_id`, strings.TrimSpace(apiID), since.UTC().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BinanceFill
+	for rows.Next() {
+		var fill BinanceFill
+		var buyer, maker int
+		if err := rows.Scan(&fill.APIID, &fill.Symbol, &fill.TradeID, &fill.OrderID, &fill.Side, &fill.PositionSide, &fill.Price, &fill.Qty, &fill.QuoteQty, &fill.RealizedPnl, &fill.Commission, &fill.CommissionAsset, &buyer, &maker, &fill.FillTime, &fill.RawJSON); err != nil {
+			return nil, err
+		}
+		fill.Buyer = buyer != 0
+		fill.Maker = maker != 0
+		out = append(out, fill)
+	}
+	return out, rows.Err()
+}
+
 func (f *BinanceFill) normalize(index int) {
 	f.APIID = strings.TrimSpace(f.APIID)
 	f.Symbol = strings.ToUpper(strings.TrimSpace(f.Symbol))

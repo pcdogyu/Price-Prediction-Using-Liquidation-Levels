@@ -349,7 +349,7 @@ func (s *Server) handlePositions(w http.ResponseWriter, r *http.Request) {
 		instType = "SWAP"
 	}
 	apiID := strings.TrimSpace(r.URL.Query().Get("api_id"))
-	refresh := strings.EqualFold(r.URL.Query().Get("refresh"), "true")
+	refresh := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("refresh")), "true")
 	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), r.URL.Query().Get("env"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
@@ -400,6 +400,7 @@ func (s *Server) handlePendingOrders(w http.ResponseWriter, r *http.Request) {
 		instType = "SWAP"
 	}
 	apiID := strings.TrimSpace(r.URL.Query().Get("api_id"))
+	refresh := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("refresh")), "true")
 	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), r.URL.Query().Get("env"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
@@ -418,7 +419,7 @@ func (s *Server) handlePendingOrders(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "Binance credential store is not configured")
 			return
 		}
-		resp, err = s.fetchBinancePendingOrders(ctx, cfg, apiID)
+		resp, err = s.fetchBinancePendingOrders(ctx, cfg, apiID, refresh)
 	} else if exchange == trading.ExchangeGate {
 		if gateStore == nil {
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "Gate credential store is not configured")
@@ -3036,42 +3037,45 @@ func (s *Server) fetchBinancePositions(ctx context.Context, cfg config.Config, r
 	}, nil
 }
 
-func (s *Server) fetchBinancePendingOrders(ctx context.Context, cfg config.Config, requestedAPIID string) (pendingOrdersResponse, error) {
+func (s *Server) fetchBinancePendingOrders(ctx context.Context, cfg config.Config, requestedAPIID string, forceRefresh bool) (pendingOrdersResponse, error) {
 	client, apiID, err := s.binanceClientForCredentials(cfg, requestedAPIID)
 	if err != nil {
 		return pendingOrdersResponse{}, err
 	}
-	orders, err := client.OpenOrders(ctx, "")
-	if err != nil {
-		return pendingOrdersResponse{}, err
-	}
-	algoOrders, err := client.OpenAlgoOrders(ctx, "")
-	if err != nil {
-		return pendingOrdersResponse{}, err
-	}
-	sort.Slice(orders, func(i, j int) bool {
-		if orders[i].Symbol == orders[j].Symbol {
-			return orders[i].Time > orders[j].Time
+	key := binanceUserStreamID(client, apiID)
+	return cachedBinancePendingOrders(ctx, key, s.now(), forceRefresh, func() (pendingOrdersResponse, error) {
+		orders, err := client.OpenOrders(ctx, "")
+		if err != nil {
+			return pendingOrdersResponse{}, err
 		}
-		return orders[i].Symbol < orders[j].Symbol
+		algoOrders, err := client.OpenAlgoOrders(ctx, "")
+		if err != nil {
+			return pendingOrdersResponse{}, err
+		}
+		sort.Slice(orders, func(i, j int) bool {
+			if orders[i].Symbol == orders[j].Symbol {
+				return orders[i].Time > orders[j].Time
+			}
+			return orders[i].Symbol < orders[j].Symbol
+		})
+		views := s.binancePendingOrderViews(ctx, cfg, client, apiID, orders)
+		algoViews := s.binancePendingAlgoOrderViews(ctx, cfg, client, apiID, algoOrders)
+		normalCount := len(views)
+		algoCount := len(algoViews)
+		return pendingOrdersResponse{
+			OK:          true,
+			Exchange:    trading.ExchangeBinance,
+			APIID:       apiID,
+			InstType:    "USDT-M",
+			Count:       normalCount,
+			NormalCount: normalCount,
+			AlgoCount:   algoCount,
+			TotalCount:  normalCount + algoCount,
+			RefreshedAt: s.now(),
+			Orders:      views,
+			AlgoOrders:  algoViews,
+		}, nil
 	})
-	views := s.binancePendingOrderViews(ctx, cfg, client, apiID, orders)
-	algoViews := s.binancePendingAlgoOrderViews(ctx, cfg, client, apiID, algoOrders)
-	normalCount := len(views)
-	algoCount := len(algoViews)
-	return pendingOrdersResponse{
-		OK:          true,
-		Exchange:    trading.ExchangeBinance,
-		APIID:       apiID,
-		InstType:    "USDT-M",
-		Count:       normalCount,
-		NormalCount: normalCount,
-		AlgoCount:   algoCount,
-		TotalCount:  normalCount + algoCount,
-		RefreshedAt: s.now(),
-		Orders:      views,
-		AlgoOrders:  algoViews,
-	}, nil
 }
 
 func (s *Server) fetchGatePositions(ctx context.Context, cfg config.Config, requestedAPIID string) (positionsResponse, error) {

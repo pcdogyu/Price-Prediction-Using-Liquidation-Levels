@@ -39,6 +39,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer logStore.Close()
+	if migrated, legacyDatabase, err := tvbotbridge.MigrateLegacyDatabase(context.Background(), cfg); err != nil {
+		log.Error("legacy tvbot database migration failed", "error", err)
+		os.Exit(1)
+	} else if migrated {
+		log.Info("legacy tvbot database migrated", "source", legacyDatabase)
+	}
 	st, err := store.Open(cfg.DatabasePath)
 	if err != nil {
 		log.Error("database open failed", "error", err)

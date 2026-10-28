@@ -13,8 +13,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/binancerest"
 )
 
 type Credentials struct {
@@ -40,11 +41,6 @@ type APIError struct {
 	Code int    `json:"code"`
 	Msg  string `json:"msg"`
 }
-
-var binanceRESTRateLimit = struct {
-	mu           sync.Mutex
-	blockedUntil time.Time
-}{}
 
 func (e APIError) Error() string {
 	if e.Code == 0 && e.Msg == "" {
@@ -76,7 +72,9 @@ func IsRateLimitError(err error) bool {
 	message := strings.ToLower(strings.TrimSpace(errString(err)))
 	return strings.Contains(message, "too many requests") ||
 		strings.Contains(message, "way too many requests") ||
-		strings.Contains(message, "request weight")
+		strings.Contains(message, "request weight") ||
+		strings.Contains(message, "status 429") ||
+		strings.Contains(message, "status 418")
 }
 
 // RateLimitUntil extracts the optional Unix timestamp from Binance's ban
@@ -116,20 +114,12 @@ func errString(err error) string {
 // RateLimitPauseUntil reports the process-wide Binance REST pause. The ban is
 // IP-scoped, so all clients and both demo/live endpoints must honor it.
 func RateLimitPauseUntil(now time.Time) (time.Time, bool) {
-	binanceRESTRateLimit.mu.Lock()
-	defer binanceRESTRateLimit.mu.Unlock()
 	if now.IsZero() {
 		now = time.Now().UTC()
 	} else {
 		now = now.UTC()
 	}
-	if !now.Before(binanceRESTRateLimit.blockedUntil) {
-		if !binanceRESTRateLimit.blockedUntil.IsZero() {
-			binanceRESTRateLimit.blockedUntil = time.Time{}
-		}
-		return time.Time{}, false
-	}
-	return binanceRESTRateLimit.blockedUntil, true
+	return binancerest.Default().PausedUntil(now)
 }
 
 func noteRateLimit(err error, now time.Time) {
@@ -145,11 +135,7 @@ func noteRateLimit(err error, now time.Time) {
 	if !ok || !until.After(now) {
 		until = now.Add(5 * time.Minute)
 	}
-	binanceRESTRateLimit.mu.Lock()
-	if until.After(binanceRESTRateLimit.blockedUntil) {
-		binanceRESTRateLimit.blockedUntil = until
-	}
-	binanceRESTRateLimit.mu.Unlock()
+	binancerest.Default().PauseUntil(until)
 }
 
 func rateLimitPauseError(until time.Time) error {
@@ -437,6 +423,28 @@ func (c Client) Do(ctx context.Context, method, path string, values url.Values, 
 	if base == "" {
 		base = "https://fapi.binance.com"
 	}
+	requestClass := binancerest.ClassBackground
+	requestPriority := binancerest.PriorityBackground
+	if private {
+		requestClass = binancerest.ClassAccount
+		requestPriority = binancerest.PriorityAccount
+	}
+	if method != http.MethodGet && (method != http.MethodDelete || private) {
+		requestClass = binancerest.ClassExecution
+		requestPriority = binancerest.PriorityExecution
+	}
+	scheduledRequest := binancerest.Request{
+		Host:     base,
+		Path:     path,
+		Class:    requestClass,
+		Priority: requestPriority,
+		Weight:   binancerest.WeightForPath(path),
+	}
+	release, err := binancerest.Default().Acquire(ctx, scheduledRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	encodedParams := params.Encode()
 	if private {
 		if err := c.Credentials.Validate(); err != nil {
@@ -467,27 +475,57 @@ func (c Client) Do(ctx context.Context, method, path string, values url.Values, 
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return nil, err
+		binancerest.Default().Complete(scheduledRequest, 0, 0, redactTransportError(method, path, err))
+		return nil, redactTransportError(method, path, err)
 	}
 	defer resp.Body.Close()
+	usedWeight, _ := strconv.Atoi(resp.Header.Get("X-MBX-USED-WEIGHT-1M"))
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
+		binancerest.Default().Complete(scheduledRequest, resp.StatusCode, usedWeight, err)
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if apiErr := decodeAPIError(respBody); apiErr.Msg != "" || apiErr.Code != 0 {
 			noteRateLimit(apiErr, c.Now())
+			binancerest.Default().Complete(scheduledRequest, resp.StatusCode, usedWeight, apiErr)
 			return nil, apiErr
 		}
 		err := fmt.Errorf("binance http status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 		noteRateLimit(err, c.Now())
+		binancerest.Default().Complete(scheduledRequest, resp.StatusCode, usedWeight, err)
 		return nil, err
 	}
 	if apiErr := decodeAPIError(respBody); apiErr.Code < 0 {
 		noteRateLimit(apiErr, c.Now())
+		binancerest.Default().Complete(scheduledRequest, resp.StatusCode, usedWeight, apiErr)
 		return nil, apiErr
 	}
+	binancerest.Default().Complete(scheduledRequest, resp.StatusCode, usedWeight, nil)
 	return respBody, nil
+}
+
+type redactedTransportError struct {
+	err     error
+	message string
+}
+
+func (e redactedTransportError) Error() string { return e.message }
+func (e redactedTransportError) Unwrap() error { return e.err }
+
+func redactTransportError(method, path string, err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		message = urlErr.Err.Error()
+	}
+	return redactedTransportError{
+		err:     err,
+		message: fmt.Sprintf("binance %s %s: %s", method, path, message),
+	}
 }
 
 func decodeAPIError(b []byte) APIError {

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -178,6 +179,25 @@ type OptionExposure struct {
 	InterestRate *float64
 }
 
+type binanceOptionMark struct {
+	Symbol       string `json:"symbol"`
+	Gamma        string `json:"gamma"`
+	IV           string `json:"markIV"`
+	InterestRate string `json:"riskFreeInterest"`
+}
+
+var binanceGammaMetadataCache struct {
+	sync.Mutex
+	meta         []OptionContract
+	metaAt       time.Time
+	metaLoading  chan struct{}
+	marks        []binanceOptionMark
+	marksAt      time.Time
+	marksLoading chan struct{}
+}
+
+const binanceGammaMetadataCacheTTL = 5 * time.Minute
+
 func BuildGamma(symbol string, spot float64, rows []OptionExposure, at time.Time) domain.GammaView {
 	g := domain.GammaView{Symbol: symbol, State: "ok", Time: at, SpotPrice: spot, Levels: []domain.GammaLevel{}, Expiries: []domain.GammaExpiry{}, Warnings: []string{}, Method: "Binance Options Gamma × OI × 合约单位 × 标的指数价格² × 1%；CALL 正、PUT 负。公开期权链估算，不代表做市商真实净仓。"}
 	levels := map[float64]domain.GammaLevel{}
@@ -235,15 +255,13 @@ func BuildGamma(symbol string, spot float64, rows []OptionExposure, at time.Time
 func BinanceGamma(ctx context.Context, symbol string) (domain.GammaView, error) {
 	h := newHTTP()
 	at := time.Now().UTC()
-	var meta struct {
-		Symbols []OptionContract `json:"optionSymbols"`
-	}
-	if err := h.get(ctx, "https://eapi.binance.com/eapi/v1/exchangeInfo", &meta); err != nil {
+	meta, err := cachedBinanceOptionMeta(ctx, h)
+	if err != nil {
 		return domain.GammaView{}, err
 	}
 	contracts := []OptionContract{}
 	expirations := map[string]bool{}
-	for _, c := range meta.Symbols {
+	for _, c := range meta {
 		if c.Underlying == symbol && c.Status == "TRADING" && c.Expiry > at.UnixMilli() {
 			contracts = append(contracts, c)
 			expirations[time.UnixMilli(c.Expiry).UTC().Format("060102")] = true
@@ -259,13 +277,8 @@ func BinanceGamma(ctx context.Context, symbol string) (domain.GammaView, error) 
 	if spot <= 0 {
 		return domain.GammaView{}, fmt.Errorf("invalid option index for %s", symbol)
 	}
-	var marks []struct {
-		Symbol       string `json:"symbol"`
-		Gamma        string `json:"gamma"`
-		IV           string `json:"markIV"`
-		InterestRate string `json:"riskFreeInterest"`
-	}
-	if err := h.get(ctx, "https://eapi.binance.com/eapi/v1/mark", &marks); err != nil {
+	marks, err := cachedBinanceOptionMarks(ctx, h)
+	if err != nil {
 		return domain.GammaView{}, err
 	}
 	gammas := map[string]float64{}
@@ -321,4 +334,76 @@ func BinanceGamma(ctx context.Context, symbol string) (domain.GammaView, error) 
 		}
 	}
 	return g, nil
+}
+
+func cachedBinanceOptionMeta(ctx context.Context, h httpClient) ([]OptionContract, error) {
+	for {
+		binanceGammaMetadataCache.Lock()
+		if time.Since(binanceGammaMetadataCache.metaAt) < binanceGammaMetadataCacheTTL && len(binanceGammaMetadataCache.meta) > 0 {
+			value := append([]OptionContract(nil), binanceGammaMetadataCache.meta...)
+			binanceGammaMetadataCache.Unlock()
+			return value, nil
+		}
+		if binanceGammaMetadataCache.metaLoading != nil {
+			loading := binanceGammaMetadataCache.metaLoading
+			binanceGammaMetadataCache.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-loading:
+				continue
+			}
+		}
+		binanceGammaMetadataCache.metaLoading = make(chan struct{})
+		loading := binanceGammaMetadataCache.metaLoading
+		binanceGammaMetadataCache.Unlock()
+		var response struct {
+			Symbols []OptionContract `json:"optionSymbols"`
+		}
+		err := h.get(ctx, "https://eapi.binance.com/eapi/v1/exchangeInfo", &response)
+		binanceGammaMetadataCache.Lock()
+		if err == nil {
+			binanceGammaMetadataCache.meta = append([]OptionContract(nil), response.Symbols...)
+			binanceGammaMetadataCache.metaAt = time.Now().UTC()
+		}
+		close(loading)
+		binanceGammaMetadataCache.metaLoading = nil
+		binanceGammaMetadataCache.Unlock()
+		return response.Symbols, err
+	}
+}
+
+func cachedBinanceOptionMarks(ctx context.Context, h httpClient) ([]binanceOptionMark, error) {
+	for {
+		binanceGammaMetadataCache.Lock()
+		if time.Since(binanceGammaMetadataCache.marksAt) < binanceGammaMetadataCacheTTL && len(binanceGammaMetadataCache.marks) > 0 {
+			value := append([]binanceOptionMark(nil), binanceGammaMetadataCache.marks...)
+			binanceGammaMetadataCache.Unlock()
+			return value, nil
+		}
+		if binanceGammaMetadataCache.marksLoading != nil {
+			loading := binanceGammaMetadataCache.marksLoading
+			binanceGammaMetadataCache.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-loading:
+				continue
+			}
+		}
+		binanceGammaMetadataCache.marksLoading = make(chan struct{})
+		loading := binanceGammaMetadataCache.marksLoading
+		binanceGammaMetadataCache.Unlock()
+		var response []binanceOptionMark
+		err := h.get(ctx, "https://eapi.binance.com/eapi/v1/mark", &response)
+		binanceGammaMetadataCache.Lock()
+		if err == nil {
+			binanceGammaMetadataCache.marks = append([]binanceOptionMark(nil), response...)
+			binanceGammaMetadataCache.marksAt = time.Now().UTC()
+		}
+		close(loading)
+		binanceGammaMetadataCache.marksLoading = nil
+		binanceGammaMetadataCache.Unlock()
+		return response, err
+	}
 }

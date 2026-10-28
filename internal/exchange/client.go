@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/binancerest"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
 
@@ -103,22 +104,80 @@ type httpClient struct{ c *http.Client }
 
 func newHTTP() httpClient { return httpClient{&http.Client{Timeout: 20 * time.Second}} }
 func (h httpClient) get(ctx context.Context, raw string, v any) error {
+	displayPath := raw
+	if parsed, parseErr := url.Parse(raw); parseErr == nil {
+		displayPath = parsed.Path
+		if displayPath == "" {
+			displayPath = "/"
+		}
+	}
 	req, e := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if e != nil {
 		return e
 	}
 	req.Header.Set("User-Agent", "liquidation-predictor/1.0")
+	var request binancerest.Request
+	var release func()
+	if binancerest.IsBinanceURL(raw) {
+		parsed, parseErr := url.Parse(raw)
+		if parseErr != nil {
+			return parseErr
+		}
+		request = binancerest.Request{
+			Host:     parsed.Hostname(),
+			Path:     parsed.Path,
+			Class:    binancerest.ClassBackground,
+			Priority: binancerest.PriorityBackground,
+			Weight:   binancerest.WeightForPath(parsed.Path),
+		}
+		release, e = binancerest.Default().Acquire(ctx, request)
+		if e != nil {
+			return e
+		}
+		defer release()
+	}
 	resp, e := h.c.Do(req)
 	if e != nil {
-		return e
+		redacted := redactHTTPTransportError(displayPath, e)
+		if request.Host != "" {
+			binancerest.Default().Complete(request, 0, 0, redacted)
+		}
+		return redacted
 	}
 	defer resp.Body.Close()
+	usedWeight, _ := strconv.Atoi(resp.Header.Get("X-MBX-USED-WEIGHT-1M"))
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("GET %s: %s: %s", raw, resp.Status, string(b))
+		err := fmt.Errorf("GET %s: %s: %s", displayPath, resp.Status, string(b))
+		if request.Host != "" {
+			binancerest.Default().Complete(request, resp.StatusCode, usedWeight, err)
+			if until, ok := binancerest.ParsePauseUntil(string(b)); ok {
+				binancerest.Default().PauseUntil(until)
+			}
+			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusTeapot {
+				binancerest.Default().PauseUntil(time.Now().UTC().Add(5 * time.Minute))
+			}
+		}
+		return err
 	}
-	return json.NewDecoder(resp.Body).Decode(v)
+	decodeErr := json.NewDecoder(resp.Body).Decode(v)
+	if request.Host != "" {
+		binancerest.Default().Complete(request, resp.StatusCode, usedWeight, decodeErr)
+	}
+	return decodeErr
 }
+
+func redactHTTPTransportError(path string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		return fmt.Errorf("GET %s: %v", path, urlErr.Err)
+	}
+	return fmt.Errorf("GET %s: request failed", path)
+}
+
 func f(s string) float64 { v, _ := strconv.ParseFloat(s, 64); return v }
 func ms(v any) time.Time {
 	switch x := v.(type) {

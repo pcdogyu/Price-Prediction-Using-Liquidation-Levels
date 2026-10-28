@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,21 @@ type ContractSymbol struct {
 var AlwaysWatch = []string{"BTCUSDT", "ETHUSDT"}
 
 var errNoTopSymbols = errors.New("binance returned no rankable USDT perpetual ticker")
+
+const (
+	binanceExchangeInfoCacheTTL = 30 * time.Minute
+	binanceTickerCacheTTL       = 30 * time.Second
+)
+
+var binancePublicMetadataCache struct {
+	sync.Mutex
+	info          topSymbolExchangeInfo
+	infoAt        time.Time
+	infoLoading   chan struct{}
+	tickers       []topSymbolTicker
+	tickersAt     time.Time
+	tickerLoading chan struct{}
+}
 
 type topSymbolEntry struct {
 	Symbol       string `json:"symbol"`
@@ -85,8 +101,8 @@ func tradableUSDT(info topSymbolExchangeInfo) map[string]string {
 // catalog used by the bubble page. The endpoint is public and the result is
 // intentionally not used to expand background streams or model training.
 func BinanceUSDTPerpetualSymbols(ctx context.Context) ([]ContractSymbol, error) {
-	var info topSymbolExchangeInfo
-	if err := newHTTP().get(ctx, binanceFuturesBase+"/fapi/v1/exchangeInfo", &info); err != nil {
+	info, err := cachedBinanceExchangeInfo(ctx)
+	if err != nil {
 		return nil, err
 	}
 	tradable := tradableUSDT(info)
@@ -172,15 +188,13 @@ func BinanceTopUSDTPerpetuals(ctx context.Context, limit int) ([]TopSymbol, erro
 	if limit <= 0 {
 		limit = 50
 	}
-	h := newHTTP()
-	var info topSymbolExchangeInfo
 	tradable := map[string]string{}
 	// exchangeInfo only refines the tradable filter, so its failure is not fatal.
-	if err := h.get(ctx, "https://fapi.binance.com/fapi/v1/exchangeInfo", &info); err == nil {
+	if info, err := cachedBinanceExchangeInfo(ctx); err == nil {
 		tradable = tradableUSDT(info)
 	}
-	var tickers []topSymbolTicker
-	if err := h.get(ctx, "https://fapi.binance.com/fapi/v1/ticker/24hr", &tickers); err != nil {
+	tickers, err := cachedBinanceTickers(ctx)
+	if err != nil {
 		return nil, err
 	}
 	rows := rankUSDT(tickers, tradable, limit, time.Now())
@@ -188,6 +202,78 @@ func BinanceTopUSDTPerpetuals(ctx context.Context, limit int) ([]TopSymbol, erro
 		return nil, errNoTopSymbols
 	}
 	return rows, nil
+}
+
+func cachedBinanceExchangeInfo(ctx context.Context) (topSymbolExchangeInfo, error) {
+	for {
+		binancePublicMetadataCache.Lock()
+		if time.Since(binancePublicMetadataCache.infoAt) < binanceExchangeInfoCacheTTL && len(binancePublicMetadataCache.info.Symbols) > 0 {
+			value := binancePublicMetadataCache.info
+			binancePublicMetadataCache.Unlock()
+			return value, nil
+		}
+		if binancePublicMetadataCache.infoLoading != nil {
+			loading := binancePublicMetadataCache.infoLoading
+			binancePublicMetadataCache.Unlock()
+			select {
+			case <-ctx.Done():
+				return topSymbolExchangeInfo{}, ctx.Err()
+			case <-loading:
+				continue
+			}
+		}
+		binancePublicMetadataCache.infoLoading = make(chan struct{})
+		loading := binancePublicMetadataCache.infoLoading
+		binancePublicMetadataCache.Unlock()
+
+		var value topSymbolExchangeInfo
+		err := newHTTP().get(ctx, binanceFuturesBase+"/fapi/v1/exchangeInfo", &value)
+		binancePublicMetadataCache.Lock()
+		if err == nil {
+			binancePublicMetadataCache.info = value
+			binancePublicMetadataCache.infoAt = time.Now().UTC()
+		}
+		close(loading)
+		binancePublicMetadataCache.infoLoading = nil
+		binancePublicMetadataCache.Unlock()
+		return value, err
+	}
+}
+
+func cachedBinanceTickers(ctx context.Context) ([]topSymbolTicker, error) {
+	for {
+		binancePublicMetadataCache.Lock()
+		if time.Since(binancePublicMetadataCache.tickersAt) < binanceTickerCacheTTL && len(binancePublicMetadataCache.tickers) > 0 {
+			value := append([]topSymbolTicker(nil), binancePublicMetadataCache.tickers...)
+			binancePublicMetadataCache.Unlock()
+			return value, nil
+		}
+		if binancePublicMetadataCache.tickerLoading != nil {
+			loading := binancePublicMetadataCache.tickerLoading
+			binancePublicMetadataCache.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-loading:
+				continue
+			}
+		}
+		binancePublicMetadataCache.tickerLoading = make(chan struct{})
+		loading := binancePublicMetadataCache.tickerLoading
+		binancePublicMetadataCache.Unlock()
+
+		var value []topSymbolTicker
+		err := newHTTP().get(ctx, "https://fapi.binance.com/fapi/v1/ticker/24hr", &value)
+		binancePublicMetadataCache.Lock()
+		if err == nil {
+			binancePublicMetadataCache.tickers = append([]topSymbolTicker(nil), value...)
+			binancePublicMetadataCache.tickersAt = time.Now().UTC()
+		}
+		close(loading)
+		binancePublicMetadataCache.tickerLoading = nil
+		binancePublicMetadataCache.Unlock()
+		return value, err
+	}
 }
 
 // TopSymbolNames returns the symbol list of a ranked set.

@@ -8,8 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/binancerest"
 )
 
 // DoAPIKey performs an unsigned Binance USER_STREAM request. listenKey
@@ -33,6 +36,18 @@ func (c Client) DoAPIKey(ctx context.Context, method, path string, values url.Va
 	if base == "" {
 		base = "https://fapi.binance.com"
 	}
+	scheduledRequest := binancerest.Request{
+		Host:     base,
+		Path:     path,
+		Class:    binancerest.ClassAccount,
+		Priority: binancerest.PriorityAccount,
+		Weight:   binancerest.WeightForPath(path),
+	}
+	release, err := binancerest.Default().Acquire(ctx, scheduledRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	encodedParams := params.Encode()
 	requestURL := base + path
 	var body io.Reader
@@ -54,26 +69,34 @@ func (c Client) DoAPIKey(ctx context.Context, method, path string, values url.Va
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return nil, err
+		redacted := redactTransportError(method, path, err)
+		binancerest.Default().Complete(scheduledRequest, 0, 0, redacted)
+		return nil, redacted
 	}
 	defer resp.Body.Close()
+	usedWeight, _ := strconv.Atoi(resp.Header.Get("X-MBX-USED-WEIGHT-1M"))
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
+		binancerest.Default().Complete(scheduledRequest, resp.StatusCode, usedWeight, err)
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if apiErr := decodeAPIError(respBody); apiErr.Msg != "" || apiErr.Code != 0 {
 			noteRateLimit(apiErr, c.Now())
+			binancerest.Default().Complete(scheduledRequest, resp.StatusCode, usedWeight, apiErr)
 			return nil, apiErr
 		}
 		err := fmt.Errorf("binance http status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 		noteRateLimit(err, c.Now())
+		binancerest.Default().Complete(scheduledRequest, resp.StatusCode, usedWeight, err)
 		return nil, err
 	}
 	if apiErr := decodeAPIError(respBody); apiErr.Code < 0 {
 		noteRateLimit(apiErr, c.Now())
+		binancerest.Default().Complete(scheduledRequest, resp.StatusCode, usedWeight, apiErr)
 		return nil, apiErr
 	}
+	binancerest.Default().Complete(scheduledRequest, resp.StatusCode, usedWeight, nil)
 	return respBody, nil
 }
 

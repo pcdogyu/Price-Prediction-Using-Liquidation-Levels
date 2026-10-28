@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	tradeMonitorDefaultPollInterval = 20 * time.Second
+	tradeMonitorDefaultPollInterval = 60 * time.Second
 	tradeMonitorPollTimeout         = 45 * time.Second
 	tradeMonitorOrderTimeout        = 20 * time.Second
 	tradeMonitorHistoryLimit        = 1000

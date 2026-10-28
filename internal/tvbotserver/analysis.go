@@ -30,7 +30,7 @@ const (
 	maxAnalysisPNLDays         = 90
 	maxAnalysisPNLMinutes      = maxAnalysisPNLDays * 24 * 60
 	minPositionLookbackMinutes = 30 * 24 * 60
-	analysisCacheTTL           = 60 * time.Second
+	analysisCacheTTL           = 5 * time.Minute
 	usdtSampleInterval         = 5 * time.Minute
 	maxBalanceMinutes          = 90 * 24 * 60
 
@@ -1220,6 +1220,19 @@ func (s *Server) refreshFillsSince(ctx context.Context, client okx.Client, apiID
 
 func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.Client, apiID string, cfg config.Config, pnlMinutes int, now time.Time) ([]analysisTrade, error) {
 	since := analysisPositionSince(now, pnlMinutes)
+	if s.Orders != nil && binanceUserStreamIsActive(client, apiID) {
+		if fills, err := s.Orders.ListBinanceFills(apiID, since); err == nil && len(fills) > 0 {
+			out := make([]analysisTrade, 0, len(fills))
+			for _, fill := range fills {
+				if row, ok := analysisTradeFromBinanceFill(fill); ok {
+					out = append(out, row)
+				}
+			}
+			if len(out) > 0 {
+				return aggregateAnalysisTrades(out), nil
+			}
+		}
+	}
 	symbols := s.analysisBinanceSymbols(cfg, since)
 	if len(symbols) == 0 {
 		return nil, nil
@@ -1419,6 +1432,29 @@ func analysisTradeFromBinanceTrade(apiID string, trade binance.UserTrade) (analy
 		FeeCcy:    strings.TrimSpace(trade.CommissionAsset),
 		FillTime:  time.UnixMilli(trade.Time).UTC(),
 		FillTS:    trade.Time,
+		FillCount: 1,
+	}, true
+}
+
+func analysisTradeFromBinanceFill(fill storage.BinanceFill) (analysisTrade, bool) {
+	if strings.TrimSpace(fill.Symbol) == "" || fill.FillTime <= 0 {
+		return analysisTrade{}, false
+	}
+	return analysisTrade{
+		Exchange:  trading.ExchangeBinance,
+		APIID:     strings.TrimSpace(fill.APIID),
+		InstID:    strings.ToUpper(strings.TrimSpace(fill.Symbol)),
+		TradeID:   strings.TrimSpace(fill.TradeID),
+		OrdID:     strings.TrimSpace(fill.OrderID),
+		Side:      strings.TrimSpace(fill.Side),
+		PosSide:   normalizeAnalysisPositionSide(fill.PositionSide),
+		FillPx:    strings.TrimSpace(fill.Price),
+		FillSz:    strings.TrimSpace(fill.Qty),
+		FillPnl:   strings.TrimSpace(fill.RealizedPnl),
+		Fee:       normalizedBinanceFee(fill.Commission),
+		FeeCcy:    strings.TrimSpace(fill.CommissionAsset),
+		FillTime:  time.UnixMilli(fill.FillTime).UTC(),
+		FillTS:    fill.FillTime,
 		FillCount: 1,
 	}, true
 }

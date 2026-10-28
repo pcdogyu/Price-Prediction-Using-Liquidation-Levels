@@ -134,7 +134,6 @@ func renderTVBotHTMLWithTenantMenuAndUser(info BuildInfo, r *http.Request, menu 
 	username = strings.TrimSpace(username)
 	page = strings.Replace(page, "{{HOME_LINK}}", html.EscapeString(link("/alerts")), 1)
 	page = strings.Replace(page, "{{UNIFIED_NAV}}", RenderUnifiedNav(menu, link, active, username, link("/auth/logout")), 1)
-	page = strings.Replace(page, "{{SHARED_LOGS}}", RenderSharedLogsDialog(), 1)
 	if tenantID = strings.TrimSpace(tenantID); tenantID != "" {
 		// tenant IDs are generated from URL-safe base64 usernames, so they are
 		// safe to embed in these localStorage key literals.
@@ -1694,7 +1693,6 @@ const tvbotHTML = `<!doctype html>
 </head>
 <body>
   {{UNIFIED_NAV}}
-  {{SHARED_LOGS}}
 
   <main>
     <div class="tvbot-page-toolbar">
@@ -4078,8 +4076,8 @@ const tvbotHTML = `<!doctype html>
       state.analysisPositions = positionSnapshot(exchanges);
     }
 
-    async function loadPendingOrders() {
-      const results = await Promise.all([loadPendingOrdersExchange(activeExchange())]);
+    async function loadPendingOrders(forceRefresh) {
+      const results = await Promise.all([loadPendingOrdersExchange(activeExchange(), !!forceRefresh)]);
       const rows = [];
       const algoRows = [];
       let normalCount = 0;
@@ -4134,12 +4132,13 @@ const tvbotHTML = `<!doctype html>
       }
     }
 
-    async function loadPendingOrdersExchange(exchange) {
+    async function loadPendingOrdersExchange(exchange, forceRefresh) {
       const qs = new URLSearchParams({ inst_type: "SWAP", exchange });
       const requestedEnv = requestedPositionEnvironment();
       const apiID = activeAPIID(exchange, positionEnvironment());
       if (apiID) qs.set("api_id", apiID);
       if (requestedEnv) qs.set("env", requestedEnv);
+      if (forceRefresh) qs.set("refresh", "true");
       try {
         const result = await api("/tvbot/pending-orders?" + qs.toString());
         result.exchange = normalizeExchange(result.exchange || exchange);
@@ -4250,7 +4249,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadPositionView(forceRefresh) {
-      await Promise.all([loadPositions(!!forceRefresh), loadPendingOrders()]);
+      await Promise.all([loadPositions(!!forceRefresh), loadPendingOrders(!!forceRefresh)]);
     }
 
     async function loadSymbols(showLoading) {

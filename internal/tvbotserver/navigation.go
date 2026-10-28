@@ -90,7 +90,7 @@ func renderUnifiedNav(classSuffix string, items []TopMenuItem, link func(string)
 		out.WriteString(`</div>`)
 	}
 	out.WriteString(RenderSystemMenu(items, link, active))
-	out.WriteString(`<button id="nav-theme" data-theme-toggle="true" type="button">浅色主题</button><button id="nav-logs" type="button">程序日志</button>`)
+	out.WriteString(`<button id="nav-theme" data-theme-toggle="true" type="button">浅色主题</button><button id="nav-logs" data-log-popup="true" type="button">程序日志</button>`)
 	if username = strings.TrimSpace(username); username != "" {
 		out.WriteString(`<span class="nav-user" aria-label="当前登录用户">` + html.EscapeString(username) + `</span>`)
 	}
@@ -100,11 +100,6 @@ func renderUnifiedNav(classSuffix string, items []TopMenuItem, link func(string)
 	}
 	out.WriteString(`</nav>`)
 	return out.String()
-}
-
-// RenderSharedLogsDialog renders the log dialog used with shared.js.
-func RenderSharedLogsDialog() string {
-	return `<dialog id="shared-logs"><div class="dialog-head"><h2>程序日志</h2><button id="shared-logs-close" type="button">关闭</button></div><select id="shared-log-level"><option value="DEBUG">全部级别</option><option value="INFO">INFO+</option><option value="WARN">WARN+</option><option value="ERROR">ERROR</option></select><button id="shared-log-refresh" type="button">刷新</button><pre id="shared-log-content">等待加载</pre></dialog>`
 }
 
 func isSystemMenuItem(item TopMenuItem) bool {

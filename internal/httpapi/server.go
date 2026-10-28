@@ -18,6 +18,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/app"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authn"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/binancerest"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/coinglass"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/observability"
@@ -380,7 +381,7 @@ func (s *Server) renderLoginForRequest(w http.ResponseWriter, r *http.Request, s
 	html := strings.ReplaceAll(string(loginHTML), "{{LOGIN_ACTION}}", s.auth.BasePath()+"auth/login")
 	html = strings.ReplaceAll(html, "{{ERROR}}", message)
 	next := ""
-	if r.URL.Path == "/system" || r.URL.Path == "/tvbot" || strings.HasPrefix(r.URL.Path, "/tvbot/") || r.URL.Path == "/upgrade" {
+	if r.URL.Path == "/system" || r.URL.Path == "/logs" || r.URL.Path == "/tvbot" || strings.HasPrefix(r.URL.Path, "/tvbot/") || r.URL.Path == "/upgrade" {
 		next = htmlEscapeAttribute(sanitizeLoginNext(r.URL.RequestURI()))
 	}
 	html = strings.ReplaceAll(html, "{{NEXT}}", next)
@@ -661,6 +662,17 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	snapshot := binancerest.Default().Snapshot()
+	fmt.Fprintf(w, "binance_rest_weight_budget_per_minute %d\nbinance_rest_weight_reserved %d\nbinance_rest_weight_window_used %d\nbinance_rest_inflight %d\nbinance_rest_queued %d\nbinance_rest_blocked_total %d\n", snapshot.BudgetPerMinute, snapshot.ReservedWeight, snapshot.WindowUsed, snapshot.InFlight, snapshot.Queued, snapshot.Blocked)
+	pausedUntil := float64(0)
+	if !snapshot.PausedUntil.IsZero() {
+		pausedUntil = float64(snapshot.PausedUntil.Unix())
+	}
+	fmt.Fprintf(w, "binance_rest_paused_until_seconds %.0f\n", pausedUntil)
+	for _, endpoint := range snapshot.Endpoints {
+		labels := fmt.Sprintf("host=%q,path=%q,class=%q", endpoint.Host, endpoint.Path, endpoint.Class)
+		fmt.Fprintf(w, "binance_rest_requests_total{%s} %d\nbinance_rest_completed_total{%s} %d\nbinance_rest_errors_total{%s} %d\nbinance_rest_blocked_endpoint_total{%s} %d\nbinance_rest_last_status{%s} %d\nbinance_rest_last_response_weight{%s} %d\n", labels, endpoint.Requests, labels, endpoint.Completed, labels, endpoint.Errors, labels, endpoint.Blocked, labels, endpoint.LastStatus, labels, endpoint.LastResponseWeight)
+	}
 	for name, h := range s.svc.Health() {
 		connected := 0
 		if h.Connected {

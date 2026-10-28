@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="app-base" content="{{BASE}}">
+  <title>程序日志</title>
+  <script src="{{BASE}}assets/theme.js"></script>
+  <link rel="stylesheet" href="{{BASE}}assets/pages.css">
+  <link rel="stylesheet" href="{{BASE}}assets/theme.css">
+  <link rel="stylesheet" href="{{BASE}}assets/logs.css">
+  <script src="{{BASE}}assets/logs.js" defer></script>
+</head>
+<body>
+  <main class="logs-shell">
+    <header class="logs-header">
+      <div>
+        <div class="logs-kicker">OPERATIONS / LOG STREAM</div>
+        <h1>程序日志</h1>
+        <p>独立日志窗口 · 仅显示当前账户可访问的应用运行记录</p>
+      </div>
+      <button id="logs-close" type="button" class="logs-close">关闭窗口</button>
+    </header>
+    <section class="logs-panel" aria-labelledby="logs-table-title">
+      <div class="logs-toolbar">
+        <div class="logs-toolbar-left">
+          <label for="logs-level">级别</label>
+          <select id="logs-level">
+            <option value="DEBUG">全部级别</option>
+            <option value="INFO">INFO+</option>
+            <option value="WARN">WARN+</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <button id="logs-refresh" type="button">刷新</button>
+        </div>
+        <span id="logs-status" class="logs-status" role="status">等待加载</span>
+      </div>
+      <div id="logs-error" class="logs-error" role="alert" hidden></div>
+      <div class="logs-table-wrap">
+        <table id="logs-table">
+          <caption id="logs-table-title" class="sr-only">程序日志记录</caption>
+          <thead>
+            <tr><th scope="col">时间</th><th scope="col">级别</th><th scope="col">消息</th><th scope="col">字段</th></tr>
+          </thead>
+          <tbody id="logs-rows"></tbody>
+        </table>
+      </div>
+      <div class="logs-footer">
+        <button id="logs-more" type="button">加载更早日志</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

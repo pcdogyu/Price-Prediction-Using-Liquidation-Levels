@@ -301,7 +301,7 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	if w.Header().Get("Cache-Control") != "no-store, max-age=0" || w.Header().Get("Pragma") != "no-cache" || w.Header().Get("Expires") != "0" {
 		t.Fatalf("login page must not be cached: %v", w.Header())
 	}
-	for _, path := range []string{"/bubbles", "/liquidations", "/hedge-wall", "/market-info"} {
+	for _, path := range []string{"/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/logs"} {
 		page := httptest.NewRecorder()
 		srv.http.Handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, path, nil))
 		if page.Code != 200 || !strings.Contains(page.Body.String(), `name="password"`) || strings.Contains(page.Body.String(), `class="app-nav"`) {
@@ -433,6 +433,20 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	encoded, _ := json.Marshal(body)
 	if strings.Contains(string(encoded), "do-not-record-this") || !strings.Contains(string(encoded), "login succeeded") {
 		t.Fatalf("unexpected log response=%s", encoded)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/logs", nil)
+	r.AddCookie(session)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "<th scope=\"col\">时间</th>") || !strings.Contains(w.Body.String(), "<th scope=\"col\">字段</th>") || !strings.Contains(w.Body.String(), "/liquidation/assets/logs.js") || strings.Contains(w.Body.String(), "<dialog") || strings.Contains(w.Body.String(), "shared-logs") {
+		t.Fatalf("logs page status=%d body=%s", w.Code, w.Body.String())
+	}
+	r = httptest.NewRequest(http.MethodGet, "/assets/logs.js", nil)
+	r.AddCookie(session)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "textContent") || strings.Contains(w.Body.String(), "innerHTML") {
+		t.Fatalf("logs script status=%d body=%s", w.Code, w.Body.String())
 	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/logs?limit=10&file=../../etc/passwd", nil)
 	r.AddCookie(session)

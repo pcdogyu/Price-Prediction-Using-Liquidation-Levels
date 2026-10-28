@@ -2,7 +2,6 @@
 (() => {
   const baseMeta = document.querySelector('meta[name="app-base"]');
   const base = baseMeta ? baseMeta.content : '/';
-  const dialog = document.getElementById('shared-logs');
   const themeButton = document.getElementById('nav-theme') || document.getElementById('tvbot-theme');
   function updateThemeButton() {
     if (!themeButton) return;
@@ -14,25 +13,15 @@
     window.addEventListener('themechange', updateThemeButton);
     updateThemeButton();
   }
-  async function load() {
-    const output = document.getElementById('shared-log-content');
-    try {
-      const level = document.getElementById('shared-log-level').value;
-      const response = await fetch(base + 'api/v1/logs?limit=200&level=' + level, { cache: 'no-store', credentials: 'same-origin' });
-      if (response.status === 401) { location.assign(base); return; }
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || response.status);
-      output.textContent = (data.entries || []).map(row => JSON.stringify(row)).join('\n') || '暂无日志';
-    } catch (error) { output.textContent = '加载失败：' + error.message; }
-  }
   const logsButton = document.getElementById('nav-logs');
-  const closeButton = document.getElementById('shared-logs-close');
-  const refreshButton = document.getElementById('shared-log-refresh');
-  const levelSelect = document.getElementById('shared-log-level');
-  if (logsButton && dialog) logsButton.addEventListener('click', () => { dialog.showModal(); load(); });
-  if (closeButton && dialog) closeButton.addEventListener('click', () => dialog.close());
-  if (refreshButton) refreshButton.addEventListener('click', load);
-  if (levelSelect) levelSelect.addEventListener('change', load);
+  if (logsButton) logsButton.addEventListener('click', () => {
+    const popup = window.open(base + 'logs', 'program-logs', 'popup=yes,width=1280,height=800,resizable=yes,scrollbars=yes');
+    if (popup) {
+      popup.focus();
+    } else {
+      window.location.assign(base + 'logs');
+    }
+  });
 
   const positionLinks = document.querySelectorAll('a[data-position-link]');
   if (positionLinks.length) {

@@ -124,13 +124,6 @@ func New(cfg config.Config, appStore *store.Store, logger *slog.Logger, build tv
 	if strings.TrimSpace(tvCfg.Server.Addr) == "" {
 		tvCfg.Server.Addr = cfg.Address
 	}
-	legacyDatabase := resolvePath(cfg.TVBotLegacyDataPath, cfg.TVBotLegacyDatabasePath)
-	if migrated, err := tvbotmigration.MigrateSQLite(context.Background(), cfg.DatabasePath, legacyDatabase); err != nil {
-		return nil, err
-	} else if migrated && logger != nil {
-		logger.Info("legacy tvbot database migrated", "source", legacyDatabase)
-	}
-
 	legacyOrders := ""
 	if strings.TrimSpace(tvCfg.DataFile) != "" {
 		legacyOrders = resolvePath(cfg.TVBotLegacyDataPath, tvCfg.DataFile)
@@ -322,6 +315,19 @@ func New(cfg config.Config, appStore *store.Store, logger *slog.Logger, build tv
 		Logger: logger, Upgrade: upgrade, BuildInfo: build,
 	}
 	return &Bridge{Handler: handler, ConfigStore: handler.ConfigStore, Orders: orders, Tenants: tenants, Upgrade: upgrade, upgradeStatus: statusPath}, nil
+}
+
+// MigrateLegacyDatabase must run before the unified application database is
+// opened. Opening a second SQLite handle for the same target during startup
+// can contend with the app store's migration and surface as "database is
+// locked". The command entry point calls this once, before store.Open.
+func MigrateLegacyDatabase(ctx context.Context, cfg config.Config) (bool, string, error) {
+	legacyDatabase := resolvePath(cfg.TVBotLegacyDataPath, cfg.TVBotLegacyDatabasePath)
+	if err := os.MkdirAll(filepath.Dir(cfg.DatabasePath), 0o750); err != nil {
+		return false, legacyDatabase, err
+	}
+	migrated, err := tvbotmigration.MigrateSQLite(ctx, cfg.DatabasePath, legacyDatabase)
+	return migrated, legacyDatabase, err
 }
 
 func (b *Bridge) Start(ctx context.Context) {

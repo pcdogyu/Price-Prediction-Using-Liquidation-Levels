@@ -52,9 +52,18 @@ var themeJS []byte
 //go:embed theme.css
 var themeCSS []byte
 
+//go:embed logs.html
+var logsHTML []byte
+
+//go:embed logs.js
+var logsJS []byte
+
+//go:embed logs.css
+var logsCSS []byte
+
 func isDashboardPage(path string) bool {
 	switch path {
-	case "/", "/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/alerts", "/alerts/chart", "/tvbot", "/tvbot/", "/system", "/admin", "/menu":
+	case "/", "/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/alerts", "/alerts/chart", "/tvbot", "/tvbot/", "/system", "/admin", "/menu", "/logs":
 		return true
 	}
 	return false
@@ -79,12 +88,17 @@ func (s *Server) renderPage(body []byte, page, title string, r *http.Request) []
 	active := func(item tvbotserver.TopMenuItem) bool {
 		return item.Key == page || strings.HasPrefix(item.Key, page+"#")
 	}
-	nav := tvbotserver.RenderUnifiedNav(items, link, active, username, base+`auth/logout`) + tvbotserver.RenderSharedLogsDialog()
+	nav := tvbotserver.RenderUnifiedNav(items, link, active, username, base+`auth/logout`)
 	replacer := strings.NewReplacer("{{BASE}}", base, "{{NAV}}", nav, "{{PAGE}}", page, "{{TITLE}}", title, "{{VERSION}}", versionFooter())
 	return []byte(replacer.Replace(string(body)))
 }
 func (s *Server) registerDashboard(mux *http.ServeMux) {
 	mux.HandleFunc("/bubbles", getOnly(s.index))
+	mux.HandleFunc("/logs", getOnly(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		base := html.EscapeString(s.auth.BasePath())
+		_, _ = w.Write([]byte(strings.ReplaceAll(string(logsHTML), "{{BASE}}", base)))
+	}))
 	mux.HandleFunc("/options", getOnly(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(s.renderPage(optionsHTML, "options", "期权", r))
@@ -96,7 +110,7 @@ func (s *Server) registerDashboard(mux *http.ServeMux) {
 			_, _ = w.Write(s.renderPage(pagesHTML, strings.TrimPrefix(p, "/"), t, r))
 		}))
 	}
-	for path, data := range map[string][]byte{"/assets/pages.css": pagesCSS, "/assets/pages.js": pagesJS, "/assets/options.js": optionsJS, "/assets/options.css": optionsCSS, "/assets/liquidation-analysis.js": liquidationAnalysisJS, "/assets/bubble-chart.js": bubbleChartJS, "/assets/shared.js": sharedJS, "/assets/theme.js": themeJS, "/assets/theme.css": themeCSS} {
+	for path, data := range map[string][]byte{"/assets/pages.css": pagesCSS, "/assets/pages.js": pagesJS, "/assets/options.js": optionsJS, "/assets/options.css": optionsCSS, "/assets/liquidation-analysis.js": liquidationAnalysisJS, "/assets/bubble-chart.js": bubbleChartJS, "/assets/shared.js": sharedJS, "/assets/theme.js": themeJS, "/assets/theme.css": themeCSS, "/assets/logs.js": logsJS, "/assets/logs.css": logsCSS} {
 		p, b := path, data
 		mux.HandleFunc(p, getOnly(func(w http.ResponseWriter, r *http.Request) {
 			kind := "text/javascript"

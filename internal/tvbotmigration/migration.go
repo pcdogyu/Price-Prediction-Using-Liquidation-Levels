@@ -38,12 +38,13 @@ func MigrateSQLite(ctx context.Context, targetPath, legacyPath string) (bool, er
 	if legacyAbs == targetAbs {
 		return false, nil
 	}
-	db, err := sql.Open("sqlite", targetAbs+"?_pragma=busy_timeout(15000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", targetAbs+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return false, err
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if _, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS tvbot_migrations(source_path TEXT PRIMARY KEY,completed_ts INTEGER NOT NULL)`); err != nil {
 		return false, err
 	}

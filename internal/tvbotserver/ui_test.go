@@ -41,8 +41,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`href="/liquidation/admin"`,
 		`id="nav-theme"`,
 		`data-theme-toggle="true"`,
-		`id="nav-logs" type="button">程序日志</button>`,
-		`id="shared-logs"`,
+		`id="nav-logs" data-log-popup="true" type="button">程序日志</button>`,
 		`method="post" action="/liquidation/auth/logout"><button type="submit">退出</button></form>`,
 		`data-global-exchange="okx" aria-selected="true"`,
 		`data-global-exchange="binance"`,
@@ -67,6 +66,9 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Fatalf("unified header missing %q", want)
 		}
+	}
+	if strings.Contains(page, "shared-logs") || strings.Contains(page, "shared-log-content") {
+		t.Fatal("tvbot page should not contain the legacy log dialog")
 	}
 	if strings.Contains(page, `href="/liquidation/tvbot/view/dashboard"`) {
 		t.Fatal("funding dashboard should not be exposed in the top navigation")
