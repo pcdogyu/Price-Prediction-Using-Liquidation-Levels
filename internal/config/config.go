@@ -34,7 +34,10 @@ type Config struct {
 	// DepthSymbols controls the expensive per-symbol order-book streams. It
 	// may be narrower than Symbols, which keeps all configured symbols eligible
 	// for candle/alert collection without opening hundreds of depth sockets.
-	DepthSymbols                 []string
+	DepthSymbols []string
+	// BootstrapSymbols receive large historical backfills during startup.
+	// Other configured symbols are repaired on demand when their first alert arrives.
+	BootstrapSymbols             []string
 	BackfillDays                 int
 	TrainingDays                 int
 	LogRetentionDays             int
@@ -82,9 +85,13 @@ func Load() Config {
 	if len(depthSymbols) == 0 {
 		depthSymbols = append([]string(nil), symbols...)
 	}
+	bootstrapSymbols := split(env("APP_BOOTSTRAP_SYMBOLS", ""))
+	if len(bootstrapSymbols) == 0 {
+		bootstrapSymbols = append([]string(nil), symbols...)
+	}
 	return Config{
 		Address: env("APP_ADDRESS", ":9090"), DatabasePath: env("APP_DATABASE", "data/liquidation.db"),
-		ModelPath: env("APP_MODEL", "models/model.json"), Symbols: symbols, DepthSymbols: depthSymbols,
+		ModelPath: env("APP_MODEL", "models/model.json"), Symbols: symbols, DepthSymbols: depthSymbols, BootstrapSymbols: bootstrapSymbols,
 		BasePath: env("APP_BASE_PATH", "/"), AuthUsername: strings.TrimSpace(os.Getenv("APP_AUTH_USERNAME")),
 		AuthPasswordHash: strings.TrimSpace(os.Getenv("APP_AUTH_PASSWORD_HASH")), LogPath: strings.TrimSpace(os.Getenv("APP_LOG_PATH")),
 		TVBotConfigPath:           env("APP_TVBOT_CONFIG", "data/tvbot-config.json"),

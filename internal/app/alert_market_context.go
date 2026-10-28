@@ -111,12 +111,15 @@ func (s *Service) liquidationMarketContext(ctx context.Context, event domain.Liq
 }
 
 func (s *Service) alertCandleRepairCandidate(symbol string, rows []domain.Candle, cfg alert.Config) bool {
-	if len(rows) == 0 || !s.isConfiguredAlertSymbol(symbol) {
+	if !s.isConfiguredAlertSymbol(symbol) {
 		return false
 	}
 	rangeMinutes := cfg.VWAPRangeMinutes
 	if rangeMinutes <= 0 {
 		rangeMinutes = 24 * 60
+	}
+	if len(rows) == 0 {
+		return true
 	}
 	return len(rows) >= rangeMinutes-alertCandleRepairMinCoverage
 }

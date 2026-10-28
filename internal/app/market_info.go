@@ -17,7 +17,7 @@ func (s *Service) marketInfoLoop(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
-		for _, sym := range s.cfg.Symbols {
+		for _, sym := range s.bootstrapSymbols() {
 			cc, cancel := context.WithTimeout(ctx, 45*time.Second)
 			m := exchange.BinanceMarketMetric(cc, sym)
 			cancel()
@@ -84,7 +84,7 @@ func (s *Service) gammaSymbols() []string {
 }
 
 func (s *Service) backfillMarketMetrics(ctx context.Context) {
-	for _, symbol := range s.cfg.Symbols {
+	for _, symbol := range s.bootstrapSymbols() {
 		if err := exchange.BinanceMetricHistory(ctx, symbol, s.store.SaveMarketMetric); err != nil && ctx.Err() == nil {
 			s.log.Warn("market metrics backfill failed", "symbol", symbol, "error", err)
 		}

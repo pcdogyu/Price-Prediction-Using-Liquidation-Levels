@@ -230,8 +230,9 @@ func (s *Service) bootstrap(ctx context.Context) {
 	now := time.Now().UTC()
 	target := now.AddDate(0, 0, -s.cfg.BackfillDays)
 	complete := true
+	bootstrapSymbols := s.bootstrapSymbols()
 	for _, c := range s.clients {
-		for _, sym := range s.cfg.Symbols {
+		for _, sym := range bootstrapSymbols {
 			if ctx.Err() != nil {
 				return
 			}
@@ -280,6 +281,13 @@ func (s *Service) bootstrap(ctx context.Context) {
 	s.mu.Unlock()
 	s.rebuild(ctx)
 	s.train(ctx)
+}
+
+func (s *Service) bootstrapSymbols() []string {
+	if len(s.cfg.BootstrapSymbols) > 0 {
+		return s.cfg.BootstrapSymbols
+	}
+	return s.cfg.Symbols
 }
 
 func (s *Service) historyWithRetry(ctx context.Context, client exchange.Client, symbol string, from, until time.Time) ([]domain.Candle, error) {
