@@ -53,7 +53,7 @@ func (s *Service) startDashboard(ctx context.Context) {
 			s.dashboard.gamma[anchor] = g
 		}
 	}
-	exchange.StartDepthStreams(ctx, s.cfg.Symbols, s.recordBook, s.health, s.log)
+	exchange.StartDepthStreams(ctx, s.cfg.DepthSymbols, s.recordBook, s.health, s.log)
 	go s.marketInfoLoop(ctx)
 	go s.gammaLoop(ctx)
 	for _, symbol := range []string{"BTCUSDT", "ETHUSDT"} {

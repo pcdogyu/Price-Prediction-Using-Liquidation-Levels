@@ -31,10 +31,14 @@ type Config struct {
 	CoinGlassCaptureDir              string
 	CoinGlassCaptureInterval         time.Duration
 	Symbols                          []string
-	BackfillDays                     int
-	TrainingDays                     int
-	LogRetentionDays                 int
-	SnapshotInterval, StaleAfter     time.Duration
+	// DepthSymbols controls the expensive per-symbol order-book streams. It
+	// may be narrower than Symbols, which keeps all configured symbols eligible
+	// for candle/alert collection without opening hundreds of depth sockets.
+	DepthSymbols                 []string
+	BackfillDays                 int
+	TrainingDays                 int
+	LogRetentionDays             int
+	SnapshotInterval, StaleAfter time.Duration
 	// Liquidation alert strategy (top volume watch list plus alert engine).
 	AlertTopSymbols int
 	AlertWindow     time.Duration
@@ -73,9 +77,14 @@ type Config struct {
 }
 
 func Load() Config {
+	symbols := split(env("APP_SYMBOLS", "BTCUSDT,ETHUSDT"))
+	depthSymbols := split(env("APP_DEPTH_SYMBOLS", ""))
+	if len(depthSymbols) == 0 {
+		depthSymbols = append([]string(nil), symbols...)
+	}
 	return Config{
 		Address: env("APP_ADDRESS", ":9090"), DatabasePath: env("APP_DATABASE", "data/liquidation.db"),
-		ModelPath: env("APP_MODEL", "models/model.json"), Symbols: split(env("APP_SYMBOLS", "BTCUSDT,ETHUSDT")),
+		ModelPath: env("APP_MODEL", "models/model.json"), Symbols: symbols, DepthSymbols: depthSymbols,
 		BasePath: env("APP_BASE_PATH", "/"), AuthUsername: strings.TrimSpace(os.Getenv("APP_AUTH_USERNAME")),
 		AuthPasswordHash: strings.TrimSpace(os.Getenv("APP_AUTH_PASSWORD_HASH")), LogPath: strings.TrimSpace(os.Getenv("APP_LOG_PATH")),
 		TVBotConfigPath:           env("APP_TVBOT_CONFIG", "data/tvbot-config.json"),
