@@ -745,6 +745,11 @@ func TestAlertChartPageAndAssets(t *testing.T) {
 			t.Fatalf("the chart must refresh after signal recalculation with %q", want)
 		}
 	}
+	for _, want := range []string{"requestURL", "serverTradeMarkerRows", "/tvbot/analysis?price_days=3&pnl_minutes=43200", "focusAtTime", "K.clampWindow({ start: end - span, end }, chartLimits())"} {
+		if !strings.Contains(chartScript, want) {
+			t.Fatalf("the position chart must restore real fills and focus the selected trade with %q", want)
+		}
+	}
 	chartMath := serveAlert(srv, http.MethodGet, "/assets/alerts-chart.js", nil).Body.String()
 	for _, removed := range []string{"peak-decay", "peakDecay"} {
 		if strings.Contains(chartMath, removed) {

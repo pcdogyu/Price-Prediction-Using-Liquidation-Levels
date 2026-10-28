@@ -116,7 +116,8 @@
     : '') + escape(label);
 
   async function json(path, options) {
-    const response = await fetch(base + path, Object.assign({ cache: 'no-store', credentials: 'same-origin' }, options || {}));
+    const requestURL = String(path || '').startsWith('/') ? path : base + path;
+    const response = await fetch(requestURL, Object.assign({ cache: 'no-store', credentials: 'same-origin' }, options || {}));
     if (response.status === 401) { location.assign(base); throw new Error('需要重新登录'); }
     const packet = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
@@ -257,17 +258,97 @@
     return url;
   }
 
-  function loadPositionTradeMarkers() {
-    if (!positionMode || !tradeRef || !BubbleChart || typeof BubbleChart.normalizeTradeMarkers !== 'function') return;
+  const positionExchange = String(params.get('exchange') || '').trim().toLowerCase();
+
+  function focusAtTime() {
+    const value = Date.parse(String(params.get('focus_at') || '').trim());
+    return Number.isFinite(value) ? value : NaN;
+  }
+
+  function loadLocalPositionTradeMarkers() {
+    if (!tradeRef || !BubbleChart || typeof BubbleChart.normalizeTradeMarkers !== 'function') return;
     try {
       const raw = localStorage.getItem('tvbot.analysisChart.' + tradeRef);
-      if (!raw) return;
+      if (!raw) return false;
       const payload = JSON.parse(raw);
       const rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
       const symbol = String(payload && payload.symbol || state.symbol).toUpperCase();
       state.tradeMarkers = BubbleChart.normalizeTradeMarkers(rows, symbol, payload && payload.selected_key || '');
+      return state.tradeMarkers.length > 0;
     } catch (_) {
       state.tradeMarkers = [];
+      return false;
+    }
+  }
+
+  function serverTradeSide(row) {
+    const positionSide = String(row && row.pos_side || '').trim().toLowerCase();
+    if (positionSide === 'long' || positionSide === 'short') return positionSide;
+    const effect = String(row && row.position_effect || '').trim().toLowerCase();
+    const orderSide = String(row && row.side || '').trim().toLowerCase();
+    if (effect === 'open') return orderSide === 'buy' ? 'long' : orderSide === 'sell' ? 'short' : '';
+    if (effect === 'close') return orderSide === 'sell' ? 'long' : orderSide === 'buy' ? 'short' : '';
+    return '';
+  }
+
+  function serverTradeMarkerRows(rows) {
+    const target = state.symbol;
+    const targetExchange = positionExchange;
+    const selectedAt = focusAtTime();
+    return (Array.isArray(rows) ? rows : []).filter(row => {
+      const exchange = String(row && row.exchange || '').trim().toLowerCase();
+      const symbol = String(row && row.inst_id || row && row.symbol || '').toUpperCase().replace(/[-_\/]/g, '');
+      const effect = String(row && row.position_effect || '').trim().toLowerCase();
+      return (!targetExchange || exchange === targetExchange) && symbol === target &&
+        (effect === 'open' || effect === 'close') && String(row && (row.trade_id || row.ord_id) || '').trim();
+    }).map(row => {
+      const effect = String(row.position_effect || '').trim().toLowerCase();
+      const close = effect === 'close';
+      const side = serverTradeSide(row);
+      const fillTime = row.fill_time || '';
+      const fillPx = row.fill_px || '';
+      const rowKey = [row.inst_id, row.trade_id, row.ord_id, fillTime, fillPx, effect].map(value => String(value == null ? '' : value)).join('|');
+      const selected = Number.isFinite(selectedAt) && Number.isFinite(Date.parse(fillTime)) && Math.abs(Date.parse(fillTime) - selectedAt) <= 1000;
+      return {
+        exchange: String(row.exchange || '').trim().toLowerCase(),
+        inst_id: String(row.inst_id || ''),
+        side,
+        entry_time: close ? '' : fillTime,
+        exit_time: close ? fillTime : '',
+        entry_px: close ? '' : fillPx,
+        exit_px: close ? fillPx : '',
+        row_key: rowKey,
+        selected,
+        ord_id: String(row.ord_id || ''),
+        trade_id: String(row.trade_id || ''),
+        position_effect: effect,
+        operation: String(row.operation || '').trim().toLowerCase(),
+        operation_source: String(row.operation_source || '').trim().toLowerCase(),
+        fill_sz: row.fill_sz || '',
+        qty: row.fill_sz || '',
+        turnover: row.turnover || '',
+        notional_usdt: row.turnover || '',
+        margin_usdt: row.margin || '',
+        fill_pnl: row.fill_pnl || '',
+        fee: row.fee || '',
+        fee_ccy: row.fee_ccy || '',
+        net_pnl: row.net_pnl || ''
+      };
+    }).filter(row => row.side);
+  }
+
+  async function loadPositionTradeMarkers() {
+    if (!positionMode || !state.symbol || !BubbleChart || typeof BubbleChart.normalizeTradeMarkers !== 'function') return;
+    const localLoaded = loadLocalPositionTradeMarkers();
+    if (localLoaded) return;
+    try {
+      const packet = await json('/tvbot/analysis?price_days=3&pnl_minutes=43200');
+      const rows = serverTradeMarkerRows(packet && packet.trades);
+      state.tradeMarkers = BubbleChart.normalizeTradeMarkers(rows, state.symbol);
+      if (state.tradeMarkers.length) draw();
+    } catch (_) {
+      // Keep the chart usable when the analysis endpoint is unavailable. The
+      // local payload, when present, remains the best same-page fallback.
     }
   }
 
@@ -305,6 +386,11 @@
     const last = newestCandle();
     if (!last) return { start: 0, end: 0 };
     const span = state.keepSpan > 0 ? state.keepSpan : K.DEFAULT_VISIBLE * step();
+    const focus = positionMode ? focusAtTime() : NaN;
+    if (Number.isFinite(focus)) {
+      const end = focus + span * .45;
+      return K.clampWindow({ start: end - span, end }, chartLimits());
+    }
     const end = last.t + (K.RIGHT_PAD + 1) * step();
     return K.clampWindow({ start: end - span, end }, chartLimits());
   }
@@ -1206,7 +1292,7 @@
   }
 
   function boot() {
-    loadPositionTradeMarkers();
+    void loadPositionTradeMarkers();
     buildIntervals();
     bindControls();
     bindSignalRecalculation();
