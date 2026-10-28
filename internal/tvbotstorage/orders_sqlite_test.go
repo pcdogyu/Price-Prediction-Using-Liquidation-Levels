@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,8 +12,28 @@ import (
 	"testing"
 	"time"
 
+	appstore "github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
+
+func TestSQLiteOrderStoreCanShareApplicationDatabase(t *testing.T) {
+	appDB, err := appstore.Open(filepath.Join(t.TempDir(), "liquidation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer appDB.Close()
+
+	orders, err := NewSQLiteOrderStoreWithDB(appDB.SQLDB(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orders.Close(); err != nil {
+		t.Fatalf("shared order store close: %v", err)
+	}
+	if err := appDB.Ping(context.Background()); err != nil {
+		t.Fatalf("closing shared order store must not close application db: %v", err)
+	}
+}
 
 func TestSQLiteOrderStoreMigratesLegacyJSONOnce(t *testing.T) {
 	dir := t.TempDir()

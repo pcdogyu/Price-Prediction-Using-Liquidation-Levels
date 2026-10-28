@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 	tvbotbinance "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	tvbotenv "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotenv"
@@ -111,7 +112,10 @@ func (b *Bridge) WebhookTokenForUser(username, tokenNonce string) (string, bool)
 	return b.Handler.Token.Generate(signal.CanonicalNonceWebhookTokenPayload()), true
 }
 
-func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*Bridge, error) {
+func New(cfg config.Config, appStore *store.Store, logger *slog.Logger, build tvbotserver.BuildInfo) (*Bridge, error) {
+	if appStore == nil || appStore.SQLDB() == nil {
+		return nil, errors.New("application store is required")
+	}
 	tvCfg, err := loadConfig(cfg.TVBotConfigPath)
 	if err != nil {
 		return nil, err
@@ -131,7 +135,7 @@ func New(cfg config.Config, logger *slog.Logger, build tvbotserver.BuildInfo) (*
 	if strings.TrimSpace(tvCfg.DataFile) != "" {
 		legacyOrders = resolvePath(cfg.TVBotLegacyDataPath, tvCfg.DataFile)
 	}
-	orders, err := tvbotstorage.NewSQLiteOrderStore(cfg.DatabasePath, legacyOrders)
+	orders, err := tvbotstorage.NewSQLiteOrderStoreWithDB(appStore.SQLDB(), legacyOrders)
 	if err != nil {
 		return nil, err
 	}

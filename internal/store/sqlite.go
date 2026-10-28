@@ -25,7 +25,7 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(15000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
 	}
@@ -40,6 +40,16 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error                   { return s.db.Close() }
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+
+// SQLDB returns the shared database handle used by the application store.
+// Components that persist data in the same SQLite file must reuse this handle
+// so database/sql serializes their writes through the same single connection.
+func (s *Store) SQLDB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
 
 func (s *Store) migrate(ctx context.Context) error {
 	const schema = `

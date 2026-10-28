@@ -61,10 +61,11 @@ type OrderRecord struct {
 }
 
 type OrderStore struct {
-	mu    sync.Mutex
-	path  string
-	state orderState
-	db    *sql.DB
+	mu     sync.Mutex
+	path   string
+	state  orderState
+	db     *sql.DB
+	ownsDB bool
 }
 
 type orderState struct {
@@ -100,11 +101,31 @@ func NewSQLiteOrderStore(databasePath, legacyJSONPath string) (*OrderStore, erro
 	if err := os.MkdirAll(filepath.Dir(databasePath), 0o755); err != nil && filepath.Dir(databasePath) != "." {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", databasePath+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", databasePath+"?_pragma=busy_timeout(15000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	s, err := newSQLiteOrderStore(db, true, legacyJSONPath)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// NewSQLiteOrderStoreWithDB creates an order store backed by an existing
+// database/sql handle. The caller owns the handle and remains responsible for
+// closing it. This is required when multiple subsystems share one SQLite file.
+func NewSQLiteOrderStoreWithDB(db *sql.DB, legacyJSONPath string) (*OrderStore, error) {
+	if db == nil {
+		return nil, errors.New("database handle is required")
+	}
+	db.SetMaxOpenConns(1)
+	return newSQLiteOrderStore(db, false, legacyJSONPath)
+}
+
+func newSQLiteOrderStore(db *sql.DB, ownsDB bool, legacyJSONPath string) (*OrderStore, error) {
 	s := &OrderStore{
 		path: legacyJSONPath,
 		state: orderState{
@@ -113,14 +134,13 @@ func NewSQLiteOrderStore(databasePath, legacyJSONPath string) (*OrderStore, erro
 			CoinpairBlocks:      []CoinpairBlock{},
 			CoinpairBlockEvents: map[string]bool{},
 		},
-		db: db,
+		db:     db,
+		ownsDB: ownsDB,
 	}
 	if err := s.migrateSQLite(); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	if err := s.importLegacyJSON(); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
@@ -516,6 +536,9 @@ func (s *OrderStore) hasSignalIDLocked(signalID string) bool {
 
 func (s *OrderStore) Close() error {
 	if s.db == nil {
+		return nil
+	}
+	if !s.ownsDB {
 		return nil
 	}
 	return s.db.Close()

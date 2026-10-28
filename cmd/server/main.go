@@ -53,8 +53,7 @@ func main() {
 	defer stop()
 	svc := app.New(cfg, st, log)
 	defer svc.Close()
-	svc.Start(ctx)
-	bridge, err := tvbotbridge.New(cfg, log, tvbotserver.BuildInfo{
+	bridge, err := tvbotbridge.New(cfg, st, log, tvbotserver.BuildInfo{
 		CommitTime: httpapi.BuildTime, CommitHash: httpapi.BuildRevision, CommitBranch: httpapi.BuildBranch,
 	})
 	if err != nil {
@@ -81,6 +80,7 @@ func main() {
 		return tvbotserver.GammaSnapshot{State: gamma.State, Value: gamma.Gamma}
 	})
 	bridge.Start(ctx)
+	svc.Start(ctx)
 	srv, err := httpapi.New(cfg, svc, log, logStore, st)
 	if err != nil {
 		log.Error("http server configuration failed", "error", err)

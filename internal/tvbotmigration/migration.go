@@ -38,7 +38,7 @@ func MigrateSQLite(ctx context.Context, targetPath, legacyPath string) (bool, er
 	if legacyAbs == targetAbs {
 		return false, nil
 	}
-	db, err := sql.Open("sqlite", targetAbs+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", targetAbs+"?_pragma=busy_timeout(15000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return false, err
 	}
