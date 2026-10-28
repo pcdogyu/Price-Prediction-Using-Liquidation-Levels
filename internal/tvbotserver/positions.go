@@ -54,8 +54,11 @@ var (
 )
 
 const (
-	positionEntryLookback       = 90 * 24 * time.Hour
-	positionEntryCacheTTL       = 15 * time.Second
+	positionEntryLookback = 90 * 24 * time.Hour
+	// Entry fills are historical data. The positions page polls every five
+	// seconds, but refreshing Binance userTrades that often can exhaust the
+	// account/IP request-weight budget.
+	positionEntryCacheTTL       = 5 * time.Minute
 	positionEntryHistoryLimit   = 100
 	positionEntryMaxOKXPages    = 90
 	binanceUserTradesWindow     = 7 * 24 * time.Hour
@@ -2975,11 +2978,18 @@ func (s *Server) fetchBinancePositions(ctx context.Context, cfg config.Config, r
 	if err != nil {
 		return positionsResponse{}, err
 	}
-	positions, err := client.Positions(ctx, "")
-	if err != nil {
-		return positionsResponse{}, err
+	now := s.now()
+	positions, fromStream := cachedBinanceUserStreamPositions(client, apiID, now)
+	if !fromStream {
+		positions, err = client.Positions(ctx, "")
+		if err != nil {
+			return positionsResponse{}, err
+		}
 	}
-	precisions := s.binanceDisplayPrecisions(ctx, client)
+	precisions := map[string]symbolDisplayPrecision(nil)
+	if !binanceUserStreamIsActive(client, apiID) {
+		precisions = s.binanceDisplayPrecisions(ctx, client)
+	}
 	out := make([]okx.Position, 0, len(positions))
 	for _, position := range positions {
 		converted := binancePositionToOKX(position)
@@ -2993,7 +3003,6 @@ func (s *Server) fetchBinancePositions(ctx context.Context, cfg config.Config, r
 		}
 		return out[i].InstID < out[j].InstID
 	})
-	now := s.now()
 	fillsBySymbol := make(map[string][]positionEntryFill)
 	errorsBySymbol := make(map[string]error)
 	positionsBySymbol := positionsByInstID(out)

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -40,6 +41,11 @@ type APIError struct {
 	Msg  string `json:"msg"`
 }
 
+var binanceRESTRateLimit = struct {
+	mu           sync.Mutex
+	blockedUntil time.Time
+}{}
+
 func (e APIError) Error() string {
 	if e.Code == 0 && e.Msg == "" {
 		return "binance api error"
@@ -58,6 +64,96 @@ func IsAPIErrorCode(err error, codes ...int) bool {
 		}
 	}
 	return false
+}
+
+// IsRateLimitError identifies both Binance's request-weight response and the
+// temporary IP-ban response. Keep this separate from IsAPIErrorCode because
+// Binance has used the same -1003 code with several different messages.
+func IsRateLimitError(err error) bool {
+	if IsAPIErrorCode(err, -1003) {
+		return true
+	}
+	message := strings.ToLower(strings.TrimSpace(errString(err)))
+	return strings.Contains(message, "too many requests") ||
+		strings.Contains(message, "way too many requests") ||
+		strings.Contains(message, "request weight")
+}
+
+// RateLimitUntil extracts the optional Unix timestamp from Binance's ban
+// message, for example: "banned until 1793205212975".
+func RateLimitUntil(err error) (time.Time, bool) {
+	var apiErr APIError
+	if !errors.As(err, &apiErr) {
+		return time.Time{}, false
+	}
+	fields := strings.Fields(apiErr.Msg)
+	for i, field := range fields {
+		if !strings.EqualFold(strings.Trim(field, ":,;"), "until") || i+1 >= len(fields) {
+			continue
+		}
+		raw := strings.Trim(fields[i+1], "`.,;:)")
+		value, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil {
+			continue
+		}
+		if value >= 1_000_000_000_000 {
+			return time.UnixMilli(value).UTC(), true
+		}
+		if value >= 1_000_000_000 {
+			return time.Unix(value, 0).UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// RateLimitPauseUntil reports the process-wide Binance REST pause. The ban is
+// IP-scoped, so all clients and both demo/live endpoints must honor it.
+func RateLimitPauseUntil(now time.Time) (time.Time, bool) {
+	binanceRESTRateLimit.mu.Lock()
+	defer binanceRESTRateLimit.mu.Unlock()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	if !now.Before(binanceRESTRateLimit.blockedUntil) {
+		if !binanceRESTRateLimit.blockedUntil.IsZero() {
+			binanceRESTRateLimit.blockedUntil = time.Time{}
+		}
+		return time.Time{}, false
+	}
+	return binanceRESTRateLimit.blockedUntil, true
+}
+
+func noteRateLimit(err error, now time.Time) {
+	if !IsRateLimitError(err) {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	until, ok := RateLimitUntil(err)
+	if !ok || !until.After(now) {
+		until = now.Add(5 * time.Minute)
+	}
+	binanceRESTRateLimit.mu.Lock()
+	if until.After(binanceRESTRateLimit.blockedUntil) {
+		binanceRESTRateLimit.blockedUntil = until
+	}
+	binanceRESTRateLimit.mu.Unlock()
+}
+
+func rateLimitPauseError(until time.Time) error {
+	return fmt.Errorf("Binance REST 暂停至 %s（-1003 限流/封禁；成交实时更新应使用 WebSocket）", until.UTC().Format(time.RFC3339))
 }
 
 func IsExecutionStatusUnknown(err error) bool {
@@ -330,6 +426,9 @@ func (c Client) Do(ctx context.Context, method, path string, values url.Values, 
 	if c.Now == nil {
 		c.Now = time.Now
 	}
+	if until, blocked := RateLimitPauseUntil(c.Now()); blocked {
+		return nil, rateLimitPauseError(until)
+	}
 	if values == nil {
 		values = url.Values{}
 	}
@@ -377,11 +476,15 @@ func (c Client) Do(ctx context.Context, method, path string, values url.Values, 
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if apiErr := decodeAPIError(respBody); apiErr.Msg != "" || apiErr.Code != 0 {
+			noteRateLimit(apiErr, c.Now())
 			return nil, apiErr
 		}
-		return nil, fmt.Errorf("binance http status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		err := fmt.Errorf("binance http status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		noteRateLimit(err, c.Now())
+		return nil, err
 	}
 	if apiErr := decodeAPIError(respBody); apiErr.Code < 0 {
+		noteRateLimit(apiErr, c.Now())
 		return nil, apiErr
 	}
 	return respBody, nil

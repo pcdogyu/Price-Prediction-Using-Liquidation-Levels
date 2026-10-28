@@ -31,6 +31,7 @@ func (s *Server) StartTradeFillMonitor(ctx context.Context) {
 		return
 	}
 	go s.runTradeFillMonitor(ctx)
+	s.startBinanceUserDataStreams(ctx)
 }
 
 func (s *Server) runTradeFillMonitor(ctx context.Context) {
@@ -75,6 +76,12 @@ func (s *Server) runTradeFillMonitorOnce(ctx context.Context) {
 	if len(symbols) == 0 {
 		return
 	}
+	if until, blocked := binance.RateLimitPauseUntil(now); blocked {
+		if s.Logger != nil {
+			s.Logger.Warn("Binance trade monitor paused after REST rate limiting", "resume_at", until.Format(time.RFC3339))
+		}
+		return
+	}
 	for _, requestedAPIID := range configuredBinanceAPIIDs(binanceStore.Status()) {
 		client, apiID, err := s.binanceClientForCredentials(cfg, requestedAPIID)
 		if err != nil {
@@ -84,6 +91,9 @@ func (s *Server) runTradeFillMonitorOnce(ctx context.Context) {
 			continue
 		}
 		for _, symbol := range symbols {
+			if binanceUserStreamIsActive(client, apiID) {
+				break
+			}
 			pollCtx, cancel := context.WithTimeout(ctx, tradeMonitorPollTimeout)
 			err := s.pollBinanceSymbolFills(pollCtx, cfg, client, apiID, symbol, now, lookback, lifecycleEnabled)
 			cancel()
@@ -421,6 +431,9 @@ func (s *Server) tradeMonitorBinanceSymbols(now time.Time, lookback time.Duratio
 }
 
 func (s *Server) pollBinanceSymbolFills(ctx context.Context, cfg config.Config, client binance.Client, apiID, symbol string, now time.Time, lookback time.Duration, processLifecycles bool) error {
+	if binanceUserStreamIsActive(client, apiID) {
+		return nil
+	}
 	cp, found, err := s.Orders.TradeMonitorCheckpoint(trading.ExchangeBinance, apiID, symbol)
 	if err != nil {
 		return err
@@ -482,44 +495,8 @@ func (s *Server) pollBinanceSymbolFills(ctx context.Context, cfg config.Config, 
 		return inserted[i].FillTime < inserted[j].FillTime
 	})
 	if found {
-		cooldownFills := make([]cooldownOrderFill, 0, len(inserted))
-		for _, fill := range inserted {
-			occurredAt := now
-			if fill.FillTime > 0 {
-				occurredAt = time.UnixMilli(fill.FillTime).UTC()
-			}
-			cooldownFills = append(cooldownFills, cooldownOrderFill{
-				exchange:    trading.ExchangeBinance,
-				apiID:       fill.APIID,
-				symbol:      fill.Symbol,
-				orderID:     fill.OrderID,
-				tradeID:     fill.TradeID,
-				price:       fill.Price,
-				size:        fill.Qty,
-				realizedPnL: fill.RealizedPnl,
-				occurredAt:  occurredAt,
-			})
-		}
-		for _, order := range aggregateCooldownOrderFills(cooldownFills) {
-			if !order.pnlValid || order.realizedPnL >= 0 {
-				continue
-			}
-			_, _, blockErr := s.recordLossCoinpairCooldown(
-				cfg,
-				order.eventID,
-				"exchange_fill",
-				order.exchange,
-				order.apiID,
-				order.triggerPrice,
-				order.occurredAt,
-				order.symbol,
-			)
-			if blockErr != nil && s.Logger != nil {
-				s.Logger.Error("failed to record Binance loss-order coinpair cooldown", "api_id", order.apiID, "symbol", order.symbol, "order_id", order.orderID, "error", blockErr)
-			}
-			if blockErr != nil {
-				return blockErr
-			}
+		if err := s.recordBinanceFillLossCooldowns(cfg, inserted, now); err != nil {
+			return err
 		}
 	}
 	for _, fill := range inserted {
@@ -551,6 +528,49 @@ func (s *Server) pollBinanceSymbolFills(ctx context.Context, cfg config.Config, 
 	}
 	if len(trades) >= tradeMonitorHistoryLimit {
 		return fmt.Errorf("Binance %s userTrades reached %d limit; trade monitor history may be incomplete", symbol, tradeMonitorHistoryLimit)
+	}
+	return nil
+}
+
+func (s *Server) recordBinanceFillLossCooldowns(cfg config.Config, fills []storage.BinanceFill, now time.Time) error {
+	cooldownFills := make([]cooldownOrderFill, 0, len(fills))
+	for _, fill := range fills {
+		occurredAt := now
+		if fill.FillTime > 0 {
+			occurredAt = time.UnixMilli(fill.FillTime).UTC()
+		}
+		cooldownFills = append(cooldownFills, cooldownOrderFill{
+			exchange:    trading.ExchangeBinance,
+			apiID:       fill.APIID,
+			symbol:      fill.Symbol,
+			orderID:     fill.OrderID,
+			tradeID:     fill.TradeID,
+			price:       fill.Price,
+			size:        fill.Qty,
+			realizedPnL: fill.RealizedPnl,
+			occurredAt:  occurredAt,
+		})
+	}
+	for _, order := range aggregateCooldownOrderFills(cooldownFills) {
+		if !order.pnlValid || order.realizedPnL >= 0 {
+			continue
+		}
+		_, _, blockErr := s.recordLossCoinpairCooldown(
+			cfg,
+			order.eventID,
+			"exchange_fill",
+			order.exchange,
+			order.apiID,
+			order.triggerPrice,
+			order.occurredAt,
+			order.symbol,
+		)
+		if blockErr != nil && s.Logger != nil {
+			s.Logger.Error("failed to record Binance loss-order coinpair cooldown", "api_id", order.apiID, "symbol", order.symbol, "order_id", order.orderID, "error", blockErr)
+		}
+		if blockErr != nil {
+			return blockErr
+		}
 	}
 	return nil
 }

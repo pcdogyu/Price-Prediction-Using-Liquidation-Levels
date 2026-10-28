@@ -101,6 +101,46 @@ func TestClientUserTradesSignsPrivateRequest(t *testing.T) {
 	}
 }
 
+func TestRateLimitUntilParsesBinanceBanTimestamp(t *testing.T) {
+	err := APIError{Code: -1003, Msg: "Way too many requests; IP(8.216.52.43) banned until 1793205212975. Please use the websocket for live updates to avoid bans."}
+	got, ok := RateLimitUntil(err)
+	if !ok || !got.Equal(time.UnixMilli(1793205212975).UTC()) {
+		t.Fatalf("unexpected ban timestamp got=%s ok=%v", got, ok)
+	}
+	if !IsRateLimitError(err) {
+		t.Fatal("-1003 should be recognized as a rate-limit error")
+	}
+}
+
+func TestClientStopsRESTRequestsAfterRateLimit(t *testing.T) {
+	now := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	banUntil := now.Add(time.Hour)
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":-1003,"msg":"banned until ` + strconv.FormatInt(banUntil.UnixMilli(), 10) + `"}`))
+	}))
+	defer ts.Close()
+	t.Cleanup(func() { _, _ = RateLimitPauseUntil(now.Add(2 * time.Hour)) })
+
+	client := Client{
+		BaseURL:     ts.URL,
+		Credentials: Credentials{APIKey: "unit-key", SecretKey: "unit-secret"},
+		HTTPClient:  ts.Client(),
+		Now:         func() time.Time { return now },
+	}
+	if _, err := client.AccountBalance(context.Background()); !IsRateLimitError(err) {
+		t.Fatalf("expected initial rate-limit error, got %v", err)
+	}
+	if _, err := client.AccountBalance(context.Background()); err == nil || !strings.Contains(err.Error(), "暂停至") {
+		t.Fatalf("expected local REST pause, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("REST pause should prevent the second request, calls=%d", calls)
+	}
+}
+
 func TestClientIncomeHistorySignsPrivateRequest(t *testing.T) {
 	const secret = "unit-secret"
 	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)

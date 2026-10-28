@@ -34,8 +34,9 @@ const (
 	usdtSampleInterval         = 5 * time.Minute
 	maxBalanceMinutes          = 90 * 24 * 60
 
-	binanceAnalysisTradeWindow = 7 * 24 * time.Hour
-	binanceAnalysisTradeLimit  = 1000
+	binanceAnalysisTradeWindow   = 7 * 24 * time.Hour
+	binanceAnalysisTradeLimit    = 1000
+	maxAnalysisConfiguredSymbols = 32
 )
 
 type analysisResponse struct {
@@ -1226,11 +1227,18 @@ func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.
 	out := []analysisTrade{}
 	symbolErrs := []error{}
 	for _, symbol := range symbols {
-		trades, err := fetchBinanceAnalysisSymbolTrades(ctx, client, apiID, symbol, since, now.UTC())
+		if until, blocked := binance.RateLimitPauseUntil(now); blocked {
+			symbolErrs = append(symbolErrs, fmt.Errorf("Binance analysis trades paused until %s after REST rate limiting", until.Format(time.RFC3339)))
+			break
+		}
+		trades, err := s.fetchBinanceAnalysisSymbolTrades(ctx, client, apiID, symbol, since, now.UTC())
 		out = append(out, trades...)
 		if err != nil {
 			symbolErr := fmt.Errorf("Binance %s analysis trades: %w", symbol, err)
 			symbolErrs = append(symbolErrs, symbolErr)
+			if _, blocked := binance.RateLimitPauseUntil(now); blocked {
+				break
+			}
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 				return out, errors.Join(symbolErrs...)
 			}
@@ -1239,7 +1247,7 @@ func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.
 	return out, errors.Join(symbolErrs...)
 }
 
-func fetchBinanceAnalysisSymbolTrades(ctx context.Context, client binance.Client, apiID, symbol string, since, until time.Time) ([]analysisTrade, error) {
+func (s *Server) fetchBinanceAnalysisSymbolTrades(ctx context.Context, client binance.Client, apiID, symbol string, since, until time.Time) ([]analysisTrade, error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	if symbol == "" {
 		return nil, nil
@@ -1282,9 +1290,15 @@ func (s *Server) analysisBinanceSymbols(cfg config.Config, since time.Time) []st
 		}
 		seen[symbol] = true
 	}
-	for key, sym := range cfg.Symbols {
-		if symbol, ok := deriveBinanceAnalysisSymbol(sym.Coinpair, key, ""); ok {
-			add(symbol)
+	// cfg.Symbols is the global UI/trading catalog and can contain hundreds of
+	// instruments. It is not evidence that this account has traded every one.
+	// Keep the config fallback for small/test installations, while production
+	// analysis uses durable order/lifecycle symbols below.
+	if len(cfg.Symbols) <= maxAnalysisConfiguredSymbols {
+		for key, sym := range cfg.Symbols {
+			if symbol, ok := deriveBinanceAnalysisSymbol(sym.Coinpair, key, ""); ok {
+				add(symbol)
+			}
 		}
 	}
 	if s.Orders != nil {
