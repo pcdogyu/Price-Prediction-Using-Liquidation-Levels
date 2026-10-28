@@ -53,6 +53,15 @@ test('the cumulative net long-short band uses a fixed 48-hour window with bounde
   assert.match(chartApp, /当前视窗不在最近48小时累计范围内/);
 });
 
+test('initial chart loading backfills a full radar warmup window', () => {
+  assert.match(chartApp, /const RADAR_WARMUP_MAX_PAGES = 4/);
+  assert.match(chartApp, /function radarWarmupMs\(\)/);
+  assert.match(chartApp, /state\.view\.start - radarWarmupMs\(\) - step\(\)/);
+  assert.match(chartApp, /async function loadRadarWarmupHistory\(\)/);
+  assert.match(chartApp, /&limit=1500&before=' \+ encodeURIComponent\(cursor\)/);
+  assert.match(chartApp, /await loadRadarWarmupHistory\(\);/);
+});
+
 test('position chart tooltip distinguishes merged closing fills', () => {
   assert.match(chartApp, /marker\.phase === 'exit' \? '平仓' : '开仓'/);
 });

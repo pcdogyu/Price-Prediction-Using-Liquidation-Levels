@@ -15,6 +15,7 @@
 
   const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_ZONES = 'liquidation.kline.zones', STORE_DONCHIAN = 'liquidation.kline.donchian', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000, LIQUIDATION_DELTA_REFRESH_MS = 15000, LIQUIDATION_DELTA_DEBOUNCE_MS = 250;
+  const RADAR_WARMUP_MAX_PAGES = 4;
   const FILTERED_SIGNAL_ALPHA = .2;
   const KLINE_HEIGHT_SCALE = 1.20, LIQUIDATION_DELTA_HEIGHT_SCALE = 1.15;
   const CHART_MARGIN_TOP = 18, CHART_MARGIN_BOTTOM = 42, CHART_SECTION_GAP = 12;
@@ -373,13 +374,25 @@
     document.querySelectorAll('#kline-intervals button').forEach(button => button.classList.toggle('selected', button.dataset.interval === state.interval));
   }
 
-  // candleLimit sizes a request so the fetched page covers the window the chart
-  // shows plus enough history to pan into without an immediate refetch.
+  // candleLimit sizes the first page for the visible window and the radar
+  // calculation. If Binance's 1500-row page is not enough for both, the loader
+  // below follows the cursor and fills the remaining warmup history.
   function candleLimit(mode) {
     if (mode === 'history') return 1500;
     const wanted = state.keepSpan > 0 ? state.keepSpan : K.DEFAULT_VISIBLE * step();
     const warmup = Math.ceil(Math.max(Number(state.radarConfig.periodMinutes) || 240, Number(state.radarConfig.rangeMinutes) || 1440) / Math.max(1, step() / 60000)) + 2;
     return Math.max(120, Math.min(1500, Math.ceil(wanted / step()) + 80 + warmup));
+  }
+
+  function radarWarmupMs() {
+    const minutes = Math.max(Number(state.radarConfig.periodMinutes) || 240, Number(state.radarConfig.rangeMinutes) || 1440);
+    return minutes * 60000;
+  }
+
+  function radarWarmupReady() {
+    if (!state.candles.length || !(state.view.end > state.view.start)) return false;
+    const first = state.candles[0].t;
+    return finite(first) && first <= state.view.start - radarWarmupMs() - step();
   }
 
   function initialWindow() {
@@ -425,6 +438,7 @@
       const packet = await json('api/v1/alerts/klines?symbol=' + encodeURIComponent(state.symbol) + '&interval=' + encodeURIComponent(state.interval) + '&limit=' + candleLimit('latest'));
       applyCandles(packet);
       clearError();
+      await loadRadarWarmupHistory();
       note(statusText());
     } catch (error) {
       showError('K 线读取失败：' + error.message + '（币需为 Binance USDⓈ-M 永续合约名，如 BTCUSDT）');
@@ -455,6 +469,35 @@
     else state.view = K.clampWindow(state.view, chartLimits());
     state.atLatest = atLatest();
     $('kline-new-data').classList.toggle('hidden', !state.newData);
+  }
+
+  // The first Binance page is capped at 1500 rows. A 1m chart can therefore
+  // contain the visible window but still miss the 24h rolling Donchian/VWAP
+  // history to its left. Pull older pages until every visible candle has a
+  // complete warmup window, while keeping the request bounded and non-blocking
+  // for pairs with no more historical data.
+  async function loadRadarWarmupHistory() {
+    if (state.loadingHistory || !state.hasMore || !state.nextBefore || !state.candles.length || radarWarmupReady()) return;
+    state.loadingHistory = true;
+    try {
+      let pages = 0;
+      while (pages < RADAR_WARMUP_MAX_PAGES && state.hasMore && state.nextBefore && state.candles.length && !radarWarmupReady()) {
+        const cursor = state.nextBefore;
+        const packet = await json('api/v1/alerts/klines?symbol=' + encodeURIComponent(state.symbol) + '&interval=' + encodeURIComponent(state.interval) + '&limit=1500&before=' + encodeURIComponent(cursor));
+        const older = K.normaliseCandles(packet.candles);
+        state.candles = K.mergeCandles(state.candles, older);
+        state.hasMore = packet.has_more === true;
+        state.nextBefore = packet.next_before || '';
+        pages++;
+        if (!older.length || state.nextBefore === cursor) break;
+      }
+    } catch (error) {
+      // The initial page is still useful; retain it and let the next refresh
+      // retry the optional warmup instead of treating the chart as unavailable.
+      showError('VWAP/Donchian 预热 K 线读取失败：' + error.message);
+    } finally {
+      state.loadingHistory = false;
+    }
   }
 
   // loadHistory pulls an older page once the view nears the oldest loaded candle,
@@ -505,6 +548,7 @@
         minDrawdown: (Number(thresholds.vwap_min_drawdown_pct) || 2.2) / 100,
         donchianFraction: (Number(thresholds.vwap_donchian_pct) || 35) / 100
       };
+      await loadRadarWarmupHistory();
       state.radarZone = packet.zone && packet.zone.ready ? packet.zone : null;
       state.signalThreshold = state.symbol === 'BTCUSDT' ? thresholds.btc_usd : state.symbol === 'ETHUSDT' ? thresholds.eth_usd : thresholds.other_usd;
       state.signalWindowMinutes = Number(thresholds.window_minutes) || 0;
