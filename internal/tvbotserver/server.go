@@ -688,6 +688,8 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 		s.handlePendingOrderCancel(w, r)
 	case path == "/positions/close":
 		s.handlePositionClose(w, r)
+	case path == "/positions/open":
+		s.handlePositionOpen(w, r)
 	case path == "/positions/protection":
 		s.handlePositionProtection(w, r)
 	case path == "/api-keys":

@@ -914,10 +914,13 @@ func TestPositionActionsExcludeProtectionButtons(t *testing.T) {
 			t.Fatalf("position action cell should not include %q", removed)
 		}
 	}
-	for _, kept := range []string{"data-position-ratio", "data-position-close=\"market\"", "data-position-close=\"limit\""} {
+	for _, kept := range []string{"data-position-ratio", "data-position-open=\"market\"", "position-open-actions", "position-close-actions", "data-position-close=\"market\"", "data-position-close=\"limit\""} {
 		if !strings.Contains(actions, kept) {
 			t.Fatalf("position action cell should retain %q", kept)
 		}
+	}
+	if strings.Index(actions, "position-open-actions") > strings.Index(actions, "position-close-actions") {
+		t.Fatal("position open actions should render above close actions")
 	}
 }
 

@@ -798,7 +798,20 @@ const tvbotHTML = `<!doctype html>
       gap: 6px;
       flex-wrap: wrap;
     }
-    .position-percent-close-btn {
+    .position-action-groups {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
+    .position-action-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .position-percent-close-btn,
+    .position-percent-open-btn {
       width: 36px;
       height: 36px;
       min-width: 36px;
@@ -2413,6 +2426,7 @@ const tvbotHTML = `<!doctype html>
       coinpairCooldownRemoving: {},
       retrying: {},
       positionClosing: {},
+      positionOpening: {},
       positionClosingAll: false,
       pendingOrderActions: {},
       analysis: null,
@@ -5691,21 +5705,32 @@ const tvbotHTML = `<!doctype html>
       const exchange = normalizeExchange(row._exchange || "okx");
       const key = positionCloseRowKey(row);
       const closing = !!state.positionClosing[key];
+      const opening = !!state.positionOpening[key];
+      const busy = closing || opening || state.positionClosingAll;
       const instID = escapeHTML(asText(row.instId));
       const posSide = escapeHTML(String(row.posSide || ""));
       const pos = escapeHTML(String(row.pos || ""));
       const apiID = escapeHTML(row._api_id || "");
       const baseAttrs = ' data-exchange="' + exchange + '" data-api-id="' + apiID + '" data-inst-id="' + instID + '" data-pos-side="' + posSide + '" data-pos="' + pos + '"';
-      const percentButtons = [
+      const openPercentButtons = [
         { label: "10%", ratio: "0.1" },
         { label: "25%", ratio: "0.25" },
         { label: "50%", ratio: "0.5" },
         { label: "75%", ratio: "0.75" }
-      ].map((item) => '<button class="btn small position-percent-close-btn" type="button" data-position-close="limit" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="限价平仓 ' + item.label + '，60秒后市价兜底"' + (closing ? " disabled" : "") + '>' + item.label + '</button>').join("");
-      return '<td><div class="position-actions">' +
-        percentButtons +
-        '<button class="btn small danger" type="button" data-position-close="market"' + baseAttrs + (closing ? " disabled" : "") + '>市价平仓</button>' +
-        '<button class="btn small" type="button" data-position-close="limit"' + baseAttrs + (closing ? " disabled" : "") + '>限价平仓</button>' +
+      ].map((item) => '<button class="btn small position-percent-open-btn" type="button" data-position-open="market" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="市价开仓 ' + item.label + '（同向加仓）"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
+      const closePercentButtons = [
+        { label: "10%", ratio: "0.1" },
+        { label: "25%", ratio: "0.25" },
+        { label: "50%", ratio: "0.5" },
+        { label: "75%", ratio: "0.75" }
+      ].map((item) => '<button class="btn small position-percent-close-btn" type="button" data-position-close="limit" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="限价平仓 ' + item.label + '，60秒后市价兜底"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
+      return '<td><div class="position-action-groups">' +
+        '<div class="position-actions position-action-group position-open-actions">' + openPercentButtons + '</div>' +
+        '<div class="position-actions position-action-group position-close-actions">' +
+        closePercentButtons +
+        '<button class="btn small danger" type="button" data-position-close="market"' + baseAttrs + (busy ? " disabled" : "") + '>市价平仓</button>' +
+        '<button class="btn small" type="button" data-position-close="limit"' + baseAttrs + (busy ? " disabled" : "") + '>限价平仓</button>' +
+        '</div>' +
         '</div></td>';
     }
 
@@ -7548,6 +7573,14 @@ const tvbotHTML = `<!doctype html>
       });
     }
 
+    async function submitPositionOpen(body) {
+      return api("/tvbot/positions/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+    }
+
     function positionCloseBody(row, mode) {
       return addRequestedPositionEnvironment({
         exchange: normalizeExchange(row && (row._exchange || row.exchange || "okx")),
@@ -7556,6 +7589,51 @@ const tvbotHTML = `<!doctype html>
         pos_side: row && (row.posSide || row.pos_side) || "",
         mode: mode || "market"
       });
+    }
+
+    function positionOpenBody(button) {
+      return addRequestedPositionEnvironment({
+        exchange: normalizeExchange(button.dataset.exchange || "okx"),
+        api_id: button.dataset.apiId || "",
+        inst_id: button.dataset.instId || "",
+        pos_side: button.dataset.posSide || "",
+        ratio: Number(button.dataset.positionRatio || "0")
+      });
+    }
+
+    function positionOpenEstimateText(button) {
+      const size = positionNumber(button.dataset.pos || "");
+      const ratio = Number(button.dataset.positionRatio || "0");
+      if (!Number.isFinite(size) || !Number.isFinite(ratio) || size <= 0 || ratio <= 0) return "数量待实时确认";
+      return "约 " + formatNumber(size * ratio) + " 个单位";
+    }
+
+    async function openPosition(button) {
+      if (state.positionClosingAll) return;
+      const body = positionOpenBody(button);
+      const exchange = body.exchange;
+      const instID = body.inst_id || "";
+      const posSide = body.pos_side || "";
+      const positionKind = positionSideKind(posSide, button.dataset.pos || "");
+      const key = [exchange, body.api_id || "", instID.toUpperCase(), (posSide || "net").toLowerCase()].join("|");
+      if (!instID || !body.ratio || !positionKind || state.positionOpening[key] || state.positionClosing[key]) return;
+      if (positionEnvironment() === "live") {
+        const direction = positionKind === "long" ? "多单" : "空单";
+        const percent = Math.round(Number(body.ratio) * 100) + "%";
+        if (!window.confirm("确认提交 " + exchangeLabel(exchange) + " " + instID + " " + direction + " 市价开仓 " + percent + "？\n" + positionOpenEstimateText(button))) return;
+      }
+      state.positionOpening[key] = true;
+      renderPositions();
+      try {
+        const result = await submitPositionOpen(body);
+        const percent = Math.round(Number(body.ratio) * 100) + "%";
+        toast("市价开仓已提交 " + instID + " " + percent + " " + (positionKind === "long" ? "多单" : "空单"));
+        await Promise.all([loadPositionView(), loadOrders()]);
+        if (result && result.signal_id) toast("开仓信号 " + asText(result.signal_id) + " 已记录");
+      } finally {
+        delete state.positionOpening[key];
+        renderPositions();
+      }
     }
 
     async function closeAllPositions() {
@@ -8051,6 +8129,11 @@ const tvbotHTML = `<!doctype html>
         const rows = state.positions && Array.isArray(state.positions.positions) ? state.positions.positions : [];
         const row = rows.find((item) => positionCloseRowKey(item) === key);
         if (row) openPositionSymbolDetails(row).catch((err) => toast(err.message));
+        return;
+      }
+      const openButton = event.target.closest("button[data-position-open]");
+      if (openButton) {
+        openPosition(openButton).catch((err) => toast(err.message));
         return;
       }
       const button = event.target.closest("button[data-position-close]");
