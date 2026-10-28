@@ -76,26 +76,11 @@ func (s *Service) gammaLoop(ctx context.Context) {
 	}
 }
 
-// gammaSymbols always includes both liquidation Gamma anchors even when an
-// operator narrows APP_SYMBOLS to a smaller futures watch list.
+// Gamma is an anchor signal for the liquidation radar, not a per-symbol
+// futures feed. Keep this list fixed so expanding APP_SYMBOLS cannot fan out
+// hundreds of option API requests and trigger exchange rate limits.
 func (s *Service) gammaSymbols() []string {
-	seen := make(map[string]struct{}, len(s.cfg.Symbols)+2)
-	out := make([]string, 0, len(s.cfg.Symbols)+2)
-	for _, symbol := range s.cfg.Symbols {
-		if _, ok := seen[symbol]; ok {
-			continue
-		}
-		seen[symbol] = struct{}{}
-		out = append(out, symbol)
-	}
-	for _, anchor := range []string{alertGammaBTCAnchor, alertGammaETHAnchor} {
-		if _, ok := seen[anchor]; ok {
-			continue
-		}
-		seen[anchor] = struct{}{}
-		out = append(out, anchor)
-	}
-	return out
+	return []string{alertGammaBTCAnchor, alertGammaETHAnchor}
 }
 
 func (s *Service) backfillMarketMetrics(ctx context.Context) {
