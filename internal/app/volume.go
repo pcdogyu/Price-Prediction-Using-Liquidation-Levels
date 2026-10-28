@@ -17,13 +17,18 @@ func (s *Service) startVolumeProfiles(ctx context.Context) {
 }
 
 func (s *Service) volumeProfileLoop(ctx context.Context) {
-	for _, symbol := range s.cfg.Symbols {
+	// Volume profiles use the deliberately small bootstrap set. Configured
+	// symbols still remain available to alerts and on-demand charts, but
+	// opening an aggregate-trade REST catch-up for every configured pair would
+	// immediately exhaust Binance request limits when APP_SYMBOLS is large.
+	bootstrapSymbols := s.bootstrapSymbols()
+	for _, symbol := range bootstrapSymbols {
 		if err := s.syncVolumeSession(ctx, symbol, time.Now().UTC()); err != nil && ctx.Err() == nil {
 			s.log.Warn("aggregate trade initial backfill failed", "symbol", symbol, "error", err)
 		}
 	}
 	input := make(chan domain.AggregateTrade, 100000)
-	exchange.StartAggregateTradeStreams(ctx, s.cfg.Symbols, func(ctx context.Context, trade domain.AggregateTrade) error {
+	exchange.StartAggregateTradeStreams(ctx, bootstrapSymbols, func(ctx context.Context, trade domain.AggregateTrade) error {
 		s.RecordAggregateTrade(trade)
 		select {
 		case input <- trade:
@@ -285,7 +290,7 @@ func (s *Service) VolumeProfile(ctx context.Context, symbol string) (domain.Volu
 }
 
 func (s *Service) saveCurrentVolumeSnapshots(ctx context.Context, at time.Time) {
-	for _, symbol := range s.cfg.Symbols {
+	for _, symbol := range s.bootstrapSymbols() {
 		profile, err := s.VolumeProfile(ctx, symbol)
 		if err != nil || profile.State != "ok" || profile.VAL == nil || profile.VAH == nil {
 			continue

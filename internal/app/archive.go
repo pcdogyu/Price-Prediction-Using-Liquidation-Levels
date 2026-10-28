@@ -48,7 +48,10 @@ func (s *Service) importVolumeArchives(ctx context.Context) {
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	start, before := today.AddDate(0, 0, -31), today.AddDate(0, 0, -1)
 	allReady := true
-	for _, symbol := range s.cfg.Symbols {
+	// Historical volume archives are as expensive as the live aggregate-trade
+	// feed. Keep them aligned with the bootstrap set so a large APP_SYMBOLS
+	// catalog does not fan out hundreds of downloads at startup.
+	for _, symbol := range s.bootstrapSymbols() {
 		for day := start; day.Before(before); day = day.AddDate(0, 0, 1) {
 			if ctx.Err() != nil {
 				return
