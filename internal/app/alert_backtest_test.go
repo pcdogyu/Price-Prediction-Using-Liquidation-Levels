@@ -95,6 +95,43 @@ func TestScoreAlertBacktestUsesWeightedAverageAndLeverage(t *testing.T) {
 	}
 }
 
+func TestScoreAlertBacktestUsesRequestedHoldingDeadline(t *testing.T) {
+	base := time.Date(2026, 10, 26, 4, 0, 0, 0, time.UTC)
+	params := DefaultAlertBacktestParameters()
+	params.TakeProfitPct = 10
+	params.StopLossPct = 10
+	entry := alertBacktestEntry{
+		at:    base,
+		price: 100,
+		side:  "long",
+		candles: []domain.Candle{
+			{Time: base.Add(15 * time.Minute), Close: 100},
+			{Time: base.Add(time.Hour), Close: 100},
+			{Time: base.Add(time.Hour + time.Minute), Close: 101},
+		},
+	}
+	shortHolding := scoreAlertBacktestForHolding([]alertBacktestEntry{entry}, params, 15*time.Minute)
+	longHolding := scoreAlertBacktestForHolding([]alertBacktestEntry{entry}, params, time.Hour)
+	if shortHolding.trades != 1 || shortHolding.finalEquity != params.InitialEquity {
+		t.Fatalf("15m holding should exit at the next flat candle: %+v", shortHolding)
+	}
+	if longHolding.trades != 1 || longHolding.finalEquity != params.InitialEquity+10 {
+		t.Fatalf("1h holding should exit at the next profitable candle: %+v", longHolding)
+	}
+}
+
+func TestBacktestEventsThroughRejectsFutureSignals(t *testing.T) {
+	base := time.Date(2026, 10, 26, 5, 0, 0, 0, time.UTC)
+	events := backtestEventsThrough([]domain.LiquidationEvent{
+		{Symbol: "BTCUSDT", EventTime: base.Add(-time.Minute)},
+		{Symbol: "BTCUSDT", EventTime: base},
+		{Symbol: "BTCUSDT", EventTime: base.Add(time.Minute)},
+	}, base)
+	if len(events) != 2 || !events[1].EventTime.Equal(base) {
+		t.Fatalf("future events must not enter the report replay: %+v", events)
+	}
+}
+
 func TestValueAreaBacktestUsesGammaAndRearmsAfterCloseOnlyCrossing(t *testing.T) {
 	base := time.Date(2026, 10, 26, 3, 0, 0, 0, time.UTC)
 	val, vah := 100.0, 110.0

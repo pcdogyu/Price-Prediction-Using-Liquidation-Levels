@@ -76,6 +76,29 @@ def timeline_fixture():
 
 
 all_rows = timeline_fixture()
+holding_options = [15, 60, 240, 480, 720, 1440]
+backtest_rows = []
+for signal in ("alert", "aggressive", "steady"):
+    for filter_name in ("none", "vwap", "donchian", "vwap_donchian"):
+        for holding_minutes in holding_options:
+            backtest_rows.append({
+                "signal": signal, "filter": filter_name, "holding_minutes": holding_minutes,
+                "trades": 1, "additions": 0, "win_rate": 100, "profit_factor": 0,
+                "max_drawdown_pct": 0, "final_equity": 10000,
+            })
+for holding_minutes in holding_options:
+    backtest_rows.append({
+        "signal": "value_area", "filter": "none", "holding_minutes": holding_minutes,
+        "trades": 1, "additions": 0, "win_rate": 100, "profit_factor": 0,
+        "max_drawdown_pct": 0, "final_equity": 10000,
+    })
+backtest_report = {
+    "window_days": 14, "holding_minutes": 15, "holding_minutes_options": holding_options,
+    "initial_equity": 10000, "leverage": 1, "take_profit_pct": 1.2, "stop_loss_pct": 1.5,
+    "entry_notional_usd": 1000, "max_add_ons": 1, "vwap_range_hours": 24,
+    "vwap_min_drawdown_pct": 2, "vwap_donchian_pct": 35, "symbol_count": 2,
+    "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "rows": backtest_rows,
+}
 
 with sync_playwright() as playwright:
     launch = {"headless": True}
@@ -108,7 +131,14 @@ with sync_playwright() as playwright:
             packet["next_cursor"] = "page-2"
         route.fulfill(status=200, json=packet)
 
+    def route_backtest(route):
+        if route.request.method == "POST":
+            route.fulfill(status=200, json={"status": "completed", "report": backtest_report})
+        else:
+            route.fulfill(status=404, json={"detail": "not found"})
+
     page.route("**/api/v1/alerts/timeline?**", route_timeline)
+    page.route("**/api/v1/alerts/backtest", route_backtest)
     page.goto(base + "/alerts", wait_until="domcontentloaded")
     expect(page.locator("#alerts-history-status")).to_contain_text("预警 9", timeout=30000)
     expect(page.locator("#alerts-history-rows tr")).to_have_count(20)
@@ -142,6 +172,15 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows tr")).to_have_count(9)
     expect(page.locator("#alerts-count")).to_have_text("第 1 页 · 本页 9 条")
     expect(page.locator("#alerts-history-rows td:nth-child(3)")).to_contain_text(["预警"] * 9)
+
+    page.locator("#alerts-backtest-run").click()
+    expect(page.locator("#alerts-backtest-rows tr")).to_have_count(78)
+    expect(page.locator(".alerts-backtest-table th[data-sort-key='holding_minutes']")).to_contain_text("持有时间")
+    expect(page.locator("#alerts-backtest-status")).to_contain_text("持有 15m、1h、4h、8h、12h、24h")
+    expect(page.locator("#alerts-backtest-rows tr").nth(0).locator("td").nth(2)).to_have_text("15m")
+    page.locator(".alerts-backtest-table th[data-sort-key='holding_minutes'] button").click()
+    page.locator(".alerts-backtest-table th[data-sort-key='holding_minutes'] button").click()
+    expect(page.locator("#alerts-backtest-rows tr").nth(0).locator("td").nth(2)).to_have_text("24h")
 
     for width in (1440, 390):
         page.set_viewport_size({"width": width, "height": 1100})

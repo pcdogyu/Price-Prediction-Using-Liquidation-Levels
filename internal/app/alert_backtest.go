@@ -43,7 +43,7 @@ type AlertBacktestParameters struct {
 }
 
 // DefaultAlertBacktestParameters returns the page/API defaults. The fixed
-// 14-day window and 15-minute holding period are not request parameters.
+// 14-day window and holding-period comparison set are not request parameters.
 func DefaultAlertBacktestParameters() AlertBacktestParameters {
 	return AlertBacktestParameters{
 		InitialEquity:      10000,
@@ -184,9 +184,26 @@ func (s *Service) AlertBacktestStatusForContext(ctx context.Context, jobID strin
 }
 
 const (
-	alertBacktestWindow  = 14 * 24 * time.Hour
-	alertBacktestHolding = 15 * time.Minute
+	alertBacktestWindow        = 14 * 24 * time.Hour
+	alertBacktestLegacyHolding = 15 * time.Minute
 )
+
+var alertBacktestHoldingDurations = [...]time.Duration{
+	15 * time.Minute,
+	1 * time.Hour,
+	4 * time.Hour,
+	8 * time.Hour,
+	12 * time.Hour,
+	24 * time.Hour,
+}
+
+func alertBacktestHoldingOptions() []int {
+	options := make([]int, 0, len(alertBacktestHoldingDurations))
+	for _, duration := range alertBacktestHoldingDurations {
+		options = append(options, int(duration/time.Minute))
+	}
+	return options
+}
 
 type alertBacktestFilter struct {
 	key      string
@@ -269,12 +286,13 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 	}
 
 	for _, symbol := range symbols {
-		// Include the forward holding window in the candle read so the last
-		// completed entries are scored without another query per signal.
-		events, candles, replayErr := rtm.alertChartReplayData(ctx, symbol, cfg, to.Add(alertBacktestHolding), from)
+		// Include the longest forward holding window in the candle read so all
+		// six periods can score the last completed entries without another query.
+		events, candles, replayErr := rtm.alertChartReplayData(ctx, symbol, cfg, to.Add(alertBacktestHoldingDurations[len(alertBacktestHoldingDurations)-1]), from)
 		if replayErr != nil {
 			return domain.AlertBacktestReport{}, replayErr
 		}
+		events = backtestEventsThrough(events, to)
 		markets := replayAlertChartMarkets(events, cfg, candles)
 		type filterReplay struct {
 			filter string
@@ -321,31 +339,46 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 	}
 
 	report := domain.AlertBacktestReport{
-		WindowDays:         int(alertBacktestWindow / (24 * time.Hour)),
-		HoldingMinutes:     int(alertBacktestHolding / time.Minute),
-		InitialEquity:      params.InitialEquity,
-		Leverage:           params.Leverage,
-		TakeProfitPct:      params.TakeProfitPct,
-		StopLossPct:        params.StopLossPct,
-		EntryNotionalUSD:   params.EntryNotionalUSD,
-		AddOnNotionalUSD:   params.EntryNotionalUSD,
-		MaxAddOns:          params.MaxAddOns,
-		VWAPRangeHours:     params.VWAPRangeHours,
-		VWAPMinDrawdownPct: params.VWAPMinDrawdownPct,
-		VWAPDonchianPct:    params.VWAPDonchianPct,
-		From:               from,
-		To:                 to,
-		GeneratedAt:        to,
-		SymbolCount:        len(symbols),
-		Rows:               make([]domain.AlertBacktestRow, 0, len(alertBacktestSignals)*len(alertBacktestFilters)),
+		WindowDays:            int(alertBacktestWindow / (24 * time.Hour)),
+		HoldingMinutes:        int(alertBacktestLegacyHolding / time.Minute),
+		HoldingMinutesOptions: alertBacktestHoldingOptions(),
+		InitialEquity:         params.InitialEquity,
+		Leverage:              params.Leverage,
+		TakeProfitPct:         params.TakeProfitPct,
+		StopLossPct:           params.StopLossPct,
+		EntryNotionalUSD:      params.EntryNotionalUSD,
+		AddOnNotionalUSD:      params.EntryNotionalUSD,
+		MaxAddOns:             params.MaxAddOns,
+		VWAPRangeHours:        params.VWAPRangeHours,
+		VWAPMinDrawdownPct:    params.VWAPMinDrawdownPct,
+		VWAPDonchianPct:       params.VWAPDonchianPct,
+		From:                  from,
+		To:                    to,
+		GeneratedAt:           to,
+		SymbolCount:           len(symbols),
+		Rows:                  make([]domain.AlertBacktestRow, 0, len(alertBacktestSignals)*len(alertBacktestFilters)*len(alertBacktestHoldingDurations)),
 	}
 	for _, signal := range alertBacktestSignals {
 		for _, filter := range backtestFiltersForSignal(signal.key) {
-			metrics := scoreAlertBacktest(buckets[alertBacktestBucketKey(signal.key, filter.key)].entries, params)
-			report.Rows = append(report.Rows, backtestRow(signal.key, filter.key, metrics))
+			entries := buckets[alertBacktestBucketKey(signal.key, filter.key)].entries
+			for _, holding := range alertBacktestHoldingDurations {
+				metrics := scoreAlertBacktestForHolding(entries, params, holding)
+				report.Rows = append(report.Rows, backtestRowForHolding(signal.key, filter.key, holding, metrics))
+			}
 		}
 	}
 	return report, nil
+}
+
+func backtestEventsThrough(events []domain.LiquidationEvent, to time.Time) []domain.LiquidationEvent {
+	filtered := make([]domain.LiquidationEvent, 0, len(events))
+	for _, event := range events {
+		if !event.EventTime.IsZero() && event.EventTime.After(to) {
+			continue
+		}
+		filtered = append(filtered, event)
+	}
+	return filtered
 }
 
 func backtestFiltersForSignal(signal string) []alertBacktestFilter {
@@ -461,10 +494,14 @@ type alertBacktestMetrics struct {
 	finalEquity float64
 }
 
-// scoreAlertBacktest is kept separate from the replay so the trade accounting
-// is deterministic and easy to unit test. A candle close triggers TP/SL or the
+// scoreAlertBacktest keeps the legacy 15-minute helper available to focused
+// tests and older in-package callers. A candle close triggers TP/SL or the
 // fixed holding deadline; the next complete candle close is the exit price.
 func scoreAlertBacktest(entries []alertBacktestEntry, params AlertBacktestParameters) alertBacktestMetrics {
+	return scoreAlertBacktestForHolding(entries, params, alertBacktestLegacyHolding)
+}
+
+func scoreAlertBacktestForHolding(entries []alertBacktestEntry, params AlertBacktestParameters, holding time.Duration) alertBacktestMetrics {
 	metrics := alertBacktestMetrics{finalEquity: params.InitialEquity}
 	if len(entries) == 0 {
 		return metrics
@@ -518,7 +555,7 @@ func scoreAlertBacktest(entries []alertBacktestEntry, params AlertBacktestParame
 				change = -change
 			}
 			triggered := change >= takeProfit || change <= -stopLoss
-			heldLongEnough := !candle.Time.Before(entry.at.Add(alertBacktestHolding))
+			heldLongEnough := !candle.Time.Before(entry.at.Add(holding))
 			if !triggered && !heldLongEnough {
 				continue
 			}
@@ -560,13 +597,18 @@ func scoreAlertBacktest(entries []alertBacktestEntry, params AlertBacktestParame
 }
 
 func backtestRow(signal, filter string, metrics alertBacktestMetrics) domain.AlertBacktestRow {
+	return backtestRowForHolding(signal, filter, alertBacktestLegacyHolding, metrics)
+}
+
+func backtestRowForHolding(signal, filter string, holding time.Duration, metrics alertBacktestMetrics) domain.AlertBacktestRow {
 	row := domain.AlertBacktestRow{
-		Signal:      signal,
-		Filter:      filter,
-		Trades:      metrics.trades,
-		Additions:   metrics.additions,
-		MaxDrawdown: metrics.maxDrawdown,
-		FinalEquity: metrics.finalEquity,
+		Signal:         signal,
+		Filter:         filter,
+		HoldingMinutes: int(holding / time.Minute),
+		Trades:         metrics.trades,
+		Additions:      metrics.additions,
+		MaxDrawdown:    metrics.maxDrawdown,
+		FinalEquity:    metrics.finalEquity,
 	}
 	if metrics.trades > 0 {
 		row.WinRate = float64(metrics.wins) / float64(metrics.trades) * 100

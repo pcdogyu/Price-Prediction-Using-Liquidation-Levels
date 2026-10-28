@@ -58,7 +58,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	// Alerts and signals live in one 20-row paged table, and the live monitor table
 	// stays the last section.
-	for _, want := range []string{"预警与信号历史", "最近 30 天", "报警回测（过去 2 周）", "交易所刷单独立回测", "Gamma 开仓条件", "alerts-backtest-run", "alerts-backtest-rows", `data-sort-key="signal"`, `data-sort-key="filter"`, `data-sort-key="trades"`, `data-sort-key="additions"`, `data-sort-key="win_rate"`, `data-sort-key="profit_factor"`, `data-sort-key="max_drawdown_pct"`, `data-sort-key="final_equity"`, "alerts-backtest-sort", "报警参数", "策略开关", "交易所刷单", "VAL/VAH 来回刷", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-filter", `<option value="" selected>全部</option>`, `<option value="unfiltered">未过滤</option>`, `<option value="filtered">过滤</option>`, "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "平仓区域预警信号过滤", "激进信号过滤", "稳健信号过滤", "交易所刷单策略过滤", "VWAP过滤", "Donchian过滤", "服务端过滤", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-order-value-area-close" type="checkbox"`, `id="alerts-order-value-area" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`, `id="alerts-vwap-filter" type="checkbox"`, `id="alerts-donchian-filter" type="checkbox"`, `id="alerts-backtest-initial-equity" type="number"`, `value="10000"`, `id="alerts-backtest-leverage"`, `id="alerts-backtest-take-profit"`, `id="alerts-backtest-stop-loss"`, `id="alerts-backtest-order-size"`, `id="alerts-backtest-max-add-ons"`, `id="alerts-backtest-vwap-range-hours"`, `id="alerts-backtest-vwap-min-drawdown"`, `id="alerts-backtest-vwap-donchian"`} {
+	for _, want := range []string{"预警与信号历史", "最近 30 天", "报警回测（过去 2 周）", "交易所刷单独立回测", "Gamma 开仓条件", "alerts-backtest-run", "alerts-backtest-rows", `data-sort-key="signal"`, `data-sort-key="filter"`, `data-sort-key="holding_minutes"`, `data-sort-key="trades"`, `data-sort-key="additions"`, `data-sort-key="win_rate"`, `data-sort-key="profit_factor"`, `data-sort-key="max_drawdown_pct"`, `data-sort-key="final_equity"`, "持有时间", "alerts-backtest-sort", "报警参数", "策略开关", "交易所刷单", "VAL/VAH 来回刷", "信号重算", "alerts-signal-progress", "alerts-signal-progress-fill", "分别控制平仓和开仓", "每页 20 条", "全部或输入 DOGE", "alerts-filter", `<option value="" selected>全部</option>`, `<option value="unfiltered">未过滤</option>`, `<option value="filtered">过滤</option>`, "alerts-prev", "alerts-next", "<th>下单</th>", "<th>报警</th>", "<th>周期</th>", "平仓区域预警信号过滤", "激进信号过滤", "稳健信号过滤", "交易所刷单策略过滤", "VWAP过滤", "Donchian过滤", "服务端过滤", "alerts-strategy-settings", "alerts-signal-recalculate", "alerts-order-signal-settings", `id="alerts-order-alert-close" type="checkbox"`, `id="alerts-order-alert" type="checkbox"`, `id="alerts-order-aggressive-close" type="checkbox"`, `id="alerts-order-aggressive" type="checkbox"`, `id="alerts-order-steady-close" type="checkbox"`, `id="alerts-order-steady" type="checkbox"`, `id="alerts-order-value-area-close" type="checkbox"`, `id="alerts-order-value-area" type="checkbox"`, `id="alerts-threshold-btc" type="number" min="1000"`, `id="alerts-vwap-range-hours"`, `id="alerts-vwap-min-drawdown"`, `id="alerts-vwap-donchian"`, `id="alerts-vwap-filter" type="checkbox"`, `id="alerts-donchian-filter" type="checkbox"`, `id="alerts-backtest-initial-equity" type="number"`, `value="10000"`, `id="alerts-backtest-leverage"`, `id="alerts-backtest-take-profit"`, `id="alerts-backtest-stop-loss"`, `id="alerts-backtest-order-size"`, `id="alerts-backtest-max-add-ons"`, `id="alerts-backtest-vwap-range-hours"`, `id="alerts-backtest-vwap-min-drawdown"`, `id="alerts-backtest-vwap-donchian"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
@@ -385,11 +385,19 @@ func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
 	}
 	status := waitForReport(nil)
 	report := *status.Report
-	if report.WindowDays != 14 || report.HoldingMinutes != 15 || len(report.Rows) != 13 || report.InitialEquity != 10000 || report.Leverage != 1 || report.TakeProfitPct != 1.2 || report.StopLossPct != 1.5 || report.EntryNotionalUSD != 1000 || report.AddOnNotionalUSD != 1000 || report.MaxAddOns != 1 || report.VWAPRangeHours != 24 || report.VWAPMinDrawdownPct != 2 || report.VWAPDonchianPct != 35 {
+	expectedHoldingMinutes := []int{15, 60, 240, 480, 720, 1440}
+	if report.WindowDays != 14 || report.HoldingMinutes != 15 || len(report.HoldingMinutesOptions) != len(expectedHoldingMinutes) || len(report.Rows) != 78 || report.InitialEquity != 10000 || report.Leverage != 1 || report.TakeProfitPct != 1.2 || report.StopLossPct != 1.5 || report.EntryNotionalUSD != 1000 || report.AddOnNotionalUSD != 1000 || report.MaxAddOns != 1 || report.VWAPRangeHours != 24 || report.VWAPMinDrawdownPct != 2 || report.VWAPDonchianPct != 35 {
 		t.Fatalf("unexpected default backtest report: %+v", report)
 	}
+	for index, holding := range expectedHoldingMinutes {
+		if report.HoldingMinutesOptions[index] != holding {
+			t.Fatalf("unexpected holding options: %+v", report.HoldingMinutesOptions)
+		}
+	}
 	valueAreaRows := 0
+	holdingCounts := map[int]int{}
 	for _, row := range report.Rows {
+		holdingCounts[row.HoldingMinutes]++
 		if row.Signal == domain.SignalValueArea {
 			valueAreaRows++
 			if row.Filter != "none" {
@@ -397,8 +405,13 @@ func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
 			}
 		}
 	}
-	if valueAreaRows != 1 {
+	if valueAreaRows != len(expectedHoldingMinutes) {
 		t.Fatalf("value-area backtest row missing: %+v", report.Rows)
+	}
+	for _, holding := range expectedHoldingMinutes {
+		if holdingCounts[holding] != 13 {
+			t.Fatalf("holding period %d must have one row per signal/filter combination: %+v", holding, holdingCounts)
+		}
 	}
 
 	beforeSettings := serveAlert(srv, http.MethodGet, "/api/v1/alerts/strategy-settings", nil)
@@ -408,7 +421,7 @@ func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
 	customBody := `{"initial_equity":25000,"leverage":3,"take_profit_pct":2.5,"stop_loss_pct":4,"entry_notional_usd":750,"max_add_ons":3,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30}`
 	custom := waitForReport(strings.NewReader(customBody))
 	customReport := *custom.Report
-	if customReport.InitialEquity != 25000 || customReport.Leverage != 3 || customReport.TakeProfitPct != 2.5 || customReport.StopLossPct != 4 || customReport.EntryNotionalUSD != 750 || customReport.AddOnNotionalUSD != 750 || customReport.MaxAddOns != 3 || customReport.VWAPRangeHours != 18 || customReport.VWAPMinDrawdownPct != 2.5 || customReport.VWAPDonchianPct != 30 {
+	if customReport.InitialEquity != 25000 || customReport.Leverage != 3 || customReport.TakeProfitPct != 2.5 || customReport.StopLossPct != 4 || customReport.EntryNotionalUSD != 750 || customReport.AddOnNotionalUSD != 750 || customReport.MaxAddOns != 3 || customReport.VWAPRangeHours != 18 || customReport.VWAPMinDrawdownPct != 2.5 || customReport.VWAPDonchianPct != 30 || len(customReport.Rows) != 78 {
 		t.Fatalf("unexpected custom backtest report: %+v", customReport)
 	}
 	afterSettings := serveAlert(srv, http.MethodGet, "/api/v1/alerts/strategy-settings", nil)

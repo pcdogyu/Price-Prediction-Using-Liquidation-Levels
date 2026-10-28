@@ -352,44 +352,46 @@ type AlertSignalRecalculation struct {
 	SignalCount    int       `json:"signal_count"`
 }
 
-// AlertBacktestRow is one signal/filter combination in the two-week alert
+// AlertBacktestRow is one signal/filter/holding-period combination in the two-week alert
 // backtest shown on the alert page. The value_area strategy has one independent
 // "none" row because it uses VAL/VAH and Gamma rather than VWAP/Donchian filters.
 // Metrics are based only on entries with a complete next candle for the exit;
 // ProfitFactor is zero when no losing trade exists so the JSON remains finite
 // and the UI can render it as unavailable.
 type AlertBacktestRow struct {
-	Signal       string  `json:"signal"`
-	Filter       string  `json:"filter"`
-	Trades       int     `json:"trades"`
-	Additions    int     `json:"additions"`
-	WinRate      float64 `json:"win_rate"`
-	ProfitFactor float64 `json:"profit_factor"`
-	MaxDrawdown  float64 `json:"max_drawdown_pct"`
-	FinalEquity  float64 `json:"final_equity"`
+	Signal         string  `json:"signal"`
+	Filter         string  `json:"filter"`
+	HoldingMinutes int     `json:"holding_minutes"`
+	Trades         int     `json:"trades"`
+	Additions      int     `json:"additions"`
+	WinRate        float64 `json:"win_rate"`
+	ProfitFactor   float64 `json:"profit_factor"`
+	MaxDrawdown    float64 `json:"max_drawdown_pct"`
+	FinalEquity    float64 `json:"final_equity"`
 }
 
 // AlertBacktestReport is an ephemeral, tenant-scoped alert replay report. It
 // intentionally does not write rows to the alert audit tables or change live
 // strategy/order settings.
 type AlertBacktestReport struct {
-	WindowDays         int                `json:"window_days"`
-	HoldingMinutes     int                `json:"holding_minutes"`
-	InitialEquity      float64            `json:"initial_equity"`
-	Leverage           float64            `json:"leverage"`
-	TakeProfitPct      float64            `json:"take_profit_pct"`
-	StopLossPct        float64            `json:"stop_loss_pct"`
-	EntryNotionalUSD   float64            `json:"entry_notional_usd"`
-	AddOnNotionalUSD   float64            `json:"add_on_notional_usd"`
-	MaxAddOns          int                `json:"max_add_ons"`
-	VWAPRangeHours     int                `json:"vwap_range_hours"`
-	VWAPMinDrawdownPct float64            `json:"vwap_min_drawdown_pct"`
-	VWAPDonchianPct    float64            `json:"vwap_donchian_pct"`
-	From               time.Time          `json:"from"`
-	To                 time.Time          `json:"to"`
-	GeneratedAt        time.Time          `json:"generated_at"`
-	SymbolCount        int                `json:"symbol_count"`
-	Rows               []AlertBacktestRow `json:"rows"`
+	WindowDays            int                `json:"window_days"`
+	HoldingMinutes        int                `json:"holding_minutes"`
+	HoldingMinutesOptions []int              `json:"holding_minutes_options"`
+	InitialEquity         float64            `json:"initial_equity"`
+	Leverage              float64            `json:"leverage"`
+	TakeProfitPct         float64            `json:"take_profit_pct"`
+	StopLossPct           float64            `json:"stop_loss_pct"`
+	EntryNotionalUSD      float64            `json:"entry_notional_usd"`
+	AddOnNotionalUSD      float64            `json:"add_on_notional_usd"`
+	MaxAddOns             int                `json:"max_add_ons"`
+	VWAPRangeHours        int                `json:"vwap_range_hours"`
+	VWAPMinDrawdownPct    float64            `json:"vwap_min_drawdown_pct"`
+	VWAPDonchianPct       float64            `json:"vwap_donchian_pct"`
+	From                  time.Time          `json:"from"`
+	To                    time.Time          `json:"to"`
+	GeneratedAt           time.Time          `json:"generated_at"`
+	SymbolCount           int                `json:"symbol_count"`
+	Rows                  []AlertBacktestRow `json:"rows"`
 }
 
 // KlineView backs the per symbol K-line chart on the alert page. The candles come

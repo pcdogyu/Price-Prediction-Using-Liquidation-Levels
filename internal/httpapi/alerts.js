@@ -176,12 +176,23 @@
 
   const backtestSignalLabels = { alert: '预警', aggressive: '激进', steady: '稳健', value_area: '交易所刷单' };
   const backtestFilterLabels = { none: '无', vwap: 'VWAP', donchian: 'Donchian', vwap_donchian: 'VWAP + Donchian' };
+  const BACKTEST_HOLDING_OPTIONS = [15, 60, 240, 480, 720, 1440];
+  let backtestHoldingOptions = BACKTEST_HOLDING_OPTIONS.slice(), backtestHoldingDefault = BACKTEST_HOLDING_OPTIONS[0];
   const backtestSignalOrder = { alert: 0, aggressive: 1, steady: 2, value_area: 3 };
   const backtestFilterOrder = { none: 0, vwap: 1, donchian: 2, vwap_donchian: 3 };
-  const backtestNumericSortKeys = new Set(['trades', 'additions', 'win_rate', 'profit_factor', 'max_drawdown_pct', 'final_equity']);
+  const backtestNumericSortKeys = new Set(['holding_minutes', 'trades', 'additions', 'win_rate', 'profit_factor', 'max_drawdown_pct', 'final_equity']);
   const backtestPercent = value => Number.isFinite(Number(value)) ? Number(value).toFixed(2) + '%' : '—';
   const backtestFactor = value => Number(value) > 0 ? Number(value).toFixed(2) : '—';
   const backtestEquity = value => Number.isFinite(Number(value)) ? '$' + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+  const backtestHoldingMinutes = row => {
+    const value = Number(row && row.holding_minutes);
+    return Number.isFinite(value) && value > 0 ? value : backtestHoldingDefault;
+  };
+  const backtestHoldingLabel = value => {
+    const minutes = Number(value);
+    if (!Number.isFinite(minutes) || minutes <= 0) return '—';
+    return minutes < 60 ? minutes + 'm' : (minutes / 60) + 'h';
+  };
 
   function updateBacktestSortControls() {
     document.querySelectorAll('.alerts-backtest-sort').forEach(button => {
@@ -228,6 +239,7 @@
     $('alerts-backtest-rows').innerHTML = rows.length ? rows.map(row => '<tr>' +
       '<td>' + escape(backtestSignalLabels[row.signal] || row.signal || '—') + '</td>' +
       '<td>' + escape(backtestFilterLabels[row.filter] || row.filter || '—') + '</td>' +
+      '<td>' + escape(backtestHoldingLabel(backtestHoldingMinutes(row))) + '</td>' +
       '<td>' + escape(String(row.trades ?? 0)) + '</td>' +
       '<td>' + escape(String(row.additions ?? 0)) + '</td>' +
       '<td>' + escape(backtestPercent(row.win_rate)) + '</td>' +
@@ -250,10 +262,15 @@
 
   function renderBacktest(report) {
     backtestRows = Array.isArray(report && report.rows) ? report.rows.slice() : [];
+    const reportedOptions = Array.isArray(report && report.holding_minutes_options)
+      ? report.holding_minutes_options.map(Number).filter(value => Number.isFinite(value) && value > 0)
+      : [];
+    backtestHoldingOptions = reportedOptions.length ? reportedOptions : [Number(report && report.holding_minutes) || BACKTEST_HOLDING_OPTIONS[0]];
+    backtestHoldingDefault = backtestHoldingOptions[0];
     renderBacktestRows();
     const symbols = Number(report && report.symbol_count) || 0;
     const days = Number(report && report.window_days) || 14;
-    const holding = Number(report && report.holding_minutes) || 15;
+    const holdingText = backtestHoldingOptions.map(backtestHoldingLabel).join('、');
     const initial = Number(report && report.initial_equity) || 10000;
     const leverage = Number(report && report.leverage) || 1;
     const takeProfit = Number(report && report.take_profit_pct) || 1.2;
@@ -264,8 +281,8 @@
     const vwapMinDrawdown = Number(report && report.vwap_min_drawdown_pct) || 2;
     const vwapDonchian = Number(report && report.vwap_donchian_pct) || 35;
     const moneyValue = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    $('alerts-backtest-status').textContent = '过去 ' + days + ' 天回测完成 · ' + symbols + ' 个币对 · 持有 ' + holding + ' 分钟 · 生成 ' + when(report && report.generated_at);
-    $('alerts-backtest-note').textContent = '本次回测参数：本金 $' + moneyValue(initial) + ' · 杠杆 ' + leverage + 'x · 止盈 ' + takeProfit + '% · 止损 ' + stopLoss + '% · 每次下单保证金 $' + moneyValue(orderSize) + ' · 最多加仓 ' + maxAddOns + ' 次 · VWAP Donchian 窗口 ' + vwapRangeHours + ' 小时 · 最小回撤 ' + vwapMinDrawdown + '% · 分位 ' + vwapDonchian + '%。采用收盘触发、下一根 K 线收盘成交；不计手续费、滑点和资金费；没有下一根完整 K 线的末端信号不计入交易数。';
+    $('alerts-backtest-status').textContent = '过去 ' + days + ' 天回测完成 · ' + symbols + ' 个币对 · 持有 ' + holdingText + ' · 生成 ' + when(report && report.generated_at);
+    $('alerts-backtest-note').textContent = '本次回测参数：持有时间 ' + holdingText + '（最长持有期限，止盈或止损先触发则提前退出）· 本金 $' + moneyValue(initial) + ' · 杠杆 ' + leverage + 'x · 止盈 ' + takeProfit + '% · 止损 ' + stopLoss + '% · 每次下单保证金 $' + moneyValue(orderSize) + ' · 最多加仓 ' + maxAddOns + ' 次 · VWAP Donchian 窗口 ' + vwapRangeHours + ' 小时 · 最小回撤 ' + vwapMinDrawdown + '% · 分位 ' + vwapDonchian + '%。采用收盘触发、到期后下一根完整 K 线收盘成交；不计手续费、滑点和资金费；没有下一根完整 K 线的末端信号不计入交易数。';
   }
 
   function backtestParamsBody() {
