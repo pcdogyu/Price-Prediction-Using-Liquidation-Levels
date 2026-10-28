@@ -446,19 +446,25 @@ func (s *Server) dashboardSymbolButtons() string {
 	if len(s.symbols) == 0 {
 		s.symbols = normalizeDashboardSymbols(nil)
 	}
-	buttons := make([]string, 0, len(s.symbols))
-	for _, value := range s.symbols {
+	// Keep the two primary anchors as the stable, one-click choices. The
+	// exchange-wide catalog is intentionally searched instead of rendered as
+	// hundreds of buttons, which keeps the bubble page usable on desktop and TV.
+	buttons := make([]string, 0, 2)
+	for _, value := range []string{"BTCUSDT", "ETHUSDT"} {
+		if !containsString(s.symbols, value) {
+			continue
+		}
 		label := strings.TrimSuffix(value, "USDT")
 		if label == "" {
 			label = value
 		}
 		class := ""
-		if value == "ETHUSDT" || (value != "BTCUSDT" && !containsString(s.symbols, "ETHUSDT")) {
+		if value == "ETHUSDT" || (value == "BTCUSDT" && !containsString(s.symbols, "ETHUSDT")) {
 			class = ` class="active"`
 		}
 		buttons = append(buttons, `<button type="button" data-symbol="`+htmlEscapeAttribute(value)+`"`+class+`>`+html.EscapeString(label)+`</button>`)
 	}
-	return strings.Join(buttons, "") + `<label class="symbol-picker" for="symbol-search"><span>全部币对</span><input id="symbol-search" type="search" list="symbol-options" placeholder="搜索 BTC / ETH" autocomplete="off" spellcheck="false"><datalist id="symbol-options"></datalist><button id="symbol-load" type="button">加载</button></label><span id="symbol-catalog-state" class="symbol-catalog-state" aria-live="polite">正在读取币对目录…</span>`
+	return strings.Join(buttons, "") + `<label class="symbol-picker" for="symbol-search"><span>其他币对</span><input id="symbol-search" type="search" list="symbol-options" placeholder="搜索 SOL / XRP" autocomplete="off" spellcheck="false"><datalist id="symbol-options"></datalist><button id="symbol-load" type="button">加载</button></label><span id="symbol-catalog-state" class="symbol-catalog-state" aria-live="polite">正在读取币对目录…</span>`
 }
 
 func containsString(values []string, target string) bool {

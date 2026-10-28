@@ -58,8 +58,12 @@ func TestBubbleChartUsesConfiguredMultipleSymbols(t *testing.T) {
 	defer st.Close()
 	w := httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/bubbles", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `data-symbol="SOLUSDT"`) || !strings.Contains(w.Body.String(), `id="symbol-search"`) || !strings.Contains(w.Body.String(), `id="symbol-options"`) {
-		t.Fatalf("configured SOL symbol was not rendered: status=%d", w.Code)
+	body := w.Body.String()
+	if w.Code != 200 || !strings.Contains(body, `data-symbol="BTCUSDT"`) || !strings.Contains(body, `data-symbol="ETHUSDT" class="active"`) || !strings.Contains(body, `id="symbol-search"`) || !strings.Contains(body, `id="symbol-options"`) {
+		t.Fatalf("primary buttons or symbol search were not rendered: status=%d", w.Code)
+	}
+	if strings.Contains(body, `data-symbol="SOLUSDT"`) {
+		t.Fatal("non-primary symbols should use the search box instead of shortcut buttons")
 	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/assets/dashboard.js", nil))
