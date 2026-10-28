@@ -103,7 +103,6 @@ const pct = value => finite(value) ? (value * 100).toFixed(1) + '%' : '—';
 const zoomLabel = value => '×' + (Math.round(value * 100) / 100);
 const zoomSuffix = value => value === 1 ? '' : ' ' + zoomLabel(value);
 const when = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
-const patternName = { doji: '十字星', hammer: '锤头', shooting_star: '流星', bullish_engulfing: '看涨吞没', bearish_engulfing: '看跌吞没' };
 const statusName = { unavailable: '不可用', reference: '参考', armed: '等待触发', approaching: '接近触发', triggered: '已触发', expired: '已过期' };
 const intervalName = { '1m': '1分钟', '2m': '2分钟', '3m': '3分钟', '5m': '5分钟', '10m': '10分钟', '15m': '15分钟', '30m': '30分钟', '1h': '1小时', '4h': '4小时', '8h': '8小时', '12h': '12小时', '24h': '24小时' };
 const intervalMilliseconds = { '1m': 60000, '2m': 120000, '3m': 180000, '5m': 300000, '10m': 600000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000, '8h': 28800000, '12h': 43200000, '24h': 86400000 };
@@ -842,27 +841,17 @@ function draw(view, map, signal, volume) {
       const color = candle.close >= candle.open ? '#2dd4bf' : '#fb7185';
       const bodyTop = y(Math.max(candle.open, candle.close));
       const bodyBottom = y(Math.min(candle.open, candle.close));
-      const patterns = (candle.patterns || []).map(item => patternName[item.name] || item.name).join(' · ') || '无识别形态';
       const candleTip = embeddedChart
         ? when(candle.time) + '\nO ' + money(candle.open) + '  H ' + money(candle.high) + '\nL ' + money(candle.low) + '  C ' + money(candle.close)
-        : when(candle.time) + '\nO ' + money(candle.open) + '  H ' + money(candle.high) + '\nL ' + money(candle.low) + '  C ' + money(candle.close) + '\n成交额 $' + compact(candle.volume_usd) + '\n' + patterns + (candle.complete ? '' : '\n当前K线尚未完成');
+        : when(candle.time) + '\nO ' + money(candle.open) + '  H ' + money(candle.high) + '\nL ' + money(candle.low) + '  C ' + money(candle.close) + '\n成交额 $' + compact(candle.volume_usd) + (candle.complete ? '' : '\n当前K线尚未完成');
       const group = svgNode('g', { 'data-tip': candleTip });
       group.appendChild(svgNode('line', { x1: x, y1: y(candle.high), x2: x, y2: y(candle.low), stroke: color, 'stroke-width': 1.15 }));
       group.appendChild(svgNode('rect', { x: x - bodyWidth / 2, y: bodyTop, width: bodyWidth, height: Math.max(1.5, bodyBottom - bodyTop), fill: color, rx: .8 }));
-      const bullish = embeddedChart ? [] : (candle.patterns || []).filter(item => item.bias === 'bullish');
-      const bearish = embeddedChart ? [] : (candle.patterns || []).filter(item => item.bias === 'bearish');
-      if (bullish.length) {
-        const cy = y(candle.low) + 9;
-        group.appendChild(svgNode('path', { d: arrowPath(x, cy, 'long', 4), fill: 'none', stroke: '#2dd4bf', 'stroke-width': 1.4, 'data-tip': 'K线形态 · 多单方向\n' + bullish.map(item => patternName[item.name] || item.name).join(' · ') + '\n' + when(candle.time) }));
-      }
-      if (bearish.length) {
-        const cy = y(candle.high) - 9;
-        group.appendChild(svgNode('path', { d: arrowPath(x, cy, 'short', 4), fill: 'none', stroke: '#fb7185', 'stroke-width': 1.4, 'data-tip': 'K线形态 · 空单方向\n' + bearish.map(item => patternName[item.name] || item.name).join(' · ') + '\n' + when(candle.time) }));
-      }
+      // Keep candle.patterns in the API payload for compatibility, but do not render
+      // pattern annotations on the bubbles page.
       const signals = embeddedChart ? [] : (modelSignals.get(new Date(candle.time).getTime()) || []);
       signals.forEach(item => {
-        const patterned = item.side === 'long' ? bullish.length : bearish.length;
-        const cy = item.side === 'long' ? y(candle.low) + 10 + (patterned ? 11 : 0) : y(candle.high) - 10 - (patterned ? 11 : 0);
+        const cy = item.side === 'long' ? y(candle.low) + 10 : y(candle.high) - 10;
         const signalColor = item.side === 'long' ? '#2dd4bf' : '#fb7185';
         group.appendChild(svgNode('path', { d: arrowPath(x, cy, item.side, 5), fill: signalColor, stroke: '#07141d', 'stroke-width': 1, 'data-tip': '模型' + (item.side === 'long' ? '多单' : '空单') + '信号 · ' + pct(item.probability) + '\n预测价 ' + money(item.price) + '\n预测时间 ' + when(item.time) + '\n模型 ' + (item.model_version || '—') + '\n仅表示60分钟先触墙概率' }));
       });

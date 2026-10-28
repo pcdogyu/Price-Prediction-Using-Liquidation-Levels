@@ -84,7 +84,7 @@ with sync_playwright() as playwright:
         start = end - 120 * duration
         key = (symbol, interval, end)
         if key not in state["datasets"]:
-            candles = [{"time": iso(start + i * duration), "open": 2490, "close": 2495, "low": 2484.59, "high": 2501.49, "volume_usd": 1000, "patterns": [], "complete": True} for i in range(120) if i != 10]
+            candles = [{"time": iso(start + i * duration), "open": 2490, "close": 2495, "low": 2484.59, "high": 2501.49, "volume_usd": 1000, "patterns": ([{"name": "hammer", "bias": "bullish"}] if i == 20 else []), "complete": True} for i in range(120) if i != 10]
             rows = [{"id": f"{symbol}-{interval}-{end}-{i}", "exchange": "binance", "symbol": symbol, "position_side": "short" if i % 2 else "long", "price": 2490 + i % 5, "quantity": .001, "notional_usd": 2.49, "event_time": iso(start + int(i / 6003 * (119 * duration))), "coverage": "sampled"} for i in range(6003)]
             rows[0]["price"] = 2482.9  # At the padded lower border.
             rows[1]["price"] = 2800  # Counted as outside the price viewport.
@@ -208,6 +208,13 @@ with sync_playwright() as playwright:
         expect(page.locator("#classic-distance-30")).to_have_text("30.00 USDT")
         assert page.evaluate("""() => Array.from(document.querySelectorAll('#classic-pivot-table .classic-pivot-row > *')).every(cell => getComputedStyle(cell).textAlign === 'center')""")
     initial = check_axis()
+    pattern_view = page.evaluate("""() => ({
+      tips: Array.from(document.querySelectorAll('[data-tip*="K线形态"]'), e => e.getAttribute('data-tip')),
+      legend: document.querySelector('.legend').textContent,
+      footer: document.querySelector('.status-row .panel:last-child .footer-note').textContent
+    })""")
+    assert not pattern_view["tips"], pattern_view
+    assert "形态" not in pattern_view["legend"] and "形态" not in pattern_view["footer"], pattern_view
     trade_view_status = page.evaluate("""() => ({
       count: Number(document.getElementById('market-chart').dataset.tradeMarkerCount || 0),
       context: document.getElementById('chart-context').textContent,
