@@ -39,38 +39,63 @@ type Health struct {
 	LastError   string    `json:"last_error,omitempty"`
 	Coverage    float64   `json:"coverage"`
 }
-type HealthRegistry struct {
-	mu sync.RWMutex
-	m  map[string]Health
+
+type healthEntry struct {
+	mu    sync.RWMutex
+	value Health
 }
 
-func NewHealthRegistry() *HealthRegistry            { return &HealthRegistry{m: map[string]Health{}} }
-func (h *HealthRegistry) Set(name string, v Health) { h.mu.Lock(); defer h.mu.Unlock(); h.m[name] = v }
+type HealthRegistry struct {
+	entries sync.Map // map[string]*healthEntry
+}
+
+func NewHealthRegistry() *HealthRegistry { return &HealthRegistry{} }
+
+func (h *HealthRegistry) entry(name string) *healthEntry {
+	if value, ok := h.entries.Load(name); ok {
+		return value.(*healthEntry)
+	}
+	value, _ := h.entries.LoadOrStore(name, &healthEntry{})
+	return value.(*healthEntry)
+}
+
+func (h *HealthRegistry) Set(name string, v Health) {
+	entry := h.entry(name)
+	entry.mu.Lock()
+	entry.value = v
+	entry.mu.Unlock()
+}
 func (h *HealthRegistry) Touch(name string, coverage float64) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	v := h.m[name]
+	entry := h.entry(name)
+	entry.mu.Lock()
+	v := entry.value
 	v.Connected = true
 	v.LastMessage = time.Now().UTC()
 	v.LastError = ""
 	v.Coverage = coverage
-	h.m[name] = v
+	entry.value = v
+	entry.mu.Unlock()
 }
 func (h *HealthRegistry) Fail(name string, err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	v := h.m[name]
+	entry := h.entry(name)
+	entry.mu.Lock()
+	v := entry.value
 	v.Connected = false
-	v.LastError = err.Error()
-	h.m[name] = v
+	if err != nil {
+		v.LastError = err.Error()
+	}
+	entry.value = v
+	entry.mu.Unlock()
 }
 func (h *HealthRegistry) Snapshot() map[string]Health {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	out := map[string]Health{}
-	for k, v := range h.m {
-		out[k] = v
-	}
+	h.entries.Range(func(key, value any) bool {
+		entry := value.(*healthEntry)
+		entry.mu.RLock()
+		out[key.(string)] = entry.value
+		entry.mu.RUnlock()
+		return true
+	})
 	return out
 }
 
