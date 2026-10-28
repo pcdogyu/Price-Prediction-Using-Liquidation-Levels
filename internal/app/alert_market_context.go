@@ -97,7 +97,11 @@ func (s *Service) liquidationMarketContext(ctx context.Context, event domain.Liq
 		return alert.MarketContext{Price: event.Price}
 	}
 	market := buildLiquidationMarketContext(event, cfg, rows)
-	if market.DonchianReady || !s.alertCandleRepairCandidate(symbol, rows, cfg) || !s.claimAlertCandleRepair(symbol, time.Now().UTC()) {
+	needsRepair := s.alertCandleRepairCandidate(symbol, rows, cfg)
+	if len(rows) == 0 && s.isConfiguredAlertSymbol(symbol) {
+		needsRepair = true
+	}
+	if market.DonchianReady || !needsRepair || !s.claimAlertCandleRepair(symbol, time.Now().UTC()) {
 		return market
 	}
 	repaired, ok := s.repairAlertCandleWindow(ctx, symbol, event.EventTime, cfg)
@@ -117,9 +121,6 @@ func (s *Service) alertCandleRepairCandidate(symbol string, rows []domain.Candle
 	rangeMinutes := cfg.VWAPRangeMinutes
 	if rangeMinutes <= 0 {
 		rangeMinutes = 24 * 60
-	}
-	if len(rows) == 0 {
-		return true
 	}
 	return len(rows) >= rangeMinutes-alertCandleRepairMinCoverage
 }

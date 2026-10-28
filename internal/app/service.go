@@ -202,7 +202,7 @@ func (s *Service) pollLoop(ctx context.Context) {
 func (s *Service) poll(ctx context.Context) {
 	var wg sync.WaitGroup
 	for _, c := range s.clients {
-		for _, sym := range s.cfg.Symbols {
+		for _, sym := range s.bootstrapSymbols() {
 			wg.Add(1)
 			go func(c exchange.Client, sym string) {
 				defer wg.Done()
