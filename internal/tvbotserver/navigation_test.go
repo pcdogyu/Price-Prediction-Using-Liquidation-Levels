@@ -67,6 +67,9 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 	if !strings.Contains(page, `>系统信息<span class="nav-system-caret"`) {
 		t.Fatal("system menu trigger is missing")
 	}
+	if !strings.Contains(page, `id="nav-theme" data-theme-toggle="true"`) {
+		t.Fatal("theme toggle should be marked for delegated mobile handling")
+	}
 }
 
 func TestTVBotNavigationMatchesAlertsNavigation(t *testing.T) {

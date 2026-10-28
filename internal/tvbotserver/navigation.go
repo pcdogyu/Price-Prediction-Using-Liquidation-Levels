@@ -90,7 +90,7 @@ func renderUnifiedNav(classSuffix string, items []TopMenuItem, link func(string)
 		out.WriteString(`</div>`)
 	}
 	out.WriteString(RenderSystemMenu(items, link, active))
-	out.WriteString(`<button id="nav-theme" type="button">浅色主题</button><button id="nav-logs" type="button">程序日志</button>`)
+	out.WriteString(`<button id="nav-theme" data-theme-toggle="true" type="button">浅色主题</button><button id="nav-logs" type="button">程序日志</button>`)
 	if username = strings.TrimSpace(username); username != "" {
 		out.WriteString(`<span class="nav-user" aria-label="当前登录用户">` + html.EscapeString(username) + `</span>`)
 	}

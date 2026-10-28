@@ -11,7 +11,6 @@
     themeButton.setAttribute('aria-label', '当前' + (light ? '浅色' : '深色') + '主题，切换至' + (light ? '深色' : '浅色') + '主题');
   }
   if (themeButton) {
-    themeButton.addEventListener('click', () => window.LiquidationTheme.toggle());
     window.addEventListener('themechange', updateThemeButton);
     updateThemeButton();
   }

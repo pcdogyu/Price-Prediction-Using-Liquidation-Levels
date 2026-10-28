@@ -93,6 +93,7 @@ func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 		`.app-nav>.app-links{flex:1 1 auto;min-width:0;display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}`,
 		`@media(max-width:720px){.app-nav{gap:6px;flex-wrap:wrap}`,
 		`.app-links{order:3;flex:1 0 100%;flex-basis:100%;min-width:0;scrollbar-width:thin}.app-links a{flex:0 0 auto}`,
+		`@media(max-width:720px){.app-nav>#nav-theme{order:-1;min-height:38px;touch-action:manipulation}}`,
 	} {
 		if !strings.Contains(styles, marker) {
 			t.Fatalf("alerts navigation missing mobile scroll override %q", marker)
@@ -114,6 +115,15 @@ func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 	}
 	if strings.Contains(body, `class="app-brand-name"`) || strings.Contains(body, `class="app-logo"`) || strings.Contains(body, `aria-label="清算墙雷达首页"`) {
 		t.Fatal("alerts navigation still contains the removed product name")
+	}
+}
+
+func TestThemeToggleUsesDelegatedMobileHandler(t *testing.T) {
+	if !strings.Contains(string(themeJS), `closest('[data-theme-toggle="true"]')`) {
+		t.Fatal("theme asset should delegate clicks from the document for mobile navigation")
+	}
+	if strings.Contains(string(sharedJS), `themeButton.addEventListener('click'`) {
+		t.Fatal("shared asset should not register a second theme toggle handler")
 	}
 }
 

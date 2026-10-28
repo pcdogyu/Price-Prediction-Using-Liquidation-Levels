@@ -85,6 +85,13 @@
       return colors[name] || value;
     }
   };
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target && target.closest('[data-theme-toggle="true"]');
+    if (!button) return;
+    event.preventDefault();
+    window.LiquidationTheme.toggle();
+  });
   loadRemote();
   function setupSystemMenus() {
     document.querySelectorAll('[data-system-menu="true"]').forEach((menu) => {

@@ -40,6 +40,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`href="/liquidation/admin">用户管理`,
 		`href="/liquidation/admin"`,
 		`id="nav-theme"`,
+		`data-theme-toggle="true"`,
 		`id="nav-logs" type="button">程序日志</button>`,
 		`id="shared-logs"`,
 		`method="post" action="/liquidation/auth/logout"><button type="submit">退出</button></form>`,
