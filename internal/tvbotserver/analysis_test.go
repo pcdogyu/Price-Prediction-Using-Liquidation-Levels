@@ -748,6 +748,20 @@ func TestBuildAnalysisPositionTradesCountsClosedPositionsOnly(t *testing.T) {
 	}
 }
 
+func TestBuildAnalysisPositionTradesEmptyIsJSONArray(t *testing.T) {
+	rows := buildAnalysisPositionTrades(config.Config{}, nil, time.Time{})
+	if rows == nil {
+		t.Fatal("empty position trades should be a non-nil slice")
+	}
+	payload, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != "[]" {
+		t.Fatalf("empty position trades JSON=%s, want []", payload)
+	}
+}
+
 func TestBuildAnalysisPositionTradesMergesClosedFillsByEntryOrder(t *testing.T) {
 	cfg := config.Config{Symbols: map[string]config.SymbolConfig{
 		"TEST": {InstID: "TEST-USDT-SWAP", CtVal: 1},

@@ -2147,7 +2147,7 @@ type analysisPositionTradeAccumulator struct {
 
 func buildAnalysisPositionTrades(cfg config.Config, trades []analysisTrade, closeSince time.Time) []analysisPositionTrade {
 	if len(trades) == 0 {
-		return nil
+		return []analysisPositionTrade{}
 	}
 	ordered := append([]analysisTrade(nil), trades...)
 	sort.SliceStable(ordered, func(i, j int) bool {

@@ -256,8 +256,10 @@ async function loadHistoricalTradeView() {
   showFailures(lastFailures);
   try {
     const packet = await tvbotJSON('analysis?price_days=1&pnl_days=30');
-    if (!Array.isArray(packet?.position_trades)) throw new Error('历史交易响应无效');
-    tradeView.historyRows = packet.position_trades;
+    // An account with no closed trades is valid: older TVBot responses and
+    // cached payloads may encode the empty list as null. Treat both forms as
+    // an empty history so the bubble chart remains usable.
+    tradeView.historyRows = Array.isArray(packet?.position_trades) ? packet.position_trades : [];
     tradeView.historyLoaded = true;
     refreshTradeMarkers();
   } catch (error) {

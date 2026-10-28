@@ -167,6 +167,7 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"tvbotAPI",
 		"analysis?price_days=1&pnl_days=30",
 		"position_trades",
+		"Array.isArray(packet?.position_trades) ? packet.position_trades : []",
 		"历史开平点",
 		"tradeView.historyRows",
 		"tradeView.referenceMarkers",
