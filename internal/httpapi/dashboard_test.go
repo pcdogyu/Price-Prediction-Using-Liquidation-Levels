@@ -65,21 +65,27 @@ func TestHedgeWallDepthChartIncludesPriceGridAndTopFiveMarkers(t *testing.T) {
 		"integerStart=Math.ceil(low)",
 		"gridStep=integerCount>120",
 		"topFive=(rows,side)",
-		"ctx.font='bold 12px system-ui'",
-		"label=(item.side==='bid'?'B':'A')+item.rank+' '+price(item.level.price)",
-		"item.side==='bid'?'B':'A'",
+		"ctx.font='bold 14px system-ui'",
+		"label=price(item.level.price)",
+		"candidateYs=[baseY,baseY-28,baseY+28",
+		"ctx.fillStyle='#ffffff'",
 	} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("depth chart missing %q", marker)
 		}
 	}
-	if strings.Contains(body, "priceRows") || strings.Contains(body, "右侧价格 · Top 5") {
-		t.Fatal("depth chart must not render the separate right-side A/B price list")
+	if strings.Contains(body, "priceRows") || strings.Contains(body, "右侧价格 · Top 5") || strings.Contains(body, "item.side==='bid'?'B':'A'") {
+		t.Fatal("depth chart must not render the separate right-side A/B price list or A/B marker labels")
 	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/hedge-wall", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "柱线上显示 Top 5 价格") || !strings.Contains(w.Body.String(), "B/A1–5") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "柱线上仅显示 Top 5 价格") || strings.Contains(w.Body.String(), "B/A1–5") {
 		t.Fatalf("hedge wall legend missing chart guidance: status=%d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/assets/pages.css", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), ".depth-canvas{height:480px}") || !strings.Contains(w.Body.String(), ".depth-canvas{height:396px}") {
+		t.Fatalf("depth chart height override missing: status=%d", w.Code)
 	}
 }
 

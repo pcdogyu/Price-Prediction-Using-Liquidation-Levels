@@ -197,11 +197,13 @@
     for(const s of series){ctx.fillStyle=s.color;ctx.globalAlpha=s.alpha;for(const lv of s.rows.filter(inside))ctx.fillRect(x(lv.price)-bar/2,y(lv.notional_usd),bar,height-pad.b-y(lv.notional_usd));}ctx.globalAlpha=1;
     const topFive=(rows,side)=>rows.filter(inside).sort((a,b)=>b.notional_usd-a.notional_usd).slice(0,5).map((level,index)=>({level,side,rank:index+1}));
     const ranked=[...topFive(book.bids,'bid'),...topFive(book.asks,'ask')];
-    ctx.font='bold 12px system-ui';ctx.textAlign='center';
-    for(const item of ranked){
-      const px=x(item.level.price),barTop=y(item.level.notional_usd),label=(item.side==='bid'?'B':'A')+item.rank+' '+price(item.level.price),labelWidth=ctx.measureText(label).width+10,markerY=Math.max(pad.t+12,barTop-15-(item.rank%2)*12),labelX=Math.max(pad.l+labelWidth/2,Math.min(px,width-pad.r-labelWidth/2));
-      ctx.strokeStyle=paint(item.side==='bid'?'#2dd4bf':'#fb7185');ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(px,barTop);ctx.lineTo(labelX,markerY+6);ctx.stroke();
-      ctx.fillStyle=paint(item.side==='bid'?'#0f766e':'#be123c');ctx.fillRect(labelX-labelWidth/2,markerY-10,labelWidth,20);ctx.fillStyle=paint('#f8fafc');ctx.fillText(label,labelX,markerY+4);
+    ctx.font='bold 14px system-ui';ctx.textAlign='center';
+    const markers=ranked.map(item=>{const px=x(item.level.price),barTop=y(item.level.notional_usd),label=price(item.level.price),labelWidth=ctx.measureText(label).width+14,labelX=Math.max(pad.l+labelWidth/2,Math.min(px,width-pad.r-labelWidth/2));return {...item,px,barTop,label,labelWidth,labelX};}).sort((a,b)=>a.px-b.px);
+    const placed=[];
+    for(const item of markers){
+      const baseY=Math.max(pad.t+16,item.barTop-20),candidateYs=[baseY,baseY-28,baseY+28,baseY-56,baseY+56],markerY=candidateYs.find(py=>py>=pad.t+16&&py<=height-pad.b-16&&!placed.some(other=>Math.abs(item.labelX-other.labelX)<(item.labelWidth+other.labelWidth)/2+8&&Math.abs(py-other.markerY)<26))||baseY;
+      ctx.strokeStyle=paint(item.side==='bid'?'#2dd4bf':'#fb7185');ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(item.px,item.barTop);ctx.lineTo(item.labelX,markerY+6);ctx.stroke();
+      ctx.fillStyle=paint(item.side==='bid'?'#0f766e':'#be123c');ctx.fillRect(item.labelX-item.labelWidth/2,markerY-12,item.labelWidth,24);ctx.fillStyle='#ffffff';ctx.fillText(item.label,item.labelX,markerY+5);placed.push({labelX:item.labelX,labelWidth:item.labelWidth,markerY});
     }
     ctx.textAlign='center';ctx.fillStyle=paint('#83a0b2');const pixelsPerInteger=plotWidth/Math.max(1,high-low),labelStep=Math.max(gridStep,Math.ceil(38/Math.max(1,pixelsPerInteger)));for(let p=integerStart;p<=integerEnd;p+=labelStep){const px=x(p),label=price(p),labelWidth=ctx.measureText(label).width;if(px<labelWidth/2+pad.l||px>width-pad.r-labelWidth/2)continue;ctx.fillText(label,px,height-14);}
     ctx.textAlign='left';const mid=(book.best_bid+book.best_ask)/2;ctx.strokeStyle=paint('#fbbf24');ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x(mid),pad.t);ctx.lineTo(x(mid),height-pad.b);ctx.stroke();ctx.setLineDash([]);
