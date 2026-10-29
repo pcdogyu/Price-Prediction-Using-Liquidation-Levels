@@ -265,6 +265,29 @@ const tvbotLoginHTML = `<!doctype html>
       font: inherit;
       font-weight: 750;
       cursor: pointer;
+      transition: transform .18s ease, box-shadow .2s ease, background-color .2s ease, border-color .2s ease, color .2s ease;
+    }
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 5px 14px rgba(0, 0, 0, .14);
+    }
+    button:active {
+      transform: scale(.98);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+      transition-duration: .08s;
+    }
+    button:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      button {
+        transition-duration: .01ms;
+      }
+      button:hover,
+      button:active {
+        transform: none;
+      }
     }
     .error {
       margin: 0 0 12px;

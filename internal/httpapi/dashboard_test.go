@@ -159,6 +159,38 @@ func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 	}
 }
 
+func TestPagesCSSHasUnifiedButtonMotion(t *testing.T) {
+	styles := string(pagesCSS)
+	for _, marker := range []string{
+		`:where(button, .btn, [role="button"], .kline-back a)`,
+		`button:not(:disabled):not([aria-disabled="true"]):not(.is-disabled):hover`,
+		`button:not(:disabled):not([aria-disabled="true"]):not(.is-disabled):active`,
+		`button:focus-visible`,
+		`button[aria-busy="true"]::before`,
+		`@keyframes shared-button-spin`,
+		`@media(prefers-reduced-motion:reduce)`,
+	} {
+		if !strings.Contains(styles, marker) {
+			t.Fatalf("shared button motion is missing %q", marker)
+		}
+	}
+}
+
+func TestLoginHTMLUsesUnifiedButtonMotion(t *testing.T) {
+	page := string(loginHTML)
+	for _, marker := range []string{
+		`transition:transform .18s ease`,
+		`button:hover`,
+		`button:active`,
+		`button:focus-visible`,
+		`@media(prefers-reduced-motion:reduce)`,
+	} {
+		if !strings.Contains(page, marker) {
+			t.Fatalf("login page button motion is missing %q", marker)
+		}
+	}
+}
+
 func TestThemeToggleUsesDelegatedMobileHandler(t *testing.T) {
 	if !strings.Contains(string(themeJS), `closest('[data-theme-toggle="true"]')`) {
 		t.Fatal("theme asset should delegate clicks from the document for mobile navigation")

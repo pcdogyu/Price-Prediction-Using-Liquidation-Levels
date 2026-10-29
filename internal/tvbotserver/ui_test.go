@@ -162,6 +162,21 @@ func TestRenderTVBotOrderSettingsSaveButtonHasAnimatedStates(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotLoginHTMLUsesUnifiedButtonMotion(t *testing.T) {
+	page := renderTVBotLoginHTML("", "/tvbot", BuildInfo{CommitHash: "test"})
+	for _, want := range []string{
+		`transition: transform .18s ease`,
+		`button:hover`,
+		`button:active`,
+		`button:focus-visible`,
+		`@media (prefers-reduced-motion: reduce)`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("tvbot login button motion is missing %q", want)
+		}
+	}
+}
+
 func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	entryColumn := strings.Index(page, `{ id: "entry_time", title: "开仓时间"`)
