@@ -13,13 +13,10 @@ import (
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 )
 
-const tenantBackgroundCandidateLimit = 50
-
-// RefreshBackgroundCandidates reads tenant-owned symbol selections without
-// creating lazy tenant resources, ranks each tenant's Binance-compatible pairs
-// by public 24h quote volume, and returns the merged base-50 plus protected
-// Binance positions/orders.
-func (b *Bridge) RefreshBackgroundCandidates(ctx context.Context) (domain.BackgroundSymbolSnapshot, error) {
+// RefreshBackgroundCandidates ranks the application-configured Binance pairs
+// by public 24h quote volume and returns the base-50 plus protected Binance
+// positions/orders discovered from the tenant scopes.
+func (b *Bridge) RefreshBackgroundCandidates(ctx context.Context, configured []string) (domain.BackgroundSymbolSnapshot, error) {
 	if b == nil || b.Tenants == nil || b.Handler == nil {
 		return domain.BackgroundSymbolSnapshot{}, errors.New("TVBot tenant manager is unavailable")
 	}
@@ -31,31 +28,9 @@ func (b *Bridge) RefreshBackgroundCandidates(ctx context.Context) (domain.Backgr
 	if err != nil {
 		return domain.BackgroundSymbolSnapshot{}, err
 	}
-	if len(records) == 0 {
-		return domain.BackgroundSymbolSnapshot{}, errors.New("no active TVBot tenants found")
-	}
-
-	rankedByTenant := make([][]exchange.TopSymbol, 0, len(records))
-	for _, record := range records {
-		configured := configuredBinanceSymbols(record.Config)
-		if len(configured) == 0 {
-			continue
-		}
-		rows, rankErr := exchange.BinanceTopConfiguredUSDTPerpetuals(ctx, configured, tenantBackgroundCandidateLimit)
-		if rankErr != nil {
-			// A tenant with no rankable configured symbols must not invalidate
-			// other tenants' valid candidates. Public API and exchange metadata
-			// failures invalidate the refresh so the previous snapshot survives.
-			if !exchange.IsNoRankableUSDTPerpetuals(rankErr) {
-				return domain.BackgroundSymbolSnapshot{}, rankErr
-			}
-			continue
-		}
-		rankedByTenant = append(rankedByTenant, rows)
-	}
-	rows := mergeConfiguredCandidates(rankedByTenant, app.BackgroundCandidateLimitForProvider())
-	if len(rows) == 0 {
-		return domain.BackgroundSymbolSnapshot{}, errors.New("no configured Binance USDT symbol has usable volume")
+	rows, rankErr := exchange.BinanceTopConfiguredUSDTPerpetuals(ctx, configured, app.BackgroundCandidateLimitForProvider())
+	if rankErr != nil {
+		return domain.BackgroundSymbolSnapshot{}, rankErr
 	}
 	now := time.Now().UTC()
 	snapshot := domain.BackgroundSymbolSnapshot{TenantCount: len(records), BaseCount: len(rows), RefreshedAt: now}
@@ -86,6 +61,14 @@ func (b *Bridge) RefreshBackgroundCandidates(ctx context.Context) (domain.Backgr
 			}
 		}
 	}
+	appendProtectedCandidates(&snapshot, rows, baseSet, protected, now)
+	return snapshot, nil
+}
+
+func appendProtectedCandidates(snapshot *domain.BackgroundSymbolSnapshot, rows []exchange.TopSymbol, baseSet, protected map[string]struct{}, at time.Time) {
+	if snapshot == nil {
+		return
+	}
 	protectedRows := make([]string, 0, len(protected))
 	for symbol := range protected {
 		if _, ok := baseSet[symbol]; ok {
@@ -97,41 +80,8 @@ func (b *Bridge) RefreshBackgroundCandidates(ctx context.Context) (domain.Backgr
 	for _, symbol := range protectedRows {
 		snapshot.ExceptionSymbols = append(snapshot.ExceptionSymbols, symbol)
 		row := findTopSymbol(rows, symbol)
-		snapshot.Symbols = append(snapshot.Symbols, domain.WatchSymbol{Symbol: symbol, Rank: len(snapshot.Symbols) + 1, QuoteVolumeUSD: row.QuoteVolumeUSD, UpdatedAt: now})
+		snapshot.Symbols = append(snapshot.Symbols, domain.WatchSymbol{Symbol: symbol, Rank: len(snapshot.Symbols) + 1, QuoteVolumeUSD: row.QuoteVolumeUSD, UpdatedAt: at})
 	}
-	return snapshot, nil
-}
-
-func mergeConfiguredCandidates(perTenant [][]exchange.TopSymbol, limit int) []exchange.TopSymbol {
-	if limit <= 0 {
-		limit = app.BackgroundCandidateLimitForProvider()
-	}
-	merged := make(map[string]exchange.TopSymbol)
-	for _, rows := range perTenant {
-		for _, row := range rows {
-			previous, ok := merged[row.Symbol]
-			if !ok || row.QuoteVolumeUSD > previous.QuoteVolumeUSD {
-				merged[row.Symbol] = row
-			}
-		}
-	}
-	rows := make([]exchange.TopSymbol, 0, len(merged))
-	for _, row := range merged {
-		rows = append(rows, row)
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].QuoteVolumeUSD != rows[j].QuoteVolumeUSD {
-			return rows[i].QuoteVolumeUSD > rows[j].QuoteVolumeUSD
-		}
-		return rows[i].Symbol < rows[j].Symbol
-	})
-	if len(rows) > limit {
-		rows = rows[:limit]
-	}
-	for i := range rows {
-		rows[i].Rank = i + 1
-	}
-	return rows
 }
 
 func findTopSymbol(rows []exchange.TopSymbol, symbol string) exchange.TopSymbol {
@@ -143,6 +93,9 @@ func findTopSymbol(rows []exchange.TopSymbol, symbol string) exchange.TopSymbol 
 	return exchange.TopSymbol{Symbol: symbol}
 }
 
+// configuredBinanceSymbols and normalizeBinanceCandidateSymbol remain shared
+// by TVBot tenant configuration tests and legacy callers. Candidate ranking no
+// longer uses them: the alert base set comes from the application's APP_SYMBOLS.
 func configuredBinanceSymbols(cfg tvbotconfig.Config) []string {
 	seen := make(map[string]struct{}, len(cfg.Symbols))
 	rows := make([]string, 0, len(cfg.Symbols))

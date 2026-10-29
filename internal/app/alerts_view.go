@@ -38,10 +38,13 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 	view.Monitor = rtm.engine.Snapshot(now)
 	if len(view.Monitor) > 0 {
 		view.State = "ok"
+		if view.WatchError != "" {
+			view.State = "watch_error"
+		}
 		// Candidate rankings refresh once per day at 07:50 Beijing time. Keep a
 		// modest grace period so a delayed public API does not make a healthy
 		// persisted snapshot appear stale after the old ten-minute cadence.
-		if view.WatchUpdatedAt != nil && now.Sub(*view.WatchUpdatedAt) > 26*time.Hour {
+		if view.WatchError == "" && view.WatchUpdatedAt != nil && now.Sub(*view.WatchUpdatedAt) > 26*time.Hour {
 			view.State = "stale"
 		}
 	}

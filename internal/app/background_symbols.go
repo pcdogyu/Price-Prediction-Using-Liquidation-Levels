@@ -16,10 +16,11 @@ const backgroundCandidateLimit = BackgroundCandidateLimit
 // from the Service's internal candidate state while sharing the fixed policy.
 func BackgroundCandidateLimitForProvider() int { return BackgroundCandidateLimit }
 
-// BackgroundCandidateProvider builds the next candidate set from the current
-// tenant configurations. Implementations must not expose credentials.
+// BackgroundCandidateProvider builds the next candidate set from the
+// application-configured symbol universe. Implementations must not expose
+// credentials.
 type BackgroundCandidateProvider interface {
-	RefreshBackgroundCandidates(context.Context) (domain.BackgroundSymbolSnapshot, error)
+	RefreshBackgroundCandidates(context.Context, []string) (domain.BackgroundSymbolSnapshot, error)
 }
 
 var backgroundCandidateLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -38,13 +39,17 @@ func (s *Service) loadBackgroundCandidateSnapshot(ctx context.Context) {
 	snapshot, found, err := s.store.LoadBackgroundSymbolSnapshot(ctx)
 	if err != nil {
 		s.log.Warn("load background symbol snapshot failed", "error", err)
+		s.applyBackgroundCandidateSnapshot(fallback, false)
+		s.setBackgroundCandidateError("读取候选币对快照失败，等待成交额排行刷新：" + err.Error())
 	} else if found && validBackgroundCandidateSnapshot(snapshot) {
 		s.applyBackgroundCandidateSnapshot(snapshot, false)
 		s.log.Info("background symbol snapshot loaded", "symbols", len(snapshot.Symbols), "refreshed_at", snapshot.RefreshedAt)
 		return
+	} else {
+		s.applyBackgroundCandidateSnapshot(fallback, false)
+		s.setBackgroundCandidateError("等待首次成交额排行刷新")
 	}
-	s.applyBackgroundCandidateSnapshot(fallback, false)
-	s.log.Info("using fallback background symbols until scheduled tenant refresh", "symbols", len(fallback.Symbols))
+	s.log.Info("using fallback background symbols until initial candidate refresh", "symbols", len(fallback.Symbols))
 }
 
 func (s *Service) fallbackBackgroundCandidateSnapshot() domain.BackgroundSymbolSnapshot {
@@ -64,11 +69,11 @@ func (s *Service) fallbackBackgroundCandidateSnapshot() domain.BackgroundSymbolS
 		seen[symbol] = struct{}{}
 		rows = append(rows, domain.WatchSymbol{Symbol: symbol, Rank: len(rows) + 1})
 	}
-	bootstrap := s.cfg.BootstrapSymbols
-	if len(bootstrap) == 0 {
-		bootstrap = s.cfg.Symbols
+	configured := s.cfg.Symbols
+	if len(configured) == 0 {
+		configured = s.cfg.BootstrapSymbols
 	}
-	for _, symbol := range bootstrap {
+	for _, symbol := range configured {
 		add(symbol, true)
 	}
 	baseCount := len(rows)
@@ -141,6 +146,30 @@ func (s *Service) applyBackgroundCandidateSnapshot(snapshot domain.BackgroundSym
 	s.log.Info("background symbols applied", "symbols", len(copySnapshot.Symbols), "base", copySnapshot.BaseCount, "exceptions", len(copySnapshot.ExceptionSymbols), "tenants", copySnapshot.TenantCount)
 }
 
+// setBackgroundCandidateError preserves the active watch list while making a
+// failed or not-yet-completed ranking refresh visible to every alert runtime.
+func (s *Service) setBackgroundCandidateError(message string) {
+	if s == nil {
+		return
+	}
+	s.alertTenantsMu.Lock()
+	runtimes := make([]*alertRuntime, 0, len(s.alertTenants)+1)
+	if s.alerts != nil {
+		runtimes = append(runtimes, s.alerts)
+	}
+	for _, rtm := range s.alertTenants {
+		if rtm != nil && rtm != s.alerts {
+			runtimes = append(runtimes, rtm)
+		}
+	}
+	s.alertTenantsMu.Unlock()
+	for _, rtm := range runtimes {
+		rtm.mu.Lock()
+		rtm.watchErr = strings.TrimSpace(message)
+		rtm.mu.Unlock()
+	}
+}
+
 func (s *Service) backgroundSymbols() []string {
 	s.candidateMu.RLock()
 	current := append([]string(nil), s.candidates...)
@@ -169,6 +198,9 @@ func (s *Service) backgroundCandidateSnapshot() domain.BackgroundSymbolSnapshot 
 }
 
 func (s *Service) backgroundCandidateRefreshLoop(ctx context.Context) {
+	// Refresh immediately after startup. Waiting for the next daily boundary
+	// leaves the alert page on the small bootstrap list after every restart.
+	s.refreshBackgroundCandidates(ctx)
 	for {
 		next := nextBackgroundCandidateRefresh(time.Now())
 		timer := time.NewTimer(time.Until(next))
@@ -196,13 +228,16 @@ func (s *Service) refreshBackgroundCandidates(ctx context.Context) {
 	provider := s.candidateProvider
 	s.candidateMu.RUnlock()
 	if provider == nil {
+		s.setBackgroundCandidateError("候选币对排行提供器不可用")
 		return
 	}
 	refreshCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	snapshot, err := provider.RefreshBackgroundCandidates(refreshCtx)
+	configured := append([]string(nil), s.cfg.Symbols...)
+	snapshot, err := provider.RefreshBackgroundCandidates(refreshCtx, configured)
 	if err != nil {
 		s.log.Warn("background symbol refresh failed; keeping previous snapshot", "error", err)
+		s.setBackgroundCandidateError("成交额排行刷新失败，保留当前监控：" + err.Error())
 		return
 	}
 	if snapshot.RefreshedAt.IsZero() {
@@ -210,6 +245,7 @@ func (s *Service) refreshBackgroundCandidates(ctx context.Context) {
 	}
 	if !validBackgroundCandidateSnapshot(snapshot) {
 		s.log.Warn("background symbol refresh returned invalid snapshot", "symbols", len(snapshot.Symbols))
+		s.setBackgroundCandidateError("成交额排行返回了无效候选列表")
 		return
 	}
 	s.applyBackgroundCandidateSnapshot(snapshot, true)

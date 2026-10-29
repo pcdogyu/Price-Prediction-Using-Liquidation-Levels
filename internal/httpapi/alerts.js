@@ -474,7 +474,7 @@
     if (document.activeElement !== vwapFilter) vwapFilter.checked = settings.vwap_filter_enabled !== false;
     if (document.activeElement !== donchianFilter) donchianFilter.checked = settings.donchian_filter_enabled !== false;
     $('alerts-monitor-window').textContent = settings.window_minutes || 3;
-    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 100) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健 / 交易所刷单下单信号';
+    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 50) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健 / 交易所刷单下单信号';
     if (!strategyLoaded) strategyLoaded = true;
   }
 
@@ -495,7 +495,7 @@
       renderGammaStatus(data.gamma);
       $('alerts-method').textContent = data.method;
       const states = data.monitor.filter(row => row.state !== 'idle').length;
-      $('alerts-monitor-status').textContent = ({ waiting_watch_list: '等待成交额排行', stale: '成交额排名已过期' })[data.state] || ('已加载 ' + data.monitor.length + ' 个币对 · ' + states + ' 个处于预警流程 · 每 5 秒更新');
+      $('alerts-monitor-status').textContent = ({ waiting_watch_list: '等待成交额排行', stale: '成交额排名已过期', watch_error: '成交额排名刷新失败，保留当前监控' })[data.state] || ('已加载 ' + data.monitor.length + ' 个币对 · ' + states + ' 个处于预警流程 · 每 5 秒更新');
       $('alerts-monitor-note').textContent = '排名更新 ' + when(data.watch_updated_at) + (data.watch_error ? ' · 最近刷新失败：' + data.watch_error : '') + ' · 预警与信号自 ' + when(data.available_from) + ' 起可查询';
       renderSettings(packet.settings);
       renderNotifyStatus(data.notifications);

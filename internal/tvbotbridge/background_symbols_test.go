@@ -2,29 +2,29 @@ package tvbotbridge
 
 import (
 	"testing"
+	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
 )
 
-func TestMergeConfiguredCandidatesDeduplicatesBeforeGlobalLimit(t *testing.T) {
-	first := make([]exchange.TopSymbol, 0, 3)
-	second := make([]exchange.TopSymbol, 0, 3)
-	for i, volume := range []float64{100, 90, 80} {
-		first = append(first, exchange.TopSymbol{Symbol: string(rune('A'+i)) + "USDT", QuoteVolumeUSD: volume})
+func TestAppendProtectedCandidatesKeepsPositionAndOrderSymbols(t *testing.T) {
+	now := time.Now().UTC()
+	snapshot := domain.BackgroundSymbolSnapshot{
+		Symbols:   []domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 100}},
+		BaseCount: 1,
 	}
-	second = append(second,
-		exchange.TopSymbol{Symbol: "AUSDT", QuoteVolumeUSD: 110},
-		exchange.TopSymbol{Symbol: "DUSDT", QuoteVolumeUSD: 95},
-		exchange.TopSymbol{Symbol: "EUSDT", QuoteVolumeUSD: 70},
-	)
-	got := mergeConfiguredCandidates([][]exchange.TopSymbol{first, second}, 4)
-	if len(got) != 4 {
-		t.Fatalf("merged=%+v", got)
+	rows := []exchange.TopSymbol{{Symbol: "ETHUSDT", QuoteVolumeUSD: 80}}
+	appendProtectedCandidates(&snapshot, rows,
+		map[string]struct{}{"BTCUSDT": {}},
+		map[string]struct{}{"BTCUSDT": {}, "ETHUSDT": {}, "XRPUSDT": {}}, now)
+	if len(snapshot.Symbols) != 3 || len(snapshot.ExceptionSymbols) != 2 {
+		t.Fatalf("protected snapshot=%+v", snapshot)
 	}
-	want := []string{"AUSDT", "DUSDT", "BUSDT", "CUSDT"}
-	for i, symbol := range want {
-		if got[i].Symbol != symbol || got[i].Rank != i+1 {
-			t.Fatalf("merged=%+v, want symbols=%v with sequential ranks", got, want)
-		}
+	if snapshot.ExceptionSymbols[0] != "ETHUSDT" || snapshot.ExceptionSymbols[1] != "XRPUSDT" {
+		t.Fatalf("protected symbols=%v", snapshot.ExceptionSymbols)
+	}
+	if snapshot.Symbols[1].Symbol != "ETHUSDT" || snapshot.Symbols[1].QuoteVolumeUSD != 80 || snapshot.Symbols[2].Symbol != "XRPUSDT" {
+		t.Fatalf("protected rows=%v", snapshot.Symbols)
 	}
 }

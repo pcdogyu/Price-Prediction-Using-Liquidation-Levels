@@ -2,9 +2,13 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +19,19 @@ import (
 
 type historyCall struct{ from, until time.Time }
 type historyClient struct{ calls []historyCall }
+
+type backgroundCandidateProviderStub struct {
+	calls      int
+	configured []string
+	snapshot   domain.BackgroundSymbolSnapshot
+	err        error
+}
+
+func (p *backgroundCandidateProviderStub) RefreshBackgroundCandidates(_ context.Context, configured []string) (domain.BackgroundSymbolSnapshot, error) {
+	p.calls++
+	p.configured = append([]string(nil), configured...)
+	return p.snapshot, p.err
+}
 
 func TestNextDailyMaintenanceUsesBeijingTime(t *testing.T) {
 	tests := []struct {
@@ -44,7 +61,7 @@ func TestNextBackgroundCandidateRefreshUsesBeijingTime(t *testing.T) {
 	}
 }
 
-func TestLoadBackgroundCandidateSnapshotDoesNotUseConfiguredUniverse(t *testing.T) {
+func TestLoadBackgroundCandidateSnapshotPrefersValidSnapshot(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +84,87 @@ func TestLoadBackgroundCandidateSnapshotDoesNotUseConfiguredUniverse(t *testing.
 	}
 	if svc.backgroundCandidateSnapshot().TenantCount != 2 {
 		t.Fatalf("loaded snapshot=%+v", svc.backgroundCandidateSnapshot())
+	}
+}
+
+func TestFallbackBackgroundCandidateSnapshotUsesConfiguredUniverse(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	configured := make([]string, 0, 60)
+	for i := 0; i < 60; i++ {
+		configured = append(configured, fmt.Sprintf("TOKEN%02dUSDT", i))
+	}
+	svc := New(config.Config{
+		Symbols:          configured,
+		BootstrapSymbols: []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"},
+		ModelPath:        filepath.Join(t.TempDir(), "model.json"),
+	}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	snapshot := svc.fallbackBackgroundCandidateSnapshot()
+	if snapshot.BaseCount != BackgroundCandidateLimit || len(snapshot.Symbols) != BackgroundCandidateLimit+2 {
+		t.Fatalf("fallback snapshot=%+v", snapshot)
+	}
+	if snapshot.Symbols[0].Symbol != "TOKEN00USDT" || snapshot.Symbols[49].Symbol != "TOKEN49USDT" {
+		t.Fatalf("fallback did not use configured universe: first=%q fiftieth=%q", snapshot.Symbols[0].Symbol, snapshot.Symbols[49].Symbol)
+	}
+	if snapshot.Symbols[50].Symbol != "BTCUSDT" || snapshot.Symbols[51].Symbol != "ETHUSDT" {
+		t.Fatalf("fallback protection symbols=%v", snapshot.Symbols[50:])
+	}
+}
+
+func TestBackgroundCandidateRefreshStartsImmediatelyAndPassesConfiguredUniverse(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	configured := []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"}
+	svc := New(config.Config{Symbols: configured, ModelPath: filepath.Join(t.TempDir(), "model.json")}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	provider := &backgroundCandidateProviderStub{snapshot: domain.BackgroundSymbolSnapshot{
+		Symbols:     []domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 123}},
+		BaseCount:   1,
+		RefreshedAt: time.Now().UTC(),
+	}}
+	svc.SetBackgroundCandidateProvider(provider)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	svc.backgroundCandidateRefreshLoop(ctx)
+	if provider.calls != 1 {
+		t.Fatalf("immediate refresh calls=%d", provider.calls)
+	}
+	if !reflect.DeepEqual(provider.configured, configured) {
+		t.Fatalf("provider configured=%v, want=%v", provider.configured, configured)
+	}
+	if got := svc.backgroundSymbols(); len(got) != 1 || got[0] != "BTCUSDT" {
+		t.Fatalf("refreshed candidates=%v", got)
+	}
+}
+
+func TestBackgroundCandidateRefreshFailureKeepsSnapshotAndExposesError(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(config.Config{Symbols: []string{"BTCUSDT", "ETHUSDT"}, ModelPath: filepath.Join(t.TempDir(), "model.json")}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.applyBackgroundCandidateSnapshot(domain.BackgroundSymbolSnapshot{
+		Symbols:     []domain.WatchSymbol{{Symbol: "ETHUSDT", Rank: 1, QuoteVolumeUSD: 99}},
+		BaseCount:   1,
+		RefreshedAt: time.Now().UTC(),
+	}, false)
+	svc.SetBackgroundCandidateProvider(&backgroundCandidateProviderStub{err: errors.New("ticker endpoint unavailable")})
+	svc.refreshBackgroundCandidates(context.Background())
+	if got := svc.backgroundSymbols(); len(got) != 1 || got[0] != "ETHUSDT" {
+		t.Fatalf("failed refresh replaced candidates=%v", got)
+	}
+	view, err := svc.Alerts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.State != "watch_error" || !strings.Contains(view.WatchError, "ticker endpoint unavailable") {
+		t.Fatalf("refresh error not exposed: state=%q error=%q", view.State, view.WatchError)
 	}
 }
 
