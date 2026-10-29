@@ -57,8 +57,8 @@ func AlertMonitorMethod(windowMinutes, refreshMinutes, topSymbols int) string {
 }
 
 // LiquidationAlert is one alert cycle for a symbol and the liquidated position
-// side. Side=long means long positions were liquidated, which the strategy
-// trades as a long recommendation.
+// side. Side=long means long positions were liquidated; TradeSide is the
+// opposite position direction recommended by the strategy.
 type LiquidationAlert struct {
 	ID            string    `json:"id"`
 	Symbol        string    `json:"symbol"`

@@ -323,10 +323,15 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 	longDonchianBlocked := cfg.DonchianFilterEnabled && (!donchianReady || price > donGreen)
 	shortDonchianBlocked := cfg.DonchianFilterEnabled && (!donchianReady || price < donRed)
 
-	// High: short-liquidation opens short; long-liquidation only closes short.
+	// High: short-liquidation opens long; long-liquidation only closes long.
 	// Middle: neither side opens; the liquidation direction may close the
-	// profitable opposite position. Low is the mirror image for long entries.
+	// profitable opposite position. Low is the mirror image for short entries.
 	side = strings.ToLower(strings.TrimSpace(side))
+	tradeSide := tradeSideForLiquidation(side)
+	if tradeSide == "" {
+		d.Reason = "unsupported_liquidation_side"
+		return d
+	}
 	if side == "long" {
 		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && (!cfg.VWAPFilterEnabled || price <= vwapGreen) && (!cfg.DonchianFilterEnabled || price <= donGreen)
 		d.CloseAllowed = !d.OpenAllowed
@@ -350,11 +355,11 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 			d.Reason = "vwap_donchian_zone_overlap_long_liquidation_close_only"
 		} else if d.OpenAllowed {
 			if !cfg.VWAPFilterEnabled && !cfg.DonchianFilterEnabled {
-				d.Reason = "zone_filters_disabled_long_liquidation_open_long"
+				d.Reason = "zone_filters_disabled_long_liquidation_open_short"
 			} else if low {
-				d.Reason = "low_zscore_long_liquidation_open_long"
+				d.Reason = "low_zscore_long_liquidation_open_short"
 			} else {
-				d.Reason = "donchian_long_liquidation_open_long"
+				d.Reason = "donchian_long_liquidation_open_short"
 			}
 		} else {
 			if longVWAPBlocked {
@@ -392,11 +397,11 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 			d.Reason = "vwap_donchian_zone_overlap_short_liquidation_close_only"
 		} else if d.OpenAllowed {
 			if !cfg.VWAPFilterEnabled && !cfg.DonchianFilterEnabled {
-				d.Reason = "zone_filters_disabled_short_liquidation_open_short"
+				d.Reason = "zone_filters_disabled_short_liquidation_open_long"
 			} else if high {
-				d.Reason = "high_zscore_short_liquidation_open_short"
+				d.Reason = "high_zscore_short_liquidation_open_long"
 			} else {
-				d.Reason = "donchian_short_liquidation_open_short"
+				d.Reason = "donchian_short_liquidation_open_long"
 			}
 		} else {
 			if shortVWAPBlocked {
@@ -411,13 +416,10 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 				d.Reason = "neutral_zscore_short_liquidation_close_only"
 			}
 		}
-	} else {
-		d.Reason = "unsupported_liquidation_side"
-		return d
 	}
 
 	if ctx.PositionDataAvailable {
-		if side == "long" {
+		if tradeSide == "long" {
 			d.CloseAllowed = ctx.ShortPositionCount > 0 && ctx.ShortAvgPrice > 0 && price <= ctx.ShortAvgPrice*(1-cfg.MinProfitSpread)
 		} else {
 			d.CloseAllowed = ctx.LongPositionCount > 0 && ctx.LongAvgPrice > 0 && price >= ctx.LongAvgPrice*(1+cfg.MinProfitSpread)
@@ -444,7 +446,7 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 	if ctx.LastLongEntryPrice > 0 {
 		lastEntry = ctx.LastLongEntryPrice
 	}
-	if side == "long" && d.OpenAllowed && layers > 0 {
+	if tradeSide == "long" && d.OpenAllowed && layers > 0 {
 		step := cfg.GridStep0Price
 		if step <= 0 {
 			step = lastEntry * cfg.GridStep0Pct

@@ -14,6 +14,10 @@
 //  3. A FIRED cycle can still emit its steady confirmation signal when the
 //     opposite liquidation arrives inside the confirmation window.
 //
+// Liquidation side is kept as the observed position side, while the recommended
+// trade side is its opposite: short liquidations recommend long and long
+// liquidations recommend short.
+//
 // The engine is a pure state machine over LiquidationEvent values with an
 // injectable clock, so every transition is unit testable without SQLite or a
 // network connection. Persistence and notification live in the app package.
@@ -637,7 +641,7 @@ func (e *Engine) confirmOpposite(symbol string, st *symbolState, c *cycle, at ti
 	c.steadyID = SteadySignalID(symbol, c.side, at)
 	signal := domain.TradeSignal{
 		ID: c.steadyID, AlertID: c.id, Symbol: symbol, Kind: domain.SignalSteady,
-		Side: c.side, LiquidationSide: c.side, CreatedAt: at, ReferencePrice: price,
+		Side: tradeSideForLiquidation(c.side), LiquidationSide: c.side, CreatedAt: at, ReferencePrice: price,
 		AlertNotionalUSD: c.total, ThresholdUSD: c.threshold, WindowMinutes: int(e.cfg.Window / time.Minute),
 		FollowUps: c.followUps, OppositeUSD: c.oppositeUSD, OppositeCount: c.oppositeCount,
 		OppositeSeconds: int64(at.Sub(c.aggressiveAt).Seconds()), ConfirmLimitSecs: int64(e.cfg.Confirm / time.Second),
@@ -648,6 +652,20 @@ func (e *Engine) confirmOpposite(symbol string, st *symbolState, c *cycle, at ti
 	// The cycle is terminal, so the next breach of this direction can raise a
 	// fresh alert.
 	delete(st.cycles, c.side)
+}
+
+// tradeSideForLiquidation applies the liquidation-reversal rule used by the
+// alert strategy: forced short closures are buy pressure and recommend a long;
+// forced long closures are sell pressure and recommend a short.
+func tradeSideForLiquidation(liquidationSide string) string {
+	switch strings.ToLower(strings.TrimSpace(liquidationSide)) {
+	case "long":
+		return "short"
+	case "short":
+		return "long"
+	default:
+		return ""
+	}
 }
 
 // Tick advances the quiet and confirmation deadlines. It runs on a short timer
@@ -675,13 +693,13 @@ func (e *Engine) Tick(now time.Time) Result {
 					continue
 				}
 				// Rule 3: the quiet period elapsed, so the aggressive signal is
-				// emitted in the direction of the liquidated positions.
+				// emitted in the direction opposite to the liquidated positions.
 				c.status = domain.AlertStateAggressive
 				c.aggressiveAt = c.quietUntil
 				c.aggressiveID = AggressiveSignalID(symbol, c.side, c.aggressiveAt)
 				res.addSignal(domain.TradeSignal{
 					ID: c.aggressiveID, AlertID: c.id, Symbol: symbol, Kind: domain.SignalAggressive,
-					Side: c.side, LiquidationSide: c.side, CreatedAt: c.aggressiveAt, ReferencePrice: c.lastPrice,
+					Side: tradeSideForLiquidation(c.side), LiquidationSide: c.side, CreatedAt: c.aggressiveAt, ReferencePrice: c.lastPrice,
 					AlertNotionalUSD: c.total, ThresholdUSD: c.threshold, WindowMinutes: int(e.cfg.Window / time.Minute),
 					QuietElapsedSeconds: int64(c.aggressiveAt.Sub(c.lastSameSideAt).Seconds()), FollowUps: c.followUps,
 					ConfirmLimitSecs: int64(e.cfg.Confirm / time.Second),
@@ -764,7 +782,7 @@ func (e *Engine) tryFireRadar(symbol string, st *symbolState, c *cycle, now time
 	c.aggressiveID = AggressiveSignalID(symbol, c.side, c.aggressiveAt)
 	signal := domain.TradeSignal{
 		ID: c.aggressiveID, AlertID: c.id, Symbol: symbol, Kind: domain.SignalAggressive,
-		Side: c.side, LiquidationSide: c.side, CreatedAt: c.aggressiveAt, ReferencePrice: c.lastPrice,
+		Side: tradeSideForLiquidation(c.side), LiquidationSide: c.side, CreatedAt: c.aggressiveAt, ReferencePrice: c.lastPrice,
 		AlertNotionalUSD: c.total, ThresholdUSD: c.threshold, WindowMinutes: int(e.cfg.Window / time.Minute),
 		QuietElapsedSeconds: int64(c.aggressiveAt.Sub(c.lastSameSideAt).Seconds()), FollowUps: c.followUps,
 		ConfirmLimitSecs: int64(e.cfg.Confirm / time.Second),
@@ -865,7 +883,7 @@ func (c *cycle) view(cfg Config, symbol string) domain.LiquidationAlert {
 		}
 	}
 	out := domain.LiquidationAlert{
-		ID: c.id, Symbol: symbol, Side: c.side, TradeSide: c.side, WindowMinutes: int(cfg.Window / time.Minute),
+		ID: c.id, Symbol: symbol, Side: c.side, TradeSide: tradeSideForLiquidation(c.side), WindowMinutes: int(cfg.Window / time.Minute),
 		NotionalUSD: c.total, PeakUSD: c.peak, ThresholdUSD: c.threshold, EventCount: c.count,
 		WindowStart: c.windowStart, TriggeredAt: c.triggeredAt, QuietSeconds: int64(quiet / time.Second),
 		QuietUntil: c.quietUntil, FollowUps: c.followUps, Status: c.status, ReferencePrice: c.lastPrice,

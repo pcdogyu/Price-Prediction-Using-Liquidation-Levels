@@ -12,7 +12,7 @@ func TestAlertMessageOmitsQuietPeriodDetails(t *testing.T) {
 	message := alertMessage(domain.LiquidationAlert{
 		Symbol:        "BTCUSDT",
 		Side:          "long",
-		TradeSide:     "long",
+		TradeSide:     "short",
 		WindowMinutes: 3,
 		NotionalUSD:   3470000,
 		PeakUSD:       3470000,
@@ -28,7 +28,7 @@ func TestAlertMessageOmitsQuietPeriodDetails(t *testing.T) {
 		}
 	}
 
-	for _, expected := range []string{"BTCUSDT", "多单被爆仓 → 观察下单方向：做多", "3 分钟爆仓额：$3.47M（阈值 $300K）", "笔数 21 · 峰值 $3.47M"} {
+	for _, expected := range []string{"BTCUSDT", "多单被爆仓 → 观察下单方向：做空", "3 分钟爆仓额：$3.47M（阈值 $300K）", "笔数 21 · 峰值 $3.47M"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("alert is missing %q: %q", expected, message)
 		}
@@ -39,7 +39,7 @@ func TestSignalMessageAggressiveOmitsSteadyConfirmationPrompt(t *testing.T) {
 	message := signalMessage(domain.TradeSignal{
 		Symbol:              "ZECUSDT",
 		Kind:                domain.SignalAggressive,
-		Side:                "short",
+		Side:                "long",
 		LiquidationSide:     "short",
 		WindowMinutes:       3,
 		AlertNotionalUSD:    398000,
