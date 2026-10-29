@@ -137,6 +137,31 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotOrderSettingsSaveButtonHasAnimatedStates(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=orderSettings", nil))
+	for _, want := range []string{
+		`id="save-order-settings"`,
+		`#save-order-settings.is-saving`,
+		`#save-order-settings.is-saved`,
+		`#save-order-settings.is-error`,
+		`order-settings-save-spin`,
+		`order-settings-save-pulse`,
+		`prefers-reduced-motion: reduce`,
+		`aria-busy`,
+		`保存中…`,
+		`保存完成 ✓`,
+		`保存失败，重试`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("order settings save button is missing state marker %q", want)
+		}
+	}
+	saveStart := strings.Index(page, "async function saveOrderSettings()")
+	if saveStart < 0 || !strings.Contains(page[saveStart:], `setOrderSettingsSaveButtonState("saving")`) || !strings.Contains(page[saveStart:], `setOrderSettingsSaveButtonState("saved")`) || !strings.Contains(page[saveStart:], `setOrderSettingsSaveButtonState("error")`) {
+		t.Fatal("order settings save flow should expose saving, saved, and error button states")
+	}
+}
+
 func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	entryColumn := strings.Index(page, `{ id: "entry_time", title: "开仓时间"`)

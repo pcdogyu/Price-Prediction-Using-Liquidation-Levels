@@ -454,6 +454,60 @@ const tvbotHTML = `<!doctype html>
       background: var(--green);
       border-color: var(--green);
     }
+    #save-order-settings {
+      transition: background-color .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+    }
+    #save-order-settings.is-saving {
+      background: var(--warning);
+      border-color: var(--warning);
+      color: var(--bg);
+      cursor: wait;
+      opacity: 1;
+      animation: order-settings-save-pulse 1.15s ease-in-out infinite;
+    }
+    #save-order-settings.is-saving::before {
+      content: "";
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      margin-right: 8px;
+      vertical-align: -1px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: order-settings-save-spin .75s linear infinite;
+    }
+    #save-order-settings.is-saved {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: var(--bg);
+      opacity: 1;
+      animation: order-settings-save-complete .55s ease-out;
+    }
+    #save-order-settings.is-error {
+      background: var(--red);
+      border-color: var(--red);
+      color: var(--bg);
+      opacity: 1;
+    }
+    @keyframes order-settings-save-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 32%, transparent); }
+      50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--warning) 0%, transparent); }
+    }
+    @keyframes order-settings-save-spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes order-settings-save-complete {
+      0% { transform: scale(.97); box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 36%, transparent); }
+      100% { transform: scale(1); box-shadow: 0 0 0 8px color-mix(in srgb, var(--blue) 0%, transparent); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #save-order-settings.is-saving,
+      #save-order-settings.is-saving::before,
+      #save-order-settings.is-saved {
+        animation: none;
+      }
+    }
     main {
       width: 100%;
       flex: 1;
@@ -7381,34 +7435,80 @@ const tvbotHTML = `<!doctype html>
       toast("订单配置已保存");
     }
 
+    let orderSettingsSaveResetTimer = 0;
+
+    function resetOrderSettingsSaveButton() {
+      const button = $("save-order-settings");
+      if (!button) return;
+      button.classList.remove("is-saving", "is-saved", "is-error");
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = "保存下单设置";
+    }
+
+    function setOrderSettingsSaveButtonState(state) {
+      const button = $("save-order-settings");
+      if (!button) return;
+      if (orderSettingsSaveResetTimer) {
+        window.clearTimeout(orderSettingsSaveResetTimer);
+        orderSettingsSaveResetTimer = 0;
+      }
+      resetOrderSettingsSaveButton();
+      if (state === "saving") {
+        button.classList.add("is-saving");
+        button.disabled = true;
+        button.setAttribute("aria-busy", "true");
+        button.textContent = "保存中…";
+        return;
+      }
+      if (state === "saved") {
+        button.classList.add("is-saved");
+        button.textContent = "保存完成 ✓";
+        orderSettingsSaveResetTimer = window.setTimeout(resetOrderSettingsSaveButton, 1600);
+        return;
+      }
+      if (state === "error") {
+        button.classList.add("is-error");
+        button.textContent = "保存失败，重试";
+        orderSettingsSaveResetTimer = window.setTimeout(resetOrderSettingsSaveButton, 2400);
+      }
+    }
+
     async function saveOrderSettings() {
-      const previousScope = marketTurnoverScope();
-      const patch = {
-        trading: {
-          order_amount_usdt: Number($("order-amount").value),
-          leverage: Number($("order-leverage").value),
-          order_type: $("order-type").value,
-          market_turnover_scope: $("order-turnover-scope").value,
-          gamma_negative_policy: selectedGammaNegativePolicy(),
-          risk_type: $("order-risk-type").value,
-          take_profit_pct: Number($("order-tp").value),
-          stop_loss_pct: Number($("order-sl").value),
-          trailing_pct: Number($("order-trailing").value),
-          long_limit_price_multiplier: Number($("order-long-multiplier").value),
-          short_limit_price_multiplier: Number($("order-short-multiplier").value),
-          layered_order: readLayeredOrderConfig()
+      setOrderSettingsSaveButtonState("saving");
+      try {
+        const previousScope = marketTurnoverScope();
+        const patch = {
+          trading: {
+            order_amount_usdt: Number($("order-amount").value),
+            leverage: Number($("order-leverage").value),
+            order_type: $("order-type").value,
+            market_turnover_scope: $("order-turnover-scope").value,
+            gamma_negative_policy: selectedGammaNegativePolicy(),
+            risk_type: $("order-risk-type").value,
+            take_profit_pct: Number($("order-tp").value),
+            stop_loss_pct: Number($("order-sl").value),
+            trailing_pct: Number($("order-trailing").value),
+            long_limit_price_multiplier: Number($("order-long-multiplier").value),
+            short_limit_price_multiplier: Number($("order-short-multiplier").value),
+            layered_order: readLayeredOrderConfig()
+          }
+        };
+        state.config = await api("/tvbot/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+        applyMenuSettings();
+        renderOrderSettings();
+        renderMarketTurnoverScope();
+        renderDashboard();
+        renderMenuSettings();
+        updateMetrics();
+        toast("下单设置已保存");
+        if (previousScope !== marketTurnoverScope()) {
+          await loadSymbols(false).catch((err) => toast("下单设置已保存，币对列表刷新失败：" + err.message));
         }
-      };
-      state.config = await api("/tvbot/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-      applyMenuSettings();
-      renderOrderSettings();
-      renderMarketTurnoverScope();
-      renderDashboard();
-      renderMenuSettings();
-      updateMetrics();
-      toast("下单设置已保存");
-      if (previousScope !== marketTurnoverScope()) {
-        await loadSymbols(false).catch((err) => toast("下单设置已保存，币对列表刷新失败：" + err.message));
+        setOrderSettingsSaveButtonState("saved");
+      } catch (err) {
+        setOrderSettingsSaveButtonState("error");
+        throw err;
       }
     }
 
