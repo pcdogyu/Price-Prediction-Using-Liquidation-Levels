@@ -2474,6 +2474,8 @@ const tvbotHTML = `<!doctype html>
       positionClosing: {},
       positionOpening: {},
       positionOpenModeSaving: {},
+      positionOpenModePending: {},
+      positionOpenModeRequestSeq: {},
       positionClosingAll: false,
       pendingOrderActions: {},
       analysis: null,
@@ -5759,8 +5761,14 @@ const tvbotHTML = `<!doctype html>
       return positionOpenModeMap()[key] === "limit" ? "limit" : "market";
     }
 
+    function pendingPositionOpenModeForKey(key) {
+      const mode = state.positionOpenModePending[key];
+      return mode === "limit" || mode === "market" ? mode : "";
+    }
+
     function positionOpenMode(row) {
-      return positionOpenModeForKey(positionCloseRowKey(row));
+      const key = positionCloseRowKey(row);
+      return pendingPositionOpenModeForKey(key) || positionOpenModeForKey(key);
     }
 
     function setPositionOpenModeForKey(key, mode) {
@@ -5778,7 +5786,7 @@ const tvbotHTML = `<!doctype html>
       const closing = !!state.positionClosing[key];
       const opening = !!state.positionOpening[key];
       const modeSaving = !!state.positionOpenModeSaving[key];
-      const busy = closing || opening || modeSaving || state.positionClosingAll;
+      const busy = closing || opening || state.positionClosingAll;
       const openMode = positionOpenMode(row);
       const instID = escapeHTML(asText(row.instId));
       const posSide = escapeHTML(String(row.posSide || ""));
@@ -5792,7 +5800,7 @@ const tvbotHTML = `<!doctype html>
         { label: "50%", ratio: "0.5" },
         { label: "75%", ratio: "0.75" }
       ].map((item) => '<button class="btn small position-percent-open-btn" type="button" data-position-open="' + openMode + '" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="' + (openMode === "limit" ? "限价" : "市价") + '开仓 ' + item.label + '（同向加仓）"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
-      const openModeToggle = '<label class="position-open-mode-toggle" title="切换本行增仓订单方式"><span>市价</span><input type="checkbox" data-position-open-mode="true" data-position-key="' + keyAttr + '"' + baseAttrs + (openMode === "limit" ? " checked" : "") + (busy ? " disabled" : "") + ' aria-label="当前' + (openMode === "limit" ? "限价" : "市价") + '，点击切换" /><span>限价</span></label>';
+      const openModeToggle = '<label class="position-open-mode-toggle" title="切换本行增仓订单方式"><span>市价</span><input type="checkbox" data-position-open-mode="true" data-position-key="' + keyAttr + '"' + baseAttrs + (openMode === "limit" ? " checked" : "") + (busy || modeSaving ? " disabled" : "") + ' aria-label="当前' + (openMode === "limit" ? "限价" : "市价") + '，点击切换" /><span>限价</span></label>';
       const closePercentButtons = [
         { label: "10%", ratio: "0.1" },
         { label: "25%", ratio: "0.25" },
@@ -7680,32 +7688,50 @@ const tvbotHTML = `<!doctype html>
 
     async function savePositionOpenMode(input) {
       const key = input.dataset.positionKey || "";
-      if (!key) return;
+      if (!key || state.positionOpenModeSaving[key]) return;
+      const exchange = input.dataset.exchange || "okx";
+      const apiID = input.dataset.apiId || "";
+      const instID = input.dataset.instId || "";
+      const posSide = input.dataset.posSide || "";
       const previous = positionOpenModeForKey(key);
       const mode = input.checked ? "limit" : "market";
-      setPositionOpenModeForKey(key, mode);
+      const requestSeq = (Number(state.positionOpenModeRequestSeq[key]) || 0) + 1;
+      state.positionOpenModeRequestSeq[key] = requestSeq;
+      state.positionOpenModePending[key] = mode;
       state.positionOpenModeSaving[key] = true;
       renderPositions();
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 10000);
       try {
         const result = await api("/tvbot/positions/open-mode", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
-            exchange: input.dataset.exchange || "okx",
-            api_id: input.dataset.apiId || "",
-            inst_id: input.dataset.instId || "",
-            pos_side: input.dataset.posSide || "",
+            exchange: exchange,
+            api_id: apiID,
+            inst_id: instID,
+            pos_side: posSide,
             mode: mode
           })
         });
-        if (result && result.key && result.mode) setPositionOpenModeForKey(result.key, result.mode);
+        if (state.positionOpenModeRequestSeq[key] !== requestSeq) return;
+        setPositionOpenModeForKey(key, result && result.mode ? result.mode : mode);
+        delete state.positionOpenModePending[key];
         toast((mode === "limit" ? "限价" : "市价") + "增仓方式已保存");
       } catch (err) {
+        if (state.positionOpenModeRequestSeq[key] !== requestSeq) return;
+        delete state.positionOpenModePending[key];
         setPositionOpenModeForKey(key, previous);
-        toast("增仓方式保存失败：" + err.message);
+        const message = err && err.name === "AbortError" ? "保存超时，请稍后重试" : err.message;
+        toast("增仓方式保存失败：" + message);
       } finally {
-        delete state.positionOpenModeSaving[key];
-        renderPositions();
+        window.clearTimeout(timeout);
+        if (state.positionOpenModeRequestSeq[key] === requestSeq) {
+          delete state.positionOpenModePending[key];
+          delete state.positionOpenModeSaving[key];
+          renderPositions();
+        }
       }
     }
 

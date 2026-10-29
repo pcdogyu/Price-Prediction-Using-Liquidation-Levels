@@ -933,14 +933,38 @@ func TestPositionOpenModeUIUsesTenantSavedMode(t *testing.T) {
 	for _, marker := range []string{
 		"function positionOpenModeMap()",
 		"function positionOpenModeForKey(key)",
+		"function pendingPositionOpenModeForKey(key)",
 		"function savePositionOpenMode(input)",
 		"/tvbot/positions/open-mode",
 		"mode: button.dataset.positionOpen || \"market\"",
 		"positionOpenModeSaving",
+		"positionOpenModePending",
+		"AbortController",
 		"data-position-open-mode",
 	} {
 		if !strings.Contains(tvbotHTML, marker) {
 			t.Fatalf("position open mode UI missing %q", marker)
+		}
+	}
+}
+
+func TestPositionOpenModeSavingDoesNotDisableOrderActions(t *testing.T) {
+	start := strings.Index(tvbotHTML, "function positionActionCell(row)")
+	end := strings.Index(tvbotHTML, "function positionEntryTimeTitle(row)")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatal("position action cell boundaries are missing")
+	}
+	actions := tvbotHTML[start:end]
+	if strings.Contains(actions, "const busy = closing || opening || modeSaving") {
+		t.Fatal("saving the open mode must not disable the full position action row")
+	}
+	for _, marker := range []string{
+		"const busy = closing || opening || state.positionClosingAll;",
+		"(busy || modeSaving ? \" disabled\" : \"\")",
+		"(busy ? \" disabled\" : \"\")",
+	} {
+		if !strings.Contains(actions, marker) {
+			t.Fatalf("position action busy-state marker missing %q", marker)
 		}
 	}
 }
