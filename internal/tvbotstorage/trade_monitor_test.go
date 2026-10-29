@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -134,5 +135,51 @@ func TestTradeMonitorStoragePersistsFillsLifecycleCheckpointAndEvents(t *testing
 	}
 	if len(events) != 1 || events[0].EventType != "lifecycle_open" {
 		t.Fatalf("bad event list: %#v", events)
+	}
+}
+
+func TestRetentionPrunesOldTradeMonitorEventsAndAnalysisCache(t *testing.T) {
+	store, err := NewSQLiteOrderStore(filepath.Join(t.TempDir(), "tvbot-retention.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	cutoff := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	for _, event := range []TradeMonitorEvent{
+		{EventID: "old-event", EventTime: cutoff.Add(-time.Minute), Exchange: trading.ExchangeBinance, APIID: "main", Symbol: "BTCUSDT", EventType: "old"},
+		{EventID: "new-event", EventTime: cutoff.Add(time.Minute), Exchange: trading.ExchangeBinance, APIID: "main", Symbol: "BTCUSDT", EventType: "new"},
+	} {
+		if err := store.InsertTradeMonitorEvent(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.CachePayload("old-cache", map[string]string{"value": "old"}, cutoff.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CachePayload("new-cache", map[string]string{"value": "new"}, cutoff.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	removedEvents, removedCache, err := store.PruneRetention(ctx, cutoff, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removedEvents != 1 || removedCache != 1 {
+		t.Fatalf("removed events=%d cache=%d, want 1 each", removedEvents, removedCache)
+	}
+	events, err := store.ListTradeMonitorEvents(TradeMonitorFilter{}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].EventID != "new-event" {
+		t.Fatalf("remaining events=%+v", events)
+	}
+	if _, found, err := store.CachedPayload("old-cache"); err != nil || found {
+		t.Fatalf("old cache found=%v err=%v", found, err)
+	}
+	if _, found, err := store.CachedPayload("new-cache"); err != nil || !found {
+		t.Fatalf("new cache found=%v err=%v", found, err)
 	}
 }

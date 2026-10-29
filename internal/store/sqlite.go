@@ -55,10 +55,8 @@ func (s *Store) SQLDB() *sql.DB {
 func (s *Store) migrate(ctx context.Context) error {
 	const schema = `
 CREATE TABLE IF NOT EXISTS candles(exchange TEXT NOT NULL,symbol TEXT NOT NULL,ts INTEGER NOT NULL,open REAL,high REAL,low REAL,close REAL,volume_usd REAL,taker_buy_usd REAL,open_interest_usd REAL,funding_rate REAL,long_short_ratio REAL,PRIMARY KEY(exchange,symbol,ts));
-CREATE INDEX IF NOT EXISTS candles_symbol_ts ON candles(symbol,ts);
 CREATE INDEX IF NOT EXISTS candles_retention_time ON candles(ts);
 CREATE TABLE IF NOT EXISTS liquidations(id TEXT PRIMARY KEY,exchange TEXT NOT NULL,symbol TEXT NOT NULL,position_side TEXT NOT NULL,event_ts INTEGER NOT NULL,received_ts INTEGER NOT NULL,price REAL NOT NULL,quantity REAL NOT NULL,notional_usd REAL NOT NULL,coverage TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS liq_symbol_ts ON liquidations(symbol,event_ts);
 CREATE INDEX IF NOT EXISTS liquidations_retention_time ON liquidations(event_ts);
 CREATE TABLE IF NOT EXISTS predictions(symbol TEXT NOT NULL,ts INTEGER NOT NULL,source TEXT NOT NULL DEFAULT '',payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
 CREATE INDEX IF NOT EXISTS predictions_retention_time ON predictions(ts);
@@ -83,6 +81,15 @@ CREATE TABLE IF NOT EXISTS user_theme(username TEXT PRIMARY KEY,theme TEXT NOT N
 CREATE TABLE IF NOT EXISTS background_symbol_snapshot(id INTEGER PRIMARY KEY CHECK(id=1),payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
+	}
+	// These indexes predate the exchange-scoped query paths. The candle primary
+	// key covers (exchange,symbol,ts), while liquidation_symbol_page covers the
+	// exchange/symbol history path; retaining the symbol-only indexes only adds
+	// write and disk overhead.
+	for _, index := range []string{"candles_symbol_ts", "liq_symbol_ts"} {
+		if _, err := s.db.ExecContext(ctx, `DROP INDEX IF EXISTS `+index); err != nil {
+			return err
+		}
 	}
 	for column, definition := range map[string]string{
 		"role":          "TEXT NOT NULL DEFAULT 'user'",

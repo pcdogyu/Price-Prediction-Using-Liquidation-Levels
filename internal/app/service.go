@@ -33,6 +33,11 @@ type WebhookTarget struct {
 type WebhookTargetResolver func(tenantID string) (WebhookTarget, bool)
 type GammaPolicyResolver func(tenantID string) string
 
+// TVBotRetentionPruner lets the unified service include TVBot tables in the
+// same daily SQLite maintenance window without coupling the application store
+// to TVBot's storage package.
+type TVBotRetentionPruner func(ctx context.Context, tradeMonitorBefore, analysisCacheBefore time.Time) (tradeMonitorEvents, analysisCache int64, err error)
+
 type Service struct {
 	dashboard           *dashboardState
 	alerts              *alertRuntime
@@ -78,6 +83,7 @@ type Service struct {
 	webhookTarget       WebhookTargetResolver
 	gammaPolicyMu       sync.RWMutex
 	gammaPolicy         GammaPolicyResolver
+	tvbotRetention      TVBotRetentionPruner
 }
 
 func (s *Service) SetWebhookTargetResolver(resolver WebhookTargetResolver) {
@@ -96,6 +102,15 @@ func (s *Service) SetGammaPolicyResolver(resolver GammaPolicyResolver) {
 	s.gammaPolicyMu.Lock()
 	s.gammaPolicy = resolver
 	s.gammaPolicyMu.Unlock()
+}
+
+func (s *Service) SetTVBotRetentionPruner(pruner TVBotRetentionPruner) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.tvbotRetention = pruner
+	s.mu.Unlock()
 }
 
 func (s *Service) gammaPolicyForTenant(tenantID string) string {
@@ -414,6 +429,20 @@ func (s *Service) runDailyMaintenance(ctx context.Context) {
 	if err := s.store.PruneAlerts(ctx, started.AddDate(0, 0, -domain.AlertRetentionDays)); err != nil && ctx.Err() == nil {
 		failed = true
 		s.log.Warn("alert retention cleanup failed", "error", err)
+	}
+	s.mu.RLock()
+	tvbotRetention := s.tvbotRetention
+	s.mu.RUnlock()
+	if tvbotRetention != nil {
+		tradeMonitorBefore := started.AddDate(0, 0, -domain.TradeMonitorEventRetentionDays)
+		analysisCacheBefore := started.AddDate(0, 0, -domain.AnalysisCacheRetentionDays)
+		tradeMonitorEvents, analysisCache, err := tvbotRetention(ctx, tradeMonitorBefore, analysisCacheBefore)
+		if err != nil && ctx.Err() == nil {
+			failed = true
+			s.log.Warn("tvbot retention cleanup failed", "error", err)
+		} else if tradeMonitorEvents > 0 || analysisCache > 0 {
+			s.log.Info("tvbot retention cleanup", "trade_monitor_events_removed", tradeMonitorEvents, "analysis_cache_removed", analysisCache, "trade_monitor_retention_days", domain.TradeMonitorEventRetentionDays, "analysis_cache_retention_days", domain.AnalysisCacheRetentionDays)
+		}
 	}
 	// The captures the CoinGlass browser writes are only read through
 	// latest.json, so anything past the rolling window is pure disk pressure.

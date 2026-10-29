@@ -77,6 +77,30 @@ func TestRetentionIndexesAndBatchedCleanup(t *testing.T) {
 	}
 }
 
+func TestLegacySymbolOnlyIndexesAreRemoved(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "index-migration.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX candles_symbol_ts ON candles(symbol,ts); CREATE INDEX liq_symbol_ts ON liquidations(symbol,event_ts)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []string{"candles_symbol_ts", "liq_symbol_ts"} {
+		var count int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, index).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("legacy index %s still exists", index)
+		}
+	}
+}
+
 // TestCancelledQueryDoesNotPoisonPool protects the production failure where a
 // cancelled HTTP request left modernc/sqlite's only pooled connection in
 // SQLITE_INTERRUPT state. Every later read and write then failed with

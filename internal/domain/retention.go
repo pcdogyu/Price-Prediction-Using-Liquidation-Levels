@@ -13,6 +13,13 @@ const (
 	// WallEventRetentionDays keeps the derived wall lifecycle history compact;
 	// the full depth snapshots have a separate retention window above.
 	WallEventRetentionDays = 1
+	// TradeMonitorEventRetentionDays keeps the execution-monitor audit trail
+	// available for operational investigation without allowing it to grow
+	// without bound.
+	TradeMonitorEventRetentionDays = 30
+	// AnalysisCacheRetentionDays keeps stale fallback results available for a
+	// bounded period while removing cache payloads that can no longer be useful.
+	AnalysisCacheRetentionDays = 30
 	// CoinGlassCaptureRetention bounds the raw capture files kept on disk.
 	CoinGlassCaptureRetention = 72 * time.Hour
 	// DatabaseCompactMinimumFreeBytes is how much freed space retention must

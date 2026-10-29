@@ -617,6 +617,7 @@ func (s *OrderStore) migrateSQLite() error {
 			payload_json TEXT NOT NULL,
 			refreshed_at TEXT NOT NULL
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_analysis_cache_refreshed_at ON analysis_cache(refreshed_at)`,
 		`CREATE TABLE IF NOT EXISTS symbol_catalog_cache (
 			exchange TEXT NOT NULL,
 			env TEXT NOT NULL,

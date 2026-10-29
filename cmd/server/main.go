@@ -66,6 +66,9 @@ func main() {
 		log.Error("initialize trading dashboard failed", "error", err)
 		os.Exit(1)
 	}
+	svc.SetTVBotRetentionPruner(func(ctx context.Context, tradeMonitorBefore, analysisCacheBefore time.Time) (int64, int64, error) {
+		return bridge.Orders.PruneRetention(ctx, tradeMonitorBefore, analysisCacheBefore)
+	})
 	defer bridge.Close()
 	svc.SetWebhookTargetResolver(func(username string) (app.WebhookTarget, bool) {
 		exchange, apiID, tradeEnv, ok := bridge.TradeTargetForUser(username)
