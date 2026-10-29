@@ -696,6 +696,12 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 	default:
 		return manualTriggerResult{}, errors.New("record type must be alert, aggressive, steady or value_area")
 	}
+	// Legacy signal rows imported before tenant isolation do not contain a
+	// tenant_id. The manual request must still carry the current authenticated
+	// tenant so its tenant-scoped webhook token can be validated by tvbot.
+	if rtm.tenantID != "" {
+		signal.TenantID = rtm.tenantID
+	}
 	if signal.Symbol == "" || signal.ReferencePrice <= 0 {
 		return manualTriggerResult{}, errors.New("record has no valid symbol or reference price")
 	}

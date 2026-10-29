@@ -449,3 +449,49 @@ func TestManualAlertTriggerUsesPersistedDirectionAndPrice(t *testing.T) {
 		t.Fatal("manual alert trigger was not delivered to webhook")
 	}
 }
+
+func TestManualSignalTriggerAddsCurrentTenantToLegacyHistory(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	svc, cfg, st := alertTestService(t, "manual-legacy-signal-trigger.db")
+	cfg.SteadyWebhookURL = server.URL
+	cfg.SteadyWebhookAPIID = "okx_bot"
+	cfg.SteadyWebhookTargetExchange = "okx"
+	cfg.SteadyWebhookTradeEnv = "demo"
+	cfg.SteadyWebhookExchange = "binance"
+	cfg.SteadyWebhookInterval = "3m"
+	cfg.SteadyWebhookTokenNonce = "nonce-value"
+	cfg.SteadyWebhookToken = "token-value"
+	svc.alerts.webhookURL = cfg.SteadyWebhookURL
+	svc.alerts.webhookConfig = cfg
+	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
+	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	svc.alerts.tenantID = "pcdog"
+	if _, err := st.SaveTradeSignal(context.Background(), domain.TradeSignal{
+		ID: "legacy-signal", Symbol: "BTCUSDT", Kind: domain.SignalSteady, Side: "long",
+		CreatedAt: time.Date(2026, 10, 16, 3, 4, 5, 0, time.UTC), ReferencePrice: 67123.45,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.TriggerAlert(context.Background(), domain.SignalSteady, "legacy-signal"); err != nil {
+		t.Fatalf("manual legacy signal trigger: %v", err)
+	}
+	select {
+	case raw := <-requests:
+		var got map[string]string
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("webhook body is not JSON: %v", err)
+		}
+		if got["tenant_id"] != "pcdog" {
+			t.Fatalf("manual legacy signal must carry the current tenant: %s", raw)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("manual legacy signal trigger was not delivered to webhook")
+	}
+}
