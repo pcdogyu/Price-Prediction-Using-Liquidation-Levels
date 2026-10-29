@@ -195,6 +195,7 @@ type analysisTrade struct {
 	NetPnL          string    `json:"net_pnl"`
 	Operation       string    `json:"operation,omitempty"`
 	OperationSource string    `json:"operation_source,omitempty"`
+	SourceAction    string    `json:"-"`
 	FillTime        time.Time `json:"fill_time"`
 	FillTS          int64     `json:"fill_ts"`
 	FillCount       int       `json:"fill_count"`
@@ -219,6 +220,7 @@ type analysisPositionTrade struct {
 	FeeCcy            string    `json:"fee_ccy,omitempty"`
 	NetPnL            string    `json:"net_pnl,omitempty"`
 	Turnover          string    `json:"turnover,omitempty"`
+	GammaDirection    string    `json:"gamma_direction,omitempty"`
 	EntryOrdID        string    `json:"entry_ord_id,omitempty"`
 	ExitOrdID         string    `json:"exit_ord_id,omitempty"`
 	FillCount         int       `json:"fill_count"`
@@ -1614,6 +1616,9 @@ func mergeAnalysisTradeText(dst *analysisTrade, src analysisTrade) {
 	if dst.OperationSource == "" {
 		dst.OperationSource = src.OperationSource
 	}
+	if dst.SourceAction == "" {
+		dst.SourceAction = src.SourceAction
+	}
 	if dst.FillPx == "" {
 		dst.FillPx = src.FillPx
 	}
@@ -1639,6 +1644,7 @@ type analysisOrderMeta struct {
 	PositionSide    string
 	Operation       string
 	OperationSource string
+	SourceAction    string
 }
 
 func enrichAnalysisTrades(cfg config.Config, trades []analysisTrade, records []storage.OrderRecord) {
@@ -1676,6 +1682,9 @@ func enrichAnalysisTradesWithEvents(cfg config.Config, trades []analysisTrade, r
 			}
 			if meta.OperationSource != "" {
 				trade.OperationSource = meta.OperationSource
+			}
+			if meta.SourceAction != "" {
+				trade.SourceAction = meta.SourceAction
 			}
 		}
 		if meta, ok := eventIndex[analysisOrderKey(trade.Exchange, trade.APIID, trade.InstID, trade.OrdID)]; ok {
@@ -1749,6 +1758,7 @@ func analysisOrderMetaIndex(records []storage.OrderRecord) map[string]analysisOr
 						PositionSide:    positionSide,
 						Operation:       operation,
 						OperationSource: operationSource,
+						SourceAction:    string(rec.SourceAction),
 					}
 				}
 			}
@@ -2150,11 +2160,28 @@ func analysisClosingSideFromTradeSide(side string) string {
 	}
 }
 
+func analysisGammaDirection(sourceAction, positionSide string) string {
+	source := normalizeAnalysisPositionSide(sourceAction)
+	actual := normalizeAnalysisPositionSide(positionSide)
+	if source == "" || actual == "" {
+		return ""
+	}
+	if source == actual {
+		return "forward"
+	}
+	if (source == trading.PositionSideLong || source == trading.PositionSideShort) &&
+		(actual == trading.PositionSideLong || actual == trading.PositionSideShort) {
+		return "reverse"
+	}
+	return ""
+}
+
 type analysisOpenLot struct {
 	exchange          string
 	apiID             string
 	instID            string
 	side              string
+	gammaDirection    string
 	entryGroupKey     string
 	entryTime         time.Time
 	entryTS           int64
@@ -2173,6 +2200,7 @@ type analysisPositionTradeAccumulator struct {
 	APIID          string
 	InstID         string
 	Side           string
+	GammaDirection string
 	EntryTime      time.Time
 	EntryTS        int64
 	ExitTime       time.Time
@@ -2312,6 +2340,7 @@ func addAnalysisOpenLot(cfg config.Config, books map[string][]*analysisOpenLot, 
 		ordID:             strings.TrimSpace(trade.OrdID),
 		leverage:          trade.Leverage,
 		fillCount:         maxInt(1, trade.FillCount),
+		gammaDirection:    analysisGammaDirection(trade.SourceAction, positionSide),
 	})
 }
 
@@ -2371,6 +2400,7 @@ func ensureAnalysisPositionAccumulator(pending map[string]*analysisPositionTrade
 			APIID:          strings.TrimSpace(trade.APIID),
 			InstID:         strings.ToUpper(strings.TrimSpace(trade.InstID)),
 			Side:           normalizeAnalysisPositionSide(positionSide),
+			GammaDirection: analysisGammaDirection(trade.SourceAction, positionSide),
 			EntryTime:      trade.FillTime,
 			EntryTS:        trade.FillTS,
 			Leverage:       trade.Leverage,
@@ -2386,6 +2416,9 @@ func ensureAnalysisPositionAccumulator(pending map[string]*analysisPositionTrade
 	}
 	if acc.Leverage <= 0 && trade.Leverage > 0 {
 		acc.Leverage = trade.Leverage
+	}
+	if acc.GammaDirection == "" {
+		acc.GammaDirection = analysisGammaDirection(trade.SourceAction, positionSide)
 	}
 	acc.Remaining += qty
 	acc.EntryFillCount += maxInt(1, trade.FillCount)
@@ -2403,6 +2436,7 @@ func applyAnalysisPositionCloseMatch(pending map[string]*analysisPositionTradeAc
 			APIID:          lot.apiID,
 			InstID:         lot.instID,
 			Side:           lot.side,
+			GammaDirection: lot.gammaDirection,
 			EntryTime:      lot.entryTime,
 			EntryTS:        lot.entryTS,
 			Leverage:       lot.leverage,
@@ -2470,27 +2504,28 @@ func finalizeAnalysisPositionAccumulator(pending map[string]*analysisPositionTra
 		margin = trading.NormalizeFloat(acc.Margin)
 	}
 	*out = append(*out, analysisPositionTrade{
-		Exchange:    acc.Exchange,
-		APIID:       acc.APIID,
-		InstID:      acc.InstID,
-		Side:        acc.Side,
-		EntryTime:   acc.EntryTime,
-		EntryTS:     acc.EntryTS,
-		ExitTime:    acc.ExitTime,
-		ExitTS:      acc.ExitTS,
-		EntryPx:     entryPx,
-		ExitPx:      exitPx,
-		Qty:         trading.NormalizeFloat(acc.Qty),
-		Margin:      margin,
-		Leverage:    acc.Leverage,
-		RealizedPnL: trading.NormalizeFloat(acc.RealizedPnL),
-		Fee:         trading.NormalizeFloat(acc.Fee),
-		FeeCcy:      "USDT",
-		NetPnL:      trading.NormalizeFloat(acc.NetPnL),
-		Turnover:    trading.NormalizeFloat(acc.Turnover),
-		EntryOrdID:  acc.EntryOrdID,
-		ExitOrdID:   strings.Join(acc.ExitOrdIDs, " / "),
-		FillCount:   maxInt(1, acc.EntryFillCount+acc.CloseFillCount),
+		Exchange:       acc.Exchange,
+		APIID:          acc.APIID,
+		InstID:         acc.InstID,
+		Side:           acc.Side,
+		GammaDirection: acc.GammaDirection,
+		EntryTime:      acc.EntryTime,
+		EntryTS:        acc.EntryTS,
+		ExitTime:       acc.ExitTime,
+		ExitTS:         acc.ExitTS,
+		EntryPx:        entryPx,
+		ExitPx:         exitPx,
+		Qty:            trading.NormalizeFloat(acc.Qty),
+		Margin:         margin,
+		Leverage:       acc.Leverage,
+		RealizedPnL:    trading.NormalizeFloat(acc.RealizedPnL),
+		Fee:            trading.NormalizeFloat(acc.Fee),
+		FeeCcy:         "USDT",
+		NetPnL:         trading.NormalizeFloat(acc.NetPnL),
+		Turnover:       trading.NormalizeFloat(acc.Turnover),
+		EntryOrdID:     acc.EntryOrdID,
+		ExitOrdID:      strings.Join(acc.ExitOrdIDs, " / "),
+		FillCount:      maxInt(1, acc.EntryFillCount+acc.CloseFillCount),
 	})
 }
 
@@ -2652,7 +2687,10 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, gateA
 	positionTradesInput := append([]analysisTrade(nil), trades...)
 	trades = append(trades, gateTrades...)
 	trades = aggregateAnalysisTrades(trades)
-	enrichAnalysisTradesWithEvents(cfg, trades, s.Orders.List(10000), s.analysisTradeMonitorEvents())
+	records := s.Orders.List(10000)
+	events := s.analysisTradeMonitorEvents()
+	enrichAnalysisTradesWithEvents(cfg, trades, records, events)
+	enrichAnalysisTradesWithEvents(cfg, positionTradesInput, records, events)
 	sortAnalysisTrades(trades)
 	positionTrades := buildAnalysisPositionTrades(cfg, positionTradesInput, pnlSince)
 	positionTrades = append(positionTrades, gatePositions...)
@@ -2694,9 +2732,13 @@ func (s *Server) analysisFromExternalData(cfg config.Config, apiID, binanceAPIID
 	trades = append(trades, binanceTrades...)
 	trades = append(trades, gateTrades...)
 	trades = aggregateAnalysisTrades(trades)
-	enrichAnalysisTradesWithEvents(cfg, trades, s.Orders.List(10000), s.analysisTradeMonitorEvents())
+	positionTradesInput := append([]analysisTrade(nil), binanceTrades...)
+	records := s.Orders.List(10000)
+	events := s.analysisTradeMonitorEvents()
+	enrichAnalysisTradesWithEvents(cfg, trades, records, events)
+	enrichAnalysisTradesWithEvents(cfg, positionTradesInput, records, events)
 	sortAnalysisTrades(trades)
-	positionTrades := buildAnalysisPositionTrades(cfg, binanceTrades, pnlSince)
+	positionTrades := buildAnalysisPositionTrades(cfg, positionTradesInput, pnlSince)
 	positionTrades = append(positionTrades, gatePositions...)
 	sortAnalysisPositionTrades(positionTrades)
 	summary, exchangeSummaries, symbols := computeStats(cfg, positionTrades, trades, pnlSince)

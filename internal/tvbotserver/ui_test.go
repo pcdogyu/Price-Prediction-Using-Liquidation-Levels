@@ -184,6 +184,22 @@ func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 	if entryColumn < 0 || exitColumn < 0 || entryColumn >= exitColumn {
 		t.Fatalf("analysis columns should put entry time before exit time: entry=%d exit=%d", entryColumn, exitColumn)
 	}
+	sideColumn := strings.Index(page, `{ id: "side", title: "方向"`)
+	gammaColumn := strings.Index(page, `{ id: "gamma", title: "Gamma"`)
+	entryPriceColumn := strings.Index(page, `{ id: "entry_px", title: "开仓价"`)
+	if sideColumn < 0 || gammaColumn < 0 || entryPriceColumn < 0 || sideColumn >= gammaColumn || gammaColumn >= entryPriceColumn {
+		t.Fatalf("analysis Gamma column should follow direction: side=%d gamma=%d entry price=%d", sideColumn, gammaColumn, entryPriceColumn)
+	}
+	for _, want := range []string{
+		`function analysisGammaDirectionText(row)`,
+		`if (value === "forward") return "正向开仓"`,
+		`if (value === "reverse") return "反向开仓"`,
+		`sideIndex >= 0 ? sideIndex + 1 : 0`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("analysis Gamma column marker missing %q", want)
+		}
+	}
 	for _, want := range []string{
 		`function analysisGateChartSymbol(instID)`,
 		`function analysisTradeSymbolHTML(row)`,

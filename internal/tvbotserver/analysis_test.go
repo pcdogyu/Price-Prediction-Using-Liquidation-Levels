@@ -748,6 +748,54 @@ func TestBuildAnalysisPositionTradesCountsClosedPositionsOnly(t *testing.T) {
 	}
 }
 
+func TestBuildAnalysisPositionTradesCapturesGammaDirection(t *testing.T) {
+	cfg := config.Config{Symbols: map[string]config.SymbolConfig{
+		"TEST": {InstID: "TEST-USDT-SWAP", CtVal: 1},
+	}}
+	base := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	trade := func(id, ordID, side, positionSide, sourceAction string, at time.Time, pnl string) analysisTrade {
+		return analysisTrade{
+			Exchange:     trading.ExchangeBinance,
+			APIID:        "default",
+			InstID:       "TESTUSDT",
+			TradeID:      id,
+			OrdID:        ordID,
+			Side:         side,
+			PosSide:      positionSide,
+			SourceAction: sourceAction,
+			FillPx:       "100",
+			FillSz:       "1",
+			FillPnl:      pnl,
+			Fee:          "-0.01",
+			Leverage:     10,
+			FillTime:     at,
+			FillTS:       at.UnixMilli(),
+			FillCount:    1,
+		}
+	}
+	trades := []analysisTrade{
+		trade("forward-open", "forward-entry", "buy", trading.PositionSideLong, trading.PositionSideLong, base, ""),
+		trade("forward-close", "forward-exit", "sell", trading.PositionSideLong, "", base.Add(time.Hour), "1"),
+		trade("reverse-open", "reverse-entry", "sell", trading.PositionSideShort, trading.PositionSideLong, base.Add(2*time.Hour), ""),
+		trade("reverse-close", "reverse-exit", "buy", trading.PositionSideShort, "", base.Add(3*time.Hour), "-1"),
+	}
+
+	positions := buildAnalysisPositionTrades(cfg, trades, base)
+	if len(positions) != 2 {
+		t.Fatalf("positions len=%d positions=%#v", len(positions), positions)
+	}
+	byEntry := map[string]analysisPositionTrade{}
+	for _, position := range positions {
+		byEntry[position.EntryOrdID] = position
+	}
+	if got := byEntry["forward-entry"].GammaDirection; got != "forward" {
+		t.Fatalf("forward Gamma direction=%q, want forward", got)
+	}
+	if got := byEntry["reverse-entry"].GammaDirection; got != "reverse" {
+		t.Fatalf("reverse Gamma direction=%q, want reverse", got)
+	}
+}
+
 func TestBuildAnalysisPositionTradesEmptyIsJSONArray(t *testing.T) {
 	rows := buildAnalysisPositionTrades(config.Config{}, nil, time.Time{})
 	if rows == nil {

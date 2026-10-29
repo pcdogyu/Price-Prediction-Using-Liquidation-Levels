@@ -1530,6 +1530,7 @@ const tvbotHTML = `<!doctype html>
     .analysis-trade-table .analysis-exit-time-col { width: 11.4%; }
     .analysis-trade-table .analysis-inst-id-col { width: 6.4%; }
     .analysis-trade-table .analysis-side-col { width: 5.4%; }
+    .analysis-trade-table .analysis-gamma-col { width: 7.2%; }
     .analysis-trade-table .analysis-entry-px-col { width: 7%; }
     .analysis-trade-table .analysis-exit-px-col { width: 7%; }
     .analysis-trade-table .analysis-qty-col { width: 7%; }
@@ -2629,6 +2630,7 @@ const tvbotHTML = `<!doctype html>
       { id: "exit_time", title: "平仓时间", colClass: "analysis-exit-time-col", tdClass: "time", render: (row) => analysisTimeText(row.exit_time) },
       { id: "inst_id", title: "币对", colClass: "analysis-inst-id-col", renderHTML: (row) => analysisTradeSymbolHTML(row) },
       { id: "side", title: "方向", colClass: "analysis-side-col", toneClass: (row) => analysisPositionSideToneClass(row.side), render: (row) => analysisPositionSideText(row.side) },
+      { id: "gamma", title: "Gamma", colClass: "analysis-gamma-col", render: (row) => analysisGammaDirectionText(row) },
       { id: "entry_px", title: "开仓价", colClass: "analysis-entry-px-col", render: (row) => analysisPriceText(row, row.entry_px) },
       { id: "exit_px", title: "平仓价", colClass: "analysis-exit-px-col", render: (row) => analysisPriceText(row, row.exit_px) },
       { id: "qty", title: "数量", colClass: "analysis-qty-col", render: (row) => analysisAmountText(row.qty) },
@@ -6069,6 +6071,12 @@ const tvbotHTML = `<!doctype html>
       analysisTradeColumnIDs().forEach((id) => {
         if (!next.includes(id)) next.push(id);
       });
+      if (!source.some((id) => String(id || "").trim() === "gamma")) {
+        const gammaIndex = next.indexOf("gamma");
+        if (gammaIndex >= 0) next.splice(gammaIndex, 1);
+        const sideIndex = next.indexOf("side");
+        next.splice(sideIndex >= 0 ? sideIndex + 1 : 0, 0, "gamma");
+      }
       if (!hadEntryTime) {
         const entryIndex = next.indexOf("entry_time");
         if (entryIndex >= 0) next.splice(entryIndex, 1);
@@ -6430,6 +6438,13 @@ const tvbotHTML = `<!doctype html>
       if (value === "long") return "signed-profit";
       if (value === "short") return "signed-loss";
       return "";
+    }
+
+    function analysisGammaDirectionText(row) {
+      const value = String(row && row.gamma_direction || "").trim().toLowerCase();
+      if (value === "forward") return "正向开仓";
+      if (value === "reverse") return "反向开仓";
+      return "-";
     }
 
     function analysisPnLRatioValue(row) {
