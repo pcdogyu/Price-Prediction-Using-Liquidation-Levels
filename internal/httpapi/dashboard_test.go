@@ -64,17 +64,21 @@ func TestHedgeWallDepthChartIncludesPriceGridAndTopFiveMarkers(t *testing.T) {
 	for _, marker := range []string{
 		"integerStart=Math.ceil(low)",
 		"gridStep=integerCount>120",
-		"价格 · Top 5",
 		"topFive=(rows,side)",
+		"ctx.font='bold 12px system-ui'",
+		"label=(item.side==='bid'?'B':'A')+item.rank+' '+price(item.level.price)",
 		"item.side==='bid'?'B':'A'",
 	} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("depth chart missing %q", marker)
 		}
 	}
+	if strings.Contains(body, "priceRows") || strings.Contains(body, "右侧价格 · Top 5") {
+		t.Fatal("depth chart must not render the separate right-side A/B price list")
+	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/hedge-wall", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "整数价位网格") || !strings.Contains(w.Body.String(), "B/A1–5") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "柱线上显示 Top 5 价格") || !strings.Contains(w.Body.String(), "B/A1–5") {
 		t.Fatalf("hedge wall legend missing chart guidance: status=%d", w.Code)
 	}
 }

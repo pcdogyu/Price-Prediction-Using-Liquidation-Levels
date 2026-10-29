@@ -182,7 +182,7 @@
   }
   function drawDepth(book, data) {
     if (!book || !book.bids.length || !book.asks.length) { emptyChart('wall-chart','等待盘口同步'); return; }
-    const {canvas,ctx,width,height} = env('wall-chart'), pad={l:65,r:128,t:38,b:48}, plotWidth=width-pad.l-pad.r;
+    const {canvas,ctx,width,height} = env('wall-chart'), pad={l:65,r:20,t:38,b:48}, plotWidth=width-pad.l-pad.r;
     const raw=[...book.bids,...book.asks], min=Math.min(...raw.map(l=>l.price)),max=Math.max(...raw.map(l=>l.price)),span=Math.max(max-min,book.bucket_width*2),low=min-span*.04,high=max+span*.04;
     const x = p=>pad.l+(p-low)/(high-low)*plotWidth, inside=lv=>lv.price>=low&&lv.price<=high;
     const series=[{rows:data.ghost_bids||[],color:paint('#2dd4bf'),alpha:.18},{rows:data.ghost_asks||[],color:paint('#fb7185'),alpha:.18},{rows:book.bids,color:paint('#2dd4bf'),alpha:1},{rows:book.asks,color:paint('#fb7185'),alpha:1}];
@@ -197,17 +197,12 @@
     for(const s of series){ctx.fillStyle=s.color;ctx.globalAlpha=s.alpha;for(const lv of s.rows.filter(inside))ctx.fillRect(x(lv.price)-bar/2,y(lv.notional_usd),bar,height-pad.b-y(lv.notional_usd));}ctx.globalAlpha=1;
     const topFive=(rows,side)=>rows.filter(inside).sort((a,b)=>b.notional_usd-a.notional_usd).slice(0,5).map((level,index)=>({level,side,rank:index+1}));
     const ranked=[...topFive(book.bids,'bid'),...topFive(book.asks,'ask')];
-    ctx.font='bold 10px system-ui';ctx.textAlign='center';
+    ctx.font='bold 12px system-ui';ctx.textAlign='center';
     for(const item of ranked){
-      const px=x(item.level.price),barTop=y(item.level.notional_usd),label=(item.side==='bid'?'B':'A')+item.rank,labelWidth=ctx.measureText(label).width+8,markerY=Math.max(pad.t+10,barTop-12-(item.rank%2)*10),labelX=Math.max(pad.l+labelWidth/2,Math.min(px,width-pad.r-labelWidth/2));
+      const px=x(item.level.price),barTop=y(item.level.notional_usd),label=(item.side==='bid'?'B':'A')+item.rank+' '+price(item.level.price),labelWidth=ctx.measureText(label).width+10,markerY=Math.max(pad.t+12,barTop-15-(item.rank%2)*12),labelX=Math.max(pad.l+labelWidth/2,Math.min(px,width-pad.r-labelWidth/2));
       ctx.strokeStyle=paint(item.side==='bid'?'#2dd4bf':'#fb7185');ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(px,barTop);ctx.lineTo(labelX,markerY+6);ctx.stroke();
-      ctx.fillStyle=paint(item.side==='bid'?'#0f766e':'#be123c');ctx.fillRect(labelX-labelWidth/2,markerY-8,labelWidth,16);ctx.fillStyle=paint('#f8fafc');ctx.fillText(label,labelX,markerY+3);
+      ctx.fillStyle=paint(item.side==='bid'?'#0f766e':'#be123c');ctx.fillRect(labelX-labelWidth/2,markerY-10,labelWidth,20);ctx.fillStyle=paint('#f8fafc');ctx.fillText(label,labelX,markerY+4);
     }
-    ctx.textAlign='left';ctx.fillStyle=paint('#83a0b2');ctx.font='10px system-ui';ctx.fillText('右侧价格 · Top 5',width-pad.r+12,pad.t-16);
-    ctx.strokeStyle=paint('#345363');ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(width-pad.r+2,pad.t);ctx.lineTo(width-pad.r+2,height-pad.b);ctx.stroke();
-    const priceRows=[...topFive(book.bids,'bid'),...topFive(book.asks,'ask')].sort((a,b)=>a.rank-b.rank||a.side.localeCompare(b.side));
-    const priceGap=Math.max(10,Math.min(22,(height-pad.t-pad.b-16)/10)),priceSplit=priceGap*5+8;
-    for(const item of priceRows){const label=(item.side==='bid'?'B':'A')+item.rank,py=Math.min(height-pad.b-3,pad.t+12+(item.rank-1)*priceGap+(item.side==='ask'?priceSplit:0));ctx.fillStyle=paint(item.side==='bid'?'#2dd4bf':'#fb7185');ctx.fillText(label,width-pad.r+12,py);ctx.fillStyle=paint('#c5d8e2');ctx.fillText(price(item.level.price),width-pad.r+42,py);}
     ctx.textAlign='center';ctx.fillStyle=paint('#83a0b2');const pixelsPerInteger=plotWidth/Math.max(1,high-low),labelStep=Math.max(gridStep,Math.ceil(38/Math.max(1,pixelsPerInteger)));for(let p=integerStart;p<=integerEnd;p+=labelStep){const px=x(p),label=price(p),labelWidth=ctx.measureText(label).width;if(px<labelWidth/2+pad.l||px>width-pad.r-labelWidth/2)continue;ctx.fillText(label,px,height-14);}
     ctx.textAlign='left';const mid=(book.best_bid+book.best_ask)/2;ctx.strokeStyle=paint('#fbbf24');ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x(mid),pad.t);ctx.lineTo(x(mid),height-pad.b);ctx.stroke();ctx.setLineDash([]);
     canvas.onpointermove=event=>{const p=low+(event.offsetX-pad.l)/(width-pad.l-pad.r)*(high-low),lv=raw.reduce((best,l)=>Math.abs(l.price-p)<Math.abs(best.price-p)?l:best,raw[0]);canvas.title='价格 '+price(lv.price)+'\n挂单金额 USD '+amount(lv.notional_usd)+'\n数量 '+price(lv.quantity);};
