@@ -52,6 +52,40 @@ func TestWallQualificationDisappearanceAndInterruption(t *testing.T) {
 		t.Fatal(history, err)
 	}
 }
+
+func TestBookSnapshotsStayInMemoryAtFiveSecondCadence(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	svc := New(config.Config{}, s, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx := context.Background()
+	start := time.Now().UTC().Truncate(time.Second)
+	for _, offset := range []int{0, 1, 5, 6, 10} {
+		if err := svc.recordBook(ctx, testBook(start.Add(time.Duration(offset)*time.Second))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	history, err := svc.WallHistory(ctx, "ETHUSDT", "snapshots", start.Add(-time.Second), start.Add(11*time.Second), 50, "")
+	if err != nil || len(history.Snapshots) != 3 {
+		t.Fatalf("memory snapshots=%d err=%v, want 3", len(history.Snapshots), err)
+	}
+	if !history.Snapshots[0].Time.Equal(start.Add(10*time.Second)) || !history.Snapshots[2].Time.Equal(start) {
+		t.Fatalf("memory snapshot times=%v, want newest-first 10s..0s", history.Snapshots)
+	}
+	persisted, err := s.WallHistory(ctx, "ETHUSDT", "snapshots", start.Add(-time.Second), start.Add(11*time.Second), 50, "")
+	if err != nil || len(persisted.Snapshots) != 0 {
+		t.Fatalf("persisted snapshots=%d err=%v, want 0", len(persisted.Snapshots), err)
+	}
+	restarted := New(config.Config{}, s, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	restartedHistory, err := restarted.WallHistory(ctx, "ETHUSDT", "snapshots", start.Add(-time.Second), start.Add(11*time.Second), 50, "")
+	if err != nil || len(restartedHistory.Snapshots) != 0 {
+		t.Fatalf("restarted snapshots=%d err=%v, want 0", len(restartedHistory.Snapshots), err)
+	}
+}
+
 func TestShortWallsDoNotAccumulateAcrossGaps(t *testing.T) {
 	tracks := map[string]*wallTrack{}
 	at := time.Now().UTC()

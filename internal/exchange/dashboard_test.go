@@ -84,6 +84,33 @@ func TestDepthSynchronizationAndBuckets(t *testing.T) {
 		t.Fatal("missing initial overlap accepted")
 	}
 }
+
+func TestDepthSnapshotRetainsAtMost250LevelsPerSide(t *testing.T) {
+	b := NewLocalBook("BTCUSDT", .01, 100, nil, nil)
+	for i := 0; i < 300; i++ {
+		b.bids[int64(10000-i*10)] = 1
+		b.asks[int64(10000+i*10)] = 1
+	}
+
+	snapshot := b.Snapshot(time.Now())
+	if len(snapshot.Bids) != 250 || len(snapshot.Asks) != 250 {
+		t.Fatalf("snapshot levels=%d/%d, want 250/250", len(snapshot.Bids), len(snapshot.Asks))
+	}
+	for i := 1; i < len(snapshot.Bids); i++ {
+		if snapshot.Bids[i-1].Price <= snapshot.Bids[i].Price {
+			t.Fatalf("bids are not sorted descending at %d: %v then %v", i, snapshot.Bids[i-1].Price, snapshot.Bids[i].Price)
+		}
+	}
+	for i := 1; i < len(snapshot.Asks); i++ {
+		if snapshot.Asks[i-1].Price >= snapshot.Asks[i].Price {
+			t.Fatalf("asks are not sorted ascending at %d: %v then %v", i, snapshot.Asks[i-1].Price, snapshot.Asks[i].Price)
+		}
+	}
+	if snapshot.BestBid != 100 || snapshot.BestAsk != 100 {
+		t.Fatalf("best prices=%v/%v, want 100/100", snapshot.BestBid, snapshot.BestAsk)
+	}
+}
+
 func TestGammaUnitsSignsAndMissingNetPosition(t *testing.T) {
 	rows := []OptionExposure{{Contract: OptionContract{Side: "CALL", Strike: "100", Unit: 2, Expiry: time.Now().Add(time.Hour).UnixMilli()}, Gamma: .01, OI: 3}, {Contract: OptionContract{Side: "PUT", Strike: "100", Unit: 1, Expiry: time.Now().Add(time.Hour).UnixMilli()}, Gamma: .01, OI: 1}}
 	g := BuildGamma("ETHUSDT", 100, rows, time.Now())

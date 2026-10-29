@@ -14,6 +14,8 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
 
+const maxBookSnapshotLevelsPerSide = 250
+
 type DepthUpdate struct {
 	Event     string     `json:"e"`
 	First     int64      `json:"U"`
@@ -96,8 +98,8 @@ func (b *LocalBook) Snapshot(at time.Time) domain.BookSnapshot {
 			}
 			return keys[i] < keys[j]
 		})
-		if len(keys) > 60 {
-			keys = keys[:60]
+		if len(keys) > maxBookSnapshotLevelsPerSide {
+			keys = keys[:maxBookSnapshotLevelsPerSide]
 		}
 		r := make([]domain.DepthLevel, 0, len(keys))
 		for _, k := range keys {

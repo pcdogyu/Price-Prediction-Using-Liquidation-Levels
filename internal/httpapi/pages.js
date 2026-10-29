@@ -143,7 +143,7 @@
   function renderWalls(d) {
     const b = frozenBook || d.book;
     $('status').textContent = frozenBook ? '历史快照 · ' + when(frozenBook.time) : stateLabel(d.state) + ' · ' + when(b?.time);
-    $('wall-metrics').innerHTML = metric('Best Bid', price(b?.best_bid), '买盘最佳报价', 'buy') + metric('Best Ask', price(b?.best_ask), '卖盘最佳报价', 'sell') + metric('盘口价差', b ? price(b.best_ask - b.best_bid) : '—', '原始价格单位') + metric('快照时间', b ? when(b.time) : '—', '每 5 秒入库 · 历史保留 30 天');
+    $('wall-metrics').innerHTML = metric('Best Bid', price(b?.best_bid), '买盘最佳报价', 'buy') + metric('Best Ask', price(b?.best_ask), '卖盘最佳报价', 'sell') + metric('盘口价差', b ? price(b.best_ask - b.best_bid) : '—', '原始价格单位') + metric('快照时间', b ? when(b.time) : '—', '每 5 秒内存采样 · 不写入数据库');
     $('bid-events').innerHTML = wallRows(d.events, 'bid'); $('ask-events').innerHTML = wallRows(d.events, 'ask');
     drawDepth(b, frozenBook ? {} : d);
     $('wall-detail').textContent = '桶宽 ' + price(b?.bucket_width) + ' · 25 万 USD / 第 85 百分位阈值 · 相邻墙确认 · 持续至少 3 秒 · 悬停查看价格与金额';

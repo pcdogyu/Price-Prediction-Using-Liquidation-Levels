@@ -10,6 +10,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 )
 
 type wallTrack struct {
@@ -23,7 +24,6 @@ type dashboardState struct {
 	books           map[string]domain.BookSnapshot
 	samples         map[string][]domain.BookSnapshot
 	tracks          map[string]map[string]*wallTrack
-	lastSave        map[string]time.Time
 	metrics         map[string]domain.MarketMetric
 	gamma           map[string]domain.GammaView
 	deribit         map[string]domain.OptionGammaPoint
@@ -31,19 +31,13 @@ type dashboardState struct {
 }
 
 func newDashboardState() *dashboardState {
-	return &dashboardState{books: map[string]domain.BookSnapshot{}, samples: map[string][]domain.BookSnapshot{}, tracks: map[string]map[string]*wallTrack{}, lastSave: map[string]time.Time{}, metrics: map[string]domain.MarketMetric{}, gamma: map[string]domain.GammaView{}, deribit: map[string]domain.OptionGammaPoint{}, deribitAttempts: map[string]optionGammaAttempt{}}
+	return &dashboardState{books: map[string]domain.BookSnapshot{}, samples: map[string][]domain.BookSnapshot{}, tracks: map[string]map[string]*wallTrack{}, metrics: map[string]domain.MarketMetric{}, gamma: map[string]domain.GammaView{}, deribit: map[string]domain.OptionGammaPoint{}, deribitAttempts: map[string]optionGammaAttempt{}}
 }
 func (s *Service) startDashboard(ctx context.Context) {
 	if err := s.store.InterruptWallEvents(ctx); err != nil {
 		s.log.Error("interrupt previous wall events", "error", err)
 	}
 	for _, symbol := range s.backgroundSymbols() {
-		h, err := s.store.WallHistory(ctx, symbol, "snapshots", time.Now().Add(-10*time.Minute), time.Now().Add(time.Second), 500, "")
-		if err == nil && len(h.Snapshots) > 0 {
-			sort.Slice(h.Snapshots, func(i, j int) bool { return h.Snapshots[i].Time.Before(h.Snapshots[j].Time) })
-			s.dashboard.samples[symbol] = h.Snapshots
-			s.dashboard.books[symbol] = h.Snapshots[len(h.Snapshots)-1]
-		}
 		if g, err := s.store.LatestGamma(ctx, symbol); err == nil {
 			s.dashboard.gamma[symbol] = g
 		}
@@ -180,8 +174,10 @@ func (s *Service) recordBook(ctx context.Context, book domain.BookSnapshot) erro
 	}
 	d.books[book.Symbol] = book
 	samples := d.samples[book.Symbol]
-	if len(samples) == 0 || book.Time.Sub(samples[len(samples)-1].Time) >= time.Second {
+	sampled := false
+	if len(samples) == 0 || book.Time.Sub(samples[len(samples)-1].Time) >= 5*time.Second {
 		samples = append(samples, filtered)
+		sampled = true
 	}
 	first := 0
 	for first < len(samples) && book.Time.Sub(samples[first].Time) > 10*time.Minute {
@@ -191,10 +187,7 @@ func (s *Service) recordBook(ctx context.Context, book domain.BookSnapshot) erro
 		samples = append([]domain.BookSnapshot{}, samples[first:]...)
 	}
 	d.samples[book.Symbol] = samples
-	if book.Time.Sub(d.lastSave[book.Symbol]) >= 5*time.Second {
-		if err := s.store.SaveBookSnapshot(ctx, book); err != nil {
-			return err
-		}
+	if sampled {
 		for _, tr := range d.tracks[book.Symbol] {
 			if tr.Emitted {
 				if err := s.store.SaveWallEvent(ctx, tr.Event); err != nil {
@@ -202,7 +195,6 @@ func (s *Service) recordBook(ctx context.Context, book domain.BookSnapshot) erro
 				}
 			}
 		}
-		d.lastSave[book.Symbol] = book.Time
 	}
 	return nil
 }
@@ -286,7 +278,45 @@ func (s *Service) WallView(ctx context.Context, symbol string, halfLife, window 
 	return out, err
 }
 func (s *Service) WallHistory(ctx context.Context, symbol, kind string, from, to time.Time, limit int, cursor string) (domain.WallHistory, error) {
+	if kind == "snapshots" {
+		return s.memorySnapshotHistory(symbol, from, to, limit, cursor)
+	}
 	return s.store.WallHistory(ctx, symbol, kind, from, to, limit, cursor)
+}
+
+func (s *Service) memorySnapshotHistory(symbol string, from, to time.Time, limit int, cursor string) (domain.WallHistory, error) {
+	out := domain.WallHistory{Events: []domain.WallEvent{}, Snapshots: []domain.BookSnapshot{}}
+	if limit < 1 || limit > 500 {
+		return out, fmt.Errorf("invalid history limit")
+	}
+	pageTime, _, err := store.DecodeCursor(cursor)
+	if err != nil {
+		return out, err
+	}
+	d := s.dashboard
+	d.RLock()
+	samples := append([]domain.BookSnapshot{}, d.samples[symbol]...)
+	d.RUnlock()
+	sort.Slice(samples, func(i, j int) bool { return samples[i].Time.After(samples[j].Time) })
+	filtered := make([]domain.BookSnapshot, 0, len(samples))
+	for _, sample := range samples {
+		if !from.IsZero() && sample.Time.Before(from) {
+			continue
+		}
+		if !to.IsZero() && !sample.Time.Before(to) {
+			continue
+		}
+		if !pageTime.IsZero() && !sample.Time.Before(pageTime) {
+			continue
+		}
+		filtered = append(filtered, sample)
+	}
+	if len(filtered) > limit {
+		out.NextCursor = store.EncodeCursor(filtered[limit-1].Time, "")
+		filtered = filtered[:limit]
+	}
+	out.Snapshots = filtered
+	return out, nil
 }
 func (s *Service) LiquidationHistory(ctx context.Context, f domain.LiquidationFilter) (domain.LiquidationPage, error) {
 	return s.store.LiquidationHistory(ctx, f)
