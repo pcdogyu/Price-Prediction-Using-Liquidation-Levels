@@ -29,6 +29,41 @@ func TestNormalizeDefaultTab(t *testing.T) {
 	}
 }
 
+func TestPositionOpenModesPersistNormalizeAndClone(t *testing.T) {
+	cfg := Default()
+	cfg.UI.PositionOpenModes = map[string]string{
+		"okx|manual|BTC-USDT-SWAP|long": "LIMIT",
+		"binance|manual|ETHUSDT|short":  "market",
+		"invalid":                       "layered",
+	}
+	cfg.Normalize()
+	if got := cfg.UI.PositionOpenModes["okx|manual|BTC-USDT-SWAP|long"]; got != "limit" {
+		t.Fatalf("position open mode should normalize to limit, got %q", got)
+	}
+	if _, ok := cfg.UI.PositionOpenModes["invalid"]; ok {
+		t.Fatal("invalid position open mode should be removed")
+	}
+
+	path := filepath.Join(t.TempDir(), "position-open-modes.json")
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.UI.PositionOpenModes["okx|manual|BTC-USDT-SWAP|long"] != "limit" || loaded.UI.PositionOpenModes["binance|manual|ETHUSDT|short"] != "market" {
+		t.Fatalf("position open modes did not persist: %#v", loaded.UI.PositionOpenModes)
+	}
+
+	store := NewStore("", loaded)
+	copy := store.Get()
+	copy.UI.PositionOpenModes["okx|manual|BTC-USDT-SWAP|long"] = "market"
+	if store.Get().UI.PositionOpenModes["okx|manual|BTC-USDT-SWAP|long"] != "limit" {
+		t.Fatal("store.Get should clone position open modes")
+	}
+}
+
 func TestNormalizeTableColumns(t *testing.T) {
 	cfg := Default()
 	cfg.UI.TableColumns = TableColumnsConfig{}

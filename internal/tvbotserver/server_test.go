@@ -919,13 +919,29 @@ func TestPositionActionsExcludeProtectionButtons(t *testing.T) {
 			t.Fatalf("position action cell should not include %q", removed)
 		}
 	}
-	for _, kept := range []string{"data-position-ratio", "data-position-open=\"market\"", "position-open-actions", "position-close-actions", "data-position-close=\"market\"", "data-position-close=\"limit\"", ">增仓</span>", ">平仓</span>"} {
+	for _, kept := range []string{"data-position-ratio", "data-position-open=\"' + openMode + '\"", "position-open-mode-toggle", "data-position-open-mode", "position-open-actions", "position-close-actions", "data-position-close=\"market\"", "data-position-close=\"limit\"", ">增仓</span>", ">平仓</span>"} {
 		if !strings.Contains(actions, kept) {
 			t.Fatalf("position action cell should retain %q", kept)
 		}
 	}
 	if strings.Index(actions, "position-open-actions") > strings.Index(actions, "position-close-actions") {
 		t.Fatal("position open actions should render above close actions")
+	}
+}
+
+func TestPositionOpenModeUIUsesTenantSavedMode(t *testing.T) {
+	for _, marker := range []string{
+		"function positionOpenModeMap()",
+		"function positionOpenModeForKey(key)",
+		"function savePositionOpenMode(input)",
+		"/tvbot/positions/open-mode",
+		"mode: button.dataset.positionOpen || \"market\"",
+		"positionOpenModeSaving",
+		"data-position-open-mode",
+	} {
+		if !strings.Contains(tvbotHTML, marker) {
+			t.Fatalf("position open mode UI missing %q", marker)
+		}
 	}
 }
 

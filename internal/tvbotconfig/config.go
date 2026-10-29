@@ -177,9 +177,10 @@ type SymbolConfig struct {
 }
 
 type UIConfig struct {
-	DefaultTab   string             `json:"default_tab"`
-	MenuItems    []MenuItemConfig   `json:"menu_items"`
-	TableColumns TableColumnsConfig `json:"table_columns"`
+	DefaultTab        string             `json:"default_tab"`
+	MenuItems         []MenuItemConfig   `json:"menu_items"`
+	TableColumns      TableColumnsConfig `json:"table_columns"`
+	PositionOpenModes map[string]string  `json:"position_open_modes,omitempty"`
 }
 
 type TableColumnsConfig struct {
@@ -553,6 +554,26 @@ func (c *Config) Normalize() {
 	c.UI.DefaultTab = normalizeDefaultMenuTab(c.UI.DefaultTab)
 	c.UI.MenuItems = normalizeMenuItems(c.UI.MenuItems)
 	c.UI.TableColumns = normalizeTableColumns(c.UI.TableColumns)
+	c.UI.PositionOpenModes = normalizePositionOpenModes(c.UI.PositionOpenModes)
+}
+
+func normalizePositionOpenModes(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, mode := range in {
+		key = strings.TrimSpace(key)
+		mode = strings.ToLower(strings.TrimSpace(mode))
+		if key == "" || (mode != string(trading.OrderTypeMarket) && mode != string(trading.OrderTypeLimit)) {
+			continue
+		}
+		out[key] = mode
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (c Config) Validate() error {

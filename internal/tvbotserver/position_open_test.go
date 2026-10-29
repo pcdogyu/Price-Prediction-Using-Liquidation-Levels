@@ -46,6 +46,10 @@ type positionOpenExecutor struct {
 	calls chan positionOpenCapture
 }
 
+func setPositionOpenTestAuth(req *http.Request) {
+	req.SetBasicAuth("admin", "Admin"+"123")
+}
+
 func (e positionOpenExecutor) ExecuteSignal(ctx context.Context, signal tvbottrading.Signal, cfg tvbottrading.RuntimeConfig) (tvbottrading.OrderResult, error) {
 	e.calls <- positionOpenCapture{signal: signal, cfg: cfg}
 	return tvbottrading.OrderResult{InstID: signal.Coinpair, OrdID: "manual-open-1", ClOrdID: "manual-open-client"}, nil
@@ -91,6 +95,9 @@ func TestPositionOpenEndpointUsesLivePositionRatioAndForcesMarket(t *testing.T) 
 	if !response.OK || response.Status != "accepted" || response.OpenNotional != "250" || response.PositionSide != "long" {
 		t.Fatalf("unexpected open response: %#v", response)
 	}
+	if response.Mode != string(tvbottrading.OrderTypeMarket) {
+		t.Fatalf("default manual open mode=%q, want market", response.Mode)
+	}
 
 	select {
 	case captured := <-capture:
@@ -108,5 +115,72 @@ func TestPositionOpenEndpointUsesLivePositionRatioAndForcesMarket(t *testing.T) 
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("manual open was not submitted to executor")
+	}
+}
+
+func TestPositionOpenEndpointUsesExplicitLimitMode(t *testing.T) {
+	srv := newTestServer(t)
+	configureTestOKX(t, srv.OKXCredentials, "manual")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v5/account/positions" {
+			t.Fatalf("unexpected OKX path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","posSide":"long","pos":"10","avgPx":"99","markPx":"100","notionalUsd":"1000","lever":"5"}]}`))
+	}))
+	defer upstream.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BaseURL = upstream.URL
+	cfg.Trading.OrderType = string(tvbottrading.OrderTypeMarket)
+	srv.ConfigStore = tvbotconfig.NewStore("", cfg)
+	srv.OKXHTTPClient = upstream.Client()
+	capture := make(chan positionOpenCapture, 1)
+	srv.Executor = positionOpenExecutor{calls: capture}
+
+	req := httptest.NewRequest(http.MethodPost, "/tvbot/positions/open", bytes.NewReader([]byte(`{"exchange":"okx","api_id":"manual","inst_id":"BTC-USDT-SWAP","pos_side":"long","mode":"limit","ratio":0.25}`)))
+	setPositionOpenTestAuth(req)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("limit open status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var response positionOpenResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Mode != string(tvbottrading.OrderTypeLimit) {
+		t.Fatalf("explicit limit response mode=%q", response.Mode)
+	}
+
+	select {
+	case captured := <-capture:
+		if captured.cfg.OrderSettings().OrderType != tvbottrading.OrderTypeLimit {
+			t.Fatalf("explicit limit manual open order type=%q", captured.cfg.OrderSettings().OrderType)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("explicit limit manual open was not submitted to executor")
+	}
+}
+
+func TestPositionOpenModeEndpointPersistsPerTenantAndRow(t *testing.T) {
+	srv := newTestServer(t)
+	req := httptest.NewRequest(http.MethodPut, "/tvbot/positions/open-mode", bytes.NewReader([]byte(`{"exchange":"okx","api_id":"manual","inst_id":"BTC-USDT-SWAP","pos_side":"long","mode":"limit"}`)))
+	setPositionOpenTestAuth(req)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("save position open mode status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	key := positionOpenModeKey("okx", "manual", "BTC-USDT-SWAP", "long")
+	if got := srv.ConfigStore.Get().UI.PositionOpenModes[key]; got != "limit" {
+		t.Fatalf("saved position open mode=%q, want limit", got)
+	}
+
+	bad := httptest.NewRequest(http.MethodPut, "/tvbot/positions/open-mode", bytes.NewReader([]byte(`{"exchange":"okx","inst_id":"BTC-USDT-SWAP","mode":"layered"}`)))
+	setPositionOpenTestAuth(bad)
+	badRR := httptest.NewRecorder()
+	srv.ServeHTTP(badRR, bad)
+	if badRR.Code != http.StatusBadRequest || !bytes.Contains(badRR.Body.Bytes(), []byte("mode must be market or limit")) {
+		t.Fatalf("invalid position open mode status=%d body=%s", badRR.Code, badRR.Body.String())
 	}
 }

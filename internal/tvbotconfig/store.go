@@ -27,6 +27,7 @@ func (s *Store) Get() Config {
 	cfg.Symbols = cloneSymbols(s.cfg.Symbols)
 	cfg.UI.MenuItems = cloneMenuItems(s.cfg.UI.MenuItems)
 	cfg.UI.TableColumns = cloneTableColumns(s.cfg.UI.TableColumns)
+	cfg.UI.PositionOpenModes = clonePositionOpenModes(s.cfg.UI.PositionOpenModes)
 	return cfg
 }
 
@@ -51,6 +52,7 @@ func (s *Store) update(fn func(*Config) error, validateSymbols bool) (Config, er
 	next.Symbols = cloneSymbols(s.cfg.Symbols)
 	next.UI.MenuItems = cloneMenuItems(s.cfg.UI.MenuItems)
 	next.UI.TableColumns = cloneTableColumns(s.cfg.UI.TableColumns)
+	next.UI.PositionOpenModes = clonePositionOpenModes(s.cfg.UI.PositionOpenModes)
 	if err := fn(&next); err != nil {
 		return Config{}, err
 	}
@@ -105,4 +107,15 @@ func cloneTableColumns(in TableColumnsConfig) TableColumnsConfig {
 		PendingOrders: cloneStrings(in.PendingOrders),
 		Symbols:       cloneStrings(in.Symbols),
 	}
+}
+
+func clonePositionOpenModes(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, mode := range in {
+		out[key] = mode
+	}
+	return out
 }

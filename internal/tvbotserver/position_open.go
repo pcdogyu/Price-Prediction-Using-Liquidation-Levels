@@ -25,6 +25,7 @@ type positionOpenRequest struct {
 	APIID    string  `json:"api_id"`
 	InstID   string  `json:"inst_id"`
 	PosSide  string  `json:"pos_side"`
+	Mode     string  `json:"mode"`
 	Ratio    float64 `json:"ratio"`
 }
 
@@ -36,6 +37,7 @@ type positionOpenResponse struct {
 	APIID           string  `json:"api_id"`
 	InstID          string  `json:"inst_id"`
 	PositionSide    string  `json:"position_side"`
+	Mode            string  `json:"mode"`
 	Ratio           float64 `json:"ratio"`
 	CurrentNotional string  `json:"current_notional_usdt,omitempty"`
 	OpenNotional    string  `json:"open_notional_usdt,omitempty"`
@@ -113,6 +115,11 @@ func (s *Server) handlePositionOpen(w http.ResponseWriter, r *http.Request) {
 	req.APIID = strings.TrimSpace(req.APIID)
 	req.InstID = strings.ToUpper(strings.TrimSpace(req.InstID))
 	req.PosSide = normalizePosSide(req.PosSide)
+	req.Mode, err = normalizePositionOpenMode(req.Mode)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_position_open", err.Error())
+		return
+	}
 	ratio, err := positionOpenRatio(req.Ratio)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_position_open", err.Error())
@@ -201,7 +208,7 @@ func (s *Server) handlePositionOpen(w http.ResponseWriter, r *http.Request) {
 		positionOpenJobs.done(key)
 		writeJSON(w, http.StatusAccepted, positionOpenResponse{
 			OK: true, Status: "duplicate", SignalID: record.SignalID, Exchange: req.Exchange,
-			APIID: apiID, InstID: position.InstID, PositionSide: positionSide, Ratio: ratio,
+			APIID: apiID, InstID: position.InstID, PositionSide: positionSide, Mode: req.Mode, Ratio: ratio,
 			CurrentNotional: tvbottrading.NormalizeFloat(notional), OpenNotional: tvbottrading.NormalizeFloat(openNotional),
 			Message: "manual position open was already recorded",
 		})
@@ -209,16 +216,16 @@ func (s *Server) handlePositionOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	execCfg := cfg
-	execCfg.Trading.OrderType = string(tvbottrading.OrderTypeMarket)
+	execCfg.Trading.OrderType = req.Mode
 	go func() {
 		defer positionOpenJobs.done(key)
 		s.execute(record.SignalID, signal, execCfg)
 	}()
 	writeJSON(w, http.StatusAccepted, positionOpenResponse{
 		OK: true, Status: "accepted", SignalID: record.SignalID, Exchange: req.Exchange,
-		APIID: apiID, InstID: position.InstID, PositionSide: positionSide, Ratio: ratio,
+		APIID: apiID, InstID: position.InstID, PositionSide: positionSide, Mode: req.Mode, Ratio: ratio,
 		CurrentNotional: tvbottrading.NormalizeFloat(notional), OpenNotional: tvbottrading.NormalizeFloat(openNotional),
-		Message: "manual market position open accepted",
+		Message: "manual " + req.Mode + " position open accepted",
 	})
 }
 

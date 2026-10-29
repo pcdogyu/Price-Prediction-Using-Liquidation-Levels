@@ -827,6 +827,48 @@ const tvbotHTML = `<!doctype html>
       line-height: 1;
       flex: 0 0 36px;
     }
+    .position-open-mode-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-height: 36px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .position-open-mode-toggle input {
+      appearance: none;
+      width: 32px;
+      height: 18px;
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--muted);
+      position: relative;
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+    .position-open-mode-toggle input::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--panel);
+      transition: transform 120ms ease;
+    }
+    .position-open-mode-toggle input:checked {
+      background: var(--blue);
+    }
+    .position-open-mode-toggle input:checked::after {
+      transform: translateX(14px);
+    }
+    .position-open-mode-toggle input:disabled {
+      opacity: 0.58;
+      cursor: not-allowed;
+    }
     .position-monitor-panel {
       border-top: 1px solid var(--line);
       border-bottom: 1px solid var(--line);
@@ -2431,6 +2473,7 @@ const tvbotHTML = `<!doctype html>
       retrying: {},
       positionClosing: {},
       positionOpening: {},
+      positionOpenModeSaving: {},
       positionClosingAll: false,
       pendingOrderActions: {},
       analysis: null,
@@ -5703,7 +5746,30 @@ const tvbotHTML = `<!doctype html>
     }
 
     function positionCloseRowKey(row) {
-      return [normalizeExchange(row._exchange || "okx"), row._api_id || "", String(row.instId || "").toUpperCase(), String(row.posSide || "net").toLowerCase()].join("|");
+      const posSide = String(row.posSide || "net").toLowerCase();
+      return [normalizeExchange(row._exchange || "okx"), row._api_id || "", String(row.instId || "").toUpperCase(), posSide === "both" ? "net" : posSide].join("|");
+    }
+
+    function positionOpenModeMap() {
+      const ui = state.config && state.config.ui;
+      return ui && ui.position_open_modes && typeof ui.position_open_modes === "object" ? ui.position_open_modes : {};
+    }
+
+    function positionOpenModeForKey(key) {
+      return positionOpenModeMap()[key] === "limit" ? "limit" : "market";
+    }
+
+    function positionOpenMode(row) {
+      return positionOpenModeForKey(positionCloseRowKey(row));
+    }
+
+    function setPositionOpenModeForKey(key, mode) {
+      if (!state.config) state.config = {};
+      if (!state.config.ui) state.config.ui = {};
+      if (!state.config.ui.position_open_modes || typeof state.config.ui.position_open_modes !== "object") {
+        state.config.ui.position_open_modes = {};
+      }
+      state.config.ui.position_open_modes[key] = mode === "limit" ? "limit" : "market";
     }
 
     function positionActionCell(row) {
@@ -5711,18 +5777,22 @@ const tvbotHTML = `<!doctype html>
       const key = positionCloseRowKey(row);
       const closing = !!state.positionClosing[key];
       const opening = !!state.positionOpening[key];
-      const busy = closing || opening || state.positionClosingAll;
+      const modeSaving = !!state.positionOpenModeSaving[key];
+      const busy = closing || opening || modeSaving || state.positionClosingAll;
+      const openMode = positionOpenMode(row);
       const instID = escapeHTML(asText(row.instId));
       const posSide = escapeHTML(String(row.posSide || ""));
       const pos = escapeHTML(String(row.pos || ""));
       const apiID = escapeHTML(row._api_id || "");
+      const keyAttr = escapeHTML(key);
       const baseAttrs = ' data-exchange="' + exchange + '" data-api-id="' + apiID + '" data-inst-id="' + instID + '" data-pos-side="' + posSide + '" data-pos="' + pos + '"';
       const openPercentButtons = [
         { label: "10%", ratio: "0.1" },
         { label: "25%", ratio: "0.25" },
         { label: "50%", ratio: "0.5" },
         { label: "75%", ratio: "0.75" }
-      ].map((item) => '<button class="btn small position-percent-open-btn" type="button" data-position-open="market" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="市价开仓 ' + item.label + '（同向加仓）"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
+      ].map((item) => '<button class="btn small position-percent-open-btn" type="button" data-position-open="' + openMode + '" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="' + (openMode === "limit" ? "限价" : "市价") + '开仓 ' + item.label + '（同向加仓）"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
+      const openModeToggle = '<label class="position-open-mode-toggle" title="切换本行增仓订单方式"><span>市价</span><input type="checkbox" data-position-open-mode="true" data-position-key="' + keyAttr + '"' + baseAttrs + (openMode === "limit" ? " checked" : "") + (busy ? " disabled" : "") + ' aria-label="当前' + (openMode === "limit" ? "限价" : "市价") + '，点击切换" /><span>限价</span></label>';
       const closePercentButtons = [
         { label: "10%", ratio: "0.1" },
         { label: "25%", ratio: "0.25" },
@@ -5731,7 +5801,7 @@ const tvbotHTML = `<!doctype html>
       ].map((item) => '<button class="btn small position-percent-close-btn" type="button" data-position-close="limit" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="限价平仓 ' + item.label + '，60秒后市价兜底"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
       return '<td><div class="position-action-groups">' +
         '<div class="position-actions position-action-group position-open-actions">' +
-        '<span class="position-action-label">增仓</span>' + openPercentButtons + '</div>' +
+        '<span class="position-action-label">增仓</span>' + openPercentButtons + openModeToggle + '</div>' +
         '<div class="position-actions position-action-group position-close-actions">' +
         '<span class="position-action-label">平仓</span>' + closePercentButtons +
         '<button class="btn small danger" type="button" data-position-close="market"' + baseAttrs + (busy ? " disabled" : "") + '>市价平仓</button>' +
@@ -7603,8 +7673,40 @@ const tvbotHTML = `<!doctype html>
         api_id: button.dataset.apiId || "",
         inst_id: button.dataset.instId || "",
         pos_side: button.dataset.posSide || "",
+        mode: button.dataset.positionOpen || "market",
         ratio: Number(button.dataset.positionRatio || "0")
       });
+    }
+
+    async function savePositionOpenMode(input) {
+      const key = input.dataset.positionKey || "";
+      if (!key) return;
+      const previous = positionOpenModeForKey(key);
+      const mode = input.checked ? "limit" : "market";
+      setPositionOpenModeForKey(key, mode);
+      state.positionOpenModeSaving[key] = true;
+      renderPositions();
+      try {
+        const result = await api("/tvbot/positions/open-mode", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            exchange: input.dataset.exchange || "okx",
+            api_id: input.dataset.apiId || "",
+            inst_id: input.dataset.instId || "",
+            pos_side: input.dataset.posSide || "",
+            mode: mode
+          })
+        });
+        if (result && result.key && result.mode) setPositionOpenModeForKey(result.key, result.mode);
+        toast((mode === "limit" ? "限价" : "市价") + "增仓方式已保存");
+      } catch (err) {
+        setPositionOpenModeForKey(key, previous);
+        toast("增仓方式保存失败：" + err.message);
+      } finally {
+        delete state.positionOpenModeSaving[key];
+        renderPositions();
+      }
     }
 
     function positionOpenEstimateText(button) {
@@ -7621,19 +7723,21 @@ const tvbotHTML = `<!doctype html>
       const instID = body.inst_id || "";
       const posSide = body.pos_side || "";
       const positionKind = positionSideKind(posSide, button.dataset.pos || "");
-      const key = [exchange, body.api_id || "", instID.toUpperCase(), (posSide || "net").toLowerCase()].join("|");
+      const sideKey = (posSide || "net").toLowerCase();
+      const key = [exchange, body.api_id || "", instID.toUpperCase(), sideKey === "both" ? "net" : sideKey].join("|");
       if (!instID || !body.ratio || !positionKind || state.positionOpening[key] || state.positionClosing[key]) return;
+      const modeLabel = body.mode === "limit" ? "限价" : "市价";
       if (positionEnvironment() === "live") {
         const direction = positionKind === "long" ? "多单" : "空单";
         const percent = Math.round(Number(body.ratio) * 100) + "%";
-        if (!window.confirm("确认提交 " + exchangeLabel(exchange) + " " + instID + " " + direction + " 市价开仓 " + percent + "？\n" + positionOpenEstimateText(button))) return;
+        if (!window.confirm("确认提交 " + exchangeLabel(exchange) + " " + instID + " " + direction + " " + modeLabel + "开仓 " + percent + "？\n" + positionOpenEstimateText(button))) return;
       }
       state.positionOpening[key] = true;
       renderPositions();
       try {
         const result = await submitPositionOpen(body);
         const percent = Math.round(Number(body.ratio) * 100) + "%";
-        toast("市价开仓已提交 " + instID + " " + percent + " " + (positionKind === "long" ? "多单" : "空单"));
+        toast(modeLabel + "开仓已提交 " + instID + " " + percent + " " + (positionKind === "long" ? "多单" : "空单"));
         await Promise.all([loadPositionView(), loadOrders()]);
         if (result && result.signal_id) toast("开仓信号 " + asText(result.signal_id) + " 已记录");
       } finally {
@@ -8128,6 +8232,11 @@ const tvbotHTML = `<!doctype html>
     });
     $("refresh-trade-monitor").addEventListener("click", () => loadTradeMonitor().then(() => toast("成交监听已刷新")).catch((err) => toast(err.message)));
     $("close-all-positions").addEventListener("click", () => closeAllPositions().catch((err) => toast(err.message)));
+    $("position-rows").addEventListener("change", (event) => {
+      const input = event.target.closest("input[data-position-open-mode]");
+      if (!input) return;
+      savePositionOpenMode(input).catch((err) => toast("增仓方式保存失败：" + err.message));
+    });
     $("position-rows").addEventListener("click", (event) => {
       const symbolButton = event.target.closest("button[data-position-symbol-details]");
       if (symbolButton) {
