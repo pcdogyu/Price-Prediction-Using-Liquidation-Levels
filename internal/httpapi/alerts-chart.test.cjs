@@ -221,11 +221,19 @@ test('filtered chart signals are painted faintly and remain in the display rows'
 
 test('the order-signal toggle only shows signals allowed by the active filter', () => {
   assert.match(chartHTML, /id="kline-vwap-donchian"[^>]*>[\s\S]*?id="kline-order-signals"[^>]*>[\s\S]*?下单信号/);
+  assert.match(chartHTML, /真实订单或成交标识/);
   assert.match(chartApp, /STORE_ORDER_SIGNALS_ONLY = 'liquidation\.kline\.order-signals-only'/);
   assert.match(chartApp, /orderSignalsOnly: stored\(STORE_ORDER_SIGNALS_ONLY, false\)/);
   assert.match(chartApp, /const visibleSignals = \(\) => state\.toggles\.orderSignalsOnly \? shownSignals\(\) : displaySignals\(\);/);
   assert.match(chartApp, /\[STORE_ORDER_SIGNALS_ONLY, 'kline-order-signals', 'orderSignalsOnly'\]/);
+  assert.match(chartApp, /gamma_ignored: row\.gamma_ignored === true/);
+  assert.match(chartApp, /state\.tradeMarkers\.filter\(marker => marker\.actual_order === true\)/);
   assert.match(chartApp, /仅显示通过过滤的下单信号/);
+});
+
+test('Gamma-ignored replay signals are not treated as order signals', () => {
+  assert.match(chartApp, /gamma_ignored: row\.gamma_ignored === true/);
+  assert.match(chartApp, /const filteredSignal = signal => signal\.gamma_ignored === true \|\| \(state\.toggles\.donchian && !donchianAllowsSignal\(signal\)\)/);
 });
 
 test('all K-line variants expose tenant VWAP/Donchian controls in the period toolbar', () => {

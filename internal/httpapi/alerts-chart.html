@@ -17,7 +17,7 @@
         <label for="kline-vwap-range-hours">VWAP Donchian 窗口（小时）<input id="kline-vwap-range-hours" type="number" min="12" max="24" step="1" inputmode="numeric"></label>
         <label for="kline-vwap-min-drawdown">VWAP 最小回撤（%）<input id="kline-vwap-min-drawdown" type="number" min="0.1" max="20" step="0.1" inputmode="decimal"></label>
         <label for="kline-vwap-donchian">VWAP Donchian 分位（%）<input id="kline-vwap-donchian" type="number" min="1" max="49" step="1" inputmode="numeric"></label>
-        <label class="alerts-check" title="勾选后仅显示通过当前过滤、允许开仓的信号"><input id="kline-order-signals" type="checkbox"><span>下单信号</span></label>
+        <label class="alerts-check" title="普通报警图仅显示通过当前过滤、允许开仓的信号；持仓图仅显示有真实订单或成交标识的开平点"><input id="kline-order-signals" type="checkbox"><span>下单信号</span></label>
         <button id="kline-radar-apply" type="submit">应用并保存</button>
         <span id="kline-radar-status" class="kline-radar-status" role="status" aria-live="polite">读取参数</span>
       </form>
@@ -58,7 +58,7 @@
   <section id="kline-signal-section" class="surface">
     <div class="section-head"><h2>该币对下单信号</h2><span id="kline-signal-status" class="muted">读取信号</span><span id="kline-alert-status" class="muted">读取预警</span></div>
     <div class="table-scroll alerts-scroll"><table class="alerts-signal-table kline-signal-table"><thead><tr><th>时间（北京时间）</th><th>类型</th><th>下单方向</th><th>参考价</th><th>预警爆仓额</th><th>通知</th></tr></thead><tbody id="kline-signal-rows"><tr><td colspan="6">尚无信号</td></tr></tbody></table></div>
-    <p class="muted alerts-note">信号按报警页当前已保存的阈值和周期重新回放生成；服务端 VWAP / Donchian 过滤开关也会参与本次回放，并影响实时雷达和 7 天重算。图中每根 K 线按当时滚动 VWAP、配置窗口内 HH/LL、最小回撤和 Donchian 分位绘制历史三分区：高位开空、低位接多，中间仅平仓。绿色上沿取 VWAP 下界、HH 回撤线和 Donchian 分位线的最小值，红色下线取对应三项的最大值。VWAP 颜色填充开关只控制图中的背景填色，不负责 Donchian 信号过滤；Donchian 过滤开关独立控制图中和下方表格的预警、激进及稳健信号，不会修改报警页的服务端开仓过滤开关。未勾选“下单信号”时，过滤掉的下单信号仍会保留在图中和下方表格，并以 80% 透明度淡显；勾选后只显示通过当前过滤、允许开仓的信号。悬停可查看“已过滤（淡显）”。这些记录不会发送自动下单信息；手动操作仍按报警页规则执行。保存参数后重新打开或刷新币对，图表会显示新参数对应的信号。历史数据库记录仍保留原参数，不会被改写。图中 ◆! 为预警，△ 为空心激进信号，▲ / ▼ 为实心稳健信号（稳健实心 / 激进空心），三类信号均画在对应 K 线上。</p>
+    <p class="muted alerts-note">信号按报警页当前已保存的阈值和周期重新回放生成；服务端 VWAP / Donchian 过滤开关也会参与本次回放，并影响实时雷达和 7 天重算。图中每根 K 线按当时滚动 VWAP、配置窗口内 HH/LL、最小回撤和 Donchian 分位绘制历史三分区：高位开空、低位接多，中间仅平仓。绿色上沿取 VWAP 下界、HH 回撤线和 Donchian 分位线的最小值，红色下线取对应三项的最大值。VWAP 颜色填充开关只控制图中的背景填色，不负责 Donchian 信号过滤；Donchian 过滤开关独立控制图中和下方表格的预警、激进及稳健信号，不会修改报警页的服务端开仓过滤开关。未勾选“下单信号”时，过滤掉的下单信号仍会保留在图中和下方表格，并以 80% 透明度淡显；勾选后只显示通过当前过滤、允许开仓的信号。Gamma 忽略的信号也属于无效开仓信号，勾选后不会显示。持仓图中勾选后仅保留带真实订单或成交标识的开平点。悬停可查看“已过滤（淡显）”。这些记录不会发送自动下单信息；手动操作仍按报警页规则执行。保存参数后重新打开或刷新币对，图表会显示新参数对应的信号。历史数据库记录仍保留原参数，不会被改写。图中 ◆! 为预警，△ 为空心激进信号，▲ / ▼ 为实心稳健信号（稳健实心 / 激进空心），三类信号均画在对应 K 线上。</p>
   </section>
   <footer class="page-footer"><span class="page-version">{{VERSION}}</span></footer>
 </main>

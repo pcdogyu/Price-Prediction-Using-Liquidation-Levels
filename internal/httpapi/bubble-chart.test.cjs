@@ -126,6 +126,19 @@ test('trade marker normalization omits incomplete or invalid values without drop
   assert.deepEqual(markers.map(item => [item.row_key, item.phase]), [['valid', 'entry'], ['bad-time', 'exit']]);
 });
 
+test('trade marker normalization identifies order-backed fills per phase', () => {
+  const markers = B.normalizeTradeMarkers([
+    { row_key: 'actual', inst_id: 'ETH_USDT', side: 'long', entry_time: '2026-01-01T00:00:00Z', entry_px: 2000, entry_ord_id: 'entry-1', exit_time: '2026-01-01T01:00:00Z', exit_px: 2010, exit_ord_id: 'exit-1' },
+    { row_key: 'invalid', inst_id: 'ETH_USDT', side: 'short', entry_time: '2026-01-01T02:00:00Z', entry_px: 2020, exit_time: '2026-01-01T03:00:00Z', exit_px: 2015 }
+  ], 'ETHUSDT');
+  assert.deepEqual(markers.map(item => [item.row_key, item.phase, item.actual_order, item.order_id]), [
+    ['actual', 'entry', true, 'entry-1'],
+    ['actual', 'exit', true, 'exit-1'],
+    ['invalid', 'entry', false, ''],
+    ['invalid', 'exit', false, '']
+  ]);
+});
+
 test('trade markers retain order and fill details for K-line tooltips', () => {
   const markers = B.normalizeTradeMarkers([
     {

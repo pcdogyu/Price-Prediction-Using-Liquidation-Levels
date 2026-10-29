@@ -103,7 +103,7 @@
     if (!K.vwapSignalAllowed(signal, zone)) return false;
     return K.vwapSignalAllowed(Object.assign({}, signal, { filter_applied: false }), zone);
   };
-  const filteredSignal = signal => state.toggles.donchian && !donchianAllowsSignal(signal);
+  const filteredSignal = signal => signal.gamma_ignored === true || (state.toggles.donchian && !donchianAllowsSignal(signal));
   const displaySignals = () => rawShownSignals().map(signal => Object.assign({}, signal, { chart_filtered: filteredSignal(signal) }));
   const shownSignals = () => displaySignals().filter(signal => !signal.chart_filtered);
   const visibleSignals = () => state.toggles.orderSignalsOnly ? shownSignals() : displaySignals();
@@ -245,10 +245,10 @@
     const parameterText = '当前参数：' + money(state.signalThreshold) + ' · ' + (state.signalWindowMinutes || '—') + ' 分钟周期';
     const replaySignals = rawShownSignals();
     const filteredCount = replaySignals.filter(filteredSignal).length;
-    const filterText = state.toggles.donchian
+    const filterText = (state.toggles.donchian || replaySignals.some(signal => signal.gamma_ignored === true))
       ? ' · 共 ' + replaySignals.length + ' 条 · 放行 ' + (replaySignals.length - filteredCount) + ' 条 · 过滤 ' + filteredCount + ' 条'
       : ' · 共 ' + replaySignals.length + ' 条 · 未过滤';
-    const displayText = state.toggles.orderSignalsOnly ? ' · 仅显示下单信号' : '';
+    const displayText = state.toggles.orderSignalsOnly ? (positionMode ? ' · 仅显示实际下单成交点' : ' · 仅显示通过过滤的下单信号') : '';
     $('kline-signal-status').textContent = state.signalReplayText + filterText + displayText + ' · ' + parameterText;
     $('kline-alert-status').textContent = state.signalReplayText + ' ' + shownAlerts().length + ' 条' + filterText + ' · 每 15 秒刷新';
   }
@@ -540,7 +540,7 @@
     else if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 + Donchian ' + (zone.range_hours || state.radarConfig.rangeMinutes / 60) + ' 小时 · 历史三分区 ' + historicalRadarZones().length + ' 根 · 高于 ' + priceText(zone.red_zone_lower || zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.green_zone_upper || zone.lower_open_price) + ' 接多 · 中间仅平仓' + (zone.boundary_overlap ? ' · 边界重叠，禁止开仓' : ''));
     else parts.push('VWAP 开仓区计算中');
     parts.push(state.toggles.donchian ? 'Donchian 信号过滤开启' : 'Donchian 信号过滤关闭');
-    if (state.toggles.orderSignalsOnly) parts.push('仅显示通过过滤的下单信号');
+    if (state.toggles.orderSignalsOnly) parts.push(positionMode ? '仅显示实际下单成交点' : '仅显示通过过滤的下单信号');
     parts.push(state.atLatest ? '每 5 秒自动刷新' : '已暂停跟随最新');
     return parts.join(' · ');
   }
@@ -647,7 +647,7 @@
       state.signals = (packet.signals || []).map(row => ({ id: row.id, t: Date.parse(row.created_at), kind: row.kind, side: row.side,
         reference_price: row.reference_price, alert_notional_usd: row.alert_notional_usd,
         filter_applied: row.filter_applied === true, open_allowed: row.open_allowed === true,
-        close_allowed: row.close_allowed === true, filter_reason: row.filter_reason || '',
+        close_allowed: row.close_allowed === true, gamma_ignored: row.gamma_ignored === true, filter_reason: row.filter_reason || '',
         notify_status: 'replayed' })).filter(row => Number.isFinite(row.t));
       state.alerts = (packet.alerts || []).map(row => ({ id: row.id, t: Date.parse(row.triggered_at), side: row.trade_side || row.side,
         liquidation_side: row.side, reference_price: row.reference_price, notional_usd: row.notional_usd,
@@ -1029,9 +1029,13 @@
   // collapsed per candle and direction before placement, while phases remain separate.
   function drawTradeMarkers(ctx, x, y, plot, intervalStep) {
     if (!state.tradeMarkers.length || !BubbleChart || typeof BubbleChart.tradeMarkerPlacements !== 'function') return;
-    const markers = typeof BubbleChart.collapseTradeMarkers === 'function'
-      ? BubbleChart.collapseTradeMarkers(state.tradeMarkers, intervalStep)
+    const visibleTradeMarkers = state.toggles.orderSignalsOnly
+      ? state.tradeMarkers.filter(marker => marker.actual_order === true)
       : state.tradeMarkers;
+    if (!visibleTradeMarkers.length) return;
+    const markers = typeof BubbleChart.collapseTradeMarkers === 'function'
+      ? BubbleChart.collapseTradeMarkers(visibleTradeMarkers, intervalStep)
+      : visibleTradeMarkers;
     const placements = BubbleChart.tradeMarkerPlacements(
       markers,
       [state.yLow, state.yHigh],

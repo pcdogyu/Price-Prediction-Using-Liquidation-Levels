@@ -59,7 +59,14 @@
         if (!Number.isFinite(time) || !Number.isFinite(price) || price <= 0) return;
         const isEntry = phase === 'entry';
         const action = side === 'long' ? (isEntry ? 'buy' : 'sell') : (isEntry ? 'sell' : 'buy');
-        const orderID = String(isEntry ? (row.ord_id || row.entry_ord_id) : (row.ord_id || row.exit_ord_id) || '').trim();
+        const rawOrderID = isEntry
+          ? (row.ord_id || row.entry_ord_id || row.entry_order_id)
+          : (row.ord_id || row.exit_ord_id || row.exit_order_id);
+        const rawTradeID = isEntry
+          ? (row.trade_id || row.entry_trade_id)
+          : (row.trade_id || row.exit_trade_id);
+        const orderID = String(rawOrderID || '').trim();
+        const tradeID = String(rawTradeID || '').trim();
         const rowOperation = String(row.operation || '').trim().toLowerCase();
         const operation = isEntry ? 'open' : (rowOperation || 'close');
         markers.push({
@@ -76,8 +83,9 @@
           time_iso: new Date(time).toISOString(),
           price,
           selected,
+          actual_order: row.actual_order === true || Boolean(orderID || tradeID),
           order_id: orderID,
-          trade_id: String(row.trade_id || '').trim(),
+          trade_id: tradeID,
           quantity: String(row.fill_sz || row.qty || '').trim(),
           turnover: String(row.turnover || '').trim(),
           notional_usdt: String(row.notional_usdt || row.notional || row.turnover || '').trim(),
