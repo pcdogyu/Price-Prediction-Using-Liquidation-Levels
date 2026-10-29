@@ -184,29 +184,9 @@ with sync_playwright() as playwright:
     page.goto(base + "/bubbles", wait_until="domcontentloaded")
     idle()
     if not production:
-        expect(page.locator("#upper-status")).to_have_text("参考")
-        expect(page.locator("#lower-status")).to_have_text("参考")
-        expect(page.locator("#upper-target")).to_have_text("2,510.00")
-        expect(page.locator("#lower-target")).to_have_text("2,480.00")
-        expect(page.locator("#upper-prob")).to_have_text("—")
-        expect(page.locator("#lower-prob")).to_have_text("—")
-        expect(page.locator("#classic-pivot-meta")).to_contain_text("ATR(14)")
-        expect(page.locator("#classic-upper-05")).to_have_text("2,500.00")
-        expect(page.locator("#classic-lower-05")).to_have_text("2,490.00")
-        expect(page.locator("#classic-distance-05")).to_have_text("5.00 USDT")
-        expect(page.locator("#classic-upper-10")).to_have_text("2,505.00")
-        expect(page.locator("#classic-lower-10")).to_have_text("2,485.00")
-        expect(page.locator("#classic-distance-10")).to_have_text("10.00 USDT")
-        expect(page.locator("#classic-upper-15")).to_have_text("2,510.00")
-        expect(page.locator("#classic-lower-15")).to_have_text("2,480.00")
-        expect(page.locator("#classic-distance-15")).to_have_text("15.00 USDT")
-        expect(page.locator("#classic-upper-20")).to_have_text("2,515.00")
-        expect(page.locator("#classic-lower-20")).to_have_text("2,475.00")
-        expect(page.locator("#classic-distance-20")).to_have_text("20.00 USDT")
-        expect(page.locator("#classic-upper-30")).to_have_text("2,525.00")
-        expect(page.locator("#classic-lower-30")).to_have_text("2,465.00")
-        expect(page.locator("#classic-distance-30")).to_have_text("30.00 USDT")
-        assert page.evaluate("""() => Array.from(document.querySelectorAll('#classic-pivot-table .classic-pivot-row > *')).every(cell => getComputedStyle(cell).textAlign === 'center')""")
+        assert page.locator("#upper-status").count() == 0
+        assert page.locator("#lower-status").count() == 0
+        assert page.locator("#classic-pivot-title").count() == 0
     initial = check_axis()
     pattern_view = page.evaluate("""() => ({
       tips: Array.from(document.querySelectorAll('[data-tip*="K线形态"]'), e => e.getAttribute('data-tip')),

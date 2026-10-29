@@ -31,9 +31,6 @@ var liquidationAnalysisJS []byte
 //go:embed bubble-chart.js
 var bubbleChartJS []byte
 
-//go:embed classic-pivots.js
-var classicPivotsJS []byte
-
 //go:embed options.html
 var optionsHTML []byte
 
@@ -122,11 +119,6 @@ func (s *Server) registerDashboard(mux *http.ServeMux) {
 			_, _ = w.Write(b)
 		}))
 	}
-	mux.HandleFunc("/assets/classic-pivots.js", getOnly(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
-		_, _ = w.Write(classicPivotsJS)
-	}))
 	mux.HandleFunc("/api/v1/liquidations", getOnly(s.liquidationHistory))
 	mux.HandleFunc("/api/v1/hedge-wall", getOnly(s.hedgeWall))
 	mux.HandleFunc("/api/v1/hedge-wall/history", getOnly(s.hedgeHistory))

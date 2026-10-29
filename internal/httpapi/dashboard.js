@@ -103,7 +103,6 @@ const pct = value => finite(value) ? (value * 100).toFixed(1) + '%' : '—';
 const zoomLabel = value => '×' + (Math.round(value * 100) / 100);
 const zoomSuffix = value => value === 1 ? '' : ' ' + zoomLabel(value);
 const when = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
-const statusName = { unavailable: '不可用', reference: '参考', armed: '等待触发', approaching: '接近触发', triggered: '已触发', expired: '已过期' };
 const intervalName = { '1m': '1分钟', '2m': '2分钟', '3m': '3分钟', '5m': '5分钟', '10m': '10分钟', '15m': '15分钟', '30m': '30分钟', '1h': '1小时', '4h': '4小时', '8h': '8小时', '12h': '12小时', '24h': '24小时' };
 const intervalMilliseconds = { '1m': 60000, '2m': 120000, '3m': 180000, '5m': 300000, '10m': 600000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000, '8h': 28800000, '12h': 43200000, '24h': 86400000 };
 let bubbleHits = () => [];
@@ -392,37 +391,6 @@ function calculateBubbleChartViewportHeight() {
   const viewportHeight = window.visualViewport?.height || window.innerHeight;
   const available = Math.floor(viewportHeight - wrap.getBoundingClientRect().top - 12);
   return Math.max(chartHeightLimits.minimum, Math.min(bubbleChartDefaultHeight, Math.round(available * bubbleChartViewportScale)));
-}
-
-function updateTrigger(prefix, trigger) {
-  const status = trigger?.status || 'unavailable';
-  $(prefix + '-status').textContent = statusName[status] || status;
-  $(prefix + '-status').style.borderColor = status === 'triggered' ? 'var(--buy)' : status === 'approaching' ? 'var(--warning)' : 'var(--strong-line)';
-  $(prefix + '-target').textContent = finite(trigger?.target_price) && trigger.target_price !== 0 ? money(trigger.target_price) : '—';
-  $(prefix + '-distance').textContent = finite(trigger?.distance_price) && finite(trigger?.distance_percent) ? money(trigger.distance_price) + ' · ' + trigger.distance_percent.toFixed(2) + '%' : '—';
-  $(prefix + '-atr').textContent = finite(trigger?.distance_atr) ? trigger.distance_atr.toFixed(2) + ' ATR' : '—';
-  $(prefix + '-prob').textContent = trigger?.probability_available === false ? '—' : pct(trigger?.probability);
-  $(prefix + '-time').textContent = trigger?.triggered_at ? when(trigger.triggered_at) : trigger?.expires_at ? '截止 ' + when(trigger.expires_at) : '—';
-}
-
-function renderClassicPivots(view, signal) {
-  const price = Number(view?.summary?.last_price || signal?.mark_price);
-  const atr = Number(signal?.atr);
-  const pivots = window.ClassicPivots?.calculate(price, atr);
-  const levelKeys = ['05', '10', '15', '20', '30'];
-  levelKeys.forEach((key, index) => {
-    const level = pivots?.levels?.[index];
-    $('classic-upper-' + key).textContent = level ? money(level.upper) : '—';
-    $('classic-lower-' + key).textContent = level ? money(level.lower) : '—';
-    $('classic-distance-' + key).textContent = level ? money(level.distance) + ' USDT' : '—';
-  });
-  if (!pivots) {
-    $('classic-pivot-meta').textContent = '等待 ATR(14) 数据';
-    $('classic-pivot-note').textContent = '等待现价和 ATR(14) 数据后生成上下方距离层级。';
-    return;
-  }
-  $('classic-pivot-meta').textContent = '现价 ' + money(price) + ' · ATR(14) ' + money(atr);
-  $('classic-pivot-note').textContent = '以现价为中心，按 ATR(14) 的 0.5×、1×、1.5×、2×、3×分别向上和向下生成价格；对应距离为 ATR(14) × 倍数。';
 }
 
 function mergeCandles(current, incoming) {
@@ -770,7 +738,6 @@ function draw(view, map, signal, volume) {
   const layout = embeddedChart ? { ...dims, candleRight: embeddedChartCandleRight, profileRight: embeddedChartCandleRight, axisPriceRight: 1718 } : dims;
   const bins = embeddedChart ? [] : (map?.bins || []);
   $('chart-title').textContent = (intervalName[chart.interval] || chart.interval) + ' K线 · 成交量分布 · 清算墙';
-  if (!embeddedChart) renderClassicPivots(view, signal);
   const sessionRange = volume?.session_start ? ' (' + when(volume.session_start) + ' → ' + when(volume.session_end) + ')' : '';
   const profileState = volume?.state === 'ok' ? '当前时段成交量' + sessionRange : volume?.state === 'backfilling' ? '成交量回填 ' + ((volume.backfill_progress || 0) * 100).toFixed(0) + '%' + sessionRange : volume?.state === 'stale' ? '成交量已过期' + sessionRange : '成交量不可用';
   const leverageText = (map?.leverages || []).map(value => value + '×').join('/');
@@ -1043,8 +1010,6 @@ async function refresh(resetMarket = false) {
     });
     if (cache.market) updateTicker(cache.market);
     if (!embeddedChart && cache.signal) {
-      updateTrigger('upper', cache.signal.upper_trigger);
-      updateTrigger('lower', cache.signal.lower_trigger);
       $('reason').textContent = cache.signal.state === 'ok' ? '当前领先类别：' + (cache.signal.leading_class || '—') + '；触发顺序：' + (cache.signal.trigger_order || 'pending') + '。' : (cache.signal.reason || '清算墙或历史数据不足');
       $('model-info').textContent = '模型：' + (cache.signal.model_version || '尚未训练') + ' · 数据年龄 ' + (finite(cache.signal.data_age_seconds) ? Math.max(0, cache.signal.data_age_seconds).toFixed(0) + ' 秒' : '—');
     }

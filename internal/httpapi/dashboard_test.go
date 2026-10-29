@@ -239,7 +239,7 @@ func TestLiquidationAnalysisRules(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not installed; run node --test liquidation-analysis.test.cjs separately")
 	}
-	output, err := exec.Command(node, "--test", "liquidation-analysis.test.cjs", "bubble-chart.test.cjs", "classic-pivots.test.cjs").CombinedOutput()
+	output, err := exec.Command(node, "--test", "liquidation-analysis.test.cjs", "bubble-chart.test.cjs").CombinedOutput()
 	if err != nil {
 		t.Fatalf("liquidation analysis rules: %v\n%s", err, output)
 	}
