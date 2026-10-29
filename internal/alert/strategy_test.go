@@ -231,7 +231,6 @@ func TestDroppedSymbolStopsTracking(t *testing.T) {
 func TestSeedReplayIsIdempotent(t *testing.T) {
 	cfg := Defaults()
 	cfg.VWAPPeriodMinutes = 3
-	cfg.ATRPeriod = 2
 	first := testEngine(t, cfg, "BTCUSDT")
 	second := testEngine(t, cfg, "BTCUSDT")
 	trigger := testEvent("BTCUSDT", "long", testStart, 400000)
@@ -367,7 +366,7 @@ func TestRadarRiskBlockDoesNotAddZoneFilterTags(t *testing.T) {
 	cfg.DonchianFilterEnabled = false
 	cfg.FilterSettingsSet = true
 	decision := filterDecision(cfg, "long", radarContext(100, radarCandles(98, 100, 102)), symbolState{}, 100)
-	if decision.OpenAllowed || len(decision.FilterTags) != 0 || !strings.Contains(decision.Reason, "deep_liquidation_quota_or_atr_not_ready") {
+	if decision.OpenAllowed || len(decision.FilterTags) != 0 || !strings.Contains(decision.Reason, "deep_liquidation_quota_not_ready") {
 		t.Fatalf("non-zone risk block must not carry VWAP/Donchian tags: %+v", decision)
 	}
 }
@@ -418,7 +417,6 @@ func TestRadarArmedPeakDecayAndHighZoneShortEntry(t *testing.T) {
 	cfg.Window = 3 * time.Minute
 	cfg.OtherUSD = 100
 	cfg.VWAPPeriodMinutes = 3
-	cfg.ATRPeriod = 2
 	cfg.PeakDecayWindow = 30 * time.Second
 	engine := testEngine(t, cfg, "SOLUSDT")
 	candles := radarCandles(100, 101, 102)
@@ -442,7 +440,6 @@ func TestHistoricalRecalculationSkipsPeakDecay(t *testing.T) {
 	cfg := Defaults()
 	cfg.OtherUSD = 100
 	cfg.VWAPPeriodMinutes = 3
-	cfg.ATRPeriod = 2
 	cfg.PeakDecayWindow = 30 * time.Second
 	cfg.SkipPeakDecay = true
 	engine := testEngine(t, cfg, "SOLUSDT")
@@ -467,7 +464,6 @@ func TestRadarContextUnavailableNeverFallsBackToStaticSignal(t *testing.T) {
 	cfg := Defaults()
 	cfg.OtherUSD = 100
 	cfg.VWAPPeriodMinutes = 3
-	cfg.ATRPeriod = 2
 	engine := testEngine(t, cfg, "SOLUSDT")
 	first := testEvent("SOLUSDT", "long", testStart, 150)
 	first.Price = 99
@@ -499,7 +495,6 @@ func TestRadarDeepQuotaBlocksEarlyLongThenUnlocks(t *testing.T) {
 	cfg.Window = 3 * time.Minute
 	cfg.OtherUSD = 100
 	cfg.VWAPPeriodMinutes = 3
-	cfg.ATRPeriod = 2
 	cfg.PeakDecayWindow = 30 * time.Second
 	cfg.DeepQuotaMultiplier = 2
 	engine := testEngine(t, cfg, "SOLUSDT")
@@ -526,7 +521,6 @@ func TestRadarDeepQuotaBlocksEarlyLongThenUnlocks(t *testing.T) {
 func TestRadarNeutralZoneAndMinProfitSpread(t *testing.T) {
 	cfg := Defaults()
 	cfg.VWAPPeriodMinutes = 3
-	cfg.ATRPeriod = 2
 	candles := radarCandles(98, 100, 102)
 	ctx := radarContext(100, candles)
 	ctx.PositionDataAvailable = true

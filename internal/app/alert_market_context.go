@@ -289,7 +289,6 @@ func buildReplayLiquidationMarketContext(event domain.LiquidationEvent, cfg aler
 		return alert.MarketContext{Price: price, Candles: rows, CurrentCandle: current}
 	}
 	vwap, sigma, z, vwapReady := alert.VWAPZScoreWithLastClose(rows, period, price, lastClose)
-	atr := alert.ATR(rows, cfg.ATRPeriod)
 	if rangeReady {
 		if price > high {
 			high = price
@@ -299,8 +298,7 @@ func buildReplayLiquidationMarketContext(event domain.LiquidationEvent, cfg aler
 		}
 	}
 	return alert.MarketContext{Ready: true, Price: price, Candles: rows, VWAP: vwap, Sigma: sigma, ZScore: z, VWAPReady: vwapReady,
-		CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: rangeReady, DonchianComputed: true,
-		ATR: atr, ATRReady: true}
+		CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: rangeReady, DonchianComputed: true}
 }
 
 func alertMarketHistoryMinutes(cfg alert.Config) int {

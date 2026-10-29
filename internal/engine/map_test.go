@@ -18,78 +18,9 @@ func TestDefaultMapConfigUsesFourRequestedLeverages(t *testing.T) {
 	}
 }
 
-func syntheticCandles(n int) []domain.Candle {
-	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	out := make([]domain.Candle, 0, n)
-	for i := 0; i < n; i++ {
-		p := 100000.0 + float64(i%7-3)*50
-		oi := 1e9 + float64(i)*2e6
-		out = append(out, domain.Candle{Exchange: "binance", Symbol: "BTCUSDT", Time: start.Add(time.Duration(i) * time.Minute), Open: p - 20, High: p + 150, Low: p - 150, Close: p, VolumeUSD: 5e7, TakerBuyUSD: 2.6e7, OpenInterestUSD: oi, LongShortRatio: 1.1})
-	}
-	return out
-}
-
-func TestBuildMapFindsBothWalls(t *testing.T) {
-	m, err := BuildMap(syntheticCandles(180), DefaultMapConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m.DataSource != domain.DataSourceBinanceUSDM {
-		t.Fatalf("data source=%q", m.DataSource)
-	}
-	if m.Upper == nil || m.Lower == nil {
-		t.Fatalf("expected both walls: %#v", m)
-	}
-	if m.Upper.Quality != "strict" || m.Lower.Quality != "strict" {
-		t.Fatalf("expected strict walls: %#v %#v", m.Upper, m.Lower)
-	}
-	if m.Upper.Price <= m.MarkPrice || m.Lower.Price >= m.MarkPrice {
-		t.Fatalf("walls on wrong sides: %#v %#v", m.Upper, m.Lower)
-	}
-	if len(m.Bins) == 0 {
-		t.Fatal("empty map")
-	}
-	if !reflect.DeepEqual(m.Leverages, []float64{10, 25, 50, 100}) {
-		t.Fatalf("map leverages=%v", m.Leverages)
-	}
-}
-
-func TestSelectWallFallsBackToStrongestReference(t *testing.T) {
-	bins := []domain.MapBin{
-		{Price: 94},
-		{Price: 95, LongUSD: 10},
-		{Price: 96, LongUSD: 20},
-		{Price: 97, LongUSD: 30},
-		{Price: 98, LongUSD: 40},
-		{Price: 99, LongUSD: 50},
-		{Price: 100, LongUSD: 60},
-		{Price: 101},
-	}
-
-	wall := selectWall(bins, 100, 2, "lower")
-	if wall == nil {
-		t.Fatal("expected a reference wall")
-	}
-	if wall.Quality != "reference" || wall.Price != 99 || wall.IntensityUSD != 50 {
-		t.Fatalf("unexpected reference wall: %#v", wall)
-	}
-}
-
-func TestSelectWallDoesNotInventOutOfRangeReference(t *testing.T) {
-	bins := []domain.MapBin{
-		{Price: 88},
-		{Price: 89, LongUSD: 10},
-		{Price: 89.5, LongUSD: 20},
-		{Price: 100},
-		{Price: 110.5, ShortUSD: 20},
-		{Price: 111, ShortUSD: 10},
-		{Price: 112},
-	}
-	if wall := selectWall(bins, 100, 2, "lower"); wall != nil {
-		t.Fatalf("expected no lower wall outside fallback range: %#v", wall)
-	}
-	if wall := selectWall(bins, 100, 2, "upper"); wall != nil {
-		t.Fatalf("expected no upper wall outside fallback range: %#v", wall)
+func TestBuildMapIsDisabled(t *testing.T) {
+	if _, err := BuildMap(nil, DefaultMapConfig()); err != ErrLocalMapDisabled {
+		t.Fatalf("expected local map to be disabled, got %v", err)
 	}
 }
 

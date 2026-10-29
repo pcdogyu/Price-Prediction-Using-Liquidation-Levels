@@ -85,7 +85,6 @@ func (s *Service) importVolumeArchives(ctx context.Context) {
 	s.mu.Unlock()
 	if becameReady {
 		s.log.Info("thirty day volume profile history ready")
-		s.train(ctx)
 	}
 }
 

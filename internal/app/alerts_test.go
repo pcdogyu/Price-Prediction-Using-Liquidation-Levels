@@ -33,7 +33,6 @@ func alertTestService(t *testing.T, name string) (*Service, config.Config, *stor
 		AlertConfirm:             30 * time.Minute,
 		AlertThresholdBTCUSD:     100000,
 		AlertDeepQuotaMultiplier: 1,
-		AlertDeepDrawdownATR:     0.5,
 	}
 	return New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil))), cfg, st
 }

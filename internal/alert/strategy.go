@@ -9,7 +9,7 @@
 //     remains available only for isolated backwards-compatible callers. An
 //     explicit historical replay may opt out of the ARMED decay phase.
 //  2. ARMED becomes FIRED only after peak-decay and price-absorption confirm
-//     the cascade has exhausted, then VWAP zone, quota/ATR, and grid filters
+//     the cascade has exhausted, then VWAP zone, quota, and grid filters
 //     decide whether to open or only close the opposite position.
 //  3. A FIRED cycle can still emit its steady confirmation signal when the
 //     opposite liquidation arrives inside the confirmation window.
@@ -73,8 +73,6 @@ type Config struct {
 	SkipPeakDecay       bool
 	DeepQuotaUSD        float64
 	DeepQuotaMultiplier float64
-	ATRPeriod           int
-	DeepDrawdownATR     float64
 	MinProfitSpread     float64
 	GridStep0Price      float64
 	GridStep0Pct        float64
@@ -108,8 +106,6 @@ func Defaults() Config {
 		AbsorptionWickRatio:   0.35,
 		DeepQuotaUSD:          0,
 		DeepQuotaMultiplier:   2,
-		ATRPeriod:             60,
-		DeepDrawdownATR:       1.5,
 		MinProfitSpread:       0.007,
 		GridStep0Price:        0,
 		GridStep0Pct:          0.003,
@@ -185,12 +181,6 @@ func (c Config) withDefaults() Config {
 	if c.DeepQuotaMultiplier <= 0 {
 		c.DeepQuotaMultiplier = d.DeepQuotaMultiplier
 	}
-	if c.ATRPeriod <= 0 {
-		c.ATRPeriod = d.ATRPeriod
-	}
-	if c.DeepDrawdownATR <= 0 {
-		c.DeepDrawdownATR = d.DeepDrawdownATR
-	}
 	if c.MinProfitSpread <= 0 || c.MinProfitSpread >= 1 {
 		c.MinProfitSpread = d.MinProfitSpread
 	}
@@ -247,8 +237,6 @@ func (c Config) Thresholds() domain.AlertThresholds {
 		AbsorptionWickRatio:   c.AbsorptionWickRatio,
 		DeepQuotaUSD:          c.DeepQuotaUSD,
 		DeepQuotaMultiplier:   c.DeepQuotaMultiplier,
-		ATRPeriod:             c.ATRPeriod,
-		DeepDrawdownATR:       c.DeepDrawdownATR,
 		MinProfitSpread:       c.MinProfitSpread,
 		GridStep0Price:        c.GridStep0Price,
 		GridStep0Pct:          c.GridStep0Pct,
@@ -817,7 +805,6 @@ func applyDecisionToSignal(signal *domain.TradeSignal, decision FilterDecision) 
 	signal.AbsorptionConfirmed = decision.AbsorptionConfirmed
 	signal.CumulativeLongLiquidationUSD = decision.CumulativeLongUSD
 	signal.DeepQuotaUSD = decision.DeepQuotaUSD
-	signal.DrawdownATR = decision.DrawdownATR
 	signal.RequiredGridStepPrice = decision.RequiredGridStepPrice
 	signal.RequiredThresholdUSD = decision.RequiredThresholdUSD
 	signal.MinProfitSpread = decision.MinProfitSpread
@@ -907,7 +894,6 @@ func (c *cycle) view(cfg Config, symbol string) domain.LiquidationAlert {
 		out.AbsorptionConfirmed = c.decision.AbsorptionConfirmed
 		out.CumulativeLongLiquidationUSD = c.decision.CumulativeLongUSD
 		out.DeepQuotaUSD = c.decision.DeepQuotaUSD
-		out.DrawdownATR = c.decision.DrawdownATR
 		out.RequiredGridStepPrice = c.decision.RequiredGridStepPrice
 		out.RequiredThresholdUSD = c.decision.RequiredThresholdUSD
 		out.MinProfitSpread = c.decision.MinProfitSpread

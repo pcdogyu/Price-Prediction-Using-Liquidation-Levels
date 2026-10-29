@@ -1011,7 +1011,7 @@ async function refresh(resetMarket = false) {
     if (cache.market) updateTicker(cache.market);
     if (!embeddedChart && cache.signal) {
       $('reason').textContent = cache.signal.state === 'ok' ? '当前领先类别：' + (cache.signal.leading_class || '—') + '；触发顺序：' + (cache.signal.trigger_order || 'pending') + '。' : (cache.signal.reason || '清算墙或历史数据不足');
-      $('model-info').textContent = '模型：' + (cache.signal.model_version || '尚未训练') + ' · 数据年龄 ' + (finite(cache.signal.data_age_seconds) ? Math.max(0, cache.signal.data_age_seconds).toFixed(0) + ' 秒' : '—');
+      $('model-info').textContent = cache.signal.state === 'disabled' ? '模型：已停用（本地 ATR / 清算墙计算已停用）' : '模型：' + (cache.signal.model_version || '尚未训练') + ' · 数据年龄 ' + (finite(cache.signal.data_age_seconds) ? Math.max(0, cache.signal.data_age_seconds).toFixed(0) + ' 秒' : '—');
     }
     draw(cache.market, cache.map, cache.signal, cache.volume);
     if (!embeddedChart) {

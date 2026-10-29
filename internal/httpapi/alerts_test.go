@@ -941,7 +941,7 @@ func TestAlertPageLinksSymbolsToTheChart(t *testing.T) {
 func TestAlertPageShowsRadarFilterReasonInProcessStatus(t *testing.T) {
 	srv, _ := alertTestServer(t)
 	script := serveAlert(srv, http.MethodGet, "/assets/alerts.js", nil).Body.String()
-	for _, want := range []string{"filter_reason", "filter_applied", "open_allowed", "close_allowed", "alerts-radar-filter", "peak_decay_armed", "deep_liquidation_quota_or_atr_not_ready"} {
+	for _, want := range []string{"filter_reason", "filter_applied", "open_allowed", "close_allowed", "alerts-radar-filter", "peak_decay_armed", "deep_liquidation_quota_not_ready"} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("alert process status must render radar filter detail %q", want)
 		}

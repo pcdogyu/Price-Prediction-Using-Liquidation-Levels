@@ -2,11 +2,9 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log/slog"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +15,6 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/engine"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
 	marketview "github.com/pcdogyu/price-prediction-liquidation-levels/internal/market"
-	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/ml"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 )
 
@@ -65,10 +62,8 @@ type Service struct {
 	candidateSnapshot   domain.BackgroundSymbolSnapshot
 	candidates          []string
 	candidateUpdates    chan []string
-	trainMu             sync.Mutex
 	maps                map[string]engine.MapResult
 	predictions         map[string]domain.Prediction
-	model               domain.ModelArtifact
 	subs                map[chan domain.Prediction]struct{}
 	liquidationSubs     map[chan domain.LiquidationEvent]struct{}
 	priceSubs           map[chan domain.PriceTick]struct{}
@@ -150,13 +145,6 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
-	if a, e := ml.Load(cfg.ModelPath); e == nil {
-		if a.DataSource == domain.DataSourceBinanceUSDM && strings.HasPrefix(a.Version, ml.ModelVersionPrefix) && sameStrings(a.FeatureNames, engine.FeatureNames) {
-			s.model = a
-		} else {
-			log.Warn("legacy or incompatible model ignored", "version", a.Version, "data_source", a.DataSource)
-		}
-	}
 	return s
 }
 
@@ -169,29 +157,13 @@ func (s *Service) Start(ctx context.Context) {
 	s.startDashboard(ctx)
 	go s.priceBroadcastLoop(ctx)
 	go s.pollLoop(ctx)
-	go s.predictionLoop(ctx)
-	go s.rebuild(ctx)
 	go s.bootstrap(ctx)
-	go s.retrainLoop(ctx)
 	go s.retentionLoop(ctx)
 	go s.backgroundCandidateRefreshLoop(ctx)
 	s.startVolumeProfiles(ctx)
 	go s.volumeArchiveLoop(ctx)
 	go s.startAlerts(ctx)
 	go s.alertCandleRepairLoop(ctx)
-}
-
-func (s *Service) predictionLoop(ctx context.Context) {
-	t := time.NewTicker(s.cfg.SnapshotInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			s.rebuild(ctx)
-		}
-	}
 }
 
 func (s *Service) pollLoop(ctx context.Context) {
@@ -242,8 +214,6 @@ func (s *Service) bootstrap(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	s.rebuild(ctx)
-	s.train(ctx)
 }
 
 // backfillSymbols synchronizes the selected background set with the configured
@@ -341,116 +311,6 @@ func (s *Service) historyWithRetry(ctx context.Context, client exchange.Client, 
 	return rows, err
 }
 
-func (s *Service) rebuild(ctx context.Context) {
-	for _, sym := range s.backgroundSymbols() {
-		cs, e := s.store.Candles(ctx, sym, time.Now().UTC().Add(-7*24*time.Hour))
-		if e != nil {
-			continue
-		}
-		m, e := engine.BuildMap(cs, engine.DefaultMapConfig())
-		m.DataSource = domain.DataSourceBinanceUSDM
-		p := domain.Prediction{Symbol: sym, DataSource: domain.DataSourceBinanceUSDM, Time: time.Now().UTC(), HorizonMinutes: 60, State: "data_insufficient", Experimental: true, SourceCoverage: s.coverage(), Reason: "清算墙或历史数据不足"}
-		if e == nil {
-			p.MarkPrice, p.ATR, p.UpperWall, p.LowerWall = m.MarkPrice, m.ATR, m.Upper, m.Lower
-			p.DataAgeSeconds = time.Since(cs[len(cs)-1].Time).Seconds()
-			if m.Upper != nil && m.Lower != nil && p.DataAgeSeconds <= s.cfg.StaleAfter.Seconds() {
-				ll, sl, _ := s.store.LiquidationTotals(ctx, sym, time.Now().Add(-15*time.Minute))
-				profile, profileErr := s.VolumeProfile(ctx, sym)
-				var profileSnapshot *domain.VolumeProfileSnapshot
-				if profileErr == nil && profile.State == "ok" && profile.VAL != nil && profile.VAH != nil {
-					profileSnapshot = &domain.VolumeProfileSnapshot{Symbol: sym, Time: profile.DataThrough, SessionStart: profile.SessionStart, VAL: *profile.VAL, VAH: *profile.VAH, TotalVolumeUSD: profile.TotalVolumeUSD, Complete: true}
-				} else {
-					p.Reason = "成交量价值区尚未完整同步"
-				}
-				fv, fe := engine.BuildFeaturesWithProfile(sym, cs, m, ll, sl, profileSnapshot)
-				s.mu.RLock()
-				model := s.model
-				volumeHistoryReady := s.volumeHistoryReady
-				s.mu.RUnlock()
-				if fe == nil && profileSnapshot != nil && volumeHistoryReady && len(model.Weights) > 0 {
-					probs, pe := ml.Predict(model, fv.Values)
-					if pe == nil {
-						p.State = "ok"
-						p.Reason = ""
-						p.Probabilities = probs
-						p.ModelVersion = model.Version
-						// Product output stays experimental until 60 days of live coverage and
-						// two consecutive weekly promotion checks are persisted.
-						p.Experimental = true
-						p.Contributions = topContributions(ml.Contributions(model, fv.Values), 6)
-					}
-				} else if !volumeHistoryReady {
-					p.Reason = "正在重建30天逐笔成交量特征"
-				} else if len(model.Weights) == 0 {
-					p.Reason = "模型尚未完成首次训练"
-				}
-			}
-		}
-		p = marketview.EnrichPrediction(p, marketview.CompositeMinutes(cs), time.Now().UTC())
-		s.mu.Lock()
-		s.maps[sym] = m
-		s.predictions[sym] = p
-		for ch := range s.subs {
-			select {
-			case ch <- p:
-			default:
-			}
-		}
-		s.mu.Unlock()
-		_ = s.store.SavePrediction(ctx, p)
-	}
-}
-
-func (s *Service) train(ctx context.Context) {
-	s.trainMu.Lock()
-	defer s.trainMu.Unlock()
-
-	s.mu.RLock()
-	volumeHistoryReady := s.volumeHistoryReady
-	s.mu.RUnlock()
-	if !volumeHistoryReady {
-		s.log.Info("training deferred until thirty day volume profile history is complete")
-		return
-	}
-	var samples []ml.Sample
-	trainingDays := s.cfg.TrainingDays
-	if trainingDays <= 0 {
-		trainingDays = 30
-	}
-	trainingSymbols := s.backgroundSymbols()
-	for _, sym := range trainingSymbols {
-		from := time.Now().AddDate(0, 0, -(trainingDays + 5))
-		cs, e := s.store.Candles(ctx, sym, from)
-		if e != nil {
-			continue
-		}
-		profiles, pe := s.store.VolumeProfileSnapshots(ctx, sym, from, time.Now().Add(time.Minute))
-		if pe != nil {
-			s.log.Warn("volume profile snapshots unavailable for training", "symbol", sym, "error", pe)
-			continue
-		}
-		samples = append(samples, engine.HistoricalSamplesWithProfiles(sym, cs, engine.DefaultMapConfig(), profiles)...)
-	}
-	report, model, e := ml.WalkForward("BTCUSDT,ETHUSDT", samples, engine.FeatureNames)
-	if e != nil {
-		s.log.Warn("training skipped", "samples", len(samples), "error", e)
-		return
-	}
-	if e = ml.Save(s.cfg.ModelPath, model); e != nil {
-		s.log.Error("model save failed", "error", e)
-		return
-	}
-	s.mu.Lock()
-	s.model = model
-	s.mu.Unlock()
-	for _, sym := range trainingSymbols {
-		r := report
-		r.Symbol = sym
-		_ = s.store.SaveBacktest(ctx, r)
-	}
-	s.log.Info("model trained", "samples", report.Samples, "log_loss", report.LogLoss, "eligible", report.PromotionEligible)
-	s.rebuild(ctx)
-}
 func (s *Service) retentionLoop(ctx context.Context) {
 	s.runDailyMaintenance(ctx)
 	for {
@@ -526,47 +386,11 @@ func nextDailyMaintenance(now time.Time) time.Time {
 	}
 	return next
 }
-func (s *Service) retrainLoop(ctx context.Context) {
-	for {
-		now := time.Now()
-		next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 10, 0, 0, time.UTC)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(time.Until(next)):
-			s.train(ctx)
-		}
-	}
-}
+
+const localPredictionDisabledReason = "本地 ATR 与清算墙计算已停用，模型预测已停用；清算墙仅使用 CoinGlass 数据"
 
 func (s *Service) Latest(ctx context.Context, symbol string) (domain.Prediction, error) {
-	s.mu.RLock()
-	p, ok := s.predictions[symbol]
-	s.mu.RUnlock()
-	if ok {
-		if age := time.Since(p.Time); age > s.cfg.SnapshotInterval+s.cfg.StaleAfter {
-			p.State = "data_insufficient"
-			p.Reason = "预测快照已过期"
-			p.Probabilities = nil
-		}
-		if cs, err := s.store.Candles(ctx, symbol, p.Time.Add(-time.Minute)); err == nil {
-			p = marketview.EnrichPrediction(p, marketview.CompositeMinutes(cs), time.Now().UTC())
-		}
-		return p, nil
-	}
-	p, e := s.store.LatestPrediction(ctx, symbol)
-	if errors.Is(e, sql.ErrNoRows) {
-		if !s.backgroundSymbol(symbol) {
-			return domain.Prediction{Symbol: symbol, DataSource: domain.DataSourceBinanceUSDM, State: "unavailable", Reason: "该币对未配置后台预测"}, nil
-		}
-		return p, errors.New("prediction unavailable")
-	}
-	if e == nil {
-		if cs, err := s.store.Candles(ctx, symbol, p.Time.Add(-time.Minute)); err == nil {
-			p = marketview.EnrichPrediction(p, marketview.CompositeMinutes(cs), time.Now().UTC())
-		}
-	}
-	return p, e
+	return domain.Prediction{Symbol: strings.ToUpper(strings.TrimSpace(symbol)), DataSource: "disabled", Time: time.Now().UTC(), HorizonMinutes: 60, State: "disabled", Experimental: true, SourceCoverage: s.coverage(), Reason: localPredictionDisabledReason}, nil
 }
 
 func (s *Service) Market(ctx context.Context, symbol, intervalName string, before time.Time, limit int) (domain.MarketView, error) {
@@ -617,11 +441,6 @@ func (s *Service) Market(ctx context.Context, symbol, intervalName string, befor
 	if len(view.Candles) > 0 {
 		start := view.Candles[0].Time
 		end := view.Candles[len(view.Candles)-1].Time.Add(interval)
-		predictions, predictionErr := s.store.Predictions(ctx, symbol, start, end)
-		if predictionErr != nil {
-			return domain.MarketView{}, predictionErr
-		}
-		view.ModelSignals = marketview.DirectionalSignals(predictions, interval)
 		liquidations, truncated, liquidationErr := s.store.Liquidations(ctx, symbol, start, end, 5000, domain.DefaultLiquidationMinimumUSD)
 		if liquidationErr != nil {
 			return domain.MarketView{}, liquidationErr
@@ -650,16 +469,11 @@ func (s *Service) CoinGlassMap(symbol string) (engine.MapResult, error) {
 }
 
 func (s *Service) Backtest(ctx context.Context, symbol string) (domain.BacktestReport, error) {
-	return s.store.Backtest(ctx, symbol)
+	return domain.BacktestReport{}, errors.New("model backtest disabled: local ATR and liquidation-wall calculation is disabled")
 }
 func (s *Service) Health() map[string]exchange.Health { return s.health.Snapshot() }
 func (s *Service) Ready(ctx context.Context) bool {
-	if s.store.Ping(ctx) != nil {
-		return false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.predictions) > 0
+	return s.store.Ping(ctx) == nil
 }
 func (s *Service) Subscribe() (chan domain.Prediction, func()) {
 	ch := make(chan domain.Prediction, 8)
@@ -820,44 +634,4 @@ func (s *Service) coverage() map[string]float64 {
 		out[k] = v.Coverage
 	}
 	return out
-}
-func topContributions(in map[string]float64, n int) map[string]float64 {
-	type kv struct {
-		k string
-		v float64
-	}
-	xs := make([]kv, 0, len(in))
-	for k, v := range in {
-		xs = append(xs, kv{k, v})
-	}
-	sort.Slice(xs, func(i, j int) bool {
-		a, b := xs[i].v, xs[j].v
-		if a < 0 {
-			a = -a
-		}
-		if b < 0 {
-			b = -b
-		}
-		return a > b
-	})
-	if len(xs) > n {
-		xs = xs[:n]
-	}
-	out := map[string]float64{}
-	for _, x := range xs {
-		out[x.k] = x.v
-	}
-	return out
-}
-
-func sameStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

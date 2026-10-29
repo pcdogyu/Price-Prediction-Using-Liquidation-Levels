@@ -258,9 +258,6 @@ func (s *Service) refreshBackgroundCandidates(ctx context.Context) {
 		s.mu.Lock()
 		s.backfillDone = complete
 		s.mu.Unlock()
-		if ctx.Err() == nil {
-			s.rebuild(ctx)
-		}
 	}()
 }
 

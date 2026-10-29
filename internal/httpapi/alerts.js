@@ -44,7 +44,7 @@
     high_zscore_short_liquidation_open_short: '高位区：允许开空',
     low_zscore_short_liquidation_close_only: '低位区：空单爆仓仅允许平多',
     neutral_zscore_short_liquidation_close_only: '中性区：空单爆仓仅允许平多',
-    deep_liquidation_quota_or_atr_not_ready: '深度爆仓配额或 ATR 回撤未达标',
+    deep_liquidation_quota_not_ready: '深度爆仓配额未达标',
     exponential_long_grid_not_ready: '多单指数网格间距未达标',
     unsupported_liquidation_side: '不支持的爆仓方向'
   };

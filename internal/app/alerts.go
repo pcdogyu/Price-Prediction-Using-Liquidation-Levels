@@ -85,8 +85,6 @@ func (s *Service) newAlertRuntime() *alertRuntime {
 		AbsorptionWickRatio:   s.cfg.AlertAbsorptionWickRatio,
 		DeepQuotaUSD:          s.cfg.AlertDeepQuotaUSD,
 		DeepQuotaMultiplier:   s.cfg.AlertDeepQuotaMultiplier,
-		ATRPeriod:             s.cfg.AlertATRPeriod,
-		DeepDrawdownATR:       s.cfg.AlertDeepDrawdownATR,
 		MinProfitSpread:       s.cfg.AlertMinProfitSpread,
 		GridStep0Price:        s.cfg.AlertGridStep0Price,
 		GridStep0Pct:          s.cfg.AlertGridStep0Pct,

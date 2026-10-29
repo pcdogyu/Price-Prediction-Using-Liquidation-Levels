@@ -34,8 +34,6 @@ type MarketContext struct {
 	DonchianLow           float64
 	DonchianReady         bool
 	DonchianComputed      bool
-	ATR                   float64
-	ATRReady              bool
 }
 
 // FilterDecision is persisted with every context-aware alert/signal so an
@@ -56,7 +54,6 @@ type FilterDecision struct {
 	AbsorptionConfirmed     bool
 	CumulativeLongUSD       float64
 	DeepQuotaUSD            float64
-	DrawdownATR             float64
 	RequiredGridStepPrice   float64
 	RequiredThresholdUSD    float64
 	MinProfitSpread         float64
@@ -211,34 +208,6 @@ func VWAPZoneBounds(cfg Config, vwap, sigma, high, low float64) (greenUpper, red
 	greenUpper = math.Min(vwapGreen, donGreen)
 	redLower = math.Max(vwapRed, donRed)
 	return greenUpper, redLower, greenUpper >= redLower, true
-}
-
-// ATR returns the simple average true range over the latest period candles.
-func ATR(candles []domain.Candle, period int) float64 {
-	if period <= 0 || len(candles) < 2 {
-		return 0
-	}
-	start := len(candles) - period
-	if start < 1 {
-		start = 1
-	}
-	var total float64
-	var count int
-	for i := start; i < len(candles); i++ {
-		c, previous := candles[i], candles[i-1]
-		if c.High <= 0 || c.Low <= 0 || previous.Close <= 0 || c.High < c.Low {
-			continue
-		}
-		tr := math.Max(c.High-c.Low, math.Max(math.Abs(c.High-previous.Close), math.Abs(c.Low-previous.Close)))
-		if tr > 0 && !math.IsNaN(tr) && !math.IsInf(tr, 0) {
-			total += tr
-			count++
-		}
-	}
-	if count == 0 {
-		return 0
-	}
-	return total / float64(count)
 }
 
 // candleAbsorbed confirms that the current candle is absorbing the side of the
@@ -460,17 +429,10 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 		d.DeepQuotaUSD = baseThreshold * cfg.DeepQuotaMultiplier
 	}
 	d.CumulativeLongUSD = state.longLiqCumulative
-	atr := ctx.ATR
-	if !ctx.ATRReady {
-		atr = ATR(ctx.Candles, cfg.ATRPeriod)
-	}
-	if state.highWaterPrice > 0 && atr > 0 {
-		d.DrawdownATR = (state.highWaterPrice - price) / atr
-	}
 	if side == "long" && d.OpenAllowed {
-		if d.CumulativeLongUSD < d.DeepQuotaUSD || d.DrawdownATR < cfg.DeepDrawdownATR {
+		if d.CumulativeLongUSD < d.DeepQuotaUSD {
 			d.OpenAllowed = false
-			d.Reason += ";deep_liquidation_quota_or_atr_not_ready"
+			d.Reason += ";deep_liquidation_quota_not_ready"
 		}
 	}
 

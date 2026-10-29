@@ -66,8 +66,6 @@ type Config struct {
 	AlertPeakDecayRatio                              float64
 	AlertAbsorptionWickRatio                         float64
 	AlertDeepQuotaUSD, AlertDeepQuotaMultiplier      float64
-	AlertATRPeriod                                   int
-	AlertDeepDrawdownATR                             float64
 	AlertMinProfitSpread                             float64
 	AlertGridStep0Price, AlertGridStep0Pct           float64
 	AlertGridStepMultiplier, AlertGridThresholdSlope float64
@@ -131,8 +129,6 @@ func Load() Config {
 		AlertAbsorptionWickRatio: envFloat("APP_ALERT_ABSORPTION_WICK_RATIO", 0.35),
 		AlertDeepQuotaUSD:        envFloat("APP_ALERT_DEEP_QUOTA_USD", 0),
 		AlertDeepQuotaMultiplier: envFloat("APP_ALERT_DEEP_QUOTA_MULTIPLIER", 2),
-		AlertATRPeriod:           envInt("APP_ALERT_ATR_PERIOD", 60),
-		AlertDeepDrawdownATR:     envFloat("APP_ALERT_DEEP_DRAWDOWN_ATR", 1.5),
 		AlertMinProfitSpread:     envFloat("APP_ALERT_MIN_PROFIT_SPREAD", 0.007),
 		AlertGridStep0Price:      envFloat("APP_ALERT_GRID_STEP0_PRICE", 0),
 		AlertGridStep0Pct:        envFloat("APP_ALERT_GRID_STEP0_PCT", 0.003),
