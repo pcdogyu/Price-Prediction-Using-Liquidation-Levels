@@ -17,6 +17,8 @@ expected_sha256="${4:-}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 short_revision="${revision:0:12}"
 backup="$data_root/backups/$stamp-$short_revision"
+backup_retention_days=7
+backup_retention_minutes=$((backup_retention_days * 24 * 60))
 binary="$app_root/liquidation-predictor"
 new_binary="$app_root/liquidation-predictor.new"
 
@@ -177,10 +179,23 @@ nginx -t
 systemctl daemon-reload
 systemctl restart liquidation-predictor.service
 
+prune_old_backups() {
+  local old_count remaining_count
+  old_count="$(find "$data_root/backups" -mindepth 1 -maxdepth 1 -type d -name '20??????T??????Z-*' -mmin "+$backup_retention_minutes" -print | wc -l)"
+  if ((old_count > 0)); then
+    find "$data_root/backups" -mindepth 1 -maxdepth 1 -type d -name '20??????T??????Z-*' -mmin "+$backup_retention_minutes" -exec rm -rf -- {} +
+  fi
+  remaining_count="$(find "$data_root/backups" -mindepth 1 -maxdepth 1 -type d -name '20??????T??????Z-*' -mmin "+$backup_retention_minutes" -print | wc -l)"
+  test "$remaining_count" -eq 0
+  echo "backup_retention_days=$backup_retention_days"
+  echo "old_backup_directories_removed=$old_count"
+}
+
 # A first-time legacy SQLite import can take longer than the normal restart
 # while the service keeps its health port closed during the transaction.
 for _ in $(seq 1 150); do
   if systemctl is-active --quiet liquidation-predictor.service && curl -fsS http://127.0.0.1:9090/healthz >/dev/null && curl -fsS http://127.0.0.1:9090/readyz >/dev/null; then
+    prune_old_backups
     printf '%s\n' "$backup" > "$app_root/dashboard-backup-path"
     echo "deployed_revision=$revision"
     echo "backup=$backup"
