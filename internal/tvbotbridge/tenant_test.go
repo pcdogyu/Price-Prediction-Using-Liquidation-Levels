@@ -68,6 +68,82 @@ func TestTenantManagerSeparatesConfigAndOrderData(t *testing.T) {
 	}
 }
 
+func TestTenantManagerPrunesOpenAndInactiveTenantStores(t *testing.T) {
+	root := t.TempDir()
+	rootConfig := tvbotconfig.NewStore(filepath.Join(root, "root-config.json"), tvbotconfig.Default())
+	rootOrders, err := tvbotstorage.NewSQLiteOrderStore(filepath.Join(root, "root.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rootOrders.Close()
+	credentials, err := newUserCredentialResolver(filepath.Join(root, "credentials"), "admin", "", "", "", tvbotokx.Credentials{}, tvbotbinance.Credentials{}, tvbotgate.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newTenantManager(filepath.Join(root, "tenants"), "admin", rootConfig, rootOrders, credentials)
+	alice, err := manager.ForUserScope("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	old := time.Now().UTC().Add(-48 * time.Hour)
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+	insertEvent := func(store *tvbotstorage.OrderStore, id string, at time.Time) {
+		t.Helper()
+		if err := store.InsertTradeMonitorEvent(tvbotstorage.TradeMonitorEvent{
+			EventID: id, EventTime: at, Exchange: tvbottrading.ExchangeBinance, APIID: "main", Symbol: "BTCUSDT", EventType: "poll_error",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertEvent(alice.Orders, "alice-old", old)
+	if err := alice.Orders.CachePayload("alice-old", map[string]string{"value": "old"}, old); err != nil {
+		t.Fatal(err)
+	}
+
+	charlieDir := filepath.Join(root, "tenants", userDirectoryName("charlie"))
+	if err := os.MkdirAll(charlieDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	charlie, err := tvbotstorage.NewSQLiteOrderStore(filepath.Join(charlieDir, "tvbot.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertEvent(charlie, "charlie-old", old)
+	if err := charlie.CachePayload("charlie-old", map[string]string{"value": "old"}, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := charlie.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	events, cache, err := manager.PruneRetention(context.Background(), cutoff, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events != 2 || cache != 2 {
+		t.Fatalf("removed events=%d cache=%d, want 2 each", events, cache)
+	}
+	if events, err := alice.Orders.ListTradeMonitorEvents(tvbotstorage.TradeMonitorFilter{}, 10); err != nil || len(events) != 0 {
+		t.Fatalf("alice old events remain: %d err=%v", len(events), err)
+	}
+	if _, found, err := alice.Orders.CachedPayload("alice-old"); err != nil || found {
+		t.Fatalf("alice old cache found=%v err=%v", found, err)
+	}
+	charlie, err = tvbotstorage.NewSQLiteOrderStore(filepath.Join(charlieDir, "tvbot.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer charlie.Close()
+	if events, err := charlie.ListTradeMonitorEvents(tvbotstorage.TradeMonitorFilter{}, 10); err != nil || len(events) != 0 {
+		t.Fatalf("charlie old events remain: %d err=%v", len(events), err)
+	}
+	if _, found, err := charlie.CachedPayload("charlie-old"); err != nil || found {
+		t.Fatalf("charlie old cache found=%v err=%v", found, err)
+	}
+}
+
 func TestConfiguredBinanceSymbolsPrefersCoinpairAndFiltersNonUSDT(t *testing.T) {
 	cfg := tvbotconfig.Config{Symbols: map[string]tvbotconfig.SymbolConfig{
 		"btc-key":          {Coinpair: "BTC-USDT-SWAP"},

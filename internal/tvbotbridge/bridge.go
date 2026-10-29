@@ -37,6 +37,35 @@ type Bridge struct {
 	upgradeStatus string
 }
 
+// PruneTVBotRetention applies the shared TVBot retention policy to the root
+// store and every tenant database that already exists on disk. Tenant stores
+// are opened lazily, so the file scan is needed to cover inactive tenants too.
+func (b *Bridge) PruneTVBotRetention(ctx context.Context, tradeMonitorBefore, analysisCacheBefore time.Time) (tradeMonitorEvents, analysisCache int64, err error) {
+	if b == nil {
+		return 0, 0, nil
+	}
+	add := func(store *tvbotstorage.OrderStore) {
+		if store == nil || err != nil || ctx.Err() != nil {
+			return
+		}
+		var events, cache int64
+		events, cache, err = store.PruneRetention(ctx, tradeMonitorBefore, analysisCacheBefore)
+		tradeMonitorEvents += events
+		analysisCache += cache
+	}
+	add(b.Orders)
+	if b.Tenants == nil || err != nil || ctx.Err() != nil {
+		return tradeMonitorEvents, analysisCache, err
+	}
+	events, cache, pruneErr := b.Tenants.PruneRetention(ctx, tradeMonitorBefore, analysisCacheBefore)
+	tradeMonitorEvents += events
+	analysisCache += cache
+	if err == nil {
+		err = pruneErr
+	}
+	return tradeMonitorEvents, analysisCache, err
+}
+
 // TradeTargetForUser exposes the tenant-scoped API-key selection to the
 // liquidation alert service without coupling the application package to the
 // TVBot tenant manager.

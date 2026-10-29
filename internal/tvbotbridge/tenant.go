@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	appstore "github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
@@ -287,6 +288,68 @@ func (m *tenantManager) Close() error {
 		}
 	}
 	return first
+}
+
+func (m *tenantManager) PruneRetention(ctx context.Context, tradeMonitorBefore, analysisCacheBefore time.Time) (tradeMonitorEvents, analysisCache int64, err error) {
+	if m == nil || strings.TrimSpace(m.rootPath) == "" {
+		return 0, 0, nil
+	}
+	m.mu.Lock()
+	resources := make([]*tenantResource, 0, len(m.resources))
+	knownPaths := make(map[string]struct{}, len(m.resources))
+	for _, resource := range m.resources {
+		if resource == nil || resource.orders == nil {
+			continue
+		}
+		resources = append(resources, resource)
+		knownPaths[filepath.Clean(filepath.Join(m.rootPath, userDirectoryName(resource.username), "tvbot.db"))] = struct{}{}
+	}
+	rootPath := m.rootPath
+	m.mu.Unlock()
+
+	prune := func(orders *tvbotstorage.OrderStore) {
+		if orders == nil || err != nil || ctx.Err() != nil {
+			return
+		}
+		var events, cache int64
+		events, cache, err = orders.PruneRetention(ctx, tradeMonitorBefore, analysisCacheBefore)
+		tradeMonitorEvents += events
+		analysisCache += cache
+	}
+	for _, resource := range resources {
+		prune(resource.orders)
+	}
+	if err != nil || ctx.Err() != nil {
+		return tradeMonitorEvents, analysisCache, err
+	}
+
+	paths, globErr := filepath.Glob(filepath.Join(rootPath, "*", "tvbot.db"))
+	if globErr != nil {
+		return tradeMonitorEvents, analysisCache, globErr
+	}
+	for _, path := range paths {
+		if _, known := knownPaths[filepath.Clean(path)]; known {
+			continue
+		}
+		if ctx.Err() != nil {
+			return tradeMonitorEvents, analysisCache, ctx.Err()
+		}
+		orders, openErr := tvbotstorage.NewSQLiteOrderStore(path, "")
+		if openErr != nil {
+			if err == nil {
+				err = fmt.Errorf("open tenant order store %s: %w", path, openErr)
+			}
+			continue
+		}
+		prune(orders)
+		if closeErr := orders.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close tenant order store %s: %w", path, closeErr)
+		}
+		if err != nil {
+			break
+		}
+	}
+	return tradeMonitorEvents, analysisCache, err
 }
 
 func tenantIDForUser(username string) string {
