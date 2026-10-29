@@ -52,6 +52,33 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 	}
 }
 
+func TestHedgeWallDepthChartIncludesPriceGridAndTopFiveMarkers(t *testing.T) {
+	srv, st := testService(t, config.Config{BasePath: "/liquidation/"}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	defer st.Close()
+	w := httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/assets/pages.js", nil))
+	if w.Code != 200 {
+		t.Fatalf("pages.js status=%d", w.Code)
+	}
+	body := w.Body.String()
+	for _, marker := range []string{
+		"integerStart=Math.ceil(low)",
+		"gridStep=integerCount>120",
+		"价格 · Top 5",
+		"topFive=(rows,side)",
+		"item.side==='bid'?'B':'A'",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("depth chart missing %q", marker)
+		}
+	}
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/hedge-wall", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "整数价位网格") || !strings.Contains(w.Body.String(), "B/A1–5") {
+		t.Fatalf("hedge wall legend missing chart guidance: status=%d", w.Code)
+	}
+}
+
 func TestBubbleChartUsesConfiguredMultipleSymbols(t *testing.T) {
 	cfg := config.Config{BasePath: "/liquidation/", Symbols: []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "ETHUSDT"}}
 	srv, st := testService(t, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
