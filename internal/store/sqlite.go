@@ -29,8 +29,8 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(2)
 	s := &Store{db: db}
 	if err = s.migrate(context.Background()); err != nil {
 		db.Close()

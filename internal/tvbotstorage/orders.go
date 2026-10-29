@@ -105,8 +105,8 @@ func NewSQLiteOrderStore(databasePath, legacyJSONPath string) (*OrderStore, erro
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(2)
 	s, err := newSQLiteOrderStore(db, true, legacyJSONPath)
 	if err != nil {
 		_ = db.Close()
@@ -122,8 +122,8 @@ func NewSQLiteOrderStoreWithDB(db *sql.DB, legacyJSONPath string) (*OrderStore, 
 	if db == nil {
 		return nil, errors.New("database handle is required")
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(2)
 	return newSQLiteOrderStore(db, false, legacyJSONPath)
 }
 
