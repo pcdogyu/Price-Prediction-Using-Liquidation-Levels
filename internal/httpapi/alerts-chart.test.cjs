@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const K = require('./alerts-chart.js');
 const chartApp = fs.readFileSync(require.resolve('./alerts-chart-app.js'), 'utf8');
 const chartHTML = fs.readFileSync(require.resolve('./alerts-chart.html'), 'utf8');
+const chartCSS = fs.readFileSync(require.resolve('./alerts-chart.css'), 'utf8');
 
 const candle = (at, open = 1, high = 2, low = 0.5, close = 1.5, volume = 1000) => ({ t: at, open, high, low, close, volume });
 const signal = (id, at, kind = 'aggressive', side = 'long', price = 100) => ({ id, t: at, kind, side, reference_price: price });
@@ -210,11 +211,21 @@ test('markerGroups preserve filtered display state without merging it into allow
 test('filtered chart signals are painted faintly and remain in the display rows', () => {
   assert.match(chartApp, /const FILTERED_SIGNAL_ALPHA = \.2/);
   assert.match(chartApp, /const displaySignals = \(\) => rawShownSignals\(\)\.map/);
-  assert.match(chartApp, /K\.markerGroups\(displaySignals\(\), intervalStep\)/);
+  assert.match(chartApp, /K\.markerGroups\(visibleSignals\(\), intervalStep\)/);
   assert.match(chartApp, /if \(group\.chartFiltered\) ctx\.globalAlpha = FILTERED_SIGNAL_ALPHA/);
-  assert.match(chartApp, /const rows = displaySignals\(\)\.slice\(\)\.reverse\(\)\.slice\(0, 200\)/);
+  assert.match(chartApp, /const rows = visibleSignals\(\)\.slice\(\)\.reverse\(\)\.slice\(0, 200\)/);
+  assert.match(chartCSS, /\.kline-signal-filtered\{opacity:\.2\}/);
   assert.match(chartApp, /已过滤（淡显）/);
   assert.match(chartHTML, /已过滤信号（80%透明）/);
+});
+
+test('the order-signal toggle only shows signals allowed by the active filter', () => {
+  assert.match(chartHTML, /id="kline-vwap-donchian"[^>]*>[\s\S]*?id="kline-order-signals"[^>]*>[\s\S]*?下单信号/);
+  assert.match(chartApp, /STORE_ORDER_SIGNALS_ONLY = 'liquidation\.kline\.order-signals-only'/);
+  assert.match(chartApp, /orderSignalsOnly: stored\(STORE_ORDER_SIGNALS_ONLY, false\)/);
+  assert.match(chartApp, /const visibleSignals = \(\) => state\.toggles\.orderSignalsOnly \? shownSignals\(\) : displaySignals\(\);/);
+  assert.match(chartApp, /\[STORE_ORDER_SIGNALS_ONLY, 'kline-order-signals', 'orderSignalsOnly'\]/);
+  assert.match(chartApp, /仅显示通过过滤的下单信号/);
 });
 
 test('all K-line variants expose tenant VWAP/Donchian controls in the period toolbar', () => {

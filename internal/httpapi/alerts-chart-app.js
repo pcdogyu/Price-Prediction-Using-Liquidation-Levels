@@ -13,7 +13,7 @@
   const storedText = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (error) { return fallback; } };
   const rememberText = (key, value) => { try { localStorage.setItem(key, value); } catch (error) { /* private mode keeps defaults */ } };
 
-  const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_ZONES = 'liquidation.kline.zones', STORE_DONCHIAN = 'liquidation.kline.donchian', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
+  const STORE_SIGNALS = 'liquidation.kline.signals', STORE_ORDER_SIGNALS_ONLY = 'liquidation.kline.order-signals-only', STORE_ALERTS = 'liquidation.kline.alerts', STORE_AGGRESSIVE = 'liquidation.kline.aggressive', STORE_STEADY = 'liquidation.kline.steady', STORE_ZONES = 'liquidation.kline.zones', STORE_DONCHIAN = 'liquidation.kline.donchian', STORE_SIGNAL_RECALCULATE = 'liquidation.alerts.signal-recalculate';
   const CANDLE_REFRESH_MS = 5000, SIGNAL_REFRESH_MS = 15000, LIQUIDATION_DELTA_REFRESH_MS = 15000, LIQUIDATION_DELTA_DEBOUNCE_MS = 250;
   const RADAR_WARMUP_MAX_PAGES = 4;
   const RADAR_RANGE_MIN_HOURS = 12, RADAR_RANGE_MAX_HOURS = 24, RADAR_DRAWDOWN_MIN_PCT = .1, RADAR_DRAWDOWN_MAX_PCT = 20, RADAR_DONCHIAN_MIN_PCT = 1, RADAR_DONCHIAN_MAX_PCT = 49;
@@ -39,7 +39,7 @@
     drag: null, hoverCandle: null, hoverMarker: null,
     radarConfig: { periodMinutes: 240, zScoreThreshold: .8, rangeMinutes: 1440, minDrawdown: .022, donchianFraction: .35 }, radarZone: null,
     liquidationDeltaHover: null, liquidationDeltaWindow: null, liquidationDeltaPending: false, liquidationDeltaRequestTimer: 0, liquidationDeltaRequestSequence: 0, liquidationDeltaAbortController: null,
-    toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true), zones: stored(STORE_ZONES, true), donchian: stored(STORE_DONCHIAN, true) }
+    toggles: { alerts: stored(STORE_ALERTS, true), signals: stored(STORE_SIGNALS, true), orderSignalsOnly: stored(STORE_ORDER_SIGNALS_ONLY, false), aggressive: stored(STORE_AGGRESSIVE, true), steady: stored(STORE_STEADY, true), zones: stored(STORE_ZONES, true), donchian: stored(STORE_DONCHIAN, true) }
   };
   // The standalone alert chart must be useful when opened directly from a URL.
   // Relying only on the alert-page localStorage event made a fresh tab request
@@ -106,6 +106,7 @@
   const filteredSignal = signal => state.toggles.donchian && !donchianAllowsSignal(signal);
   const displaySignals = () => rawShownSignals().map(signal => Object.assign({}, signal, { chart_filtered: filteredSignal(signal) }));
   const shownSignals = () => displaySignals().filter(signal => !signal.chart_filtered);
+  const visibleSignals = () => state.toggles.orderSignalsOnly ? shownSignals() : displaySignals();
   const closeOnlyMarker = marker => !!(state.toggles.donchian && marker && marker.filterApplied && marker.closeAllowed && !marker.openAllowed);
   const closeOnlyFilterLabel = label => label === '预警' ? '平仓区域预警信号过滤' : label === '稳健' ? '稳健信号过滤' : '激进信号过滤';
   const closeOnlyPrefix = marker => {
@@ -247,7 +248,8 @@
     const filterText = state.toggles.donchian
       ? ' · 共 ' + replaySignals.length + ' 条 · 放行 ' + (replaySignals.length - filteredCount) + ' 条 · 过滤 ' + filteredCount + ' 条'
       : ' · 共 ' + replaySignals.length + ' 条 · 未过滤';
-    $('kline-signal-status').textContent = state.signalReplayText + filterText + ' · ' + parameterText;
+    const displayText = state.toggles.orderSignalsOnly ? ' · 仅显示下单信号' : '';
+    $('kline-signal-status').textContent = state.signalReplayText + filterText + displayText + ' · ' + parameterText;
     $('kline-alert-status').textContent = state.signalReplayText + ' ' + shownAlerts().length + ' 条' + filterText + ' · 每 15 秒刷新';
   }
 
@@ -538,6 +540,7 @@
     else if (zone) parts.push('VWAP ' + zone.period_minutes + ' 分钟 + Donchian ' + (zone.range_hours || state.radarConfig.rangeMinutes / 60) + ' 小时 · 历史三分区 ' + historicalRadarZones().length + ' 根 · 高于 ' + priceText(zone.red_zone_lower || zone.upper_open_price) + ' 开空 / 低于 ' + priceText(zone.green_zone_upper || zone.lower_open_price) + ' 接多 · 中间仅平仓' + (zone.boundary_overlap ? ' · 边界重叠，禁止开仓' : ''));
     else parts.push('VWAP 开仓区计算中');
     parts.push(state.toggles.donchian ? 'Donchian 信号过滤开启' : 'Donchian 信号过滤关闭');
+    if (state.toggles.orderSignalsOnly) parts.push('仅显示通过过滤的下单信号');
     parts.push(state.atLatest ? '每 5 秒自动刷新' : '已暂停跟随最新');
     return parts.join(' · ');
   }
@@ -680,9 +683,10 @@
 
   function renderSignals() {
     const notifyLabels = { sent: '已推送', suppressed: '已抑制', skipped: '未启用', disabled: '已关闭', invalid: '配置无效', failed: '发送失败', replayed: '当前参数重算' };
-    const rows = displaySignals().slice().reverse().slice(0, 200);
+    const rows = visibleSignals().slice().reverse().slice(0, 200);
     if (!rows.length) {
-      $('kline-signal-rows').innerHTML = '<tr><td colspan="6">' + (state.toggles.signals ? '该币对暂无下单信号' : '信号图层已隐藏') + '</td></tr>';
+      const emptyText = !state.toggles.signals ? '信号图层已隐藏' : state.toggles.orderSignalsOnly ? '当前没有通过过滤的下单信号' : '该币对暂无下单信号';
+      $('kline-signal-rows').innerHTML = '<tr><td colspan="6">' + emptyText + '</td></tr>';
       return;
     }
     $('kline-signal-rows').innerHTML = rows.map(row => '<tr class="' + (row.chart_filtered ? 'kline-signal-filtered' : '') + '">' +
@@ -996,7 +1000,7 @@
   function drawSignals(ctx, shown, x, y, plot, priceBottom, intervalStep) {
     if (!state.toggles.signals) return;
     const byTime = new Map(shown.map(candle => [candle.t, candle]));
-    for (const group of K.markerGroups(displaySignals(), intervalStep)) {
+    for (const group of K.markerGroups(visibleSignals(), intervalStep)) {
       const cx = x(group.bucket + intervalStep / 2);
       if (cx < plot.left - 10 || cx > plot.right + 10) continue;
       const candle = byTime.get(group.bucket) || nearest(shown, group.bucket);
@@ -1415,7 +1419,7 @@
   }
 
   function bindControls() {
-    const boxes = [[STORE_ALERTS, 'kline-alerts', 'alerts'], [STORE_SIGNALS, 'kline-signals', 'signals'], [STORE_AGGRESSIVE, 'kline-aggressive', 'aggressive'], [STORE_STEADY, 'kline-steady', 'steady'], [STORE_ZONES, 'kline-zones', 'zones'], [STORE_DONCHIAN, 'kline-donchian', 'donchian']];
+    const boxes = [[STORE_ALERTS, 'kline-alerts', 'alerts'], [STORE_SIGNALS, 'kline-signals', 'signals'], [STORE_ORDER_SIGNALS_ONLY, 'kline-order-signals', 'orderSignalsOnly'], [STORE_AGGRESSIVE, 'kline-aggressive', 'aggressive'], [STORE_STEADY, 'kline-steady', 'steady'], [STORE_ZONES, 'kline-zones', 'zones'], [STORE_DONCHIAN, 'kline-donchian', 'donchian']];
     for (const [key, id, toggle] of boxes) {
       const box = $(id);
       box.checked = state.toggles[toggle];
@@ -1423,6 +1427,7 @@
         state.toggles[toggle] = box.checked;
         remember(key, box.checked);
         if (toggle === 'donchian' && state.signals.length) renderSignalStatus();
+        if (toggle === 'orderSignalsOnly' && state.signals.length) renderSignalStatus();
         note(statusText());
         renderSignals();
         draw();
