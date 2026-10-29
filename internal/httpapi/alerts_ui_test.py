@@ -48,7 +48,14 @@ def timeline_fixture():
             target.update({"filter_applied": True, "open_allowed": True, "close_allowed": True})
         elif index == 4:
             target = item["alert"] if kind == "alert" else item["signal"]
-            target.update({"filter_applied": True, "open_allowed": False, "close_allowed": False})
+            target.update({
+                "filter_applied": True,
+                "open_allowed": False,
+                "close_allowed": False,
+                # Legacy rows do not contain filter_tags. This reason must not
+                # be reverse-engineered into a false VWAP label.
+                "filter_reason": "neutral_zscore_long_liquidation_close_only",
+            })
         if index == 0:
             target = item["alert"] if kind == "alert" else item["signal"]
             target["filter_tags"] = ["vwap", "donchian"]
@@ -152,6 +159,8 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows")).to_contain_text("Donchian过滤")
     expect(page.locator("#alerts-history-rows")).to_contain_text("交易所刷单策略过滤")
     expect(page.locator("#alerts-history-rows").locator("tr").nth(0).locator("td").nth(2)).to_contain_text("VWAP过滤 · Donchian过滤")
+    expect(page.locator("#alerts-history-rows").locator("tr").nth(4).locator("td").nth(2)).not_to_contain_text("VWAP过滤")
+    expect(page.locator("#alerts-history-rows").locator("tr").nth(4).locator("td").nth(2)).not_to_contain_text("Donchian过滤")
     expect(page.locator(".alerts-close-only-prefix")).to_have_count(4)
     expect(page.locator(".alerts-order-trigger")).to_have_count(20)
     expect(page.get_by_text("策略开关", exact=True)).to_be_visible()

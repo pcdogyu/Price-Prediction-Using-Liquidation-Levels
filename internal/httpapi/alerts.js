@@ -50,17 +50,11 @@
   };
   const filterTagLabels = { vwap: 'VWAP过滤', donchian: 'Donchian过滤' };
   const canonicalFilterTags = tags => ['vwap', 'donchian'].filter(tag => Array.isArray(tags) && tags.includes(tag));
-  const legacyFilterTags = row => {
-    if (!row || row.filter_tags !== undefined && row.filter_tags !== null) return [];
-    if (!row.filter_applied || row.open_allowed) return [];
-    const reason = String(row.filter_reason || '');
-    const tags = [];
-    if (/(vwap_zscore_unavailable|vwap_zone_unavailable)/.test(reason)) tags.push('vwap');
-    if (/donchian_range_unavailable/.test(reason)) tags.push('donchian');
-    if (/vwap_donchian_zone_overlap/.test(reason) || /(high_zscore|low_zscore|neutral_zscore)/.test(reason)) {
-      tags.push('vwap', 'donchian');
-    }
-    return canonicalFilterTags(tags);
+  const legacyFilterTags = () => {
+    // Legacy rows have no per-component provenance. Their old z-score and zone
+    // reasons describe the radar decision, not which server-side switches were
+    // enabled, so guessing VWAP/Donchian here creates false history labels.
+    return [];
   };
   const rowFilterTags = row => {
     if (!row) return [];
