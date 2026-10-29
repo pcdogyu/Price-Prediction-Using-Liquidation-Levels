@@ -376,6 +376,30 @@ func TestTradeMonitorAutoReentrySubmitsOnce(t *testing.T) {
 	}
 }
 
+func TestRecordTradeMonitorEventSkipsExpiredTimestamp(t *testing.T) {
+	store, err := storage.NewSQLiteOrderStore(filepath.Join(t.TempDir(), "tvbot-expired-event.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	srv := &Server{Orders: store}
+	srv.recordTradeMonitorEvent(storage.TradeMonitorEvent{
+		EventTime: time.Now().UTC().Add(-31 * 24 * time.Hour),
+		Exchange:  trading.ExchangeBinance,
+		APIID:     "main",
+		Symbol:    "BTCUSDT",
+		EventType: "poll_error",
+	})
+	events, err := store.ListTradeMonitorEvents(storage.TradeMonitorFilter{}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expired event was persisted: %#v", events)
+	}
+}
+
 func submitMonitorTestOrder(t *testing.T, store *storage.OrderStore, now time.Time, orderID string) storage.OrderRecord {
 	t.Helper()
 	tp := trading.NewFlexibleFloat(2)

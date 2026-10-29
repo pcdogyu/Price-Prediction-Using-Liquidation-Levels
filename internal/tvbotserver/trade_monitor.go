@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
@@ -1005,6 +1006,16 @@ func firstNonEmptyString(values ...string) string {
 
 func (s *Server) recordTradeMonitorEvent(event storage.TradeMonitorEvent) {
 	if s.Orders == nil {
+		return
+	}
+	// A failed historical fill poll can carry an old checkpoint timestamp even
+	// though the error is being observed now. Do not let such writes recreate
+	// rows that the daily 30-day retention pass has already removed.
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.now()
+	}
+	if event.EventTime.Before(now.Add(-time.Duration(domain.TradeMonitorEventRetentionDays) * 24 * time.Hour)) {
 		return
 	}
 	if err := s.Orders.InsertTradeMonitorEvent(event); err != nil && s.Logger != nil {
