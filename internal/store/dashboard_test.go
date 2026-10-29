@@ -172,6 +172,13 @@ func TestDashboardPersistenceMergeRestartAndRetention(t *testing.T) {
 	if err = s.SaveMarketMetric(ctx, domain.MarketMetric{Symbol: "ETHUSDT", Time: now, TopPositionRatio: &ratio}); err != nil {
 		t.Fatal(err)
 	}
+	first, last, exists, err := s.MarketMetricBounds(ctx, "ETHUSDT")
+	if err != nil || !exists || !first.Equal(now) || !last.Equal(now) {
+		t.Fatalf("metric bounds first=%v last=%v exists=%v err=%v", first, last, exists, err)
+	}
+	if _, _, exists, err = s.MarketMetricBounds(ctx, "BTCUSDT"); err != nil || exists {
+		t.Fatalf("empty metric bounds exists=%v err=%v", exists, err)
+	}
 	for _, age := range []int{0, 4} {
 		b := domain.BookSnapshot{Symbol: "ETHUSDT", Time: now.AddDate(0, 0, -age), BucketWidth: .1, Bids: []domain.DepthLevel{{Price: 100, Quantity: 2, NotionalUSD: 200}}, Asks: []domain.DepthLevel{}}
 		if err = s.SaveBookSnapshot(ctx, b); err != nil {

@@ -25,28 +25,74 @@ var marketWindowSpecs = []struct {
 	{"24h", 24 * time.Hour},
 }
 
+const marketMetricInterval = 5 * time.Minute
+
+type marketMetricBackfillRange struct {
+	from, until time.Time
+}
+
+func marketMetricBackfillRanges(first, last time.Time, exists bool, target, now time.Time) []marketMetricBackfillRange {
+	target = target.UTC().Truncate(marketMetricInterval)
+	until := now.UTC().Truncate(marketMetricInterval)
+	if !target.Before(until) {
+		return nil
+	}
+	if !exists {
+		return []marketMetricBackfillRange{{from: target, until: until}}
+	}
+
+	ranges := make([]marketMetricBackfillRange, 0, 2)
+	if first.After(target.Add(marketMetricInterval)) {
+		ranges = append(ranges, marketMetricBackfillRange{from: target, until: first.UTC().Truncate(marketMetricInterval)})
+	}
+	if last.Before(until.Add(-2 * marketMetricInterval)) {
+		ranges = append(ranges, marketMetricBackfillRange{from: last.UTC().Truncate(marketMetricInterval).Add(marketMetricInterval), until: until})
+	}
+	return ranges
+}
+
 func (s *Service) marketInfoLoop(ctx context.Context) {
-	ticker := time.NewTicker(time.Minute)
+	interval := s.cfg.MarketInfoInterval
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		for _, sym := range s.bootstrapSymbols() {
+		started := time.Now()
+		results := s.runMarketTasks(ctx, s.bootstrapSymbols(), func(ctx context.Context, sym string) error {
 			cc, cancel := context.WithTimeout(ctx, 45*time.Second)
 			m := exchange.BinanceMarketMetric(cc, sym)
 			cancel()
 			if ctx.Err() != nil {
-				return
+				return ctx.Err()
 			}
 			s.dashboard.Lock()
 			s.dashboard.metrics[sym] = m
 			s.dashboard.Unlock()
 			if err := s.store.SaveMarketMetric(ctx, m); err != nil {
 				s.log.Error("save market metrics", "error", err)
+				return err
 			}
 			if m.MarkPrice == nil {
-				s.health.Fail("binance_market_info_"+sym, errors.New("mark price unavailable"))
+				err := errors.New("mark price unavailable")
+				s.health.Fail("binance_market_info_"+sym, err)
+				return err
 			} else {
 				s.health.Touch("binance_market_info_"+sym, 1)
 			}
+			return nil
+		})
+		success, failed := 0, 0
+		for _, result := range results {
+			if result.err != nil {
+				failed++
+			} else {
+				success++
+			}
+		}
+		if ctx.Err() == nil {
+			s.log.Info("market info cycle complete", "symbols", len(results), "success", success, "failed", failed, "elapsed", time.Since(started))
 		}
 		select {
 		case <-ctx.Done():
@@ -96,10 +142,45 @@ func (s *Service) gammaSymbols() []string {
 }
 
 func (s *Service) backfillMarketMetrics(ctx context.Context) {
-	for _, symbol := range s.bootstrapSymbols() {
-		if err := exchange.BinanceMetricHistory(ctx, symbol, s.store.SaveMarketMetric); err != nil && ctx.Err() == nil {
-			s.log.Warn("market metrics backfill failed", "symbol", symbol, "error", err)
+	started := time.Now()
+	now := started.UTC()
+	backfillDays := s.cfg.BackfillDays
+	if backfillDays <= 0 {
+		backfillDays = 1
+	}
+	target := now.AddDate(0, 0, -backfillDays)
+	symbols := s.bootstrapSymbols()
+	skipped, completed, failed, rowsWritten := 0, 0, 0, 0
+	for _, symbol := range symbols {
+		first, last, exists, err := s.store.MarketMetricBounds(ctx, symbol)
+		if err != nil {
+			failed++
+			s.log.Warn("market metrics bounds failed", "symbol", symbol, "error", err)
+			continue
 		}
+		ranges := marketMetricBackfillRanges(first, last, exists, target, now)
+		if len(ranges) == 0 {
+			skipped++
+			continue
+		}
+		for _, window := range ranges {
+			var count int
+			err = s.withMarketFetchSlot(ctx, func() error {
+				var historyErr error
+				count, historyErr = exchange.BinanceMetricHistory(ctx, symbol, window.from, window.until, s.store.SaveMarketMetric)
+				return historyErr
+			})
+			rowsWritten += count
+			if err != nil {
+				failed++
+				s.log.Warn("market metrics backfill failed", "symbol", symbol, "from", window.from, "until", window.until, "rows", count, "error", err)
+				continue
+			}
+			completed++
+		}
+	}
+	if ctx.Err() == nil {
+		s.log.Info("market metrics backfill complete", "symbols", len(symbols), "completed", completed, "skipped", skipped, "failed", failed, "rows", rowsWritten, "elapsed", time.Since(started))
 	}
 }
 func ptr(v float64) *float64 { return &v }

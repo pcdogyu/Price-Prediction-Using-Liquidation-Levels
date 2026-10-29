@@ -107,12 +107,20 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 	return m
 }
 
-func BinanceMetricHistory(ctx context.Context, symbol string, sink func(context.Context, domain.MarketMetric) error) error {
+func BinanceMetricHistory(ctx context.Context, symbol string, from, until time.Time, sink func(context.Context, domain.MarketMetric) error) (int, error) {
 	h := newHTTP()
-	until := time.Now().UTC().Truncate(5 * time.Minute)
+	until = until.UTC().Truncate(5 * time.Minute)
+	from = from.UTC().Truncate(5 * time.Minute)
 	// The historical endpoint rejects timestamps even slightly older than 30
 	// days. Leave an hour of margin for request time and server clock skew.
-	from := until.AddDate(0, 0, -30).Add(time.Hour)
+	retentionFloor := until.Add(-30 * 24 * time.Hour).Add(time.Hour)
+	if from.Before(retentionFloor) {
+		from = retentionFloor.Truncate(5 * time.Minute)
+	}
+	if !from.Before(until) {
+		return 0, nil
+	}
+	rowsWritten := 0
 	for _, kind := range []string{"openInterestHist", "globalLongShortAccountRatio", "topLongShortPositionRatio"} {
 		for start := from; start.Before(until); {
 			end := start.Add(499 * 5 * time.Minute)
@@ -127,7 +135,7 @@ func BinanceMetricHistory(ctx context.Context, symbol string, sink func(context.
 			}
 			url := fmt.Sprintf("https://fapi.binance.com/futures/data/%s?symbol=%s&period=5m&limit=500&startTime=%d&endTime=%d", kind, symbol, start.UnixMilli(), end.UnixMilli())
 			if err := h.get(ctx, url, &rows); err != nil {
-				return err
+				return rowsWritten, err
 			}
 			if len(rows) == 0 {
 				break
@@ -143,9 +151,12 @@ func BinanceMetricHistory(ctx context.Context, symbol string, sink func(context.
 				case "topLongShortPositionRatio":
 					m.TopPositionRatio = number(r.Ratio)
 				}
-				if err := sink(ctx, m); err != nil {
-					return err
+				if sink != nil {
+					if err := sink(ctx, m); err != nil {
+						return rowsWritten, err
+					}
 				}
+				rowsWritten++
 			}
 			next := time.UnixMilli(rows[len(rows)-1].Time).UTC().Add(time.Millisecond)
 			if !next.After(start) {
@@ -154,12 +165,12 @@ func BinanceMetricHistory(ctx context.Context, symbol string, sink func(context.
 			start = next
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return rowsWritten, ctx.Err()
 			case <-time.After(150 * time.Millisecond):
 			}
 		}
 	}
-	return nil
+	return rowsWritten, nil
 }
 
 type OptionContract struct {

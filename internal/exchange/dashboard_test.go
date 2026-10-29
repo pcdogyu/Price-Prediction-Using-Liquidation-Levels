@@ -28,8 +28,13 @@ func TestMetricHistoryStartWithinBinanceRetention(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("[]")), Header: http.Header{}}, nil
 	})
-	if err := BinanceMetricHistory(context.Background(), "BTCUSDT", nil); err != nil {
+	now := time.Now().UTC().Truncate(5 * time.Minute)
+	rows, err := BinanceMetricHistory(context.Background(), "BTCUSDT", now.Add(-24*time.Hour), now, nil)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("expected no rows from empty responses, got %d", rows)
 	}
 	if calls != 3 {
 		t.Fatalf("expected OI and both ratio endpoints, got %d", calls)

@@ -366,6 +366,20 @@ func (s *Store) MarketMetrics(ctx context.Context, symbol string, from, to time.
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) MarketMetricBounds(ctx context.Context, symbol string) (time.Time, time.Time, bool, error) {
+	var first, last sql.NullInt64
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT MIN(ts),MAX(ts),COUNT(*) FROM market_metrics WHERE symbol=?`, symbol).Scan(&first, &last, &count)
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	if count == 0 || !first.Valid || !last.Valid {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	return time.UnixMilli(first.Int64).UTC(), time.UnixMilli(last.Int64).UTC(), true, nil
+}
+
 func (s *Store) SaveGamma(ctx context.Context, g domain.GammaView) error {
 	b, err := json.Marshal(g)
 	if err != nil {

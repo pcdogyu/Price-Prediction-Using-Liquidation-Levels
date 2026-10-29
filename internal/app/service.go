@@ -50,12 +50,14 @@ type Service struct {
 	klineMu             sync.Mutex
 	alertCandleRepairMu sync.Mutex
 	marketMu            sync.Mutex
+	marketFetchMu       sync.Mutex
 	symbolCatalogMu     sync.Mutex
 	candidateMu         sync.RWMutex
 	backfillMu          sync.Mutex
 	klineCache          map[string]klineCacheEntry
 	alertCandleRepairAt map[string]time.Time
 	marketCache         map[string]marketCacheEntry
+	marketFetchSlots    chan struct{}
 	symbolCatalog       []exchange.ContractSymbol
 	symbolCatalogAt     time.Time
 	candidateProvider   BackgroundCandidateProvider
@@ -166,9 +168,62 @@ func (s *Service) Start(ctx context.Context) {
 	go s.alertCandleRepairLoop(ctx)
 }
 
+type marketTaskResult struct {
+	symbol string
+	err    error
+}
+
+func (s *Service) marketSlots() chan struct{} {
+	s.marketFetchMu.Lock()
+	defer s.marketFetchMu.Unlock()
+	if s.marketFetchSlots == nil {
+		limit := s.cfg.MarketFetchConcurrency
+		if limit <= 0 {
+			limit = 5
+		}
+		s.marketFetchSlots = make(chan struct{}, limit)
+	}
+	return s.marketFetchSlots
+}
+
+func (s *Service) withMarketFetchSlot(ctx context.Context, fn func() error) error {
+	slots := s.marketSlots()
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+		return fn()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Service) runMarketTasks(ctx context.Context, symbols []string, fn func(context.Context, string) error) []marketTaskResult {
+	results := make(chan marketTaskResult, len(symbols))
+	var wg sync.WaitGroup
+	for _, symbol := range symbols {
+		wg.Add(1)
+		go func(symbol string) {
+			defer wg.Done()
+			err := s.withMarketFetchSlot(ctx, func() error { return fn(ctx, symbol) })
+			results <- marketTaskResult{symbol: symbol, err: err}
+		}(symbol)
+	}
+	wg.Wait()
+	close(results)
+	out := make([]marketTaskResult, 0, len(symbols))
+	for result := range results {
+		out = append(out, result)
+	}
+	return out
+}
+
 func (s *Service) pollLoop(ctx context.Context) {
 	s.poll(ctx)
-	t := time.NewTicker(time.Minute)
+	interval := s.cfg.MarketPollInterval
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {
@@ -180,30 +235,37 @@ func (s *Service) pollLoop(ctx context.Context) {
 	}
 }
 func (s *Service) poll(ctx context.Context) {
-	var wg sync.WaitGroup
+	started := time.Now()
+	totalSuccess, totalFailed := 0, 0
 	for _, c := range s.clients {
-		for _, sym := range s.bootstrapSymbols() {
-			wg.Add(1)
-			go func(c exchange.Client, sym string) {
-				defer wg.Done()
-				cc, cancel := context.WithTimeout(ctx, 20*time.Second)
-				defer cancel()
-				row, e := c.Current(cc, sym)
-				name := c.Name() + "_market"
-				if e != nil {
-					s.health.Fail(name, e)
-					s.log.Warn("market poll failed", "exchange", c.Name(), "symbol", sym, "error", e)
-					return
-				}
-				if e = s.store.UpsertCandles(ctx, []domain.Candle{row}); e != nil {
-					s.log.Error("store candle failed", "error", e)
-					return
-				}
-				s.health.Touch(name, 1)
-			}(c, sym)
+		results := s.runMarketTasks(ctx, s.bootstrapSymbols(), func(ctx context.Context, sym string) error {
+			cc, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			row, e := c.Current(cc, sym)
+			name := c.Name() + "_market"
+			if e != nil {
+				s.health.Fail(name, e)
+				s.log.Warn("market poll failed", "exchange", c.Name(), "symbol", sym, "error", e)
+				return e
+			}
+			if e = s.store.UpsertCandles(ctx, []domain.Candle{row}); e != nil {
+				s.log.Error("store candle failed", "error", e)
+				return e
+			}
+			s.health.Touch(name, 1)
+			return nil
+		})
+		for _, result := range results {
+			if result.err != nil {
+				totalFailed++
+			} else {
+				totalSuccess++
+			}
 		}
 	}
-	wg.Wait()
+	if ctx.Err() == nil {
+		s.log.Info("market poll cycle complete", "symbols", totalSuccess+totalFailed, "success", totalSuccess, "failed", totalFailed, "elapsed", time.Since(started))
+	}
 }
 
 func (s *Service) bootstrap(ctx context.Context) {
@@ -226,7 +288,7 @@ func (s *Service) backfillSymbols(ctx context.Context, symbols []string) bool {
 	now := time.Now().UTC()
 	backfillDays := s.cfg.BackfillDays
 	if backfillDays <= 0 {
-		backfillDays = 30
+		backfillDays = 1
 	}
 	target := now.AddDate(0, 0, -backfillDays)
 	complete := true
