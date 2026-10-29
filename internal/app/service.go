@@ -387,7 +387,7 @@ func nextDailyMaintenance(now time.Time) time.Time {
 	return next
 }
 
-const localPredictionDisabledReason = "本地 ATR 与清算墙计算已停用，模型预测已停用；清算墙仅使用 CoinGlass 数据"
+const localPredictionDisabledReason = "本地信号与模型预测已停用；清算墙仅使用 CoinGlass 数据"
 
 func (s *Service) Latest(ctx context.Context, symbol string) (domain.Prediction, error) {
 	return domain.Prediction{Symbol: strings.ToUpper(strings.TrimSpace(symbol)), DataSource: "disabled", Time: time.Now().UTC(), HorizonMinutes: 60, State: "disabled", Experimental: true, SourceCoverage: s.coverage(), Reason: localPredictionDisabledReason}, nil
