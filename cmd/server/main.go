@@ -81,6 +81,7 @@ func main() {
 	svc.SetGammaPolicyResolver(func(username string) string {
 		return bridge.GammaNegativePolicyForUser(username)
 	})
+	svc.SetBackgroundCandidateProvider(bridge)
 	bridge.Handler.SetGammaProvider(func(ctx context.Context) tvbotserver.GammaSnapshot {
 		gamma := svc.CurrentETHGamma(ctx)
 		return tvbotserver.GammaSnapshot{State: gamma.State, Value: gamma.Gamma}

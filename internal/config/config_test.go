@@ -23,3 +23,12 @@ func TestLoadHonorsExplicitBootstrapSymbols(t *testing.T) {
 		t.Fatalf("explicit bootstrap symbols=%v", cfg.BootstrapSymbols)
 	}
 }
+
+func TestLoadUsesSeparateBackfillAndRetentionDefaults(t *testing.T) {
+	t.Setenv("APP_BACKFILL_DAYS", "")
+	t.Setenv("APP_RETENTION_DAYS", "")
+	cfg := Load()
+	if cfg.BackfillDays != 30 || cfg.RetentionDays != 180 {
+		t.Fatalf("backfill=%d retention=%d", cfg.BackfillDays, cfg.RetentionDays)
+	}
+}

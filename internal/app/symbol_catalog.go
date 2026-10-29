@@ -79,7 +79,7 @@ func (s *Service) DashboardSymbolSupported(ctx context.Context, symbol string) b
 
 func (s *Service) backgroundSymbol(symbol string) bool {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
-	configured := s.cfg.Symbols
+	configured := s.backgroundSymbols()
 	if len(configured) == 0 {
 		configured = []string{"BTCUSDT", "ETHUSDT"}
 	}

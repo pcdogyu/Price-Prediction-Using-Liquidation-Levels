@@ -37,6 +37,11 @@ var AlwaysWatch = []string{"BTCUSDT", "ETHUSDT"}
 
 var errNoTopSymbols = errors.New("binance returned no rankable USDT perpetual ticker")
 
+// IsNoRankableUSDTPerpetuals reports the benign case where a tenant's
+// configured symbols are all invalid, delisted, or have no positive volume.
+// Network and exchange metadata failures remain hard refresh errors.
+func IsNoRankableUSDTPerpetuals(err error) bool { return errors.Is(err, errNoTopSymbols) }
+
 const (
 	binanceExchangeInfoCacheTTL = 30 * time.Minute
 	binanceTickerCacheTTL       = 30 * time.Second
@@ -115,6 +120,25 @@ func BinanceUSDTPerpetualSymbols(ctx context.Context) ([]ContractSymbol, error) 
 		return nil, errNoTopSymbols
 	}
 	return rows, nil
+}
+
+// BinanceUSDTPerpetualSymbolSet returns the currently tradable Binance
+// USDⓈ-M perpetual symbols without requiring a ticker volume. It is used for
+// validating protected position/order exceptions.
+func BinanceUSDTPerpetualSymbolSet(ctx context.Context) (map[string]struct{}, error) {
+	info, err := cachedBinanceExchangeInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tradable := tradableUSDT(info)
+	if len(tradable) == 0 {
+		return nil, errNoTopSymbols
+	}
+	set := make(map[string]struct{}, len(tradable))
+	for symbol := range tradable {
+		set[symbol] = struct{}{}
+	}
+	return set, nil
 }
 
 // rankUSDT turns raw 24 hour tickers into ranked USDT perpetual entries. It is
@@ -202,6 +226,59 @@ func BinanceTopUSDTPerpetuals(ctx context.Context, limit int) ([]TopSymbol, erro
 		return nil, errNoTopSymbols
 	}
 	return rows, nil
+}
+
+// BinanceTopConfiguredUSDTPerpetuals ranks only the supplied Binance USDT
+// perpetual symbols by the current public 24 hour quote volume. It shares the
+// exchange-info and ticker caches with the normal alert ranking, but never
+// adds AlwaysWatch symbols on behalf of a tenant whose configuration omitted
+// them.
+func BinanceTopConfiguredUSDTPerpetuals(ctx context.Context, configured []string, limit int) ([]TopSymbol, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	allowed := make(map[string]struct{}, len(configured))
+	for _, raw := range configured {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		if symbol != "" {
+			allowed[symbol] = struct{}{}
+		}
+	}
+	if len(allowed) == 0 {
+		return nil, errNoTopSymbols
+	}
+	info, err := cachedBinanceExchangeInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tradable := tradableUSDT(info)
+	tickers, err := cachedBinanceTickers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	all := rankUSDT(tickers, tradable, 0, time.Now())
+	rows := rankConfiguredUSDT(all, allowed, limit)
+	if len(rows) == 0 {
+		return nil, errNoTopSymbols
+	}
+	return rows, nil
+}
+
+func rankConfiguredUSDT(all []TopSymbol, allowed map[string]struct{}, limit int) []TopSymbol {
+	rows := make([]TopSymbol, 0, len(all))
+	for _, row := range all {
+		if _, ok := allowed[row.Symbol]; !ok {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	for i := range rows {
+		rows[i].Rank = i + 1
+	}
+	return rows
 }
 
 func cachedBinanceExchangeInfo(ctx context.Context) (topSymbolExchangeInfo, error) {

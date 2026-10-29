@@ -37,7 +37,7 @@ func (s *Service) startDashboard(ctx context.Context) {
 	if err := s.store.InterruptWallEvents(ctx); err != nil {
 		s.log.Error("interrupt previous wall events", "error", err)
 	}
-	for _, symbol := range s.cfg.Symbols {
+	for _, symbol := range s.backgroundSymbols() {
 		h, err := s.store.WallHistory(ctx, symbol, "snapshots", time.Now().Add(-10*time.Minute), time.Now().Add(time.Second), 500, "")
 		if err == nil && len(h.Snapshots) > 0 {
 			sort.Slice(h.Snapshots, func(i, j int) bool { return h.Snapshots[i].Time.Before(h.Snapshots[j].Time) })

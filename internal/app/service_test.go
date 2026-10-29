@@ -30,6 +30,46 @@ func TestNextDailyMaintenanceUsesBeijingTime(t *testing.T) {
 	}
 }
 
+func TestNextBackgroundCandidateRefreshUsesBeijingTime(t *testing.T) {
+	tests := []struct {
+		now, want time.Time
+	}{
+		{time.Date(2026, 10, 14, 23, 40, 0, 0, time.UTC), time.Date(2026, 10, 14, 23, 50, 0, 0, time.UTC)},
+		{time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 15, 23, 50, 0, 0, time.UTC)},
+	}
+	for _, test := range tests {
+		if got := nextBackgroundCandidateRefresh(test.now); !got.Equal(test.want) {
+			t.Errorf("nextBackgroundCandidateRefresh(%v) = %v, want %v", test.now, got, test.want)
+		}
+	}
+}
+
+func TestLoadBackgroundCandidateSnapshotDoesNotUseConfiguredUniverse(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	refreshed := time.Date(2026, 10, 15, 7, 50, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60)).UTC()
+	if err := st.SaveBackgroundSymbolSnapshot(context.Background(), domain.BackgroundSymbolSnapshot{
+		Symbols:     []domain.WatchSymbol{{Symbol: "SOLUSDT", Rank: 1}},
+		BaseCount:   1,
+		TenantCount: 2,
+		RefreshedAt: refreshed,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(config.Config{Symbols: []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"}, BootstrapSymbols: []string{"BTCUSDT", "ETHUSDT"}, ModelPath: filepath.Join(t.TempDir(), "model.json")}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.loadBackgroundCandidateSnapshot(context.Background())
+	got := svc.backgroundSymbols()
+	if len(got) != 1 || got[0] != "SOLUSDT" {
+		t.Fatalf("loaded candidates=%v", got)
+	}
+	if svc.backgroundCandidateSnapshot().TenantCount != 2 {
+		t.Fatalf("loaded snapshot=%+v", svc.backgroundCandidateSnapshot())
+	}
+}
+
 func (*historyClient) Name() string { return "binance" }
 func (c *historyClient) History(_ context.Context, symbol string, from, until time.Time) ([]domain.Candle, error) {
 	c.calls = append(c.calls, historyCall{from, until})
@@ -139,6 +179,10 @@ func TestBootstrapRequestsOnlyMissingOlderRange(t *testing.T) {
 	fake := &historyClient{}
 	svc.clients = nil
 	svc.clients = append(svc.clients, fake)
+	svc.applyBackgroundCandidateSnapshot(domain.BackgroundSymbolSnapshot{
+		Symbols:   []domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1}},
+		BaseCount: 1,
+	}, false)
 	svc.bootstrap(context.Background())
 	if len(fake.calls) != 1 {
 		t.Fatalf("history calls=%#v", fake.calls)

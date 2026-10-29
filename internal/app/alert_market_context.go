@@ -51,7 +51,7 @@ func (s *Service) repairConfiguredAlertCandles(ctx context.Context) {
 	historyMinutes := alertMarketHistoryMinutes(cfg)
 	from := now.Add(-time.Duration(historyMinutes) * time.Minute)
 	to := now.Add(time.Minute)
-	for _, configured := range s.cfg.Symbols {
+	for _, configured := range s.backgroundSymbols() {
 		symbol := strings.ToUpper(strings.TrimSpace(configured))
 		if symbol == "" {
 			continue
@@ -126,7 +126,7 @@ func (s *Service) alertCandleRepairCandidate(symbol string, rows []domain.Candle
 }
 
 func (s *Service) isConfiguredAlertSymbol(symbol string) bool {
-	for _, configured := range s.cfg.Symbols {
+	for _, configured := range s.backgroundSymbols() {
 		if strings.EqualFold(strings.TrimSpace(configured), symbol) {
 			return true
 		}

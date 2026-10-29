@@ -1,14 +1,17 @@
 package tvbotbridge
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
+	appstore "github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	tvbotserver "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotserver"
 	tvbotstorage "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotstorage"
@@ -20,12 +23,14 @@ import (
 // account's trading settings, fills, positions and analysis use this manager's
 // private SQLite file.
 type tenantManager struct {
-	rootPath    string
-	legacyOwner string
-	rootConfig  *tvbotconfig.Store
-	rootOrders  *tvbotstorage.OrderStore
-	credentials *userCredentialResolver
-	baseConfig  tvbotconfig.Config
+	rootPath      string
+	legacyOwner   string
+	rootConfig    *tvbotconfig.Store
+	rootOrders    *tvbotstorage.OrderStore
+	authStore     *appstore.Store
+	credentials   *userCredentialResolver
+	baseConfig    tvbotconfig.Config
+	defaultConfig tvbotconfig.Config
 
 	mu        sync.Mutex
 	resources map[string]*tenantResource
@@ -40,21 +45,108 @@ type tenantResource struct {
 	orders   *tvbotstorage.OrderStore
 }
 
-func newTenantManager(rootPath, legacyOwner string, rootConfig *tvbotconfig.Store, rootOrders *tvbotstorage.OrderStore, credentials *userCredentialResolver) *tenantManager {
-	base := tvbotconfig.Default()
+func newTenantManager(rootPath, legacyOwner string, rootConfig *tvbotconfig.Store, rootOrders *tvbotstorage.OrderStore, credentials *userCredentialResolver, authStores ...*appstore.Store) *tenantManager {
+	defaultConfig := tvbotconfig.Default()
+	base := defaultConfig
 	if rootConfig != nil {
 		base = rootConfig.Get()
 	}
-	return &tenantManager{
-		rootPath:    strings.TrimSpace(rootPath),
-		legacyOwner: strings.TrimSpace(legacyOwner),
-		rootConfig:  rootConfig,
-		rootOrders:  rootOrders,
-		credentials: credentials,
-		baseConfig:  base,
-		resources:   make(map[string]*tenantResource),
-		started:     make(map[string]bool),
+	var authStore *appstore.Store
+	if len(authStores) > 0 {
+		authStore = authStores[0]
 	}
+	return &tenantManager{
+		rootPath:      strings.TrimSpace(rootPath),
+		legacyOwner:   strings.TrimSpace(legacyOwner),
+		rootConfig:    rootConfig,
+		rootOrders:    rootOrders,
+		authStore:     authStore,
+		credentials:   credentials,
+		baseConfig:    base,
+		defaultConfig: defaultConfig,
+		resources:     make(map[string]*tenantResource),
+		started:       make(map[string]bool),
+	}
+}
+
+type tenantConfigRecord struct {
+	Username string
+	TenantID string
+	Config   tvbotconfig.Config
+	Exists   bool
+}
+
+// readOnlyTenantConfigs enumerates active accounts without calling
+// resourceForUser. In particular, a missing tenant config does not create a
+// directory or SQLite database just because the daily candidate refresh ran.
+func (m *tenantManager) readOnlyTenantConfigs(ctx context.Context) ([]tenantConfigRecord, error) {
+	if m == nil {
+		return nil, errors.New("tenant manager is unavailable")
+	}
+	usernames := []string{}
+	if m.authStore != nil {
+		records, err := m.authStore.LoadAuthUserRecords(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for username, record := range records {
+			if !record.Disabled && strings.TrimSpace(username) != "" {
+				usernames = append(usernames, username)
+			}
+		}
+	}
+	if owner := strings.TrimSpace(m.legacyOwner); owner != "" {
+		found := false
+		for _, username := range usernames {
+			if strings.EqualFold(username, owner) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			usernames = append(usernames, owner)
+		}
+	}
+	sort.Strings(usernames)
+	seen := make(map[string]struct{}, len(usernames))
+	rows := make([]tenantConfigRecord, 0, len(usernames))
+	for _, username := range usernames {
+		key := strings.ToLower(strings.TrimSpace(username))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if strings.EqualFold(username, m.legacyOwner) {
+			cfg := m.baseConfig
+			if m.rootConfig != nil {
+				cfg = m.rootConfig.Get()
+			}
+			rows = append(rows, tenantConfigRecord{Username: username, TenantID: tenantIDForUser(username), Config: cfg, Exists: true})
+			continue
+		}
+		path := filepath.Join(m.rootPath, userDirectoryName(username), "tvbot-config.json")
+		cfg, err := tvbotconfig.Load(path)
+		if errors.Is(err, os.ErrNotExist) {
+			rows = append(rows, tenantConfigRecord{Username: username, TenantID: tenantIDForUser(username), Config: m.defaultConfig, Exists: false})
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("load tenant config for %s: %w", username, err)
+		}
+		rows = append(rows, tenantConfigRecord{Username: username, TenantID: tenantIDForUser(username), Config: cfg, Exists: true})
+	}
+	return rows, nil
+}
+
+func (m *tenantManager) readOnlyScope(username string, cfg tvbotconfig.Config) (tvbotserver.UserScope, error) {
+	if m == nil || m.credentials == nil {
+		return tvbotserver.UserScope{}, errors.New("tenant credential resolver is unavailable")
+	}
+	credentials, err := m.credentials.ReadOnlyForUser(username)
+	if err != nil {
+		return tvbotserver.UserScope{}, err
+	}
+	return tvbotserver.UserScope{TenantID: tenantIDForUser(username), ConfigStore: tvbotconfig.NewStore("", cfg), Credentials: credentials}, nil
 }
 
 func (m *tenantManager) ForUser(username string) (tvbotserver.UserCredentials, error) {

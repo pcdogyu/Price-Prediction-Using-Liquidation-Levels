@@ -50,6 +50,25 @@ func TestRankUSDTOrdersByQuoteVolume(t *testing.T) {
 	}
 }
 
+func TestRankConfiguredUSDTFiltersBeforeApplyingLimit(t *testing.T) {
+	rows := []TopSymbol{
+		{Symbol: "BTCUSDT", QuoteVolumeUSD: 100},
+		{Symbol: "ETHUSDT", QuoteVolumeUSD: 90},
+		{Symbol: "SOLUSDT", QuoteVolumeUSD: 80},
+	}
+	got := rankConfiguredUSDT(rows, map[string]struct{}{"ETHUSDT": {}, "SOLUSDT": {}}, 1)
+	if len(got) != 1 || got[0].Symbol != "ETHUSDT" || got[0].Rank != 1 {
+		t.Fatalf("configured ranking=%+v", got)
+	}
+}
+
+func TestRankConfiguredUSDTDoesNotAddAlwaysWatch(t *testing.T) {
+	rows := rankConfiguredUSDT([]TopSymbol{{Symbol: "SOLUSDT", QuoteVolumeUSD: 80}}, map[string]struct{}{"SOLUSDT": {}}, 50)
+	if len(rows) != 1 || rows[0].Symbol != "SOLUSDT" {
+		t.Fatalf("configured ranking unexpectedly added symbols=%+v", rows)
+	}
+}
+
 // TestRankUSDTKeepsAlwaysWatch proves BTC and ETH cannot drop out of the watch list,
 // because the alert thresholds are defined for them.
 func TestRankUSDTKeepsAlwaysWatch(t *testing.T) {

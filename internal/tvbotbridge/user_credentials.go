@@ -155,6 +155,73 @@ func (r *userCredentialResolver) ForUser(username string) (tvbotserver.UserCrede
 	return credentials, nil
 }
 
+// ReadOnlyForUser opens the credential stores needed for a protected-position
+// snapshot without creating the user's credential directory or writing legacy
+// environment credentials. It is intentionally separate from ForUser, whose
+// normal request path may initialize lazy tenant resources.
+func (r *userCredentialResolver) ReadOnlyForUser(username string) (tvbotserver.UserCredentials, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return tvbotserver.UserCredentials{}, errors.New("username is required for user credentials")
+	}
+	isLegacyOwner := r.legacyOwner != "" && strings.EqualFold(username, r.legacyOwner)
+	userDir := filepath.Join(r.root, "users", userDirectoryName(username))
+	pathFor := func(base, env, fallbackName string) string {
+		if !isLegacyOwner {
+			name := filepath.Base(environmentCredentialPath(base, env))
+			if name == "" || name == "." || name == string(filepath.Separator) {
+				name = fallbackName
+			}
+			return filepath.Join(userDir, name)
+		}
+		candidate := environmentCredentialPath(base, env)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		if strings.EqualFold(r.legacyEnv, env) {
+			return base
+		}
+		return candidate
+	}
+	var okxDemoInitial tvbotokx.Credentials
+	var okxLiveInitial tvbotokx.Credentials
+	var binanceDemoInitial tvbotbinance.Credentials
+	var binanceLiveInitial tvbotbinance.Credentials
+	var gateDemoInitial tvbotgate.Credentials
+	var gateLiveInitial tvbotgate.Credentials
+	if isLegacyOwner && r.legacyEnv == "demo" {
+		okxDemoInitial, binanceDemoInitial, gateDemoInitial = r.initialOKX, r.initialBinance, r.initialGate
+	}
+	if isLegacyOwner && r.legacyEnv == "live" {
+		okxLiveInitial, binanceLiveInitial, gateLiveInitial = r.initialOKX, r.initialBinance, r.initialGate
+	}
+	okxDemo, err := tvbotokx.NewCredentialStore(pathFor(r.legacyOKXPath, "demo", "okx-credentials-demo.json"), okxDemoInitial)
+	if err != nil {
+		return tvbotserver.UserCredentials{}, err
+	}
+	okxLive, err := tvbotokx.NewCredentialStore(pathFor(r.legacyOKXPath, "live", "okx-credentials-live.json"), okxLiveInitial)
+	if err != nil {
+		return tvbotserver.UserCredentials{}, err
+	}
+	binanceDemo, err := tvbotbinance.NewCredentialStore(pathFor(r.legacyBinancePath, "demo", "binance-credentials-demo.json"), binanceDemoInitial)
+	if err != nil {
+		return tvbotserver.UserCredentials{}, err
+	}
+	binanceLive, err := tvbotbinance.NewCredentialStore(pathFor(r.legacyBinancePath, "live", "binance-credentials-live.json"), binanceLiveInitial)
+	if err != nil {
+		return tvbotserver.UserCredentials{}, err
+	}
+	gateDemo, err := tvbotgate.NewCredentialStore(pathFor(r.legacyGatePath, "demo", "gate-credentials-demo.json"), gateDemoInitial)
+	if err != nil {
+		return tvbotserver.UserCredentials{}, err
+	}
+	gateLive, err := tvbotgate.NewCredentialStore(pathFor(r.legacyGatePath, "live", "gate-credentials-live.json"), gateLiveInitial)
+	if err != nil {
+		return tvbotserver.UserCredentials{}, err
+	}
+	return tvbotserver.UserCredentials{OKX: okxDemo, OKXLive: okxLive, Binance: binanceDemo, BinanceLive: binanceLive, Gate: gateDemo, GateLive: gateLive}, nil
+}
+
 func seedInitialGate(store *tvbotgate.CredentialStore, initial tvbotgate.Credentials) error {
 	if store.Status().Configured || strings.TrimSpace(initial.APIKey) == "" || strings.TrimSpace(initial.SecretKey) == "" {
 		return nil

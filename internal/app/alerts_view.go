@@ -38,9 +38,10 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 	view.Monitor = rtm.engine.Snapshot(now)
 	if len(view.Monitor) > 0 {
 		view.State = "ok"
-		// The volume ranking is stale when two refresh cycles passed without a
-		// successful fetch, which the page shows instead of hiding the fact.
-		if view.WatchUpdatedAt != nil && now.Sub(*view.WatchUpdatedAt) > 2*rtm.cfg.Refresh {
+		// Candidate rankings refresh once per day at 07:50 Beijing time. Keep a
+		// modest grace period so a delayed public API does not make a healthy
+		// persisted snapshot appear stale after the old ten-minute cadence.
+		if view.WatchUpdatedAt != nil && now.Sub(*view.WatchUpdatedAt) > 26*time.Hour {
 			view.State = "stale"
 		}
 	}

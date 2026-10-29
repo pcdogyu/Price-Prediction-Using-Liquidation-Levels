@@ -49,7 +49,9 @@ const (
 // AlertMonitorMethod describes the live monitor using the currently effective
 // strategy settings rather than hard-coding the default window.
 func AlertMonitorMethod(windowMinutes, refreshMinutes, topSymbols int) string {
-	return fmt.Sprintf("监控名单为 Binance USDⓈ-M 24 小时成交额前 %d 个 USDT 永续（每 %d 分钟刷新，BTCUSDT/ETHUSDT 恒含）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。超过阈值先进入 ARMED，等待 15~30 秒爆仓速率回落至峰值 40%% 以下且价格出现吸收后才 FIRED；VWAP Z-Score 加大周期 Donchian 双边边界决定开仓区/仅平仓区，深度配额、ATR 回撤、指数网格和最小获利间距继续拦截不合格信号。", topSymbols, refreshMinutes, windowMinutes)
+	_ = refreshMinutes
+	_ = topSymbols
+	return fmt.Sprintf("监控名单来自各启用租户配置合并后的 Binance USDⓈ-M USDT 永续，基础集合最多 50 个，BTCUSDT/ETHUSDT 及持仓或挂单币对例外保留（每天北京时间 07:50 刷新）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。超过阈值先进入 ARMED，等待 15~30 秒爆仓速率回落至峰值 40%% 以下且价格出现吸收后才 FIRED；VWAP Z-Score 加大周期 Donchian 双边边界决定开仓区/仅平仓区，深度配额、ATR 回撤、指数网格和最小获利间距继续拦截不合格信号。", windowMinutes)
 }
 
 // LiquidationAlert is one alert cycle for a symbol and the liquidated position

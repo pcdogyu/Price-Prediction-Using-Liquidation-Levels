@@ -54,11 +54,17 @@ type Service struct {
 	alertCandleRepairMu sync.Mutex
 	marketMu            sync.Mutex
 	symbolCatalogMu     sync.Mutex
+	candidateMu         sync.RWMutex
+	backfillMu          sync.Mutex
 	klineCache          map[string]klineCacheEntry
 	alertCandleRepairAt map[string]time.Time
 	marketCache         map[string]marketCacheEntry
 	symbolCatalog       []exchange.ContractSymbol
 	symbolCatalogAt     time.Time
+	candidateProvider   BackgroundCandidateProvider
+	candidateSnapshot   domain.BackgroundSymbolSnapshot
+	candidates          []string
+	candidateUpdates    chan []string
 	trainMu             sync.Mutex
 	maps                map[string]engine.MapResult
 	predictions         map[string]domain.Prediction
@@ -141,7 +147,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	if strings.TrimSpace(cfg.AlertTenantDataPath) == "" && strings.TrimSpace(cfg.DatabasePath) != "" {
 		cfg.AlertTenantDataPath = filepath.Join(filepath.Dir(cfg.DatabasePath), "alert-tenants")
 	}
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime)}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	if a, e := ml.Load(cfg.ModelPath); e == nil {
@@ -155,6 +161,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 }
 
 func (s *Service) Start(ctx context.Context) {
+	s.loadBackgroundCandidateSnapshot(ctx)
 	s.alertTenantsMu.Lock()
 	s.alertContext = ctx
 	s.alertTenantsMu.Unlock()
@@ -167,6 +174,7 @@ func (s *Service) Start(ctx context.Context) {
 	go s.bootstrap(ctx)
 	go s.retrainLoop(ctx)
 	go s.retentionLoop(ctx)
+	go s.backgroundCandidateRefreshLoop(ctx)
 	s.startVolumeProfiles(ctx)
 	go s.volumeArchiveLoop(ctx)
 	go s.startAlerts(ctx)
@@ -227,14 +235,35 @@ func (s *Service) poll(ctx context.Context) {
 }
 
 func (s *Service) bootstrap(ctx context.Context) {
+	complete := s.backfillSymbols(ctx, s.bootstrapSymbols())
+	s.mu.Lock()
+	s.backfillDone = complete
+	s.mu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
+	s.rebuild(ctx)
+	s.train(ctx)
+}
+
+// backfillSymbols synchronizes the selected background set with the configured
+// history window. The mutex prevents a scheduled candidate refresh from
+// starting a second, overlapping backfill while startup is still catching up.
+func (s *Service) backfillSymbols(ctx context.Context, symbols []string) bool {
+	s.backfillMu.Lock()
+	defer s.backfillMu.Unlock()
+
 	now := time.Now().UTC()
-	target := now.AddDate(0, 0, -s.cfg.BackfillDays)
+	backfillDays := s.cfg.BackfillDays
+	if backfillDays <= 0 {
+		backfillDays = 30
+	}
+	target := now.AddDate(0, 0, -backfillDays)
 	complete := true
-	bootstrapSymbols := s.bootstrapSymbols()
 	for _, c := range s.clients {
-		for _, sym := range bootstrapSymbols {
+		for _, sym := range symbols {
 			if ctx.Err() != nil {
-				return
+				return false
 			}
 			first, last, exists, e := s.store.CandleBounds(ctx, c.Name(), sym)
 			if e != nil {
@@ -276,18 +305,17 @@ func (s *Service) bootstrap(ctx context.Context) {
 			}
 		}
 	}
-	s.mu.Lock()
-	s.backfillDone = complete
-	s.mu.Unlock()
-	s.rebuild(ctx)
-	s.train(ctx)
+	return complete
 }
 
 func (s *Service) bootstrapSymbols() []string {
-	if len(s.cfg.BootstrapSymbols) > 0 {
-		return s.cfg.BootstrapSymbols
+	if symbols := s.backgroundSymbols(); len(symbols) > 0 {
+		return symbols
 	}
-	return s.cfg.Symbols
+	if len(s.cfg.BootstrapSymbols) > 0 {
+		return append([]string(nil), s.cfg.BootstrapSymbols...)
+	}
+	return append([]string(nil), s.cfg.Symbols...)
 }
 
 func (s *Service) historyWithRetry(ctx context.Context, client exchange.Client, symbol string, from, until time.Time) ([]domain.Candle, error) {
@@ -314,7 +342,7 @@ func (s *Service) historyWithRetry(ctx context.Context, client exchange.Client, 
 }
 
 func (s *Service) rebuild(ctx context.Context) {
-	for _, sym := range s.cfg.Symbols {
+	for _, sym := range s.backgroundSymbols() {
 		cs, e := s.store.Candles(ctx, sym, time.Now().UTC().Add(-7*24*time.Hour))
 		if e != nil {
 			continue
@@ -389,7 +417,8 @@ func (s *Service) train(ctx context.Context) {
 	if trainingDays <= 0 {
 		trainingDays = 30
 	}
-	for _, sym := range s.cfg.Symbols {
+	trainingSymbols := s.backgroundSymbols()
+	for _, sym := range trainingSymbols {
 		from := time.Now().AddDate(0, 0, -(trainingDays + 5))
 		cs, e := s.store.Candles(ctx, sym, from)
 		if e != nil {
@@ -414,7 +443,7 @@ func (s *Service) train(ctx context.Context) {
 	s.mu.Lock()
 	s.model = model
 	s.mu.Unlock()
-	for _, sym := range s.cfg.Symbols {
+	for _, sym := range trainingSymbols {
 		r := report
 		r.Symbol = sym
 		_ = s.store.SaveBacktest(ctx, r)
@@ -441,7 +470,11 @@ func (s *Service) retentionLoop(ctx context.Context) {
 func (s *Service) runDailyMaintenance(ctx context.Context) {
 	started := time.Now().UTC()
 	failed := false
-	if err := s.store.PruneBefore(ctx, started.AddDate(0, 0, -s.cfg.BackfillDays)); err != nil && ctx.Err() == nil {
+	retentionDays := s.cfg.RetentionDays
+	if retentionDays <= 0 {
+		retentionDays = 180
+	}
+	if err := s.store.PruneBefore(ctx, started.AddDate(0, 0, -retentionDays)); err != nil && ctx.Err() == nil {
 		failed = true
 		s.log.Warn("market retention cleanup failed", "error", err)
 	}

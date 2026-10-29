@@ -51,8 +51,9 @@ func (s *Service) alertReplaySymbols(rtm *alertRuntime) []string {
 	watch := append([]domain.WatchSymbol(nil), rtm.watch...)
 	rtm.mu.RUnlock()
 
-	symbols := make([]string, 0, len(watch)+len(s.cfg.Symbols))
-	seen := make(map[string]struct{}, len(watch)+len(s.cfg.Symbols))
+	configured := s.backgroundSymbols()
+	symbols := make([]string, 0, len(watch)+len(configured))
+	seen := make(map[string]struct{}, len(watch)+len(configured))
 	add := func(raw string) {
 		symbol := strings.ToUpper(strings.TrimSpace(raw))
 		if symbol == "" {
@@ -68,7 +69,7 @@ func (s *Service) alertReplaySymbols(rtm *alertRuntime) []string {
 		add(row.Symbol)
 	}
 	if len(symbols) == 0 {
-		for _, symbol := range s.cfg.Symbols {
+		for _, symbol := range configured {
 			add(symbol)
 		}
 	}

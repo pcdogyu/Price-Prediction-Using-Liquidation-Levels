@@ -13,7 +13,6 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/alert"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
-	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/notify"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/valuearea"
@@ -305,16 +304,16 @@ func (s *Service) startAlerts(ctx context.Context) {
 	rtm := s.alerts
 	rtm.restoreSettings(ctx)
 	rtm.restoreStrategySettings(ctx)
-	if rows, err := rtm.store.WatchSymbols(ctx); err != nil {
+	if rows := s.candidateWatchRows(); len(rows) > 0 {
+		rtm.applyWatch(rowsToEntries(rows), rows, time.Time{}, "")
+	} else if rows, err := rtm.store.WatchSymbols(ctx); err != nil {
 		rtm.log.Warn("load alert watch list failed", "error", err)
 	} else if len(rows) > 0 {
 		rtm.applyWatch(rowsToEntries(rows), rows, time.Time{}, "")
 	}
-	rtm.refreshTopSymbols(ctx)
 	rtm.seedFromHistory(ctx)
 	go rtm.notifier.Start(ctx)
 	go rtm.webhook.Start(ctx)
-	go rtm.topSymbolLoop(ctx)
 	go rtm.tickLoop(ctx)
 	go rtm.valueAreaLoop(ctx)
 	s.log.Info("liquidation alert engine started", "watch_symbols", rtm.engine.WatchCount(), "window", rtm.cfg.Window, "quiet", rtm.cfg.Quiet, "confirm", rtm.cfg.Confirm)
@@ -385,20 +384,6 @@ func (rtm *alertRuntime) persistValueAreaSignal(ctx context.Context, signal doma
 	}
 }
 
-// topSymbolLoop keeps the watch list in step with the 24 hour volume ranking.
-func (rtm *alertRuntime) topSymbolLoop(ctx context.Context) {
-	ticker := time.NewTicker(rtm.cfg.Refresh)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			rtm.refreshTopSymbols(ctx)
-		}
-	}
-}
-
 // tickLoop advances the quiet and confirmation deadlines. One second granularity
 // keeps a signal close to its deadline without depending on new events.
 func (rtm *alertRuntime) tickLoop(ctx context.Context) {
@@ -420,32 +405,6 @@ func (rtm *alertRuntime) tickLoop(ctx context.Context) {
 			}
 			rtm.persist(storeCtx, rtm.engine.Tick(now), true)
 		}
-	}
-}
-
-// refreshTopSymbols ranks Binance USDT perpetuals by 24 hour quote volume, hands the
-// result to the engine and persists it so the page still shows the list offline.
-func (rtm *alertRuntime) refreshTopSymbols(ctx context.Context) {
-	fetch, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	rows, err := exchange.BinanceTopUSDTPerpetuals(fetch, rtm.cfg.TopSymbols)
-	if err != nil {
-		rtm.log.Warn("top symbol refresh failed", "error", err)
-		rtm.mu.Lock()
-		rtm.watchErr = err.Error()
-		rtm.mu.Unlock()
-		return
-	}
-	now := time.Now().UTC()
-	watch := make([]domain.WatchSymbol, 0, len(rows))
-	for _, row := range rows {
-		watch = append(watch, domain.WatchSymbol{Symbol: row.Symbol, Rank: row.Rank, QuoteVolumeUSD: row.QuoteVolumeUSD, UpdatedAt: now})
-	}
-	rtm.applyWatch(topSymbolEntries(rows), watch, now, "")
-	storeCtx, storeCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer storeCancel()
-	if err = rtm.store.ReplaceWatchSymbols(storeCtx, watch); err != nil {
-		rtm.log.Warn("persist alert watch list failed", "error", err)
 	}
 }
 
@@ -490,15 +449,6 @@ func (rtm *alertRuntime) seedFromHistory(ctx context.Context) {
 
 // rowsToEntries converts a persisted watch list into engine entries.
 func rowsToEntries(rows []domain.WatchSymbol) []alert.WatchEntry {
-	out := make([]alert.WatchEntry, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, alert.WatchEntry{Symbol: row.Symbol, Rank: row.Rank, QuoteVolumeUSD: row.QuoteVolumeUSD})
-	}
-	return out
-}
-
-// topSymbolEntries converts a freshly ranked list into engine entries.
-func topSymbolEntries(rows []exchange.TopSymbol) []alert.WatchEntry {
 	out := make([]alert.WatchEntry, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, alert.WatchEntry{Symbol: row.Symbol, Rank: row.Rank, QuoteVolumeUSD: row.QuoteVolumeUSD})

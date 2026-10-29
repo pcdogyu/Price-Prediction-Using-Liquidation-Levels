@@ -267,7 +267,7 @@ func New(cfg config.Config, appStore *store.Store, logger *slog.Logger, build tv
 	if tenantDataPath == "" {
 		tenantDataPath = filepath.Join(cfg.TVBotDataPath, "tenants")
 	}
-	tenants := newTenantManager(tenantDataPath, legacyOwner(cfg, secrets.AdminUser), rootConfigStore, orders, userCredentials)
+	tenants := newTenantManager(tenantDataPath, legacyOwner(cfg, secrets.AdminUser), rootConfigStore, orders, userCredentials, appStore)
 
 	runner, err := tvbotupgrade.NewShellRunnerFromEnv()
 	if err != nil {
