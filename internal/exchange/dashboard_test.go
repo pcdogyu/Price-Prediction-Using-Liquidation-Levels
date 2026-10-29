@@ -111,6 +111,29 @@ func TestDepthSnapshotRetainsAtMost250LevelsPerSide(t *testing.T) {
 	}
 }
 
+func TestDepthSnapshotDropsLevelsBeyond2500TicksPerSide(t *testing.T) {
+	b := NewLocalBook("ETHUSDT", .01, 100, nil, nil)
+	b.bids[232000] = 1
+	b.bids[229510] = 1
+	b.bids[6900] = 1
+	b.asks[232001] = 1
+	b.asks[234491] = 1
+	b.asks[360510] = 1
+
+	snapshot := b.Snapshot(time.Now())
+	if len(snapshot.Bids) != 2 || len(snapshot.Asks) != 2 {
+		t.Fatalf("snapshot levels=%d/%d, want 2/2", len(snapshot.Bids), len(snapshot.Asks))
+	}
+	for _, level := range append(snapshot.Bids, snapshot.Asks...) {
+		if level.Price == 69 || level.Price == 3605.1 {
+			t.Fatalf("far level was retained: %+v", level)
+		}
+	}
+	if snapshot.Bids[1].Price != 2295.1 || snapshot.Asks[1].Price != 2345 {
+		t.Fatalf("unexpected edge levels: bids=%+v asks=%+v", snapshot.Bids, snapshot.Asks)
+	}
+}
+
 func TestGammaUnitsSignsAndMissingNetPosition(t *testing.T) {
 	rows := []OptionExposure{{Contract: OptionContract{Side: "CALL", Strike: "100", Unit: 2, Expiry: time.Now().Add(time.Hour).UnixMilli()}, Gamma: .01, OI: 3}, {Contract: OptionContract{Side: "PUT", Strike: "100", Unit: 1, Expiry: time.Now().Add(time.Hour).UnixMilli()}, Gamma: .01, OI: 1}}
 	g := BuildGamma("ETHUSDT", 100, rows, time.Now())

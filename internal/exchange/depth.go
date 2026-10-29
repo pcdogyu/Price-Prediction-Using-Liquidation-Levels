@@ -14,7 +14,11 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
 
-const maxBookSnapshotLevelsPerSide = 250
+const (
+	bookBucketTicks              int64 = 10
+	maxBookTicksPerSide          int64 = 2500
+	maxBookSnapshotLevelsPerSide       = int(maxBookTicksPerSide / bookBucketTicks)
+)
 
 type DepthUpdate struct {
 	Event     string     `json:"e"`
@@ -74,16 +78,32 @@ func (b *LocalBook) Update(u DepthUpdate) (bool, error) {
 	return true, nil
 }
 func (b *LocalBook) Snapshot(at time.Time) domain.BookSnapshot {
-	out := domain.BookSnapshot{Symbol: b.Symbol, Time: at, Sequence: b.Sequence, BucketWidth: b.Tick * 10, Bids: []domain.DepthLevel{}, Asks: []domain.DepthLevel{}}
+	out := domain.BookSnapshot{Symbol: b.Symbol, Time: at, Sequence: b.Sequence, BucketWidth: b.Tick * float64(bookBucketTicks), Bids: []domain.DepthLevel{}, Asks: []domain.DepthLevel{}}
 	group := func(levels map[int64]float64, bid bool) []domain.DepthLevel {
+		bestTick, ok := int64(0), false
+		for p := range levels {
+			if !ok || bid && p > bestTick || !bid && p < bestTick {
+				bestTick, ok = p, true
+			}
+		}
+		if !ok {
+			return nil
+		}
+		bucket := func(p int64) int64 {
+			if bid {
+				return p / bookBucketTicks
+			}
+			return (p + bookBucketTicks - 1) / bookBucketTicks
+		}
+		bestBucket := bucket(bestTick)
 		bins := map[int64]domain.DepthLevel{}
 		for p, q := range levels {
-			key := p / 10
-			if !bid {
-				key = (p + 9) / 10
+			key := bucket(p)
+			if bid && bestBucket-key >= int64(maxBookSnapshotLevelsPerSide) || !bid && key-bestBucket >= int64(maxBookSnapshotLevelsPerSide) {
+				continue
 			}
 			lv := bins[key]
-			lv.Price = float64(key*10) * b.Tick
+			lv.Price = float64(key*bookBucketTicks) * b.Tick
 			lv.Quantity += q
 			lv.NotionalUSD += float64(p) * b.Tick * q
 			bins[key] = lv
