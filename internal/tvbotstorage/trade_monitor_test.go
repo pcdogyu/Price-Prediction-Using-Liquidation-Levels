@@ -16,7 +16,7 @@ func TestTradeMonitorStoragePersistsFillsLifecycleCheckpointAndEvents(t *testing
 	}
 	defer store.Close()
 
-	now := time.Date(2026, 7, 30, 1, 2, 3, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	fills := []BinanceFill{{
 		APIID:       "main",
 		Symbol:      "BTCUSDT",
@@ -146,7 +146,7 @@ func TestRetentionPrunesOldTradeMonitorEventsAndAnalysisCache(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
-	cutoff := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Second)
 	for _, event := range []TradeMonitorEvent{
 		{EventID: "old-event", EventTime: cutoff.Add(-time.Minute), Exchange: trading.ExchangeBinance, APIID: "main", Symbol: "BTCUSDT", EventType: "old"},
 		{EventID: "new-event", EventTime: cutoff.Add(time.Minute), Exchange: trading.ExchangeBinance, APIID: "main", Symbol: "BTCUSDT", EventType: "new"},
@@ -181,5 +181,30 @@ func TestRetentionPrunesOldTradeMonitorEventsAndAnalysisCache(t *testing.T) {
 	}
 	if _, found, err := store.CachedPayload("new-cache"); err != nil || !found {
 		t.Fatalf("new cache found=%v err=%v", found, err)
+	}
+}
+
+func TestSQLiteRetentionGuardSkipsExpiredTradeMonitorEvents(t *testing.T) {
+	store, err := NewSQLiteOrderStore(filepath.Join(t.TempDir(), "tvbot-retention-guard.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if err := store.InsertTradeMonitorEvent(TradeMonitorEvent{
+		EventTime: time.Now().UTC().Add(-31 * 24 * time.Hour),
+		Exchange:  trading.ExchangeBinance,
+		APIID:     "main",
+		Symbol:    "BTCUSDT",
+		EventType: "poll_error",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.ListTradeMonitorEvents(TradeMonitorFilter{}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expired event was persisted by sqlite guard: %#v", events)
 	}
 }

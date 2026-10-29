@@ -726,6 +726,10 @@ func (s *OrderStore) migrateSQLite() error {
 			raw_json TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_trade_monitor_events_time ON trade_monitor_events(event_time)`,
+		`CREATE TRIGGER IF NOT EXISTS trade_monitor_events_retention_guard
+			BEFORE INSERT ON trade_monitor_events
+			WHEN julianday(NEW.event_time) < julianday('now', '-30 days')
+			BEGIN SELECT RAISE(IGNORE); END`,
 		`CREATE TABLE IF NOT EXISTS coinpair_blocks (
 			keyword TEXT PRIMARY KEY,
 			symbol TEXT NOT NULL,

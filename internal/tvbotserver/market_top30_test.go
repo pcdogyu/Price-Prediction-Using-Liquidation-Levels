@@ -375,6 +375,9 @@ func TestOrderRetryBypassesMarketScopeForFailedAndIgnoredSources(t *testing.T) {
 
 func TestAutoReentryOutsideMarketScopeStopsBeforeExchange(t *testing.T) {
 	srv := newTestServer(t)
+	// This test asserts a freshly recorded monitor event; keep its injected
+	// clock within the live 30-day retention window.
+	srv.Now = time.Now
 	now := srv.now()
 	signal := validSignal(t, srv)
 	signal.TargetExchange = trading.ExchangeBinance
