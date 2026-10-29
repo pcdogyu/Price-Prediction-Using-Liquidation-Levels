@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -98,5 +99,42 @@ func TestMarketCVDUsesWindowBaselineAndRecoversAfterGaps(t *testing.T) {
 	series = BuildMarketSeries(cs, nil, at, at.Add(15*time.Minute), 5*time.Minute)
 	if series[1].CVDUSD != nil || series[2].CVDUSD == nil || *series[2].CVDUSD != 160 {
 		t.Fatal("CVD did not resume after an empty bucket", series)
+	}
+}
+
+func TestMarketMetricAtMergesNearbyPartialRows(t *testing.T) {
+	at := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	oi := 100.0
+	topRatio := 2.0
+	accountRatio := 1.5
+	metrics := []domain.MarketMetric{
+		{Symbol: "ETHUSDT", Time: at.Add(-5 * time.Minute), OIUSD: &oi},
+		{Symbol: "ETHUSDT", Time: at.Add(-4 * time.Minute), TopPositionRatio: &topRatio},
+		{Symbol: "ETHUSDT", Time: at.Add(-3 * time.Minute), AccountRatio: &accountRatio},
+	}
+	merged := metricAt(metrics, at)
+	if merged == nil || merged.OIUSD == nil || merged.TopPositionRatio == nil || merged.AccountRatio == nil {
+		t.Fatalf("nearby partial metrics were not merged: %+v", merged)
+	}
+	if merged.NetPositionUSD == nil || *merged.NetPositionUSD != 100/3.0 {
+		t.Fatalf("net position was not recomputed: %+v", merged.NetPositionUSD)
+	}
+	if metricAt(metrics, at.Add(11*time.Minute)) != nil {
+		t.Fatal("metric outside the freshness window was accepted")
+	}
+}
+
+func TestMarketWindowSpecsIncludeTwelveHoursAndExplainMissingData(t *testing.T) {
+	labels := make([]string, 0, len(marketWindowSpecs))
+	for _, spec := range marketWindowSpecs {
+		labels = append(labels, spec.label)
+	}
+	want := []string{"5m", "1h", "4h", "12h", "24h"}
+	if !reflect.DeepEqual(labels, want) {
+		t.Fatalf("market window labels=%v want=%v", labels, want)
+	}
+	status := marketWindowAnalysis(domain.MarketWindow{Label: "12h"})
+	if status != "数据不足：OI历史数据、净仓估算历史数据、主动买卖历史数据" {
+		t.Fatalf("missing-data explanation=%q", status)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -12,6 +13,17 @@ import (
 )
 
 var MarketRanges = map[string]time.Duration{"5m": 5 * time.Minute, "15m": 15 * time.Minute, "1h": time.Hour, "4h": 4 * time.Hour, "8h": 8 * time.Hour, "12h": 12 * time.Hour, "24h": 24 * time.Hour, "2d": 48 * time.Hour, "3d": 72 * time.Hour, "7d": 7 * 24 * time.Hour}
+
+var marketWindowSpecs = []struct {
+	label    string
+	duration time.Duration
+}{
+	{"5m", 5 * time.Minute},
+	{"1h", time.Hour},
+	{"4h", 4 * time.Hour},
+	{"12h", 12 * time.Hour},
+	{"24h", 24 * time.Hour},
+}
 
 func (s *Service) marketInfoLoop(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
@@ -92,13 +104,108 @@ func (s *Service) backfillMarketMetrics(ctx context.Context) {
 }
 func ptr(v float64) *float64 { return &v }
 func metricAt(ms []domain.MarketMetric, at time.Time) *domain.MarketMetric {
-	i := sort.Search(len(ms), func(i int) bool { return ms[i].Time.After(at) }) - 1
-	if i < 0 || at.Sub(ms[i].Time) > 10*time.Minute {
+	end := sort.Search(len(ms), func(i int) bool { return ms[i].Time.After(at) })
+	if end == 0 {
 		return nil
 	}
-	m := ms[i]
-	m.NetPositionUSD = exchange.EstimateNetPosition(m.OIUSD, m.TopPositionRatio)
-	return &m
+	var merged *domain.MarketMetric
+	for i := end - 1; i >= 0; i-- {
+		age := at.Sub(ms[i].Time)
+		if age < 0 {
+			continue
+		}
+		if age > 10*time.Minute {
+			break
+		}
+		if merged == nil {
+			value := ms[i]
+			merged = &value
+			continue
+		}
+		mergeMarketMetricFields(merged, ms[i])
+	}
+	if merged == nil {
+		return nil
+	}
+	merged.NetPositionUSD = exchange.EstimateNetPosition(merged.OIUSD, merged.TopPositionRatio)
+	return merged
+}
+
+// Historical Binance endpoints are sampled on the same nominal 5-minute
+// cadence, but their latest timestamps can differ by one bucket. The store
+// keeps each endpoint's partial row so it can merge exact timestamps; metricAt
+// also fills missing fields from nearby rows to avoid treating a timestamp
+// skew as a complete loss of OI or position-ratio history.
+func mergeMarketMetricFields(dst *domain.MarketMetric, src domain.MarketMetric) {
+	if dst.MarkPrice == nil {
+		dst.MarkPrice = src.MarkPrice
+	}
+	if dst.Change24h == nil {
+		dst.Change24h = src.Change24h
+	}
+	if dst.Volume24hUSD == nil {
+		dst.Volume24hUSD = src.Volume24hUSD
+	}
+	if dst.High24h == nil {
+		dst.High24h = src.High24h
+	}
+	if dst.Low24h == nil {
+		dst.Low24h = src.Low24h
+	}
+	if dst.BestBid == nil {
+		dst.BestBid = src.BestBid
+	}
+	if dst.BestAsk == nil {
+		dst.BestAsk = src.BestAsk
+	}
+	if dst.OIQuantity == nil {
+		dst.OIQuantity = src.OIQuantity
+	}
+	if dst.OIUSD == nil {
+		dst.OIUSD = src.OIUSD
+	}
+	if dst.FundingRate == nil {
+		dst.FundingRate = src.FundingRate
+	}
+	if dst.NextFunding == nil {
+		dst.NextFunding = src.NextFunding
+	}
+	if dst.AccountRatio == nil {
+		dst.AccountRatio = src.AccountRatio
+	}
+	if dst.TopPositionRatio == nil {
+		dst.TopPositionRatio = src.TopPositionRatio
+	}
+	if len(dst.Warnings) == 0 && len(src.Warnings) > 0 {
+		dst.Warnings = append([]string(nil), src.Warnings...)
+	}
+}
+
+func marketWindowAnalysis(window domain.MarketWindow) string {
+	missing := []string{}
+	if window.OIDeltaUSD == nil {
+		missing = append(missing, "OI历史数据")
+	}
+	if window.NetPositionDeltaUSD == nil {
+		missing = append(missing, "净仓估算历史数据")
+	}
+	if window.CVDDeltaUSD == nil {
+		missing = append(missing, "主动买卖历史数据")
+	}
+	if len(missing) > 0 {
+		return "数据不足：" + strings.Join(missing, "、")
+	}
+	flow := "主动买入占优"
+	if *window.CVDDeltaUSD < 0 {
+		flow = "主动卖出占优"
+	}
+	change := "持仓稳定"
+	if *window.OIDeltaUSD > 0 {
+		change = "增仓"
+	} else if *window.OIDeltaUSD < 0 {
+		change = "减仓"
+	}
+	return change + " · " + flow
 }
 func BuildMarketSeries(candles []domain.Candle, metrics []domain.MarketMetric, from, to time.Time, step time.Duration) []domain.MarketPoint {
 	out := []domain.MarketPoint{}
@@ -167,9 +274,16 @@ func (s *Service) MarketInfo(ctx context.Context, symbol, rangeName string) (dom
 	current, exists := s.dashboard.metrics[symbol]
 	g, hasGamma := s.dashboard.gamma[symbol]
 	s.dashboard.RUnlock()
-	if !exists && len(metrics) > 0 {
-		current = metrics[len(metrics)-1]
-		exists = true
+	if !exists {
+		if stored := metricAt(metrics, to); stored != nil {
+			current = *stored
+			exists = true
+		}
+	} else if stored := metricAt(metrics, to); stored != nil {
+		// A transient live REST failure can leave one field nil even though a
+		// recent historical sample still has it. Keep the live timestamp and
+		// prefer its non-nil fields, filling only the gaps from history.
+		mergeMarketMetricFields(&current, *stored)
 	}
 	if exists {
 		current.NetPositionUSD = exchange.EstimateNetPosition(current.OIUSD, current.TopPositionRatio)
@@ -196,10 +310,7 @@ func (s *Service) MarketInfo(ctx context.Context, symbol, rangeName string) (dom
 		step = time.Hour
 	}
 	out.Series = BuildMarketSeries(candles, metrics, from, to, step)
-	for _, w := range []struct {
-		label    string
-		duration time.Duration
-	}{{"5m", 5 * time.Minute}, {"1h", time.Hour}, {"4h", 4 * time.Hour}, {"24h", 24 * time.Hour}} {
+	for _, w := range marketWindowSpecs {
 		win := domain.MarketWindow{Label: w.label, Analysis: "数据不足"}
 		past := metricAt(metrics, to.Add(-w.duration))
 		if past != nil && exists && out.State != "stale" {
@@ -215,19 +326,7 @@ func (s *Service) MarketInfo(ctx context.Context, symbol, rangeName string) (dom
 		if len(series) > 0 {
 			win.CVDDeltaUSD = series[0].CVDUSD
 		}
-		if win.OIDeltaUSD != nil && win.CVDDeltaUSD != nil {
-			flow := "主动买入占优"
-			if *win.CVDDeltaUSD < 0 {
-				flow = "主动卖出占优"
-			}
-			change := "持仓稳定"
-			if *win.OIDeltaUSD > 0 {
-				change = "增仓"
-			} else if *win.OIDeltaUSD < 0 {
-				change = "减仓"
-			}
-			win.Analysis = change + " · " + flow
-		}
+		win.Analysis = marketWindowAnalysis(win)
 		out.Windows = append(out.Windows, win)
 	}
 	return out, nil
