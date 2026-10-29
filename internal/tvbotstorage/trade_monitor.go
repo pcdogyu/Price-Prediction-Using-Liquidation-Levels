@@ -710,11 +710,13 @@ func (s *OrderStore) InsertTradeMonitorEvent(event TradeMonitorEvent) error {
 	event.normalize()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	eventTime := event.EventTime.UTC().Format(time.RFC3339Nano)
 	_, err := s.db.Exec(`INSERT INTO trade_monitor_events
 		(event_id, event_time, exchange, api_id, symbol, lifecycle_id, source_signal_id, event_type, status, message, raw_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE julianday(?) >= julianday('now', '-30 days')`,
 		event.EventID,
-		event.EventTime.UTC().Format(time.RFC3339Nano),
+		eventTime,
 		event.Exchange,
 		event.APIID,
 		event.Symbol,
@@ -724,6 +726,7 @@ func (s *OrderStore) InsertTradeMonitorEvent(event TradeMonitorEvent) error {
 		event.Status,
 		event.Message,
 		event.RawJSON,
+		eventTime,
 	)
 	return err
 }
