@@ -88,7 +88,7 @@ func TestBusinessPagesRenderVersionFooter(t *testing.T) {
 		w := httptest.NewRecorder()
 		srv.http.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		body := w.Body.String()
-		if w.Code != http.StatusOK || strings.Count(body, wantVersion) != 1 || strings.Count(body, `class="page-footer"`) != 1 {
+		if w.Code != http.StatusOK || strings.Count(body, wantVersion) != 1 || strings.Count(body, `class="page-footer"`) != 1 || strings.Contains(body, "用于市场观察与研究") {
 			t.Fatalf("path=%s status=%d version_count=%d footer_count=%d", path, w.Code, strings.Count(body, wantVersion), strings.Count(body, `class="page-footer"`))
 		}
 	}

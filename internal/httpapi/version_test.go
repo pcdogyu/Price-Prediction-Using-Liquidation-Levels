@@ -24,6 +24,20 @@ func TestVersionFooterUsesBuildMetadataAndDefaults(t *testing.T) {
 	}
 }
 
+func TestVersionFooterFormatsUTCAndShortensFullRevision(t *testing.T) {
+	originalTime, originalRevision, originalBranch := BuildTime, BuildRevision, BuildBranch
+	t.Cleanup(func() {
+		BuildTime, BuildRevision, BuildBranch = originalTime, originalRevision, originalBranch
+	})
+
+	BuildTime = "2026-10-30T01:57:36Z"
+	BuildRevision = "0123456789abcdef0123456789abcdef01234567"
+	BuildBranch = "binance"
+	if got, want := versionFooter(), "Code by Yuhao@jiansutech.com · 2026-10-30T09:57:36+08:00 · 01234567 · binance"; got != want {
+		t.Fatalf("version footer=%q, want %q", got, want)
+	}
+}
+
 func TestVersionFooterEscapesBuildMetadata(t *testing.T) {
 	originalTime, originalRevision, originalBranch := BuildTime, BuildRevision, BuildBranch
 	t.Cleanup(func() {
