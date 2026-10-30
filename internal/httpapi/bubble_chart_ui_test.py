@@ -259,6 +259,12 @@ with sync_playwright() as playwright:
         rank_box = rank_text.bounding_box()
         page.mouse.move(rank_box["x"] + rank_box["width"] / 2, rank_box["y"] + rank_box["height"] / 2)
         expect(page.locator("#tooltip")).to_contain_text("Top")
+        expect(page.locator("#tooltip")).to_contain_text("清算强度")
+        page.mouse.move(5, 5)
+        wall = page.locator('[data-wall]').first
+        wall_box = wall.bounding_box()
+        page.mouse.move(wall_box["x"] + wall_box["width"] / 2, wall_box["y"] + wall_box["height"] / 2)
+        expect(page.locator("#tooltip")).to_contain_text("清算墙")
         page.mouse.move(5, 5)
         # Bubbles clamp to the candle plot, whose right edge follows dims.candleRight after the
         # chart enlargement, so read the live geometry instead of hardcoding pixel bounds.

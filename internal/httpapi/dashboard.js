@@ -950,7 +950,8 @@ function bindTips(svg) {
     const tradeElement = event.target.closest('[data-trade-marker]');
     const element = tradeElement || event.target.closest('[data-tip]');
     const point = svgPoint(event);
-    const overlapping = tradeElement ? [] : (point.x >= dims.left && point.x <= dims.candleRight ? bubbleHits(point.x, point.y) : []);
+    const overlayElement = event.target.closest('[data-liquidation-overlay], [data-liquidation-rank], [data-wall], [data-volume-bar]');
+    const overlapping = tradeElement || overlayElement ? [] : (point.x >= dims.left && point.x <= dims.candleRight ? bubbleHits(point.x, point.y) : []);
     if (!element && !overlapping.length) { hideSoon(); return; }
     clearTimeout(tooltipHideTimer);
     tooltip.textContent = overlapping.length ? (overlapping.length > 1 ? '此处重叠 ' + overlapping.length + '笔（滚动查看）\n\n' : '') + overlapping.map(bubbleTip).join('\n\n') + '\n\n覆盖：本服务采集的 Binance 强平采样流，每交易对每秒最近一笔' : element.getAttribute('data-tip');
