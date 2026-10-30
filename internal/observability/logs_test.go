@@ -23,8 +23,15 @@ func TestLogQueryAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Entries) != 1 || page.Entries[0].Message != "training skipped" || page.NextBefore == "" {
+	if len(page.Entries) != 1 || page.Entries[0].Message != "training skipped" || page.NextBefore != "" {
 		t.Fatalf("page=%+v", page)
+	}
+	filtered, err := store.QueryFiltered(10, time.Time{}, "INFO", "BINANCE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Entries) != 1 || filtered.Entries[0].Message != "backfill complete" {
+		t.Fatalf("filtered page=%+v", filtered)
 	}
 	old := filepath.Join(filepath.Dir(path), "application-2026-01-01T00-00-00.000.log")
 	if err = os.WriteFile(old, []byte("old"), 0o600); err != nil {

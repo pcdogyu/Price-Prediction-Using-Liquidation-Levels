@@ -56,13 +56,20 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 	if strings.Contains(systemPanel, "/tvbot/view/") {
 		t.Fatalf("system submenu contains a retired TVBot route: %s", systemPanel)
 	}
-	for _, marker := range []string{
+	systemWant := []string{
+		`href="/admin">用户管理`,
+		`href="/menu">菜单管理`,
 		`data-tab="tradeMonitor" href="/tvbot?tab=tradeMonitor">成交监听`,
+		`href="/system">交易所信息`,
 		`data-tab="upgrade" href="/tvbot?tab=upgrade">升级`,
-	} {
-		if !strings.Contains(systemPanel, marker) {
-			t.Fatalf("system submenu is missing restored TVBot item %q: %s", marker, systemPanel)
+	}
+	last = -1
+	for _, marker := range systemWant {
+		at := strings.Index(systemPanel, marker)
+		if at <= last {
+			t.Fatalf("system submenu marker %q is out of order: index=%d last=%d page=%s", marker, at, last, page)
 		}
+		last = at
 	}
 	if !strings.Contains(page, `>系统信息<span class="nav-system-caret"`) {
 		t.Fatal("system menu trigger is missing")

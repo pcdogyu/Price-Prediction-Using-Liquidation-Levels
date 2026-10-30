@@ -24,6 +24,8 @@
     <section class="logs-panel" aria-labelledby="logs-table-title">
       <div class="logs-toolbar">
         <div class="logs-toolbar-left">
+          <label for="logs-search">搜索</label>
+          <input id="logs-search" type="search" placeholder="消息、级别或字段" autocomplete="off">
           <label for="logs-level">级别</label>
           <select id="logs-level">
             <option value="DEBUG">全部级别</option>
@@ -45,8 +47,11 @@
           <tbody id="logs-rows"></tbody>
         </table>
       </div>
-      <div class="logs-footer">
-        <button id="logs-more" type="button">加载更早日志</button>
+      <div class="logs-footer logs-pagination" aria-label="日志分页">
+        <button id="logs-first" type="button">第一页</button>
+        <button id="logs-prev" type="button">上一页</button>
+        <span id="logs-page" aria-live="polite">第 1 页</span>
+        <button id="logs-next" type="button">下一页</button>
       </div>
     </section>
   </main>

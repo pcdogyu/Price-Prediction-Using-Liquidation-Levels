@@ -33,6 +33,24 @@ func RenderSystemMenu(items []TopMenuItem, link func(string) string, active func
 	if len(systemItems) == 0 {
 		return ""
 	}
+	preferredOrder := []string{"system", "menu", "trade-monitor", "system-info", "upgrade"}
+	ordered := make([]TopMenuItem, 0, len(systemItems))
+	used := make(map[string]bool, len(systemItems))
+	for _, key := range preferredOrder {
+		for _, item := range systemItems {
+			if used[item.Key] || item.Key != key {
+				continue
+			}
+			ordered = append(ordered, item)
+			used[item.Key] = true
+		}
+	}
+	for _, item := range systemItems {
+		if !used[item.Key] {
+			ordered = append(ordered, item)
+		}
+	}
+	systemItems = ordered
 	var out strings.Builder
 	activeGroup := false
 	for _, item := range systemItems {

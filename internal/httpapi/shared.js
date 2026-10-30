@@ -15,7 +15,7 @@
   }
   const logsButton = document.getElementById('nav-logs');
   if (logsButton) logsButton.addEventListener('click', () => {
-    const popup = window.open(base + 'logs', 'program-logs', 'popup=yes,width=1280,height=800,resizable=yes,scrollbars=yes');
+    const popup = window.open(base + 'logs', '_blank');
     if (popup) {
       popup.focus();
     } else {

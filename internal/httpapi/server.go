@@ -643,7 +643,11 @@ func (s *Server) applicationLogs(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, errors.New("level must be DEBUG, INFO, WARN, or ERROR"))
 		return
 	}
-	page, err := s.logs.Query(limit, before, level)
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	if len([]rune(search)) > 128 {
+		search = string([]rune(search)[:128])
+	}
+	page, err := s.logs.QueryFiltered(limit, before, level, search)
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
 		return

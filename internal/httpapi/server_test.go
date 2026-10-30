@@ -413,7 +413,7 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	if err != nil || !restartedAuth.Authenticated(session.Value) {
 		t.Fatalf("session did not survive authentication manager restart: %v", err)
 	}
-	r = httptest.NewRequest(http.MethodGet, "/api/v1/logs?limit=50&level=INFO", nil)
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/logs?limit=20&level=INFO&search=login%20succeeded", nil)
 	r.AddCookie(session)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
@@ -432,15 +432,22 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	r.AddCookie(session)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "<th scope=\"col\">时间</th>") || !strings.Contains(w.Body.String(), "<th scope=\"col\">字段</th>") || !strings.Contains(w.Body.String(), "/liquidation/assets/logs.js") || strings.Contains(w.Body.String(), "<dialog") || strings.Contains(w.Body.String(), "shared-logs") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "id=\"logs-search\"") || !strings.Contains(w.Body.String(), "<th scope=\"col\">时间</th>") || !strings.Contains(w.Body.String(), "<th scope=\"col\">字段</th>") || !strings.Contains(w.Body.String(), "id=\"logs-next\"") || !strings.Contains(w.Body.String(), "/liquidation/assets/logs.js") || strings.Contains(w.Body.String(), "<dialog") || strings.Contains(w.Body.String(), "shared-logs") {
 		t.Fatalf("logs page status=%d body=%s", w.Code, w.Body.String())
 	}
 	r = httptest.NewRequest(http.MethodGet, "/assets/logs.js", nil)
 	r.AddCookie(session)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "textContent") || strings.Contains(w.Body.String(), "innerHTML") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "const pageSize = 20") || !strings.Contains(w.Body.String(), "formatFields") || !strings.Contains(w.Body.String(), "search") || strings.Contains(w.Body.String(), "innerHTML") {
 		t.Fatalf("logs script status=%d body=%s", w.Code, w.Body.String())
+	}
+	r = httptest.NewRequest(http.MethodGet, "/assets/shared.js", nil)
+	r.AddCookie(session)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "window.open(base + 'logs', '_blank')") || strings.Contains(w.Body.String(), "popup=yes") {
+		t.Fatalf("shared script status=%d body=%s", w.Code, w.Body.String())
 	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/logs?limit=10&file=../../etc/passwd", nil)
 	r.AddCookie(session)

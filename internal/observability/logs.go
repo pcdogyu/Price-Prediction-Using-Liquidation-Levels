@@ -77,6 +77,13 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) Query(limit int, before time.Time, minimumLevel string) (Page, error) {
+	return s.QueryFiltered(limit, before, minimumLevel, "")
+}
+
+// QueryFiltered returns the newest matching log entries before the optional
+// cursor. Search is case-insensitive and covers the level, message, and
+// structured fields shown by the log page.
+func (s *Store) QueryFiltered(limit int, before time.Time, minimumLevel, search string) (Page, error) {
 	page := Page{Entries: []Entry{}, GeneratedAt: time.Now().UTC()}
 	if s == nil || s.path == "" {
 		return page, errors.New("application log file is not configured")
@@ -91,6 +98,7 @@ func (s *Store) Query(limit int, before time.Time, minimumLevel string) (Page, e
 	if err != nil {
 		return page, err
 	}
+	search = strings.ToLower(strings.TrimSpace(search))
 	_ = s.cleanup(page.GeneratedAt)
 	files, err := s.files()
 	if err != nil {
@@ -116,14 +124,26 @@ func (s *Store) Query(limit int, before time.Time, minimumLevel string) (Page, e
 			if value < threshold {
 				continue
 			}
+			if search != "" && !entryMatchesSearch(entry, search) {
+				continue
+			}
 			page.Entries = append(page.Entries, entry)
-			if len(page.Entries) == limit {
-				page.NextBefore = entry.Time.Format(time.RFC3339Nano)
+			if len(page.Entries) > limit {
+				page.NextBefore = page.Entries[limit-1].Time.Format(time.RFC3339Nano)
+				page.Entries = page.Entries[:limit]
 				return page, nil
 			}
 		}
 	}
 	return page, nil
+}
+
+func entryMatchesSearch(entry Entry, search string) bool {
+	if strings.Contains(strings.ToLower(entry.Level), search) || strings.Contains(strings.ToLower(entry.Message), search) {
+		return true
+	}
+	fields, err := json.Marshal(entry.Fields)
+	return err == nil && strings.Contains(strings.ToLower(string(fields)), search)
 }
 
 func (s *Store) files() ([]string, error) {
