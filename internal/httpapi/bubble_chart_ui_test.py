@@ -227,9 +227,11 @@ with sync_playwright() as playwright:
           const svg = document.getElementById('market-chart');
           const number = (element, name) => Number(element.getAttribute(name));
           return {
-            overlay: [dims.liquidationOverlayLeft, dims.liquidationRight],
+            overlay: [dims.liquidationOverlayLeft, dims.liquidationOverlayRight],
+            wall: [dims.liquidationLeft, dims.liquidationRight],
             candle: [dims.left, dims.candleRight],
             volume: [dims.volumeLeft, dims.volumeRight],
+            profile: dims.profileRight,
             walls: Array.from(svg.querySelectorAll('[data-wall]')).map(e => ({
               x: number(e, 'x'), width: number(e, 'width')
             })),
@@ -240,16 +242,19 @@ with sync_playwright() as playwright:
           };
         }""")
         overlay_left, overlay_right = liquidation_layout["overlay"]
+        wall_left, wall_right = liquidation_layout["wall"]
         assert liquidation_layout["walls"] and all(
-            overlay_left <= item["x"] and item["x"] + item["width"] <= overlay_right + 0.01
+            wall_left <= item["x"] and item["x"] + item["width"] <= wall_right + 0.01
             for item in liquidation_layout["walls"]
         ), liquidation_layout
         assert liquidation_layout["ranks"] and all(
-            overlay_left <= item["x"] and item["x"] + item["width"] <= overlay_right + 0.01
+            wall_right <= item["x"] and item["x"] + item["width"] <= overlay_right + 0.01
             for item in liquidation_layout["ranks"]
         ), liquidation_layout
         assert overlay_left <= liquidation_layout["title"] <= overlay_right, liquidation_layout
+        assert wall_left <= liquidation_layout["title"] <= wall_right, liquidation_layout
         assert overlay_right < liquidation_layout["candle"][1] < liquidation_layout["volume"][0], liquidation_layout
+        assert liquidation_layout["volume"][1] < liquidation_layout["profile"], liquidation_layout
         rank_text = page.locator('[data-liquidation-rank] text').first
         rank_box = rank_text.bounding_box()
         page.mouse.move(rank_box["x"] + rank_box["width"] / 2, rank_box["y"] + rank_box["height"] / 2)

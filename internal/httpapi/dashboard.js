@@ -113,7 +113,7 @@ const liquidationWallWidthScale = .9;
 // Kept for compatibility with the dashboard asset contract tests; rank labels
 // now use a fixed left-overlay width instead of scaling with the right axis.
 const rankLabelWidthScale = .8;
-const rightPriceAxisWidthScale = .81;
+const rightPriceAxisWidthScale = .70;
 const rightPriceAxisShift = (1740 - 1510) * (1 - rightPriceAxisWidthScale);
 const liquidationWallRight = 1510 + rightPriceAxisShift;
 const liquidationWallWidth = Math.round((1510 - 1315) * liquidationWallWidthScale);
@@ -121,12 +121,16 @@ const rightPriceAxisX = x => liquidationWallRight + (x - 1510) * rightPriceAxisW
 const chartLeft = 72;
 const liquidationOverlayLeft = chartLeft + 12;
 const liquidationRankLabelWidth = 120;
-const rankLabelLeft = liquidationOverlayLeft;
-const rankLabelRight = rankLabelLeft + liquidationRankLabelWidth;
 const liquidationOverlayGap = 8;
-const liquidationLeft = rankLabelRight + liquidationOverlayGap;
+const liquidationLeft = liquidationOverlayLeft;
 const liquidationRight = liquidationLeft + liquidationWallWidth;
-const dims = { height: 560, width: 1740, left: chartLeft, top: 24, bottom: 42, candleRight: 1025 + rightPriceAxisShift, volumeLeft: 1060 + rightPriceAxisShift, volumeRight: 1280 + rightPriceAxisShift, liquidationOverlayLeft, liquidationLeft, liquidationRight, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft, rankLabelRight };
+const rankLabelLeft = liquidationRight + liquidationOverlayGap;
+const rankLabelRight = rankLabelLeft + liquidationRankLabelWidth;
+const liquidationOverlayRight = rankLabelRight;
+const rightPriceLabelWidth = Math.round(112 * .7);
+const volumeRight = liquidationWallRight - rightPriceLabelWidth - 8;
+const volumeLeft = volumeRight - (1280 - 1060);
+const dims = { height: 560, width: 1740, left: chartLeft, top: 24, bottom: 42, candleRight: 1025 + rightPriceAxisShift, volumeLeft, volumeRight, liquidationOverlayLeft, liquidationOverlayRight, liquidationLeft, liquidationRight, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft, rankLabelRight, rightPriceLabelWidth };
 const embeddedChartCandleRight = 1668;
 if (!intervalName[chart.interval]) chart.interval = '15m';
 
@@ -613,7 +617,7 @@ function drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom, layo
     const group = svgNode('g', { 'data-tip': tip, 'data-liquidation-rank': item.prefix + item.rank });
     const connectorX = liquidationRight - 4;
     group.appendChild(svgNode('circle', { cx: connectorX, cy: item.targetY, r: 2.2, fill: item.color }));
-    group.appendChild(svgNode('path', { d: 'M ' + connectorX + ' ' + item.targetY + ' L ' + (rankLabelRight + 8) + ' ' + item.targetY + ' L ' + (rankLabelRight + 2) + ' ' + item.labelY, fill: 'none', stroke: item.color, 'stroke-width': 1.15, opacity: .9 }));
+    group.appendChild(svgNode('path', { d: 'M ' + connectorX + ' ' + item.targetY + ' L ' + (rankLabelLeft - 8) + ' ' + item.targetY + ' L ' + (rankLabelLeft - 2) + ' ' + item.labelY, fill: 'none', stroke: item.color, 'stroke-width': 1.15, opacity: .9 }));
     group.appendChild(svgNode('rect', { x: rankLabelLeft, y: item.labelY - 9, width: rankLabelRight - rankLabelLeft, height: 18, fill: '#071019', stroke: item.color, 'stroke-width': 1, rx: 4 }));
     group.appendChild(svgNode('text', { x: rankLabelLeft + 6, y: item.labelY + 3.5, fill: item.color, 'font-size': 10.5, 'font-weight': 750 }, text));
     svg.appendChild(group);
@@ -769,7 +773,7 @@ function draw(view, map, signal, volume) {
     svg.appendChild(svgNode('text', { x: 800, y: 280, 'text-anchor': 'middle', fill: '#83a0b2' }, '等待有效 K 线数据'));
     return;
   }
-  const { height, left, top, bottom, candleRight, volumeLeft, volumeRight, liquidationOverlayLeft, liquidationLeft, liquidationRight, profileRight, axisPriceRight } = layout;
+  const { height, left, top, bottom, candleRight, volumeLeft, volumeRight, liquidationOverlayLeft, liquidationOverlayRight, liquidationLeft, liquidationRight, profileRight, axisPriceRight, rightPriceLabelWidth } = layout;
   const [low, high] = range;
   svg.setAttribute('data-price-low', low);
   svg.setAttribute('data-price-high', high);
@@ -784,7 +788,7 @@ function draw(view, map, signal, volume) {
   defs.appendChild(clip);
   // Each profile panel keeps its own clip so a wheel-zoomed bar is cut off inside its own
   // column instead of running into the neighbouring panel or the price axis.
-  [['volume-clip', volumeLeft, volumeRight], ['liquidation-overlay-clip', liquidationOverlayLeft, liquidationRight], ['liquidation-clip', liquidationLeft, liquidationRight]].forEach(([id, from, until]) => {
+  [['volume-clip', volumeLeft, volumeRight], ['liquidation-overlay-clip', liquidationOverlayLeft, liquidationOverlayRight], ['liquidation-clip', liquidationLeft, liquidationRight]].forEach(([id, from, until]) => {
     const panel = svgNode('clipPath', { id });
     panel.appendChild(svgNode('rect', { x: from, y: top, width: Math.max(1, until - from), height: plotBottom - top }));
     defs.appendChild(panel);
@@ -858,7 +862,7 @@ function draw(view, map, signal, volume) {
     (map.top_long_liquidations || []).forEach((peak, index) => topRanks.set(String(peak.price), { label: '多' + (index + 1), color: '#fb7185' }));
     (map.top_short_liquidations || []).forEach((peak, index) => topRanks.set(String(peak.price), { label: '空' + (index + 1), color: '#2dd4bf' }));
     const overlay = svgNode('g', { 'clip-path': 'url(#liquidation-overlay-clip)', 'data-liquidation-overlay': '' });
-    overlay.appendChild(svgNode('rect', { x: liquidationOverlayLeft, y: top, width: liquidationRight - liquidationOverlayLeft, height: plotBottom - top, fill: '#071019', 'fill-opacity': .34, stroke: '#315064', 'stroke-width': 1, rx: 3 }));
+    overlay.appendChild(svgNode('rect', { x: liquidationOverlayLeft, y: top, width: liquidationOverlayRight - liquidationOverlayLeft, height: plotBottom - top, fill: '#071019', 'fill-opacity': .34, stroke: '#315064', 'stroke-width': 1, rx: 3 }));
     const wall = svgNode('g', { 'clip-path': 'url(#liquidation-clip)' });
     bins.forEach(bin => {
       if (bin.price < low - binWidth || bin.price > high + binWidth) return;
@@ -918,7 +922,7 @@ function draw(view, map, signal, volume) {
     if (!price || price < low || price > high) return;
     const yy = y(price);
     svg.appendChild(svgNode('line', { x1: left, y1: yy, x2: profileRight, y2: yy, stroke: color, 'stroke-width': name === '现价' ? 1.2 : 1.8, 'stroke-dasharray': dash, opacity: .95 }));
-    svg.appendChild(svgNode('rect', { x: profileRight - 112, y: yy - 12, width: 112, height: 22, fill: '#071019', stroke: color, rx: 5 }));
+    svg.appendChild(svgNode('rect', { x: profileRight - rightPriceLabelWidth, y: yy - 12, width: rightPriceLabelWidth, height: 22, fill: '#071019', stroke: color, rx: 5 }));
     svg.appendChild(svgNode('text', { x: profileRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11 }, name + ' ' + money(price)));
   });
   [['VAL', volume?.val, '#22c55e'], ['VAH', volume?.vah, '#ef4444']].forEach(([name, price, color]) => {
@@ -926,8 +930,8 @@ function draw(view, map, signal, volume) {
     if (!finite(price) || price < low || price > high) return;
     const yy = y(price);
     svg.appendChild(svgNode('line', { x1: left, y1: yy, x2: profileRight, y2: yy, stroke: color, 'stroke-width': 1.7, opacity: .95 }));
-    svg.appendChild(svgNode('rect', { x: volumeRight - 112, y: yy - 12, width: 112, height: 22, fill: '#071019', stroke: color, rx: 5 }));
-    svg.appendChild(svgNode('text', { x: volumeRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11 }, name + ' ' + money(price)));
+    svg.appendChild(svgNode('rect', { x: profileRight - rightPriceLabelWidth, y: yy - 12, width: rightPriceLabelWidth, height: 22, fill: '#071019', stroke: color, rx: 5 }));
+    svg.appendChild(svgNode('text', { x: profileRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11 }, name + ' ' + money(price)));
   });
   if (!embeddedChart) {
     drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high, layout);
@@ -1045,7 +1049,7 @@ function svgPoint(event) {
 // chartRegion is the wheel routing table. The vertical wheel means something different in
 // every column of this chart, so the hovered x decides which series the gesture scales.
 function chartRegion(point) {
-  if (point.x >= dims.liquidationOverlayLeft && point.x <= dims.liquidationRight) return 'liquidation';
+  if (point.x >= dims.liquidationOverlayLeft && point.x <= dims.liquidationOverlayRight) return 'liquidation';
   if (point.x >= dims.left && point.x <= dims.candleRight) return 'candles';
   if (point.x >= dims.volumeLeft && point.x <= dims.volumeRight) return 'volume';
   return 'price';
@@ -1285,7 +1289,7 @@ function installChartInteractions() {
   svg.addEventListener('pointerdown', event => {
     const point = svgPoint(event);
     let mode = '';
-    if (point.x >= dims.liquidationOverlayLeft && point.x <= dims.liquidationRight) mode = 'price';
+    if (point.x >= dims.liquidationOverlayLeft && point.x <= dims.liquidationOverlayRight) mode = 'price';
     else if (point.x >= dims.left && point.x <= dims.candleRight) mode = 'chart';
     else if (point.x >= dims.volumeLeft - 18 && point.x <= dims.profileRight) mode = 'price';
     if (!mode || !finite(chart.yLow) || !finite(chart.yHigh) || chart.yHigh <= chart.yLow) return;
