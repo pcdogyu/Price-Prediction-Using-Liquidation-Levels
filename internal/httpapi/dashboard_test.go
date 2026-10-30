@@ -217,8 +217,18 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 			t.Fatalf("bubble chart missing television viewport support %q", marker)
 		}
 	}
-	if strings.Index(body, `data-interval="24h"`) > strings.Index(body, `id="liquidation-minimum"`) || strings.Index(body, `id="liquidation-short-offset"`) > strings.Index(body, `id="chart-latest"`) {
+	if strings.Index(body, `data-interval="24h"`) > strings.Index(body, `id="liquidation-minimum"`) || strings.Index(body, `id="liquidation-minimum"`) > strings.Index(body, `id="market-backfill"`) || strings.Index(body, `id="market-backfill"`) > strings.Index(body, `id="liquidation-minimum-apply"`) || strings.Index(body, `id="liquidation-short-offset"`) > strings.Index(body, `id="chart-latest"`) {
 		t.Fatal("bubble chart controls are not placed beside their requested buttons")
+	}
+	for _, marker := range []string{
+		`id="market-backfill" type="button"`,
+		`aria-busy="false"`,
+		`aria-live="polite"`,
+		"回补K线",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("bubble chart is missing manual K-line backfill control %q", marker)
+		}
 	}
 	for _, marker := range []string{
 		"calculateBubbleChartViewportHeight",
@@ -231,6 +241,12 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"pageLimit: 3",
 		"delayMs: 350",
 		"K线自动回填",
+		"const manualMarketBackfill = { active: false }",
+		"function updateMarketBackfillButton()",
+		"function manualBackfillMarketHistory()",
+		"marketPath(chart.nextBefore)",
+		"const candleRight = 1315",
+		"const volumeLeft = candleRight + candleToVolumeGap",
 	} {
 		if !strings.Contains(string(dashboardJS), marker) {
 			t.Fatalf("bubble chart script missing television viewport support %q", marker)

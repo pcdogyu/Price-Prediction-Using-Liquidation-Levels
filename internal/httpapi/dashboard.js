@@ -93,6 +93,7 @@ const automaticMarketBackfill = {
   delayMs: 350,
   active: false
 };
+const manualMarketBackfill = { active: false };
 let streamError = '';
 let lastFailures = [];
 let logCursor = '';
@@ -139,7 +140,9 @@ const liquidationOverlayRight = rankLabelRight;
 const rightPriceLabelWidth = Math.round(112 * rightPriceAxisWidthScale);
 const volumeToPriceLabelGap = 4;
 const candleToVolumeGap = 8;
-const candleRight = 1025 + rightPriceAxisShift;
+// Give the candle strip the empty area immediately before the right-side volume
+// profile while keeping the volume, liquidation wall, and price axis panels in place.
+const candleRight = 1315;
 const volumeRight = liquidationWallRight - rightPriceLabelWidth - volumeToPriceLabelGap;
 const volumeLeft = candleRight + candleToVolumeGap;
 const dims = { height: 560, width: 1740, left: chartLeft, top: 24, bottom: 42, candleRight, volumeLeft, volumeRight, liquidationOverlayLeft, liquidationOverlayRight, liquidationLeft, liquidationRight, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft, rankLabelRight, rightPriceLabelWidth };
@@ -513,12 +516,32 @@ function cancelAutomaticMarketBackfill() {
   automaticMarketBackfill.timer = 0;
   automaticMarketBackfill.pages = 0;
   automaticMarketBackfill.active = false;
+  updateMarketBackfillButton();
 }
 
 function automaticMarketBackfillLabel() {
   return automaticMarketBackfill.active
     ? ' · K线自动回填 ' + automaticMarketBackfill.pages + '/' + automaticMarketBackfill.pageLimit + '页'
     : '';
+}
+
+function updateMarketBackfillButton() {
+  const button = $('market-backfill');
+  if (!button) return;
+  const hasLoadedMarket = chart.candles.length > 0;
+  const hasMore = chart.hasMore && !!chart.nextBefore;
+  const busy = manualMarketBackfill.active || chart.loadingOlder || automaticMarketBackfill.active;
+  const exhausted = hasLoadedMarket && !hasMore && !busy;
+  button.disabled = busy || !hasLoadedMarket || !hasMore;
+  button.textContent = manualMarketBackfill.active
+    ? '回补中…'
+    : automaticMarketBackfill.active
+      ? '自动回补中…'
+      : exhausted ? '无更多K线' : '回补K线';
+  button.setAttribute('aria-busy', String(busy));
+  button.setAttribute('aria-label', manualMarketBackfill.active || automaticMarketBackfill.active
+    ? '正在按当前周期回补K线'
+    : exhausted ? '没有更多历史K线' : '按当前周期回补一页K线');
 }
 
 function applyPriceTick(tick, render = true, force = false) {
@@ -1000,6 +1023,7 @@ function showFailures(failures) {
 async function loadOlder() {
   if (chart.loadingOlder || !chart.hasMore || !chart.nextBefore) return false;
   chart.loadingOlder = true;
+  updateMarketBackfillButton();
   const requestedSymbol = symbol;
   const requestedInterval = chart.interval;
   const controller = new AbortController();
@@ -1021,6 +1045,7 @@ async function loadOlder() {
     return false;
   } finally {
     if (olderController === controller) chart.loadingOlder = false;
+    updateMarketBackfillButton();
   }
 }
 
@@ -1028,12 +1053,14 @@ function scheduleAutomaticMarketBackfill() {
   cancelAutomaticMarketBackfill();
   if (embeddedChart || !chart.hasMore || !chart.nextBefore) return;
   automaticMarketBackfill.active = true;
+  updateMarketBackfillButton();
   const generation = automaticMarketBackfill.generation;
   const step = async () => {
     if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active) return;
     if (!chart.hasMore || !chart.nextBefore || automaticMarketBackfill.pages >= automaticMarketBackfill.pageLimit) {
       automaticMarketBackfill.active = false;
       automaticMarketBackfill.timer = 0;
+      updateMarketBackfillButton();
       if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
       return;
     }
@@ -1046,6 +1073,7 @@ function scheduleAutomaticMarketBackfill() {
     if (!loaded) {
       automaticMarketBackfill.active = false;
       automaticMarketBackfill.timer = 0;
+      updateMarketBackfillButton();
       return;
     }
     automaticMarketBackfill.pages++;
@@ -1054,6 +1082,7 @@ function scheduleAutomaticMarketBackfill() {
     } else {
       automaticMarketBackfill.active = false;
       automaticMarketBackfill.timer = 0;
+      updateMarketBackfillButton();
       if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
     }
   };
@@ -1463,6 +1492,7 @@ function resetChartState() {
   chart.atLatest = true;
   chart.newData = false;
   $('new-data').classList.add('hidden');
+  updateMarketBackfillButton();
 }
 
 function formatLog(entry) {
@@ -1604,6 +1634,19 @@ $('chart-reset').addEventListener('click', () => {
   draw(cache.market, cache.map, cache.signal, cache.volume);
   ensureWindowLiquidations();
 });
+async function manualBackfillMarketHistory() {
+  const button = $('market-backfill');
+  if (!button || manualMarketBackfill.active || button.disabled) return;
+  manualMarketBackfill.active = true;
+  updateMarketBackfillButton();
+  try {
+    await loadOlder();
+  } finally {
+    manualMarketBackfill.active = false;
+    updateMarketBackfillButton();
+  }
+}
+$('market-backfill').addEventListener('click', manualBackfillMarketHistory);
 $('bubble-retry').addEventListener('click', () => ensureWindowLiquidations(true));
 $('tooltip').addEventListener('pointerenter', () => clearTimeout(tooltipHideTimer));
 $('tooltip').addEventListener('pointerleave', () => { $('tooltip').style.display = 'none'; });
@@ -1625,6 +1668,7 @@ $('log-copy').addEventListener('click', async () => {
 });
 
 installLiquidationControls();
+updateMarketBackfillButton();
 if (!embeddedChart) installChartSizeControls();
 if (!embeddedChart) installChartInteractions();
 if (embeddedChart) installEmbeddedChartInteractions();
