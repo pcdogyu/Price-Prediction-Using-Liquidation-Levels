@@ -450,6 +450,76 @@ func TestManualAlertTriggerUsesPersistedDirectionAndPrice(t *testing.T) {
 	}
 }
 
+func TestManualCloseOnlyAlertTriggerClosesOppositePosition(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	svc, cfg, st := alertTestService(t, "manual-close-only-alert.db")
+	cfg.SteadyWebhookURL = server.URL
+	cfg.SteadyWebhookAPIID = "okx_bot"
+	cfg.SteadyWebhookTargetExchange = "okx"
+	cfg.SteadyWebhookTradeEnv = "demo"
+	cfg.SteadyWebhookExchange = "binance"
+	cfg.SteadyWebhookInterval = "3m"
+	cfg.SteadyWebhookTokenNonce = "nonce-value"
+	cfg.SteadyWebhookToken = "token-value"
+	svc.alerts.webhookURL = cfg.SteadyWebhookURL
+	svc.alerts.webhookConfig = cfg
+	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
+	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	svc.alerts.tenantID = "pcdog"
+	created := time.Date(2026, 10, 30, 10, 35, 53, 0, time.UTC)
+	if _, err := st.SaveLiquidationAlert(context.Background(), domain.LiquidationAlert{
+		ID: "manual-close-only-alert", Symbol: "BTCUSDT", Side: "short", TradeSide: "short",
+		WindowMinutes: 3, NotionalUSD: 400000, ThresholdUSD: 300000,
+		TriggeredAt: created, ReferencePrice: 77585.1, Status: domain.AlertStateAggressive, UpdatedAt: created,
+		FilterApplied: true, OpenAllowed: false, CloseAllowed: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.TriggerAlert(context.Background(), "alert", "manual-close-only-alert"); err != nil {
+		t.Fatalf("manual close-only trigger: %v", err)
+	}
+	select {
+	case raw := <-requests:
+		var got map[string]string
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("webhook body is not JSON: %v", err)
+		}
+		if got["action"] != "sell" || got["position_effect"] != "close" || got["position_side"] != "long" || got["order_intent"] != "close_long" {
+			t.Fatalf("close-only alert must close the opposite position: %s", raw)
+		}
+		if got["condition"] != "manual_liquidation_trigger" || got["source"] != "liquidation_alert_manual" {
+			t.Fatalf("manual close-only payload source changed: %s", raw)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("manual close-only alert trigger was not delivered to webhook")
+	}
+}
+
+func TestManualCloseOnlySignalTriggerClosesOppositePosition(t *testing.T) {
+	signal := domain.TradeSignal{
+		Symbol: "BTCUSDT", Kind: domain.SignalAggressive, Side: "short", ReferencePrice: 77585.1,
+		FilterApplied: true, OpenAllowed: false, CloseAllowed: true,
+	}
+	raw, err := buildManualWebhookPayload(signal, config.Config{})
+	if err != nil {
+		t.Fatalf("build manual close-only payload: %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	if got["action"] != "sell" || got["position_effect"] != "close" || got["position_side"] != "long" || got["order_intent"] != "close_long" {
+		t.Fatalf("close-only signal must close the opposite position: %s", raw)
+	}
+}
+
 func TestManualSignalTriggerAddsCurrentTenantToLegacyHistory(t *testing.T) {
 	requests := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

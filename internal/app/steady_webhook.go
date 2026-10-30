@@ -44,6 +44,12 @@ func buildSteadyWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]
 }
 
 func buildManualWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]byte, error) {
+	if signal.PositionEffect == "close" || (signal.FilterApplied && !signal.OpenAllowed && signal.CloseAllowed) {
+		return buildPositionCloseWebhookPayload(signal, cfg, "manual_liquidation_trigger", "liquidation_alert_manual")
+	}
+	if signal.FilterApplied && !signal.OpenAllowed {
+		return nil, fmt.Errorf("manual signal does not allow opening or closing")
+	}
 	return buildWebhookPayload(signal, cfg, "manual_liquidation_trigger", "liquidation_alert_manual")
 }
 
@@ -93,6 +99,14 @@ func buildPrecloseWebhookPayload(signal domain.TradeSignal, cfg config.Config) (
 	source := "liquidation_alert_preclose"
 	if signal.Kind == domain.SignalValueArea {
 		source = "value_area_preclose"
+	}
+	return buildPositionWebhookPayload(signal, cfg, condition, source, action, "close", positionSide, intent)
+}
+
+func buildPositionCloseWebhookPayload(signal domain.TradeSignal, cfg config.Config, condition, source string) ([]byte, error) {
+	action, positionSide, intent, err := steadyWebhookCloseDirection(signal.Side)
+	if err != nil {
+		return nil, err
 	}
 	return buildPositionWebhookPayload(signal, cfg, condition, source, action, "close", positionSide, intent)
 }

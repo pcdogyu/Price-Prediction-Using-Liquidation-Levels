@@ -680,9 +680,11 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 			return manualTriggerResult{}, err
 		}
 		signal = domain.TradeSignal{
-			ID: row.ID, AlertID: row.ID, TenantID: rtm.tenantID, Symbol: row.Symbol, Side: row.TradeSide,
+			ID: row.ID, AlertID: row.ID, TenantID: rtm.tenantID, Symbol: row.Symbol, Kind: "alert", Side: row.TradeSide,
 			LiquidationSide: row.Side, CreatedAt: time.Now().UTC(), ReferencePrice: row.ReferencePrice,
 			AlertNotionalUSD: row.NotionalUSD, ThresholdUSD: row.ThresholdUSD, WindowMinutes: row.WindowMinutes,
+			FilterApplied: row.FilterApplied, OpenAllowed: row.OpenAllowed, CloseAllowed: row.CloseAllowed,
+			FilterReason: row.FilterReason, MinProfitSpread: row.MinProfitSpread,
 		}
 	case domain.SignalAggressive, domain.SignalSteady, domain.SignalValueArea:
 		row, err := rtm.store.TradeSignalByID(ctx, recordID)
