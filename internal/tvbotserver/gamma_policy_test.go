@@ -74,3 +74,32 @@ func TestTVOrderGammaPolicyNeverChangesCloseSignals(t *testing.T) {
 		t.Fatalf("close signal changed under negative Gamma: %#v", signal)
 	}
 }
+
+func TestManualAlertOrderBypassesNegativeGammaPolicy(t *testing.T) {
+	for _, condition := range []string{"manual_liquidation_trigger", "value_area_manual"} {
+		t.Run(condition, func(t *testing.T) {
+			signal := tvbottrading.Signal{
+				Action:         tvbottrading.ActionLong,
+				PositionEffect: tvbottrading.PositionEffectOpen,
+				PositionSide:   tvbottrading.PositionSideLong,
+				Condition:      condition,
+			}
+			if !manualAlertOrderBypassesGamma(signal) {
+				t.Fatalf("manual alert condition %q should bypass negative Gamma", condition)
+			}
+		})
+	}
+	for _, condition := range []string{"steady_liquidation_confirmation", "manual_liquidation_trigger"} {
+		t.Run(condition+"_close", func(t *testing.T) {
+			signal := tvbottrading.Signal{
+				Action:         tvbottrading.ActionLong,
+				PositionEffect: tvbottrading.PositionEffectClose,
+				PositionSide:   tvbottrading.PositionSideShort,
+				Condition:      condition,
+			}
+			if manualAlertOrderBypassesGamma(signal) {
+				t.Fatalf("close condition %q should not use the manual opening bypass", condition)
+			}
+		})
+	}
+}

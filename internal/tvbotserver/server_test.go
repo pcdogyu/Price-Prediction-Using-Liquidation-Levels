@@ -1657,6 +1657,58 @@ func TestTVOrderNegativeETHGammaDoesNotFilterCloseSignals(t *testing.T) {
 	}
 }
 
+func TestTVOrderManualAlertTriggerBypassesNegativeETHGammaPolicies(t *testing.T) {
+	negative := -0.25
+	for _, tc := range []struct {
+		name      string
+		condition string
+		policy    string
+	}{
+		{name: "liquidation_ignore", condition: "manual_liquidation_trigger", policy: config.GammaNegativePolicyIgnore},
+		{name: "liquidation_flip", condition: "manual_liquidation_trigger", policy: config.GammaNegativePolicyFlip},
+		{name: "value_area_ignore", condition: "value_area_manual", policy: config.GammaNegativePolicyIgnore},
+		{name: "value_area_flip", condition: "value_area_manual", policy: config.GammaNegativePolicyFlip},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServer(t)
+			srv.SetGammaProvider(func(context.Context) GammaSnapshot {
+				return GammaSnapshot{State: "ok", Value: &negative}
+			})
+			cfg := srv.ConfigStore.Get()
+			cfg.Trading.GammaNegativePolicy = tc.policy
+			srv.ConfigStore = config.NewStore("", cfg)
+			signal := validSignal(t, srv)
+			signal.Condition = tc.condition
+			signal.PositionEffect = trading.PositionEffectOpen
+			signal.PositionSide = trading.PositionSideLong
+			signal.OrderIntent = "entry_long"
+			signal.Normalize()
+			signal.Token = srv.Token.Generate(signal.CanonicalTokenPayload())
+			body, err := json.Marshal(signal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rr := httptest.NewRecorder()
+			srv.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/tvorder", bytes.NewReader(body)))
+			if rr.Code != http.StatusAccepted {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+			resp := decodeTVOrderSignalResponse(t, rr.Body.Bytes())
+			if resp.Status != "accepted" || resp.Reason != "" {
+				t.Fatalf("manual Gamma bypass response=%#v body=%s", resp, rr.Body.String())
+			}
+			select {
+			case got := <-srv.Executor.(fakeExecutor).calls:
+				if got.Action != trading.ActionLong || got.PositionSide != trading.PositionSideLong || got.PositionEffect != trading.PositionEffectOpen || got.OrderIntent != "entry_long" {
+					t.Fatalf("manual alert was changed by Gamma policy: %#v", got)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("manual alert did not reach executor")
+			}
+		})
+	}
+}
+
 func TestIgnoredEntrySignalUsesCaseInsensitiveFuzzyMatching(t *testing.T) {
 	cfg := config.Default()
 	cfg.Trading.IgnoredCoinpairs = []string{"SYRUP", " eth "}

@@ -221,7 +221,7 @@ func (s *Server) handleTVOrder(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if s.applyTVOrderGammaPolicy(r.Context(), &signal, cfg) {
+		if !manualAlertOrderBypassesGamma(signal) && s.applyTVOrderGammaPolicy(r.Context(), &signal, cfg) {
 			record, err := s.Orders.RecordIgnoredReason(signal, "eth_gamma_negative", "ETHUSDT Deribit Gamma is negative and the configured policy ignores opening signals", now)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "store_error", err.Error())

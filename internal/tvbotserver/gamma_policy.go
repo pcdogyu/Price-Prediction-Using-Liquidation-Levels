@@ -49,6 +49,23 @@ func (s *Server) applyTVOrderGammaPolicy(ctx context.Context, signal *tvbottradi
 	return false
 }
 
+// manualAlertOrderBypassesGamma identifies order requests created by the
+// authenticated alerts-page "触发下单" action. These signals still pass
+// through the rest of the /tvorder validation and risk pipeline, but the
+// operator explicitly requested the persisted alert direction, so the
+// automatic negative-Gamma opening gate must not ignore or flip it.
+func manualAlertOrderBypassesGamma(signal tvbottrading.Signal) bool {
+	if signal.PositionEffect != tvbottrading.PositionEffectOpen {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(signal.Condition)) {
+	case "manual_liquidation_trigger", "value_area_manual":
+		return true
+	default:
+		return false
+	}
+}
+
 func flipTVOrderEntryIntent(raw string, action tvbottrading.Side) string {
 	parts := strings.Split(strings.TrimSpace(raw), "|")
 	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
