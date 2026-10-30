@@ -85,6 +85,14 @@ let refreshing = false;
 let refreshSequence = 0;
 let refreshController;
 let olderController;
+const automaticMarketBackfill = {
+  generation: 0,
+  timer: 0,
+  pages: 0,
+  pageLimit: 3,
+  delayMs: 350,
+  active: false
+};
 let streamError = '';
 let lastFailures = [];
 let logCursor = '';
@@ -499,6 +507,20 @@ function mergeMarket(view, older, reset) {
   $('new-data').classList.toggle('hidden', !chart.newData);
 }
 
+function cancelAutomaticMarketBackfill() {
+  automaticMarketBackfill.generation++;
+  clearTimeout(automaticMarketBackfill.timer);
+  automaticMarketBackfill.timer = 0;
+  automaticMarketBackfill.pages = 0;
+  automaticMarketBackfill.active = false;
+}
+
+function automaticMarketBackfillLabel() {
+  return automaticMarketBackfill.active
+    ? ' · K线自动回填 ' + automaticMarketBackfill.pages + '/' + automaticMarketBackfill.pageLimit + '页'
+    : '';
+}
+
 function applyPriceTick(tick, render = true, force = false) {
   const tradeID = Number(tick?.trade_id);
   const tickTime = new Date(tick?.time).getTime();
@@ -770,7 +792,7 @@ function draw(view, map, signal, volume) {
   const loadState = state.status === 'loading' ? '补齐中 · ' + state.pages + '页 / ' + state.loaded + '笔' : state.status === 'error' ? '补齐失败：' + state.error + '（可重试）' : state.status === 'complete' ? '窗口已补齐' : '等待数据';
   const context = embeddedChart
     ? (chart.atLatest ? '最新K线' : '历史K线')
-    : (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · K线 ' + chart.visibleCount + '根 · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom);
+    : (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · K线 ' + chart.visibleCount + '根 · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom) + automaticMarketBackfillLabel();
   if (!range || !chartTimeScale(candles, layout.left, layout.candleRight)) {
     ['price-low', 'price-high', 'window-start', 'window-end', 'bubble-count', 'trade-marker-count'].forEach(key => svg.removeAttribute('data-' + key));
     $('chart-context').textContent = context + ' · 等待有效K线';
@@ -976,7 +998,7 @@ function showFailures(failures) {
 }
 
 async function loadOlder() {
-  if (chart.loadingOlder || !chart.hasMore || !chart.nextBefore) return;
+  if (chart.loadingOlder || !chart.hasMore || !chart.nextBefore) return false;
   chart.loadingOlder = true;
   const requestedSymbol = symbol;
   const requestedInterval = chart.interval;
@@ -985,19 +1007,57 @@ async function loadOlder() {
   const cutoff = Date.now();
   try {
     const view = await json(marketPath(chart.nextBefore), { signal: controller.signal });
-    if (controller.signal.aborted || requestedSymbol !== symbol || requestedInterval !== chart.interval) return;
+    if (controller.signal.aborted || requestedSymbol !== symbol || requestedInterval !== chart.interval) return false;
     view.queryCutoff = cutoff;
     mergeMarket(view, true, false);
     draw(cache.market, cache.map, cache.signal, cache.volume);
     ensureWindowLiquidations();
+    return true;
   } catch (error) {
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted) return false;
     lastFailures = lastFailures.filter(item => !item.startsWith('历史行情'));
     lastFailures.push('历史行情 · ' + error.message);
     showFailures(lastFailures);
+    return false;
   } finally {
     if (olderController === controller) chart.loadingOlder = false;
   }
+}
+
+function scheduleAutomaticMarketBackfill() {
+  cancelAutomaticMarketBackfill();
+  if (embeddedChart || !chart.hasMore || !chart.nextBefore) return;
+  automaticMarketBackfill.active = true;
+  const generation = automaticMarketBackfill.generation;
+  const step = async () => {
+    if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active) return;
+    if (!chart.hasMore || !chart.nextBefore || automaticMarketBackfill.pages >= automaticMarketBackfill.pageLimit) {
+      automaticMarketBackfill.active = false;
+      automaticMarketBackfill.timer = 0;
+      if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+      return;
+    }
+    if (chart.loadingOlder) {
+      automaticMarketBackfill.timer = setTimeout(step, automaticMarketBackfill.delayMs);
+      return;
+    }
+    const loaded = await loadOlder();
+    if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active) return;
+    if (!loaded) {
+      automaticMarketBackfill.active = false;
+      automaticMarketBackfill.timer = 0;
+      return;
+    }
+    automaticMarketBackfill.pages++;
+    if (chart.hasMore && chart.nextBefore && automaticMarketBackfill.pages < automaticMarketBackfill.pageLimit) {
+      automaticMarketBackfill.timer = setTimeout(step, automaticMarketBackfill.delayMs);
+    } else {
+      automaticMarketBackfill.active = false;
+      automaticMarketBackfill.timer = 0;
+      if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+    }
+  };
+  automaticMarketBackfill.timer = setTimeout(step, automaticMarketBackfill.delayMs);
 }
 
 async function refresh(resetMarket = false) {
@@ -1009,6 +1069,7 @@ async function refresh(resetMarket = false) {
   const requestedSymbol = symbol;
   const requestedInterval = chart.interval;
   refreshing = true;
+  let initializedMarket = false;
   try {
     const specs = embeddedChart
       ? [['market', '市场行情', marketPath()]]
@@ -1021,7 +1082,9 @@ async function refresh(resetMarket = false) {
       if (result.status === 'fulfilled') {
         if (key === 'market') {
           result.value.queryCutoff = cutoff;
-          mergeMarket(result.value, false, resetMarket || !chart.candles.length);
+          const reset = resetMarket || !chart.candles.length;
+          mergeMarket(result.value, false, reset);
+          initializedMarket = initializedMarket || reset;
         }
         else if (key === 'schedule') cache.schedule = { ...result.value, received_at_ms: Date.now() };
         else cache[key] = result.value;
@@ -1041,6 +1104,7 @@ async function refresh(resetMarket = false) {
       updateCoinGlassCountdown();
     }
     showFailures(lastFailures);
+    if (initializedMarket && cache.market) scheduleAutomaticMarketBackfill();
   } finally {
     if (sequence === refreshSequence) refreshing = false;
   }
@@ -1381,6 +1445,7 @@ function installEmbeddedChartInteractions() {
 
 function resetChartState() {
   bubbleLoader.reset();
+  cancelAutomaticMarketBackfill();
   refreshController?.abort();
   olderController?.abort();
   chart.loadingOlder = false;

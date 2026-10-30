@@ -227,6 +227,10 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"wrap.getBoundingClientRect().top",
 		"chartHeightLimits.minimum",
 		"setChartHeight(height, true, render)",
+		"scheduleAutomaticMarketBackfill",
+		"pageLimit: 3",
+		"delayMs: 350",
+		"K线自动回填",
 	} {
 		if !strings.Contains(string(dashboardJS), marker) {
 			t.Fatalf("bubble chart script missing television viewport support %q", marker)
