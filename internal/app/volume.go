@@ -149,7 +149,7 @@ func (s *Service) applyLiveAggregateTrades(ctx context.Context, trades []domain.
 	for _, key := range keys {
 		rows := groups[key]
 		sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
-		_, lastID, _, complete, err := s.store.VolumeProfileLevels(ctx, key.symbol, sessions[key].Start)
+		lastID, _, complete, err := s.store.VolumeProfileCursor(ctx, key.symbol, sessions[key].Start)
 		if err != nil {
 			return err
 		}
@@ -174,7 +174,7 @@ func (s *Service) syncVolumeSession(ctx context.Context, symbol string, target t
 	if target.After(session.End) {
 		target = session.End
 	}
-	_, lastID, _, _, err := s.store.VolumeProfileLevels(ctx, symbol, session.Start)
+	lastID, _, _, err := s.store.VolumeProfileCursor(ctx, symbol, session.Start)
 	if err != nil {
 		return err
 	}

@@ -288,6 +288,10 @@ func TestVolumeProfileTradesAreAtomicAndDeduplicated(t *testing.T) {
 	if levels[0].VolumeUSD != 200 || levels[1].VolumeUSD != 303 {
 		t.Fatalf("levels=%#v", levels)
 	}
+	lastID, through, complete, err = s.VolumeProfileCursor(ctx, "BTCUSDT", start)
+	if err != nil || lastID != 11 || !through.Equal(start.Add(2*time.Second)) || !complete {
+		t.Fatalf("cursor last=%d through=%v complete=%v err=%v", lastID, through, complete, err)
+	}
 }
 
 func TestRangesPredictionsAndRetention(t *testing.T) {

@@ -735,6 +735,23 @@ func (s *Store) VolumeProfileLevels(ctx context.Context, symbol string, sessionS
 	return levels, lastID, time.UnixMilli(lastMS).UTC(), complete != 0, nil
 }
 
+// VolumeProfileCursor returns only the synchronization state needed by the
+// live aggregate-trade writer. Keeping the large price-level scan out of this
+// hot path avoids repeatedly reading the whole active session from SQLite.
+func (s *Store) VolumeProfileCursor(ctx context.Context, symbol string, sessionStart time.Time) (int64, time.Time, bool, error) {
+	key := sessionStart.UTC().UnixMilli()
+	var lastID, lastMS int64
+	var complete int
+	err := s.db.QueryRowContext(ctx, `SELECT last_agg_id,last_trade_ts,complete FROM volume_profile_cursors WHERE symbol=? AND session_ts=?`, symbol, key).Scan(&lastID, &lastMS, &complete)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, time.Time{}, false, nil
+	}
+	if err != nil {
+		return 0, time.Time{}, false, err
+	}
+	return lastID, time.UnixMilli(lastMS).UTC(), complete != 0, nil
+}
+
 func (s *Store) SetVolumeProfileComplete(ctx context.Context, symbol string, sessionStart time.Time, complete bool) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO volume_profile_cursors(symbol,session_ts,last_agg_id,last_trade_ts,complete,updated_ts) VALUES(?,?,?,?,?,?) ON CONFLICT(symbol,session_ts) DO UPDATE SET complete=excluded.complete,updated_ts=excluded.updated_ts`, symbol, sessionStart.UTC().UnixMilli(), 0, 0, boolInt(complete), time.Now().UTC().UnixMilli())
 	return err
