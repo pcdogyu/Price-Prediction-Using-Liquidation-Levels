@@ -95,6 +95,7 @@ const automaticMarketBackfill = {
 };
 const manualMarketBackfill = { active: false };
 const visibleMarketBackfill = { controller: null, sequence: 0 };
+const marketRequestTimeoutMs = 15000;
 let streamError = '';
 let lastFailures = [];
 let logCursor = '';
@@ -1032,6 +1033,7 @@ async function loadOlder() {
   const requestedInterval = chart.interval;
   const controller = new AbortController();
   olderController = controller;
+  const timeout = setTimeout(() => controller.abort(), marketRequestTimeoutMs);
   const cutoff = Date.now();
   try {
     const view = await json(marketPath(chart.nextBefore), { signal: controller.signal });
@@ -1048,6 +1050,7 @@ async function loadOlder() {
     showFailures(lastFailures);
     return false;
   } finally {
+    clearTimeout(timeout);
     if (olderController === controller) chart.loadingOlder = false;
     updateMarketBackfillButton();
   }
@@ -1079,6 +1082,7 @@ async function repairCurrentMarketGap() {
   const requestedInterval = chart.interval;
   const controller = new AbortController();
   olderController = controller;
+  const timeout = setTimeout(() => controller.abort(), marketRequestTimeoutMs);
   const cutoff = Date.now();
   const wasAtLatest = chart.atLatest;
   const anchor = visibleCandles().at(-1)?.time || '';
@@ -1102,6 +1106,7 @@ async function repairCurrentMarketGap() {
     showFailures(lastFailures);
     return false;
   } finally {
+    clearTimeout(timeout);
     if (olderController === controller) chart.loadingOlder = false;
     updateMarketBackfillButton();
   }
@@ -1133,6 +1138,7 @@ async function refillVisibleMarket() {
   refreshSequence++;
   refreshController?.abort();
   visibleMarketBackfill.controller = controller;
+  const timeout = setTimeout(() => controller.abort(), marketRequestTimeoutMs);
   manualMarketBackfill.active = true;
   updateMarketBackfillButton();
   try {
@@ -1162,6 +1168,7 @@ async function refillVisibleMarket() {
     showFailures(lastFailures);
     return false;
   } finally {
+    clearTimeout(timeout);
     if (visibleMarketBackfill.controller === controller) visibleMarketBackfill.controller = null;
     if (requestID === visibleMarketBackfill.sequence) {
       manualMarketBackfill.active = false;

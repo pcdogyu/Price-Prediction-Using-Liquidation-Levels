@@ -243,6 +243,7 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"K线自动回填",
 		"const manualMarketBackfill = { active: false }",
 		"const visibleMarketBackfill = { controller: null, sequence: 0 }",
+		"const marketRequestTimeoutMs = 15000",
 		"function updateMarketBackfillButton()",
 		"function manualBackfillMarketHistory()",
 		"function visibleMarketPath()",
