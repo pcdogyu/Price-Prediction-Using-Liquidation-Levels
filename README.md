@@ -108,6 +108,8 @@ GET /metrics
 
 生产环境可用 `liquidation-predictor hash-password` 从标准输入生成 Argon2id PHC 哈希，并通过 `APP_AUTH_PASSWORD_HASH` 注入主账号。也可以将密码从标准输入传给 `liquidation-predictor add-user <用户名>`，在 SQLite 中新增或更新额外账号；数据库仅保存 Argon2id 哈希。新增账号后重启服务即可加载，主账号及已有会话不受影响。登录会话有效期为 7 天，Cookie 使用 Secure、HttpOnly 和 SameSite=Strict；程序日志以 JSON Lines 写入 `APP_LOG_PATH`，日志接口只允许已登录会话访问。
 
+气泡图的“回补K线”会按当前可见时间窗口重新请求 `/api/v1/market`（带 `repair=1`），覆盖相同时间戳的异常值并触发服务端缺口修复；按钮不会因为已经到达本地最早分页而失效。回补期间暂停并发的行情刷新，完成、失败或取消后都会恢复按钮状态，并保留当前历史位置、K 线缩放和手动纵轴；完成后重新校准可视清算气泡。
+
 ## 模型规则
 
 - 每分钟更新公开行情，每 5 分钟固定一次墙并生成预测。

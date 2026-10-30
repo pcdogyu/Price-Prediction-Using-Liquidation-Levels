@@ -94,6 +94,7 @@ const automaticMarketBackfill = {
   active: false
 };
 const manualMarketBackfill = { active: false };
+const visibleMarketBackfill = { controller: null, sequence: 0 };
 let streamError = '';
 let lastFailures = [];
 let logCursor = '';
@@ -364,6 +365,17 @@ function marketPath(before = '', options = {}) {
   return 'market?' + params.toString();
 }
 
+function visibleMarketPath() {
+  const candles = visibleCandles();
+  if (!candles.length) return '';
+  const last = Date.parse(candles.at(-1).time);
+  const before = chart.atLatest || !Number.isFinite(last)
+    ? ''
+    : new Date(last + (intervalMilliseconds[chart.interval] || 900000)).toISOString();
+  const limit = Math.min(500, Math.max(chart.visibleCount, candles.length));
+  return marketPath(before, { limit, repair: true });
+}
+
 function captureCountdown(value) {
   const seconds = Math.max(0, Math.ceil(value / 1000));
   const hours = Math.floor(seconds / 3600);
@@ -531,21 +543,17 @@ function updateMarketBackfillButton() {
   const button = $('market-backfill');
   if (!button) return;
   const hasLoadedMarket = chart.candles.length > 0;
-  const hasMore = chart.hasMore && !!chart.nextBefore;
-  const hasGap = hasLoadedMarket && !!currentMarketGap();
-  const hasWork = hasMore || hasGap;
   const busy = manualMarketBackfill.active || chart.loadingOlder || automaticMarketBackfill.active;
-  const exhausted = hasLoadedMarket && !hasWork && !busy;
-  button.disabled = busy || !hasLoadedMarket || !hasWork;
+  button.disabled = busy || !hasLoadedMarket;
   button.textContent = manualMarketBackfill.active
     ? '回补中…'
     : automaticMarketBackfill.active
       ? '自动回补中…'
-      : exhausted ? '无更多K线' : '回补K线';
+      : '回补K线';
   button.setAttribute('aria-busy', String(busy));
   button.setAttribute('aria-label', manualMarketBackfill.active || automaticMarketBackfill.active
     ? '正在按当前周期回补K线'
-    : exhausted ? '没有更多历史K线' : '按当前周期回补一页K线');
+    : '回补当前显示的K线');
 }
 
 function applyPriceTick(tick, render = true, force = false) {
@@ -1017,7 +1025,7 @@ function showFailures(failures) {
 }
 
 async function loadOlder() {
-  if (chart.loadingOlder || !chart.hasMore || !chart.nextBefore) return false;
+  if (chart.loadingOlder || manualMarketBackfill.active || !chart.hasMore || !chart.nextBefore) return false;
   chart.loadingOlder = true;
   updateMarketBackfillButton();
   const requestedSymbol = symbol;
@@ -1099,6 +1107,69 @@ async function repairCurrentMarketGap() {
   }
 }
 
+// Re-request the currently visible candle window.  The response may replace
+// values at existing timestamps and repair internal gaps on the server, while
+// the preserved chart state keeps a historical view, zoom, and manual axis in
+// exactly the same place.
+async function refillVisibleMarket() {
+  if (visibleMarketBackfill.controller || chart.loadingOlder || !chart.candles.length) return false;
+  const requestPath = visibleMarketPath();
+  if (!requestPath) return false;
+  const requestID = ++visibleMarketBackfill.sequence;
+  const requestedSymbol = symbol;
+  const requestedInterval = chart.interval;
+  const preserved = {
+    windowEnd: chart.windowEnd,
+    atLatest: chart.atLatest,
+    newData: chart.newData,
+    yLow: chart.yLow,
+    yHigh: chart.yHigh,
+    autoSpan: chart.autoSpan,
+    yManual: chart.yManual,
+    hasMore: chart.hasMore,
+    nextBefore: chart.nextBefore
+  };
+  const controller = new AbortController();
+  refreshSequence++;
+  refreshController?.abort();
+  visibleMarketBackfill.controller = controller;
+  manualMarketBackfill.active = true;
+  updateMarketBackfillButton();
+  try {
+    const view = await json(requestPath, { signal: controller.signal });
+    if (controller.signal.aborted || requestID !== visibleMarketBackfill.sequence || requestedSymbol !== symbol || requestedInterval !== chart.interval) return false;
+    view.queryCutoff = Date.now();
+    mergeMarket(view, false, false);
+    chart.windowEnd = preserved.atLatest
+      ? chart.candles.length
+      : Math.max(0, Math.min(preserved.windowEnd, chart.candles.length));
+    chart.atLatest = preserved.atLatest;
+    chart.newData = preserved.newData;
+    chart.yLow = preserved.yLow;
+    chart.yHigh = preserved.yHigh;
+    chart.autoSpan = preserved.autoSpan;
+    chart.yManual = preserved.yManual;
+    chart.hasMore = preserved.hasMore;
+    chart.nextBefore = preserved.nextBefore;
+    $('new-data').classList.toggle('hidden', !chart.newData);
+    draw(cache.market, cache.map, cache.signal, cache.volume);
+    ensureWindowLiquidations();
+    return true;
+  } catch (error) {
+    if (controller.signal.aborted) return false;
+    lastFailures = lastFailures.filter(item => !item.startsWith('当前K线回补'));
+    lastFailures.push('当前K线回补 · ' + error.message);
+    showFailures(lastFailures);
+    return false;
+  } finally {
+    if (visibleMarketBackfill.controller === controller) visibleMarketBackfill.controller = null;
+    if (requestID === visibleMarketBackfill.sequence) {
+      manualMarketBackfill.active = false;
+      updateMarketBackfillButton();
+    }
+  }
+}
+
 function scheduleAutomaticMarketBackfill() {
   cancelAutomaticMarketBackfill();
   if (embeddedChart || !chart.hasMore || !chart.nextBefore) return;
@@ -1140,6 +1211,7 @@ function scheduleAutomaticMarketBackfill() {
 }
 
 async function refresh(resetMarket = false) {
+  if (manualMarketBackfill.active) return;
   const sequence = ++refreshSequence;
   refreshController?.abort();
   const controller = new AbortController();
@@ -1527,6 +1599,10 @@ function resetChartState() {
   cancelAutomaticMarketBackfill();
   refreshController?.abort();
   olderController?.abort();
+  visibleMarketBackfill.sequence++;
+  visibleMarketBackfill.controller?.abort();
+  visibleMarketBackfill.controller = null;
+  manualMarketBackfill.active = false;
   chart.loadingOlder = false;
   chart.candles = [];
   chart.signals = [];
@@ -1687,15 +1763,7 @@ $('chart-reset').addEventListener('click', () => {
 async function manualBackfillMarketHistory() {
   const button = $('market-backfill');
   if (!button || manualMarketBackfill.active || button.disabled) return;
-  manualMarketBackfill.active = true;
-  updateMarketBackfillButton();
-  try {
-    if (currentMarketGap()) await repairCurrentMarketGap();
-    else await loadOlder();
-  } finally {
-    manualMarketBackfill.active = false;
-    updateMarketBackfillButton();
-  }
+  await refillVisibleMarket();
 }
 $('market-backfill').addEventListener('click', manualBackfillMarketHistory);
 $('bubble-retry').addEventListener('click', () => ensureWindowLiquidations(true));

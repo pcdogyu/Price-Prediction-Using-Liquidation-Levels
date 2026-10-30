@@ -183,11 +183,36 @@ with sync_playwright() as playwright:
 
     page.goto(base + "/bubbles", wait_until="domcontentloaded")
     idle()
+    page.wait_for_function("() => !automaticMarketBackfill.active && !chart.loadingOlder")
     if not production:
         assert page.locator("#upper-status").count() == 0
         assert page.locator("#lower-status").count() == 0
         assert page.locator("#classic-pivot-title").count() == 0
     initial = check_axis()
+    backfill_before = page.evaluate("""() => {
+      chart.yManual = true;
+      chart.yLow += 1;
+      chart.yHigh -= 1;
+      chart.autoSpan = chart.yHigh - chart.yLow;
+      draw(cache.market, cache.map, cache.signal, cache.volume);
+      const svg = document.getElementById('market-chart');
+      return {start: svg.dataset.windowStart, end: svg.dataset.windowEnd, low: chart.yLow, high: chart.yHigh, manual: chart.yManual};
+    }""")
+    assert not page.locator("#market-backfill").is_disabled()
+    page.locator("#market-backfill").click()
+    idle()
+    backfill_after = page.evaluate("""() => {
+      const svg = document.getElementById('market-chart');
+      const button = document.getElementById('market-backfill');
+      return {start: svg.dataset.windowStart, end: svg.dataset.windowEnd, low: chart.yLow, high: chart.yHigh, manual: chart.yManual, text: button.textContent, disabled: button.disabled, busy: button.getAttribute('aria-busy')};
+    }""")
+    assert backfill_after["start"] == backfill_before["start"] and backfill_after["end"] == backfill_before["end"], (backfill_before, backfill_after)
+    assert backfill_after["low"] == backfill_before["low"] and backfill_after["high"] == backfill_before["high"] and backfill_after["manual"] is True, (backfill_before, backfill_after)
+    assert backfill_after["text"] == "回补K线" and backfill_after["disabled"] is False and backfill_after["busy"] == "false", backfill_after
+    repair_requests = [query for path, query in requests if path.endswith("/market") and query.get("repair") == "1"]
+    assert repair_requests, requests
+    page.locator("#chart-reset").click()
+    check_axis()
     pattern_view = page.evaluate("""() => ({
       tips: Array.from(document.querySelectorAll('[data-tip*="K线形态"]'), e => e.getAttribute('data-tip')),
       legend: document.querySelector('.legend').textContent,
