@@ -234,11 +234,15 @@ with sync_playwright() as playwright:
             profile: dims.profileRight,
             rightPriceLabelWidth: dims.rightPriceLabelWidth,
             volumeToPriceLabelGap: dims.profileRight - dims.volumeRight - dims.rightPriceLabelWidth,
+            candleToVolumeGap: dims.volumeLeft - dims.candleRight,
             rightPriceAxisWidthScale: rightPriceAxisWidthScale,
             walls: Array.from(svg.querySelectorAll('[data-wall]')).map(e => ({
               x: number(e, 'x'), width: number(e, 'width')
             })),
             ranks: Array.from(svg.querySelectorAll('[data-liquidation-rank] rect')).map(e => ({
+              x: number(e, 'x'), width: number(e, 'width')
+            })),
+            volumeBars: Array.from(svg.querySelectorAll('[data-volume-bar]')).map(e => ({
               x: number(e, 'x'), width: number(e, 'width')
             })),
             title: number(svg.querySelector('[data-liquidation-title]'), 'x')
@@ -261,6 +265,12 @@ with sync_playwright() as playwright:
         assert liquidation_layout["rightPriceAxisWidthScale"] == .5, liquidation_layout
         assert liquidation_layout["rightPriceLabelWidth"] == 56, liquidation_layout
         assert liquidation_layout["volumeToPriceLabelGap"] == 4, liquidation_layout
+        assert liquidation_layout["candleToVolumeGap"] == 8, liquidation_layout
+        assert liquidation_layout["volume"][1] == 1565 and liquidation_layout["profile"] == 1625, liquidation_layout
+        assert liquidation_layout["volumeBars"] and all(
+            liquidation_layout["volume"][0] <= item["x"] and item["x"] + item["width"] <= liquidation_layout["volume"][1] + 0.01
+            for item in liquidation_layout["volumeBars"]
+        ), liquidation_layout
         rank_text = page.locator('[data-liquidation-rank] text').first
         rank_box = rank_text.bounding_box()
         page.mouse.move(rank_box["x"] + rank_box["width"] / 2, rank_box["y"] + rank_box["height"] / 2)
@@ -271,6 +281,11 @@ with sync_playwright() as playwright:
         wall_box = wall.bounding_box()
         page.mouse.move(wall_box["x"] + wall_box["width"] / 2, wall_box["y"] + .2)
         expect(page.locator("#tooltip")).to_contain_text("清算墙")
+        page.mouse.move(5, 5)
+        volume = page.locator('[data-volume-bar]').first
+        volume_box = volume.bounding_box()
+        page.mouse.move(volume_box["x"] + volume_box["width"] / 2, volume_box["y"] + volume_box["height"] / 2)
+        expect(page.locator("#tooltip")).to_contain_text("成交额")
         page.mouse.move(5, 5)
         # Bubbles clamp to the candle plot, whose right edge follows dims.candleRight after the
         # chart enlargement, so read the live geometry instead of hardcoding pixel bounds.

@@ -130,9 +130,11 @@ const rankLabelRight = rankLabelLeft + liquidationRankLabelWidth;
 const liquidationOverlayRight = rankLabelRight;
 const rightPriceLabelWidth = Math.round(112 * rightPriceAxisWidthScale);
 const volumeToPriceLabelGap = 4;
+const candleToVolumeGap = 8;
+const candleRight = 1025 + rightPriceAxisShift;
 const volumeRight = liquidationWallRight - rightPriceLabelWidth - volumeToPriceLabelGap;
-const volumeLeft = volumeRight - (1280 - 1060);
-const dims = { height: 560, width: 1740, left: chartLeft, top: 24, bottom: 42, candleRight: 1025 + rightPriceAxisShift, volumeLeft, volumeRight, liquidationOverlayLeft, liquidationOverlayRight, liquidationLeft, liquidationRight, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft, rankLabelRight, rightPriceLabelWidth };
+const volumeLeft = candleRight + candleToVolumeGap;
+const dims = { height: 560, width: 1740, left: chartLeft, top: 24, bottom: 42, candleRight, volumeLeft, volumeRight, liquidationOverlayLeft, liquidationOverlayRight, liquidationLeft, liquidationRight, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft, rankLabelRight, rightPriceLabelWidth };
 const embeddedChartCandleRight = 1668;
 if (!intervalName[chart.interval]) chart.interval = '15m';
 
@@ -804,7 +806,7 @@ function draw(view, map, signal, volume) {
     svg.appendChild(svgNode('line', { x1: profileRight, y1: yy, x2: profileRight + 6, y2: yy, stroke: '#527083', 'stroke-width': 1 }));
     svg.appendChild(svgNode('text', { x: axisPriceRight, y: yy + 4, 'text-anchor': 'end', fill: '#9ab4c4', 'font-size': 11 }, money(price)));
   }
-  svg.appendChild(svgNode('line', { x1: volumeLeft - 18, y1: top, x2: volumeLeft - 18, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
+  svg.appendChild(svgNode('line', { x1: volumeLeft - candleToVolumeGap, y1: top, x2: volumeLeft - candleToVolumeGap, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
   svg.appendChild(svgNode('line', { x1: liquidationOverlayLeft - 4, y1: top, x2: liquidationOverlayLeft - 4, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
   svg.appendChild(svgNode('line', { x1: profileRight, y1: top, x2: profileRight, y2: plotBottom, stroke: '#527083', 'stroke-width': 1 }));
   const timeScale = chartTimeScale(candles, left, candleRight);
@@ -1294,7 +1296,7 @@ function installChartInteractions() {
     let mode = '';
     if (point.x >= dims.liquidationOverlayLeft && point.x <= dims.liquidationOverlayRight) mode = 'price';
     else if (point.x >= dims.left && point.x <= dims.candleRight) mode = 'chart';
-    else if (point.x >= dims.volumeLeft - 18 && point.x <= dims.profileRight) mode = 'price';
+    else if (point.x >= dims.volumeLeft - candleToVolumeGap && point.x <= dims.profileRight) mode = 'price';
     if (!mode || !finite(chart.yLow) || !finite(chart.yHigh) || chart.yHigh <= chart.yLow) return;
     event.preventDefault();
     chart.drag = { mode, pointerId: event.pointerId, x: point.x, y: point.y, end: chart.windowEnd, low: chart.yLow, high: chart.yHigh };
