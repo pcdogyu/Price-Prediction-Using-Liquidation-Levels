@@ -1657,7 +1657,24 @@ const tvbotHTML = `<!doctype html>
     .pending-order-table .pending-filled-col { width: 6%; }
     .pending-order-table .pending-age-col { width: 6.5%; }
     .pending-order-table .pending-state-col { width: 5.5%; }
-    .pending-order-table .pending-actions-col { width: 5%; }
+    .pending-order-table .pending-actions-col {
+      width: 8%;
+      min-width: 120px;
+    }
+    .pending-order-table th:last-child,
+    .pending-order-table td:last-child {
+      position: sticky;
+      right: 0;
+      z-index: 2;
+      background: var(--panel);
+      box-shadow: -8px 0 14px -12px rgba(23, 32, 51, 0.75);
+    }
+    .pending-order-table th:last-child {
+      z-index: 3;
+    }
+    .pending-order-table tbody tr:hover td:last-child {
+      background: var(--hover-bg);
+    }
     pre {
       margin: 0;
       white-space: pre-wrap;
