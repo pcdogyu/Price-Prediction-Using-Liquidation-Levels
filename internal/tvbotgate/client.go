@@ -436,13 +436,14 @@ func rawString(raw json.RawMessage) string {
 type PriceTriggeredInitial struct {
 	Contract     string `json:"contract"`
 	Size         string `json:"size"`
-	Amount       string `json:"amount"`
+	Amount       string `json:"amount,omitempty"`
 	Price        string `json:"price"`
-	TIF          string `json:"tif"`
-	Text         string `json:"text"`
-	ReduceOnly   bool   `json:"reduce_only"`
-	IsReduceOnly bool   `json:"is_reduce_only"`
-	IsClose      bool   `json:"is_close"`
+	TIF          string `json:"tif,omitempty"`
+	Text         string `json:"text,omitempty"`
+	Close        bool   `json:"close,omitempty"`
+	ReduceOnly   bool   `json:"reduce_only,omitempty"`
+	IsReduceOnly bool   `json:"is_reduce_only,omitempty"`
+	IsClose      bool   `json:"is_close,omitempty"`
 }
 
 func (p *PriceTriggeredInitial) UnmarshalJSON(data []byte) error {
@@ -453,6 +454,7 @@ func (p *PriceTriggeredInitial) UnmarshalJSON(data []byte) error {
 		Price        json.RawMessage `json:"price"`
 		TIF          json.RawMessage `json:"tif"`
 		Text         json.RawMessage `json:"text"`
+		Close        bool            `json:"close"`
 		ReduceOnly   bool            `json:"reduce_only"`
 		IsReduceOnly bool            `json:"is_reduce_only"`
 		IsClose      bool            `json:"is_close"`
@@ -474,6 +476,7 @@ func (p *PriceTriggeredInitial) UnmarshalJSON(data []byte) error {
 		}
 		*field.out = value
 	}
+	p.Close = raw.Close
 	p.ReduceOnly = raw.ReduceOnly
 	p.IsReduceOnly = raw.IsReduceOnly
 	p.IsClose = raw.IsClose
@@ -544,6 +547,40 @@ type PriceTriggeredOrder struct {
 	Reason        string                `json:"reason"`
 	OrderType     string                `json:"order_type"`
 	PosMarginMode string                `json:"pos_margin_mode"`
+}
+
+// PriceTriggeredOrderRequest is the request body for a Gate futures
+// exchange-side take-profit or stop-loss order. It is deliberately separate
+// from PriceTriggeredOrder because Gate uses the same shape for responses but
+// accepts only a subset of response fields when creating an order.
+type PriceTriggeredOrderRequest struct {
+	Initial       PriceTriggeredInitial `json:"initial"`
+	Trigger       PriceTriggeredTrigger `json:"trigger"`
+	OrderType     string                `json:"order_type"`
+	PosMarginMode string                `json:"pos_margin_mode,omitempty"`
+}
+
+type PriceTriggeredOrderAmendment struct {
+	OrderID   string `json:"order_id"`
+	Size      string `json:"size,omitempty"`
+	Amount    string `json:"amount,omitempty"`
+	Price     string `json:"price,omitempty"`
+	TriggerPx string `json:"trigger_price,omitempty"`
+	PriceType int64  `json:"price_type,omitempty"`
+	AutoSize  string `json:"auto_size,omitempty"`
+	Close     bool   `json:"close,omitempty"`
+}
+
+type PriceTriggeredOrderResponse struct {
+	ID       json.RawMessage `json:"id"`
+	IDString json.RawMessage `json:"id_string"`
+}
+
+func (r PriceTriggeredOrderResponse) IDValue() string {
+	if id := rawString(r.IDString); id != "" {
+		return id
+	}
+	return rawString(r.ID)
 }
 
 func (p *PriceTriggeredOrder) UnmarshalJSON(data []byte) error {
@@ -637,6 +674,15 @@ func (c Client) Ticker(ctx context.Context, contract string) (Ticker, error) {
 func (c Client) Contract(ctx context.Context, name string) (Contract, error) {
 	var out Contract
 	err := c.Do(ctx, http.MethodGet, "/futures/usdt/contracts/"+url.PathEscape(name), nil, nil, false, &out)
+	return out, err
+}
+func (c Client) GetOrder(ctx context.Context, contract, orderID string) (Order, error) {
+	q := url.Values{}
+	if strings.TrimSpace(contract) != "" {
+		q.Set("contract", contract)
+	}
+	var out Order
+	err := c.Do(ctx, http.MethodGet, "/futures/usdt/orders/"+url.PathEscape(strings.TrimSpace(orderID)), q, nil, true, &out)
 	return out, err
 }
 func (c Client) Positions(ctx context.Context, contract string) ([]Position, error) {
@@ -766,6 +812,27 @@ func (c Client) SetLeverage(ctx context.Context, contract string, leverage int, 
 func (c Client) PlaceOrder(ctx context.Context, req PlaceOrderRequest) (Order, error) {
 	var out Order
 	err := c.Do(ctx, http.MethodPost, "/futures/usdt/orders", nil, req, true, &out)
+	return out, err
+}
+
+func (c Client) PlacePriceTriggeredOrder(ctx context.Context, req PriceTriggeredOrderRequest) (PriceTriggeredOrderResponse, error) {
+	var out PriceTriggeredOrderResponse
+	err := c.Do(ctx, http.MethodPost, "/futures/usdt/price_orders", nil, req, true, &out)
+	return out, err
+}
+
+func (c Client) AmendPriceTriggeredOrder(ctx context.Context, orderID string, req PriceTriggeredOrderAmendment) (PriceTriggeredOrderResponse, error) {
+	if strings.TrimSpace(req.OrderID) == "" {
+		req.OrderID = strings.TrimSpace(orderID)
+	}
+	var out PriceTriggeredOrderResponse
+	err := c.Do(ctx, http.MethodPut, "/futures/usdt/price_orders/amend/"+url.PathEscape(strings.TrimSpace(orderID)), nil, req, true, &out)
+	return out, err
+}
+
+func (c Client) CancelPriceTriggeredOrder(ctx context.Context, orderID string) (PriceTriggeredOrder, error) {
+	var out PriceTriggeredOrder
+	err := c.Do(ctx, http.MethodDelete, "/futures/usdt/price_orders/"+url.PathEscape(strings.TrimSpace(orderID)), nil, nil, true, &out)
 	return out, err
 }
 

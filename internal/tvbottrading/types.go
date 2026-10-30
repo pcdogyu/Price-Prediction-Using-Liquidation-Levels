@@ -53,6 +53,10 @@ const (
 	PositionSideShort   = "short"
 )
 
+// RiskReferencePositionAverage marks exchange orders whose TP/SL must be
+// created from the exchange-reported position average after entry fills.
+const RiskReferencePositionAverage = "position_average"
+
 const (
 	MarketStrategyTrend      = "trend"
 	MarketStrategyScalp      = "scalp"
@@ -188,6 +192,7 @@ type OrderResult struct {
 	GateMsg        string             `json:"gate_msg,omitempty"`
 	PositionEffect string             `json:"position_effect,omitempty"`
 	PositionSide   string             `json:"position_side,omitempty"`
+	RiskReference  string             `json:"risk_reference,omitempty"`
 	RiskOrders     []RiskOrderResult  `json:"risk_orders,omitempty"`
 	Layers         []OrderLayerResult `json:"layers,omitempty"`
 	Partial        bool               `json:"partial,omitempty"`

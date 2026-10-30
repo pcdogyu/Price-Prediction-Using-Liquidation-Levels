@@ -586,6 +586,7 @@ func (s *Server) execute(signalID string, signal trading.Signal, cfg config.Conf
 	if err != nil {
 		if result.Partial && result.HasSubmittedOrders() {
 			_ = s.Orders.MarkPartiallySubmitted(signalID, result, err, s.now())
+			s.reconcileGatePositionRiskForSignal(signalID)
 		} else {
 			_ = s.Orders.MarkFailed(signalID, err, s.now())
 		}
@@ -595,6 +596,7 @@ func (s *Server) execute(signalID string, signal trading.Signal, cfg config.Conf
 		return
 	}
 	_ = s.Orders.MarkSubmitted(signalID, result, s.now())
+	s.reconcileGatePositionRiskForSignal(signalID)
 }
 
 func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {

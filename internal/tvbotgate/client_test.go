@@ -181,3 +181,55 @@ func TestClientFetchesOpenPriceTriggeredOrders(t *testing.T) {
 		t.Fatalf("decoded triggered order = %#v", got)
 	}
 }
+
+func TestClientCreatesAmendsAndCancelsPriceTriggeredOrder(t *testing.T) {
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/futures/usdt/price_orders":
+			var req PriceTriggeredOrderRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			if req.Initial.Contract != "ETH_USDT" || req.Initial.Size != "0" || req.Initial.Price != "0" || !req.Initial.Close || !req.Initial.ReduceOnly || req.OrderType != "close-short-order" || req.Trigger.Price != "2272.46" || req.Trigger.Rule != 1 {
+				t.Fatalf("unexpected create request: %#v", req)
+			}
+			_, _ = w.Write([]byte(`{"id":123,"id_string":"123"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/futures/usdt/price_orders/amend/123":
+			var req PriceTriggeredOrderAmendment
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			if req.OrderID != "123" || req.TriggerPx != "2272.50" || req.Price != "0" || req.Size != "0" || !req.Close {
+				t.Fatalf("unexpected amend request: %#v", req)
+			}
+			_, _ = w.Write([]byte(`{"id":123,"id_string":"123"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/futures/usdt/price_orders/123":
+			_, _ = w.Write([]byte(`{"id":123,"id_string":"123","status":"finished"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := Client{BaseURL: server.URL, Credentials: Credentials{APIKey: "key", SecretKey: "secret"}, HTTPClient: server.Client()}
+
+	created, err := client.PlacePriceTriggeredOrder(context.Background(), PriceTriggeredOrderRequest{
+		Initial:   PriceTriggeredInitial{Contract: "ETH_USDT", Size: "0", Price: "0", Close: true, ReduceOnly: true},
+		Trigger:   PriceTriggeredTrigger{Price: "2272.46", Rule: 1},
+		OrderType: "close-short-order",
+	})
+	if err != nil || created.IDValue() != "123" {
+		t.Fatalf("created=%#v err=%v", created, err)
+	}
+	amended, err := client.AmendPriceTriggeredOrder(context.Background(), "123", PriceTriggeredOrderAmendment{TriggerPx: "2272.50", Size: "0", Price: "0", Close: true})
+	if err != nil || amended.IDValue() != "123" {
+		t.Fatalf("amended=%#v err=%v", amended, err)
+	}
+	if _, err := client.CancelPriceTriggeredOrder(context.Background(), "123"); err != nil {
+		t.Fatal(err)
+	}
+	if len(methods) != 3 || methods[0] != "POST /api/v4/futures/usdt/price_orders" || methods[1] != "PUT /api/v4/futures/usdt/price_orders/amend/123" || methods[2] != "DELETE /api/v4/futures/usdt/price_orders/123" {
+		t.Fatalf("unexpected method sequence: %#v", methods)
+	}
+}

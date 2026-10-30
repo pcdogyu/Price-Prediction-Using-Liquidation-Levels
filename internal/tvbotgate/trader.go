@@ -88,15 +88,10 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 	if signal.Action == trading.ActionShort {
 		req.Size = "-" + qty
 	}
-	if signal.Risk.Type == trading.RiskTPSL {
-		tp, sl := riskTriggerPrices(signal.Action, sizingPx, signal.Risk.TPPct.Value, signal.Risk.SLPct.Value, signal.Leverage)
-		req.TPTriggerPrice = formatStep(tp, contract.OrderPriceRound, false)
-		req.SLTriggerPrice = formatStep(sl, contract.OrderPriceRound, false)
-	}
 	ack, err := client.PlaceOrder(ctx, req)
 	result := trading.OrderResult{APIID: apiID, TargetExchange: trading.ExchangeGate, InstID: contract.Name, ClOrdID: textID, OrdType: string(settings.OrderType), Px: price, Leverage: signal.Leverage, OrdID: ack.IDString(), PositionEffect: signal.PositionEffect, PositionSide: signal.PositionSide}
-	if signal.Risk.Type == trading.RiskTPSL {
-		result.RiskOrders = []trading.RiskOrderResult{{Exchange: trading.ExchangeGate, ClientAlgoID: textID + "TP", OrderType: "TAKE_PROFIT", Side: gateCloseSide(signal.Action), Quantity: qty, TriggerPrice: req.TPTriggerPrice}, {Exchange: trading.ExchangeGate, ClientAlgoID: textID + "SL", OrderType: "STOP_LOSS", Side: gateCloseSide(signal.Action), Quantity: qty, TriggerPrice: req.SLTriggerPrice}}
+	if signal.PositionEffect == trading.PositionEffectOpen && signal.Risk.Type == trading.RiskTPSL {
+		result.RiskReference = trading.RiskReferencePositionAverage
 	}
 	if err != nil {
 		if apiErr := errorAsAPI(err); apiErr != nil {
@@ -160,6 +155,9 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 		PositionEffect: signal.PositionEffect,
 		PositionSide:   signal.PositionSide,
 	}
+	if signal.PositionEffect == trading.PositionEffectOpen && signal.Risk.Type == trading.RiskTPSL {
+		result.RiskReference = trading.RiskReferencePositionAverage
+	}
 	baseID := gateClientOrderID(signal)
 	var firstErr error
 	for index, leg := range legs {
@@ -197,15 +195,6 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 		req := PlaceOrderRequest{Contract: contract.Name, Size: qty, Price: price, TIF: tif, Text: textID, PosMarginMode: marginMode}
 		if signal.Action == trading.ActionShort {
 			req.Size = "-" + qty
-		}
-		if signal.Risk.Type == trading.RiskTPSL {
-			tp, sl := riskTriggerPrices(signal.Action, leg.Price, signal.Risk.TPPct.Value, signal.Risk.SLPct.Value, signal.Leverage)
-			req.TPTriggerPrice = formatStep(tp, contract.OrderPriceRound, false)
-			req.SLTriggerPrice = formatStep(sl, contract.OrderPriceRound, false)
-			layer.RiskOrders = []trading.RiskOrderResult{
-				{Exchange: trading.ExchangeGate, ClientAlgoID: textID + "TP", OrderType: "TAKE_PROFIT", Side: gateCloseSide(signal.Action), Quantity: qty, TriggerPrice: req.TPTriggerPrice},
-				{Exchange: trading.ExchangeGate, ClientAlgoID: textID + "SL", OrderType: "STOP_LOSS", Side: gateCloseSide(signal.Action), Quantity: qty, TriggerPrice: req.SLTriggerPrice},
-			}
 		}
 		ack, placeErr := client.PlaceOrder(ctx, req)
 		layer.ClOrdID = textID
@@ -416,6 +405,12 @@ func formatStep(v float64, step string, floor bool) string {
 	return formatGatePrice(v, step)
 }
 
+// FormatPriceStep exposes Gate's contract tick formatting to the server-side
+// post-fill risk reconciler without duplicating exchange rounding logic.
+func FormatPriceStep(v float64, step string) string {
+	return formatStep(v, step, false)
+}
+
 func formatGatePrice(value float64, step string) string {
 	precision := gateStepDecimalPlaces(step)
 	if precision < 0 {
@@ -437,14 +432,6 @@ func gateStepDecimalPlaces(step string) int {
 	}
 	return len(raw) - dot - 1
 }
-func riskTriggerPrices(action trading.Side, entry, tpPct, slPct float64, leverage int) (float64, float64) {
-	tp, sl, err := trading.FixedTPSLTriggerPrices(action, entry, tpPct, slPct, leverage)
-	if err != nil {
-		return 0, 0
-	}
-	return tp, sl
-}
-
 func gateEffectiveLeverage(position Position, fallback int) int {
 	for _, raw := range []string{position.Lever, position.Leverage} {
 		value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
@@ -455,12 +442,6 @@ func gateEffectiveLeverage(position Position, fallback int) int {
 	return fallback
 }
 
-func gateCloseSide(action trading.Side) string {
-	if action == trading.ActionShort {
-		return "BUY"
-	}
-	return "SELL"
-}
 func gateClientOrderID(signal trading.Signal) string {
 	raw := strings.TrimSpace(signal.TokenNonce)
 	if raw == "" {

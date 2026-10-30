@@ -247,6 +247,41 @@ func (s *OrderStore) MarkSubmitted(signalID string, result trading.OrderResult, 
 	return errors.New("signal record not found")
 }
 
+// UpdateResult persists exchange-side follow-up details, such as TP/SL orders
+// created after a Gate position fill, without changing the original order
+// status or error state.
+func (s *OrderStore) UpdateResult(signalID string, result trading.OrderResult, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	if s.db != nil {
+		res, err := s.db.Exec(`UPDATE orders SET updated_at = ?, result_json = ? WHERE signal_id = ?`,
+			now.UTC().Format(time.RFC3339Nano), string(resultJSON), signalID)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return errors.New("signal record not found")
+		}
+		return nil
+	}
+	for i := range s.state.Orders {
+		if s.state.Orders[i].SignalID == signalID {
+			s.state.Orders[i].UpdatedAt = now.UTC()
+			s.state.Orders[i].Result = result
+			return s.saveLocked()
+		}
+	}
+	return errors.New("signal record not found")
+}
+
 func (s *OrderStore) MarkPartiallySubmitted(signalID string, result trading.OrderResult, submitErr error, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

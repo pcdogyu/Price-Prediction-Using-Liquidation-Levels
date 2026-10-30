@@ -380,6 +380,7 @@ func (b *Bridge) startMonitors(ctx context.Context, handler *tvbotserver.Server)
 	handler.StartPositionMonitor(ctx)
 	handler.StartStalePendingOrderCancelMonitor(ctx)
 	handler.StartTradeFillMonitor(ctx)
+	handler.StartGatePositionRiskMonitor(ctx)
 	handler.StartCoinpairBlockCleaner(ctx)
 	handler.StartSymbolCatalogSyncer(ctx)
 }

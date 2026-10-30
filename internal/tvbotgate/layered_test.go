@@ -56,23 +56,17 @@ func TestTraderPlacesSixLayeredGateOrdersFromOneTicker(t *testing.T) {
 	if orders[0].Price != "0" || orders[0].TIF != "ioc" || orders[1].Price != "105" || orders[2].Price != "99.5" || orders[5].Price != "97" {
 		t.Fatalf("unexpected layered Gate requests: %#v", orders)
 	}
-	if len(result.RiskOrders) != 12 {
-		t.Fatalf("expected two risk orders for each Gate layer, got %#v", result.RiskOrders)
-	}
 	for i, order := range orders {
-		if order.TPTriggerPrice == "" || order.SLTriggerPrice == "" {
-			t.Fatalf("Gate layer %d is missing its TP/SL trigger prices: %#v", i, order)
+		if order.TPTriggerPrice != "" || order.SLTriggerPrice != "" {
+			t.Fatalf("Gate layer %d must not attach static TP/SL before the actual fill: %#v", i, order)
 		}
 	}
-	if !almostEqualGatePrice(orders[0].TPTriggerPrice, 100.4) || !almostEqualGatePrice(orders[0].SLTriggerPrice, 99.8) ||
-		!almostEqualGatePrice(orders[1].TPTriggerPrice, 105.4) || !almostEqualGatePrice(orders[1].SLTriggerPrice, 104.8) ||
-		!almostEqualGatePrice(orders[2].TPTriggerPrice, 99.9) || !almostEqualGatePrice(orders[2].SLTriggerPrice, 99.3) ||
-		!almostEqualGatePrice(orders[5].TPTriggerPrice, 97.4) || !almostEqualGatePrice(orders[5].SLTriggerPrice, 96.8) {
-		t.Fatalf("each Gate layer should calculate TP/SL from its own entry price: %#v", orders)
+	if len(result.RiskOrders) != 0 || result.RiskReference != trading.RiskReferencePositionAverage {
+		t.Fatalf("Gate TP/SL should be deferred to the actual position average: %#v", result)
 	}
 	for i, layer := range result.Layers {
-		if len(layer.RiskOrders) != 2 {
-			t.Fatalf("Gate layer %d should have its own TP and SL result: %#v", i, layer)
+		if len(layer.RiskOrders) != 0 {
+			t.Fatalf("Gate layer %d must not report pre-fill TP/SL orders: %#v", i, layer)
 		}
 	}
 }
