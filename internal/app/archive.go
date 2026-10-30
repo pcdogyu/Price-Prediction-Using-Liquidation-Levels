@@ -49,9 +49,9 @@ func (s *Service) importVolumeArchives(ctx context.Context) {
 	start, before := today.AddDate(0, 0, -31), today.AddDate(0, 0, -1)
 	allReady := true
 	// Historical volume archives are as expensive as the live aggregate-trade
-	// feed. Keep them aligned with the bootstrap set so a large APP_SYMBOLS
-	// catalog does not fan out hundreds of downloads at startup.
-	for _, symbol := range s.bootstrapSymbols() {
+	// feed. Keep them aligned with the bounded volume bootstrap set so the
+	// candidate alert catalog does not fan out dozens of downloads at startup.
+	for _, symbol := range s.volumeBootstrapSymbols() {
 		for day := start; day.Before(before); day = day.AddDate(0, 0, 1) {
 			if ctx.Err() != nil {
 				return

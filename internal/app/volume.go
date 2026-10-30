@@ -18,10 +18,11 @@ func (s *Service) startVolumeProfiles(ctx context.Context) {
 }
 
 func (s *Service) volumeProfileLoop(ctx context.Context) {
-	// The candidate set is deliberately bounded by the tenant refresh. The
-	// stream is restarted only when the daily snapshot changes; depth streams
-	// remain independently limited by APP_DEPTH_SYMBOLS.
-	bootstrapSymbols := s.bootstrapSymbols()
+	// Volume profiles use the deliberately small bootstrap set. The alert and
+	// candle candidate set may contain up to 50 symbols, but replaying exact
+	// aggregate trades for that set at startup creates a large SQLite/API burst.
+	// Other candidates remain available to alerts and on-demand market views.
+	bootstrapSymbols := s.volumeBootstrapSymbols()
 	s.syncVolumeSymbols(ctx, bootstrapSymbols)
 	input := make(chan domain.AggregateTrade, 100000)
 	cancelStream := s.startCandidateAggregateStream(ctx, bootstrapSymbols, input)
@@ -40,20 +41,11 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 				_ = s.applyLiveAggregateTrades(context.Background(), batch)
 			}
 			return
-		case nextSymbols := <-s.candidateUpdates:
-			if len(nextSymbols) == 0 || sameSymbolList(bootstrapSymbols, nextSymbols) {
-				continue
-			}
-			// A candidate refresh can expand the set to 50 symbols. Stop the
-			// aggregate stream while its historical sessions are synchronized so
-			// live volume writes cannot compete with the large backfill on SQLite.
-			cancelStream()
-			bootstrapSymbols = append([]string(nil), nextSymbols...)
-			s.syncVolumeSymbols(ctx, bootstrapSymbols)
-			if ctx.Err() != nil {
-				return
-			}
-			cancelStream = s.startCandidateAggregateStream(ctx, bootstrapSymbols, input)
+		case <-s.candidateUpdates:
+			// Candidate refreshes control alert/candle coverage, not the bounded
+			// volume-profile feed. Do not restart the stream and replay a newly
+			// expanded 50-symbol set into SQLite.
+			continue
 		case trade := <-input:
 			batch = append(batch, trade)
 			if len(batch) >= 2000 {
@@ -108,16 +100,28 @@ func (s *Service) startCandidateAggregateStream(ctx context.Context, symbols []s
 	return cancel
 }
 
-func sameSymbolList(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
+func (s *Service) volumeBootstrapSymbols() []string {
+	configured := s.cfg.BootstrapSymbols
+	if len(configured) == 0 {
+		configured = []string{"BTCUSDT", "ETHUSDT"}
 	}
-	for i := range left {
-		if !strings.EqualFold(strings.TrimSpace(left[i]), strings.TrimSpace(right[i])) {
-			return false
+	seen := make(map[string]struct{}, len(configured))
+	result := make([]string, 0, len(configured))
+	for _, raw := range configured {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		if symbol == "" || symbol == "USDT" || !strings.HasSuffix(symbol, "USDT") {
+			continue
 		}
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		result = append(result, symbol)
 	}
-	return true
+	if len(result) == 0 {
+		return []string{"BTCUSDT", "ETHUSDT"}
+	}
+	return result
 }
 
 func (s *Service) applyLiveAggregateTrades(ctx context.Context, trades []domain.AggregateTrade) error {
@@ -336,7 +340,7 @@ func (s *Service) VolumeProfile(ctx context.Context, symbol string) (domain.Volu
 }
 
 func (s *Service) saveCurrentVolumeSnapshots(ctx context.Context, at time.Time) {
-	for _, symbol := range s.bootstrapSymbols() {
+	for _, symbol := range s.volumeBootstrapSymbols() {
 		profile, err := s.VolumeProfile(ctx, symbol)
 		if err != nil || profile.State != "ok" || profile.VAL == nil || profile.VAH == nil {
 			continue

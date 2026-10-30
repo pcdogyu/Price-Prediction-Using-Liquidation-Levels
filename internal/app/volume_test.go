@@ -3,8 +3,31 @@ package app
 import (
 	"testing"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
+
+func TestVolumeBootstrapSymbolsUsesBoundedConfiguredSet(t *testing.T) {
+	svc := &Service{cfg: config.Config{BootstrapSymbols: []string{" btcusdt ", "ETHUSDT", "BTCUSDT", "SOLUSDT", ""}}}
+	got := svc.volumeBootstrapSymbols()
+	want := []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"}
+	if len(got) != len(want) {
+		t.Fatalf("volume bootstrap symbols=%v, want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("volume bootstrap symbols=%v, want=%v", got, want)
+		}
+	}
+}
+
+func TestVolumeBootstrapSymbolsFallsBackToBTCAndETH(t *testing.T) {
+	svc := &Service{}
+	got := svc.volumeBootstrapSymbols()
+	if len(got) != 2 || got[0] != "BTCUSDT" || got[1] != "ETHUSDT" {
+		t.Fatalf("volume bootstrap fallback=%v", got)
+	}
+}
 
 func TestAggregateTradeGap(t *testing.T) {
 	tests := []struct {
