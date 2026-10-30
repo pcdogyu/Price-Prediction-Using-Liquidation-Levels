@@ -12,6 +12,11 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
 
+// d46f114 was committed at 2026-10-30 00:11:35 +08:00 while the temporary
+// opposite-direction mapping was active. Rows created at or after that commit
+// timestamp are repaired on startup to the intended same-direction mapping.
+const liquidationDirectionRepairCutoverUnixMilli int64 = 1793290295000
+
 // migrateAlerts creates the tables behind the liquidation alert engine. Alerts and
 // signals store their JSON payload next to the indexed columns that drive the
 // history pages, so a row stays readable even if the struct gains fields later.
@@ -58,7 +63,115 @@ CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY
 			}
 		}
 	}
-	return nil
+	return s.repairLiquidationDirectionRows(ctx)
+}
+
+// repairLiquidationDirectionRows fixes only liquidation-driven rows created at
+// or after the d46f114 cutover. The observed liquidation side remains intact;
+// the recommended trade side and its persisted filter reason are normalized to
+// the same direction. Value-area rows without a liquidation side are untouched.
+func (s *Store) repairLiquidationDirectionRows(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	type payloadRow struct {
+		id      string
+		payload []byte
+	}
+	loadRows := func(query string) ([]payloadRow, error) {
+		rows, queryErr := tx.QueryContext(ctx, query, liquidationDirectionRepairCutoverUnixMilli)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		defer rows.Close()
+		out := []payloadRow{}
+		for rows.Next() {
+			var row payloadRow
+			if queryErr = rows.Scan(&row.id, &row.payload); queryErr != nil {
+				return nil, queryErr
+			}
+			out = append(out, row)
+		}
+		if queryErr = rows.Err(); queryErr != nil {
+			return nil, queryErr
+		}
+		return out, nil
+	}
+
+	alertRows, err := loadRows(`SELECT id,payload FROM liquidation_alerts WHERE trigger_ts>=?`)
+	if err != nil {
+		return err
+	}
+	for _, row := range alertRows {
+		var alert domain.LiquidationAlert
+		if err = json.Unmarshal(row.payload, &alert); err != nil {
+			return fmt.Errorf("decode liquidation alert %s during direction repair: %w", row.id, err)
+		}
+		side := normalizedLiquidationSide(alert.Side)
+		if side == "" {
+			continue
+		}
+		reason := repairLiquidationDirectionReason(alert.FilterReason)
+		if alert.TradeSide == side && reason == alert.FilterReason {
+			continue
+		}
+		alert.TradeSide = side
+		alert.FilterReason = reason
+		payload, marshalErr := json.Marshal(alert)
+		if marshalErr != nil {
+			return fmt.Errorf("encode liquidation alert %s during direction repair: %w", row.id, marshalErr)
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE liquidation_alerts SET payload=? WHERE id=?`, payload, row.id); err != nil {
+			return err
+		}
+	}
+
+	signalRows, err := loadRows(`SELECT id,payload FROM trade_signals WHERE created_ts>=?`)
+	if err != nil {
+		return err
+	}
+	for _, row := range signalRows {
+		var signal domain.TradeSignal
+		if err = json.Unmarshal(row.payload, &signal); err != nil {
+			return fmt.Errorf("decode trade signal %s during direction repair: %w", row.id, err)
+		}
+		side := normalizedLiquidationSide(signal.LiquidationSide)
+		if side == "" {
+			continue
+		}
+		reason := repairLiquidationDirectionReason(signal.FilterReason)
+		if signal.Side == side && reason == signal.FilterReason {
+			continue
+		}
+		signal.Side = side
+		signal.FilterReason = reason
+		payload, marshalErr := json.Marshal(signal)
+		if marshalErr != nil {
+			return fmt.Errorf("encode trade signal %s during direction repair: %w", row.id, marshalErr)
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE trade_signals SET side=?,payload=? WHERE id=?`, side, payload, row.id); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func normalizedLiquidationSide(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "long", "short":
+		return strings.ToLower(strings.TrimSpace(raw))
+	default:
+		return ""
+	}
+}
+
+func repairLiquidationDirectionReason(reason string) string {
+	reason = strings.ReplaceAll(reason, "long_liquidation_open_short", "long_liquidation_open_long")
+	return strings.ReplaceAll(reason, "short_liquidation_open_long", "short_liquidation_open_short")
 }
 
 // SaveLiquidationAlert inserts or refreshes an alert row and reports whether the

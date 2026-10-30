@@ -14,9 +14,9 @@
 //  3. A FIRED cycle can still emit its steady confirmation signal when the
 //     opposite liquidation arrives inside the confirmation window.
 //
-// Liquidation side is kept as the observed position side, while the recommended
-// trade side is its opposite: short liquidations recommend long and long
-// liquidations recommend short.
+// Liquidation side is kept as the observed position side, and the recommended
+// trade side follows it: short liquidations recommend short and long
+// liquidations recommend long.
 //
 // The engine is a pure state machine over LiquidationEvent values with an
 // injectable clock, so every transition is unit testable without SQLite or a
@@ -654,15 +654,15 @@ func (e *Engine) confirmOpposite(symbol string, st *symbolState, c *cycle, at ti
 	delete(st.cycles, c.side)
 }
 
-// tradeSideForLiquidation applies the liquidation-reversal rule used by the
-// alert strategy: forced short closures are buy pressure and recommend a long;
-// forced long closures are sell pressure and recommend a short.
+// tradeSideForLiquidation keeps the order direction aligned with the liquidated
+// position side: forced short closures recommend short and forced long closures
+// recommend long.
 func tradeSideForLiquidation(liquidationSide string) string {
 	switch strings.ToLower(strings.TrimSpace(liquidationSide)) {
 	case "long":
-		return "short"
-	case "short":
 		return "long"
+	case "short":
+		return "short"
 	default:
 		return ""
 	}
@@ -693,7 +693,7 @@ func (e *Engine) Tick(now time.Time) Result {
 					continue
 				}
 				// Rule 3: the quiet period elapsed, so the aggressive signal is
-				// emitted in the direction opposite to the liquidated positions.
+				// emitted in the direction of the liquidated positions.
 				c.status = domain.AlertStateAggressive
 				c.aggressiveAt = c.quietUntil
 				c.aggressiveID = AggressiveSignalID(symbol, c.side, c.aggressiveAt)

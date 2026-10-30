@@ -323,9 +323,10 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 	longDonchianBlocked := cfg.DonchianFilterEnabled && (!donchianReady || price > donGreen)
 	shortDonchianBlocked := cfg.DonchianFilterEnabled && (!donchianReady || price < donRed)
 
-	// High: short-liquidation opens long; long-liquidation only closes long.
+	// High: short-liquidation opens short; long-liquidation only closes long.
+	// Low: long-liquidation opens long; short-liquidation only closes short.
 	// Middle: neither side opens; the liquidation direction may close the
-	// profitable opposite position. Low is the mirror image for short entries.
+	// profitable opposite position.
 	side = strings.ToLower(strings.TrimSpace(side))
 	tradeSide := tradeSideForLiquidation(side)
 	if tradeSide == "" {
@@ -355,11 +356,11 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 			d.Reason = "vwap_donchian_zone_overlap_long_liquidation_close_only"
 		} else if d.OpenAllowed {
 			if !cfg.VWAPFilterEnabled && !cfg.DonchianFilterEnabled {
-				d.Reason = "zone_filters_disabled_long_liquidation_open_short"
+				d.Reason = "zone_filters_disabled_long_liquidation_open_long"
 			} else if low {
-				d.Reason = "low_zscore_long_liquidation_open_short"
+				d.Reason = "low_zscore_long_liquidation_open_long"
 			} else {
-				d.Reason = "donchian_long_liquidation_open_short"
+				d.Reason = "donchian_long_liquidation_open_long"
 			}
 		} else {
 			if longVWAPBlocked {
@@ -397,11 +398,11 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 			d.Reason = "vwap_donchian_zone_overlap_short_liquidation_close_only"
 		} else if d.OpenAllowed {
 			if !cfg.VWAPFilterEnabled && !cfg.DonchianFilterEnabled {
-				d.Reason = "zone_filters_disabled_short_liquidation_open_long"
+				d.Reason = "zone_filters_disabled_short_liquidation_open_short"
 			} else if high {
-				d.Reason = "high_zscore_short_liquidation_open_long"
+				d.Reason = "high_zscore_short_liquidation_open_short"
 			} else {
-				d.Reason = "donchian_short_liquidation_open_long"
+				d.Reason = "donchian_short_liquidation_open_short"
 			}
 		} else {
 			if shortVWAPBlocked {

@@ -266,6 +266,81 @@ func TestTradeSignalNoveltyAndNotification(t *testing.T) {
 	}
 }
 
+func TestDirectionRepairOnlyUpdatesRowsAfterD46f114(t *testing.T) {
+	store, ctx := openAlertStore(t)
+	cutover := time.UnixMilli(liquidationDirectionRepairCutoverUnixMilli)
+	oldAt := cutover.Add(-time.Minute)
+	newAt := cutover.Add(time.Minute)
+
+	oldAlert := alertRow("direction-old-alert", "BTCUSDT", "long", oldAt, domain.AlertStateAggressive)
+	oldAlert.TradeSide = "short"
+	oldAlert.FilterReason = "low_zscore_long_liquidation_open_short"
+	newAlert := alertRow("direction-new-alert", "BTCUSDT", "long", newAt, domain.AlertStateAggressive)
+	newAlert.TradeSide = "short"
+	newAlert.FilterReason = "low_zscore_long_liquidation_open_short"
+	for _, row := range []domain.LiquidationAlert{oldAlert, newAlert} {
+		if _, err := store.SaveLiquidationAlert(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	oldSignal := signalRow("direction-old-signal", "BTCUSDT", domain.SignalAggressive, "short", oldAt)
+	oldSignal.LiquidationSide = "long"
+	oldSignal.FilterReason = "low_zscore_long_liquidation_open_short"
+	newSignal := signalRow("direction-new-signal", "BTCUSDT", domain.SignalAggressive, "short", newAt)
+	newSignal.LiquidationSide = "long"
+	newSignal.FilterReason = "low_zscore_long_liquidation_open_short"
+	valueSignal := signalRow("direction-value-signal", "BTCUSDT", domain.SignalValueArea, "short", newAt)
+	valueSignal.LiquidationSide = ""
+	valueSignal.FilterReason = "low_zscore_long_liquidation_open_short"
+	for _, row := range []domain.TradeSignal{oldSignal, newSignal, valueSignal} {
+		if _, err := store.SaveTradeSignal(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := store.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	gotOldAlert, err := store.LiquidationAlertByID(ctx, oldAlert.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOldAlert.TradeSide != "short" || gotOldAlert.FilterReason != oldAlert.FilterReason {
+		t.Fatalf("pre-cutover alert changed: %+v", gotOldAlert)
+	}
+	gotNewAlert, err := store.LiquidationAlertByID(ctx, newAlert.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotNewAlert.TradeSide != "long" || gotNewAlert.FilterReason != "low_zscore_long_liquidation_open_long" {
+		t.Fatalf("post-cutover alert was not repaired: %+v", gotNewAlert)
+	}
+
+	gotOldSignal, err := store.TradeSignalByID(ctx, oldSignal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOldSignal.Side != "short" || gotOldSignal.FilterReason != oldSignal.FilterReason {
+		t.Fatalf("pre-cutover signal changed: %+v", gotOldSignal)
+	}
+	gotNewSignal, err := store.TradeSignalByID(ctx, newSignal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotNewSignal.Side != "long" || gotNewSignal.FilterReason != "low_zscore_long_liquidation_open_long" {
+		t.Fatalf("post-cutover signal was not repaired: %+v", gotNewSignal)
+	}
+	gotValueSignal, err := store.TradeSignalByID(ctx, valueSignal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotValueSignal.Side != "short" || gotValueSignal.FilterReason != valueSignal.FilterReason {
+		t.Fatalf("value-area signal was unexpectedly changed: %+v", gotValueSignal)
+	}
+}
+
 // TestAlertTimelinePaginationAndFilters proves that alerts and both signal kinds
 // share one stable chronological stream without dropping rows at page boundaries.
 func TestAlertTimelinePaginationAndFilters(t *testing.T) {

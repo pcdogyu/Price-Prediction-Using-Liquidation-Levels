@@ -9,8 +9,8 @@ import (
 )
 
 // The Telegram texts are written in Chinese to match the alert page. Liquidation
-// side and recommended order side are shown separately because the strategy
-// trades the forced-liquidation direction in reverse.
+// side and recommended order side are shown separately so the observed event
+// and the resulting order direction remain auditable.
 
 func alertMessage(alert domain.LiquidationAlert) string {
 	var b strings.Builder

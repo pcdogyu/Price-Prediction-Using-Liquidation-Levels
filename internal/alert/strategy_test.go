@@ -54,7 +54,7 @@ func TestBelowThresholdRaisesNothing(t *testing.T) {
 }
 
 // TestWarningAggressiveThenSteady walks the full happy path for a long-liquidation
-// cycle, whose recommended order direction is short.
+// cycle, whose recommended order direction is long.
 func TestWarningAggressiveThenSteady(t *testing.T) {
 	engine := testEngine(t, Defaults(), "BTCUSDT")
 	res := engine.Observe(testEvent("BTCUSDT", "long", testStart, 400000))
@@ -62,7 +62,7 @@ func TestWarningAggressiveThenSteady(t *testing.T) {
 		t.Fatalf("expected one alert, got %d", len(res.Alerts))
 	}
 	warning := res.Alerts[0]
-	if warning.Symbol != "BTCUSDT" || warning.Side != "long" || warning.TradeSide != "short" || warning.Status != domain.AlertStateWatching {
+	if warning.Symbol != "BTCUSDT" || warning.Side != "long" || warning.TradeSide != "long" || warning.Status != domain.AlertStateWatching {
 		t.Fatalf("unexpected warning: %+v", warning)
 	}
 	if !warning.QuietUntil.Equal(testStart.Add(10 * time.Minute)) {
@@ -76,7 +76,7 @@ func TestWarningAggressiveThenSteady(t *testing.T) {
 		t.Fatalf("expected one aggressive signal, got %v", kinds(ticked.Signals))
 	}
 	aggressive := ticked.Signals[0]
-	if aggressive.Side != "short" || aggressive.LiquidationSide != "long" || aggressive.QuietElapsedSeconds != 600 || aggressive.AlertNotionalUSD != 400000 {
+	if aggressive.Side != "long" || aggressive.LiquidationSide != "long" || aggressive.QuietElapsedSeconds != 600 || aggressive.AlertNotionalUSD != 400000 {
 		t.Fatalf("unexpected aggressive signal: %+v", aggressive)
 	}
 	if len(ticked.Alerts) != 1 || ticked.Alerts[0].Status != domain.AlertStateAggressive || ticked.Alerts[0].AggressiveID != aggressive.ID {
@@ -87,7 +87,7 @@ func TestWarningAggressiveThenSteady(t *testing.T) {
 		t.Fatalf("expected one steady signal, got %v", kinds(confirmed.Signals))
 	}
 	steady := confirmed.Signals[0]
-	if steady.Side != "short" || steady.LiquidationSide != "long" || steady.OppositeUSD != 120000 || steady.OppositeSeconds != 240 {
+	if steady.Side != "long" || steady.LiquidationSide != "long" || steady.OppositeUSD != 120000 || steady.OppositeSeconds != 240 {
 		t.Fatalf("unexpected steady signal: %+v", steady)
 	}
 	if len(confirmed.Alerts) != 1 || confirmed.Alerts[0].Status != domain.AlertStateSteady {
@@ -122,19 +122,19 @@ func TestSameSideBurstExtendsQuiet(t *testing.T) {
 	}
 }
 
-// TestShortSideIsSymmetric checks that a short liquidation wave is traded long.
+// TestShortSideIsSymmetric checks that a short liquidation wave is traded short.
 func TestShortSideIsSymmetric(t *testing.T) {
 	engine := testEngine(t, Defaults(), "BTCUSDT")
 	res := engine.Observe(testEvent("BTCUSDT", "short", testStart, 400000))
-	if len(res.Alerts) != 1 || res.Alerts[0].Side != "short" || res.Alerts[0].TradeSide != "long" {
-		t.Fatalf("a short warning should trade long: %+v", res.Alerts)
+	if len(res.Alerts) != 1 || res.Alerts[0].Side != "short" || res.Alerts[0].TradeSide != "short" {
+		t.Fatalf("a short warning should trade short: %+v", res.Alerts)
 	}
 	ticked := engine.Tick(testStart.Add(10 * time.Minute))
-	if len(ticked.Signals) != 1 || ticked.Signals[0].Side != "long" {
+	if len(ticked.Signals) != 1 || ticked.Signals[0].Side != "short" {
 		t.Fatalf("expected a short aggressive signal: %+v", ticked.Signals)
 	}
 	confirmed := engine.Observe(testEvent("BTCUSDT", "long", testStart.Add(11*time.Minute), 90000))
-	if len(confirmed.Signals) != 1 || confirmed.Signals[0].Side != "long" || confirmed.Signals[0].Kind != domain.SignalSteady {
+	if len(confirmed.Signals) != 1 || confirmed.Signals[0].Side != "short" || confirmed.Signals[0].Kind != domain.SignalSteady {
 		t.Fatalf("expected a short steady signal: %+v", confirmed.Signals)
 	}
 }
@@ -432,7 +432,7 @@ func TestRadarArmedPeakDecayAndHighZoneShortEntry(t *testing.T) {
 		t.Fatalf("radar fired before the decay window: %+v", got.Signals)
 	}
 	fired := engine.Tick(testStart.Add(31 * time.Second))
-	if len(fired.Signals) != 1 || fired.Signals[0].Side != "long" || !fired.Signals[0].OpenAllowed || fired.Signals[0].PeakDecayRatio >= .4 {
+	if len(fired.Signals) != 1 || fired.Signals[0].Side != "short" || !fired.Signals[0].OpenAllowed || fired.Signals[0].PeakDecayRatio >= .4 {
 		t.Fatalf("decayed high-zone short signal=%+v", fired.Signals)
 	}
 }
@@ -525,20 +525,20 @@ func TestRadarNeutralZoneAndMinProfitSpread(t *testing.T) {
 	candles := radarCandles(98, 100, 102)
 	ctx := radarContext(100, candles)
 	ctx.PositionDataAvailable = true
-	ctx.ShortPositionCount = 1
-	ctx.ShortAvgPrice = 100
+	ctx.LongPositionCount = 1
+	ctx.LongAvgPrice = 100
 	d := filterDecision(cfg, "short", ctx, symbolState{}, 100)
 	if d.OpenAllowed || d.CloseAllowed {
 		t.Fatalf("neutral zone must not open or close without the profit spread: %+v", d)
 	}
-	ctx.Price = 99.4
+	ctx.Price = 100.6
 	d = filterDecision(cfg, "short", ctx, symbolState{}, 100)
 	if d.OpenAllowed || d.CloseAllowed {
-		t.Fatalf("0.6%% short profit is below the configured 0.7%% gate at this price: %+v", d)
+		t.Fatalf("0.6%% long profit is below the configured 0.7%% gate at this price: %+v", d)
 	}
-	ctx.Price = 99.2
+	ctx.Price = 100.8
 	d = filterDecision(cfg, "short", ctx, symbolState{}, 100)
 	if d.OpenAllowed || !d.CloseAllowed {
-		t.Fatalf("the short close should unlock only after the minimum spread: %+v", d)
+		t.Fatalf("the long close should unlock only after the minimum spread: %+v", d)
 	}
 }

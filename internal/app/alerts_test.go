@@ -103,6 +103,9 @@ func TestRecordLiquidationDrivesAlertAndSignals(t *testing.T) {
 		if !row.FilterApplied || row.Phase != domain.AlertPhaseFired || row.PeakDecayRatio >= .4 || !row.AbsorptionConfirmed {
 			t.Fatalf("signal was not produced by the radar: %+v", row)
 		}
+		if row.Side != row.LiquidationSide {
+			t.Fatalf("signal direction must follow the liquidated side: %+v", row)
+		}
 		// Telegram is not configured, so both signals are stored as muted.
 		if row.NotifyStatus != "muted" {
 			t.Fatalf("signal %s notify status = %q", row.ID, row.NotifyStatus)
@@ -114,6 +117,9 @@ func TestRecordLiquidationDrivesAlertAndSignals(t *testing.T) {
 	}
 	if alerts.Rows[0].Status != domain.AlertStateSteady || alerts.Rows[0].OppositeUSD != 5000 {
 		t.Fatalf("alert after confirmation = %+v", alerts.Rows[0])
+	}
+	if alerts.Rows[0].TradeSide != alerts.Rows[0].Side {
+		t.Fatalf("alert trade direction must follow the liquidated side: %+v", alerts.Rows[0])
 	}
 
 	view, err := svc.Alerts(ctx)
