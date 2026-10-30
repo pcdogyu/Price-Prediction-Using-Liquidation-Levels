@@ -79,6 +79,14 @@ type Service struct {
 	backfillDone        bool
 	volumeHistoryReady  bool
 	volumeLiveReady     chan struct{}
+	volumeMu            sync.Mutex
+	volumeContext       context.Context
+	volumeRequested     map[string]struct{}
+	volumeStreamSymbols map[string]struct{}
+	volumePending       map[string]struct{}
+	volumeBackfillError map[string]string
+	volumeBackfillQueue chan string
+	volumeStreamUpdates chan []string
 	webhookTargetMu     sync.RWMutex
 	webhookTarget       WebhookTargetResolver
 	gammaPolicyMu       sync.RWMutex
@@ -159,7 +167,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	if strings.TrimSpace(cfg.AlertTenantDataPath) == "" && strings.TrimSpace(cfg.DatabasePath) != "" {
 		cfg.AlertTenantDataPath = filepath.Join(filepath.Dir(cfg.DatabasePath), "alert-tenants")
 	}
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, backfillGate: make(chan struct{}, 1), volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, backfillGate: make(chan struct{}, 1), volumeLiveReady: make(chan struct{}), volumeRequested: make(map[string]struct{}), volumeStreamSymbols: make(map[string]struct{}), volumePending: make(map[string]struct{}), volumeBackfillError: make(map[string]string), volumeBackfillQueue: make(chan string, 128), volumeStreamUpdates: make(chan []string, 128), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	return s

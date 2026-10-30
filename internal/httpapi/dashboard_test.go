@@ -246,6 +246,8 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"const marketRequestTimeoutMs = 15000",
 		"function updateMarketBackfillButton()",
 		"function manualBackfillMarketHistory()",
+		"volume-profile/backfill?symbol=",
+		"回补K线+VAL/VAH",
 		"function visibleMarketPath()",
 		"function refillVisibleMarket()",
 		"repair: true",

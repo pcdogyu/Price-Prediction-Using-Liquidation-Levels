@@ -338,6 +338,27 @@ func TestRenderTVBotPositionsFormatsFractionalEpochSeconds(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotPendingOrderPricesUseSeparateReadableCells(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=positions", nil))
+	for _, want := range []string{
+		".pending-price-cell",
+		".pending-mid-cell",
+		".pending-price-lines",
+		"min-width: 1500px",
+		".pending-order-table .pending-price-col { width: 12%; }",
+		".pending-order-table .pending-mid-col { width: 10%; }",
+		"function pendingOrderPriceParts(row)",
+		"function pendingOrderPriceCell(row)",
+		"function pendingOrderMidPriceCell(row)",
+		`cell: (row) => pendingOrderPriceCell(row)`,
+		`cell: (row) => pendingOrderMidPriceCell(row)`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("pending-order table layout marker missing %q", want)
+		}
+	}
+}
+
 func TestRenderTVBotPositionsShowsOverallReturn(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	metricsStart := strings.Index(page, `<div class="analysis-metrics position-metrics">`)

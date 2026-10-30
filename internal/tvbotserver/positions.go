@@ -28,6 +28,7 @@ var (
 	errPendingOrderNoRemaining        = errors.New("pending order has no remaining size")
 	positionClosePollInterval         = 5 * time.Second
 	positionCloseLimitTimeout         = 60 * time.Second
+	binancePositionCloseTimeout       = 60 * time.Second
 	marketClosePendingPollInterval    = 250 * time.Millisecond
 	marketClosePendingTimeout         = 3 * time.Second
 	binanceUnknownOrderLookupAttempts = 6
@@ -2682,7 +2683,8 @@ func (s *Server) handleBinancePositionClose(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "credentials_failed", err.Error())
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	client = binancePositionCloseClient(client)
+	ctx, cancel := binancePositionCloseContext(r.Context())
 	defer cancel()
 	position, err := currentBinanceOpenPosition(ctx, client, req.InstID, req.PosSide)
 	if err != nil {
@@ -2779,6 +2781,31 @@ func (s *Server) handleBinancePositionClose(w http.ResponseWriter, r *http.Reque
 		Px:      order.Px,
 		Message: message,
 	})
+}
+
+func binancePositionCloseTimeoutValue() time.Duration {
+	timeout := binancePositionCloseTimeout
+	if timeout <= 0 {
+		return 60 * time.Second
+	}
+	return timeout
+}
+
+func binancePositionCloseContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, binancePositionCloseTimeoutValue())
+}
+
+// Binance partial closes can make several account and exchange-info requests
+// before submitting the order. Use a client timeout that is no shorter than
+// the whole close budget; the request context still enforces the total limit.
+func binancePositionCloseClient(client binance.Client) binance.Client {
+	if client.HTTPClient == nil || client.HTTPClient.Timeout >= binancePositionCloseTimeoutValue() {
+		return client
+	}
+	clone := *client.HTTPClient
+	clone.Timeout = binancePositionCloseTimeoutValue()
+	client.HTTPClient = &clone
+	return client
 }
 
 // cancelAllBinanceSymbolOrders clears both regular and conditional orders for

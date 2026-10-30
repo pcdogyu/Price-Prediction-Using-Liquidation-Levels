@@ -85,6 +85,7 @@ type VolumeProfile struct {
 	Bins              []VolumeProfileBin `json:"bins"`
 	DataThrough       time.Time          `json:"data_through,omitempty"`
 	BackfillProgress  float64            `json:"backfill_progress"`
+	BackfillError     string             `json:"backfill_error,omitempty"`
 	UpdatedAt         time.Time          `json:"updated_at"`
 }
 

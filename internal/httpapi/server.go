@@ -117,6 +117,7 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.HandleFunc("/api/v1/map", getOnly(s.liquidationMap))
 	mux.HandleFunc("/api/v1/market", getOnly(s.market))
 	mux.HandleFunc("/api/v1/volume-profile", getOnly(s.volumeProfile))
+	mux.HandleFunc("/api/v1/volume-profile/backfill", postOnly(s.volumeProfileBackfill))
 	mux.HandleFunc("/api/v1/backtest", getOnly(s.backtest))
 	mux.HandleFunc("/api/v1/logs", getOnly(s.applicationLogs))
 	mux.HandleFunc("/api/v1/stream", getOnly(s.stream))
@@ -599,6 +600,28 @@ func (s *Server) volumeProfile(w http.ResponseWriter, r *http.Request) {
 	sym, err := s.symbol(r)
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	if err = s.svc.EnsureVolumeProfile(r.Context(), sym, false); err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	profile, err := s.svc.VolumeProfile(r.Context(), sym)
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
+
+func (s *Server) volumeProfileBackfill(w http.ResponseWriter, r *http.Request) {
+	sym, err := s.symbol(r)
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	if err = s.svc.EnsureVolumeProfile(r.Context(), sym, true); err != nil {
+		problem(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	profile, err := s.svc.VolumeProfile(r.Context(), sym)

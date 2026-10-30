@@ -1624,22 +1624,40 @@ const tvbotHTML = `<!doctype html>
     .positions-table .pos-holding-time-col { width: 5.94%; }
     .positions-table .pos-actions-col { width: 23.3%; }
     .pending-order-table {
-      min-width: 1360px;
+      min-width: 1500px;
     }
-    .pending-order-table .pending-exchange-col { width: 5.6%; }
-    .pending-order-table .pending-time-col { width: 9.2%; }
-    .pending-order-table .pending-symbol-col { width: 9.6%; }
-    .pending-order-table .pending-side-col { width: 6.8%; }
-    .pending-order-table .pending-pos-side-col { width: 5.4%; }
-    .pending-order-table .pending-type-col { width: 6%; }
-    .pending-order-table .pending-price-col { width: 7.8%; }
-    .pending-order-table .pending-mid-col { width: 7.8%; }
-    .pending-order-table .pending-size-col { width: 7.4%; }
-    .pending-order-table .pending-margin-col { width: 7.4%; }
-    .pending-order-table .pending-filled-col { width: 6.4%; }
-    .pending-order-table .pending-age-col { width: 7%; }
-    .pending-order-table .pending-state-col { width: 6%; }
-    .pending-order-table .pending-actions-col { width: 7.6%; }
+    .pending-order-table th,
+    .pending-order-table td {
+      padding: 8px 10px;
+      vertical-align: middle;
+      line-height: 1.35;
+    }
+    .pending-order-table .pending-price-cell,
+    .pending-order-table .pending-mid-cell {
+      white-space: nowrap;
+      overflow-wrap: normal;
+      font-variant-numeric: tabular-nums;
+    }
+    .pending-price-lines {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .pending-order-table .pending-exchange-col { width: 5.5%; }
+    .pending-order-table .pending-time-col { width: 9%; }
+    .pending-order-table .pending-symbol-col { width: 8.5%; }
+    .pending-order-table .pending-side-col { width: 6%; }
+    .pending-order-table .pending-pos-side-col { width: 5%; }
+    .pending-order-table .pending-type-col { width: 7%; }
+    .pending-order-table .pending-price-col { width: 12%; }
+    .pending-order-table .pending-mid-col { width: 10%; }
+    .pending-order-table .pending-size-col { width: 7%; }
+    .pending-order-table .pending-margin-col { width: 7%; }
+    .pending-order-table .pending-filled-col { width: 6%; }
+    .pending-order-table .pending-age-col { width: 6.5%; }
+    .pending-order-table .pending-state-col { width: 5.5%; }
+    .pending-order-table .pending-actions-col { width: 5%; }
     pre {
       margin: 0;
       white-space: pre-wrap;
@@ -2702,8 +2720,8 @@ const tvbotHTML = `<!doctype html>
       { id: "side", title: "方向", colClass: "pending-side-col", cell: (row) => textTableCell(pendingOrderDirectionText(row)) },
       { id: "position_side", title: "持仓方向", colClass: "pending-pos-side-col", cell: (row) => textTableCell(positionSideText(row.posSide, "")) },
       { id: "type", title: "类型", colClass: "pending-type-col", cell: (row) => textTableCell(pendingOrderTypeText(row)) },
-      { id: "price", title: "委托价格", colClass: "pending-price-col", cell: (row) => textTableCell(pendingOrderPriceText(row)) },
-      { id: "mid_price", title: "中间价", colClass: "pending-mid-col", cell: (row) => textTableCell(row.price_error ? row.price_error : formatPriceAmount(row, row.mid_px)) },
+      { id: "price", title: "委托价格", colClass: "pending-price-col", cell: (row) => pendingOrderPriceCell(row) },
+      { id: "mid_price", title: "中间价", colClass: "pending-mid-col", cell: (row) => pendingOrderMidPriceCell(row) },
       { id: "size", title: "委托量", colClass: "pending-size-col", cell: (row) => textTableCell(formatQuantityAmount(row, row.sz)) },
       { id: "margin", title: "保证金", colClass: "pending-margin-col", cell: (row) => textTableCell(formatFixed2(row.margin)) },
       { id: "filled", title: "已成交", colClass: "pending-filled-col", cell: (row) => textTableCell(formatQuantityAmount(row, row.accFillSz)) },
@@ -5703,14 +5721,28 @@ const tvbotHTML = `<!doctype html>
       return text.includes("%") ? text : text + "%";
     }
 
-    function pendingOrderPriceText(row) {
-      if (pendingOrderGroup(row) !== "algo") return formatPriceAmount(row, row ? row.px : null);
+    function pendingOrderPriceParts(row) {
+      if (pendingOrderGroup(row) !== "algo") return [formatPriceAmount(row, row ? row.px : null)];
       const parts = [];
       if (row && row.trigger_px) parts.push("触发 " + formatPriceAmount(row, row.trigger_px));
       if (row && row.activation_px) parts.push("激活 " + formatPriceAmount(row, row.activation_px));
       if (row && row.callback_ratio) parts.push("回调 " + formatCallbackRatio(row.callback_ratio));
       if (row && row.px && !row.trigger_px && !row.activation_px) parts.push("委托 " + formatPriceAmount(row, row.px));
-      return parts.length ? parts.join(" / ") : "-";
+      return parts.length ? parts : ["-"];
+    }
+
+    function pendingOrderPriceText(row) {
+      return pendingOrderPriceParts(row).join(" / ");
+    }
+
+    function pendingOrderPriceCell(row) {
+      const lines = pendingOrderPriceParts(row).map((part) => '<span>' + escapeHTML(part) + '</span>').join("");
+      return '<td class="pending-price-cell"><div class="pending-price-lines">' + lines + '</div></td>';
+    }
+
+    function pendingOrderMidPriceCell(row) {
+      const value = row.price_error ? row.price_error : formatPriceAmount(row, row.mid_px);
+      return '<td class="pending-mid-cell">' + escapeHTML(value) + '</td>';
     }
 
     function pendingOrderChaseUnavailable(row) {

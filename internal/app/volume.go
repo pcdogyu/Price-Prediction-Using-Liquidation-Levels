@@ -13,8 +13,25 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumeprofile"
 )
 
+var fetchAggregateTrades = exchange.BinanceAggregateTrades
+
 func (s *Service) startVolumeProfiles(ctx context.Context) {
+	bootstrapSymbols := s.volumeBootstrapSymbols()
+	s.volumeMu.Lock()
+	s.volumeContext = ctx
+	if s.volumeRequested == nil {
+		s.volumeRequested = make(map[string]struct{})
+	}
+	if s.volumeStreamSymbols == nil {
+		s.volumeStreamSymbols = make(map[string]struct{})
+	}
+	for _, symbol := range bootstrapSymbols {
+		s.volumeRequested[symbol] = struct{}{}
+		s.volumeStreamSymbols[symbol] = struct{}{}
+	}
+	s.volumeMu.Unlock()
 	go s.volumeProfileLoop(ctx)
+	go s.volumeBackfillLoop(ctx)
 }
 
 func (s *Service) volumeProfileLoop(ctx context.Context) {
@@ -25,8 +42,8 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 	bootstrapSymbols := s.volumeBootstrapSymbols()
 	s.syncVolumeSymbols(ctx, bootstrapSymbols)
 	input := make(chan domain.AggregateTrade, 100000)
-	cancelStream := s.startCandidateAggregateStream(ctx, bootstrapSymbols, input)
-	defer func() { cancelStream() }()
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	s.startAggregateTradeStream(streamCtx, s.volumeStreamSymbolList(), input)
 	close(s.volumeLiveReady)
 
 	flush := time.NewTicker(500 * time.Millisecond)
@@ -37,10 +54,15 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			cancelStream()
 			if len(batch) > 0 {
 				_ = s.applyLiveAggregateTrades(context.Background(), batch)
 			}
 			return
+		case symbols := <-s.volumeStreamUpdates:
+			cancelStream()
+			streamCtx, cancelStream = context.WithCancel(ctx)
+			s.startAggregateTradeStream(streamCtx, symbols, input)
 		case <-s.candidateUpdates:
 			// Candidate refreshes control alert/candle coverage, not the bounded
 			// volume-profile feed. Do not restart the stream and replay a newly
@@ -64,6 +86,46 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 		case now := <-snapshot.C:
 			if now.UTC().Minute()%5 == 0 {
 				s.saveCurrentVolumeSnapshots(ctx, now.UTC().Truncate(5*time.Minute))
+			}
+		}
+	}
+}
+
+func (s *Service) volumeBackfillLoop(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-s.volumeLiveReady:
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case symbol := <-s.volumeBackfillQueue:
+			err := s.syncVolumeSessionExclusive(ctx, symbol, time.Now().UTC())
+			s.volumeMu.Lock()
+			delete(s.volumePending, symbol)
+			if err != nil {
+				s.volumeBackfillError[symbol] = err.Error()
+				s.volumeMu.Unlock()
+				if ctx.Err() == nil && s.log != nil {
+					s.log.Warn("on-demand aggregate trade backfill failed", "symbol", symbol, "error", err)
+				}
+				continue
+			}
+			delete(s.volumeBackfillError, symbol)
+			_, alreadyStreaming := s.volumeStreamSymbols[symbol]
+			if !alreadyStreaming {
+				s.volumeStreamSymbols[symbol] = struct{}{}
+			}
+			streamSymbols := s.volumeStreamSymbolListLocked()
+			s.volumeMu.Unlock()
+			if !alreadyStreaming {
+				select {
+				case s.volumeStreamUpdates <- streamSymbols:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}
@@ -98,6 +160,111 @@ func (s *Service) startCandidateAggregateStream(ctx context.Context, symbols []s
 	streamCtx, cancel := context.WithCancel(ctx)
 	s.startAggregateTradeStream(streamCtx, symbols, input)
 	return cancel
+}
+
+func (s *Service) volumeStreamSymbolList() []string {
+	s.volumeMu.Lock()
+	defer s.volumeMu.Unlock()
+	return s.volumeStreamSymbolListLocked()
+}
+
+func (s *Service) volumeStreamSymbolListLocked() []string {
+	symbols := make([]string, 0, len(s.volumeStreamSymbols))
+	for symbol := range s.volumeStreamSymbols {
+		symbols = append(symbols, symbol)
+	}
+	sort.Strings(symbols)
+	return symbols
+}
+
+func normalizeVolumeSymbol(symbol string) string {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" || symbol == "USDT" || !strings.HasSuffix(symbol, "USDT") {
+		return ""
+	}
+	for _, r := range symbol {
+		if (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return ""
+		}
+	}
+	return symbol
+}
+
+// EnsureVolumeProfile registers a valid on-demand symbol and queues the current
+// volume session for aggregate-trade synchronization. The queue is idempotent;
+// force only retries an incomplete or failed session.
+func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force bool) error {
+	symbol = normalizeVolumeSymbol(symbol)
+	if symbol == "" {
+		return fmt.Errorf("symbol must be a Binance USDT perpetual")
+	}
+	if s.store == nil {
+		return errors.New("volume profile store unavailable")
+	}
+	session, err := volumeprofile.SessionAt(time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	_, _, complete, err := s.store.VolumeProfileCursor(ctx, symbol, session.Start)
+	if err != nil {
+		return err
+	}
+	s.volumeMu.Lock()
+	if s.volumeRequested == nil {
+		s.volumeRequested = make(map[string]struct{})
+	}
+	if s.volumePending == nil {
+		s.volumePending = make(map[string]struct{})
+	}
+	if s.volumeBackfillError == nil {
+		s.volumeBackfillError = make(map[string]string)
+	}
+	s.volumeRequested[symbol] = struct{}{}
+	if complete || s.volumeContext == nil || s.volumeBackfillQueue == nil {
+		s.volumeMu.Unlock()
+		return nil
+	}
+	if _, pending := s.volumePending[symbol]; pending {
+		s.volumeMu.Unlock()
+		return nil
+	}
+	if !force && s.volumeBackfillError[symbol] != "" {
+		s.volumeMu.Unlock()
+		return nil
+	}
+	if !force {
+		if _, streaming := s.volumeStreamSymbols[symbol]; streaming {
+			s.volumeMu.Unlock()
+			return nil
+		}
+	}
+	s.volumePending[symbol] = struct{}{}
+	delete(s.volumeBackfillError, symbol)
+	queue := s.volumeBackfillQueue
+	s.volumeMu.Unlock()
+	select {
+	case queue <- symbol:
+		return nil
+	case <-ctx.Done():
+		s.volumeMu.Lock()
+		delete(s.volumePending, symbol)
+		s.volumeMu.Unlock()
+		return ctx.Err()
+	default:
+		s.volumeMu.Lock()
+		delete(s.volumePending, symbol)
+		s.volumeMu.Unlock()
+		return errors.New("volume profile backfill queue is full")
+	}
+}
+
+func (s *Service) syncVolumeSessionExclusive(ctx context.Context, symbol string, target time.Time) error {
+	release, ok := s.beginBackfill(ctx)
+	if !ok {
+		return ctx.Err()
+	}
+	defer release()
+	return s.syncVolumeSession(ctx, symbol, target)
 }
 
 func (s *Service) volumeBootstrapSymbols() []string {
@@ -159,7 +326,7 @@ func (s *Service) applyLiveAggregateTrades(ctx context.Context, trades []domain.
 		}
 		if !complete || lastID == 0 || aggregateTradeGap(rows, lastID) {
 			_ = s.store.SetVolumeProfileComplete(ctx, key.symbol, sessions[key].Start, false)
-			if err = s.syncVolumeSession(ctx, key.symbol, rows[len(rows)-1].Time); err != nil {
+			if err = s.syncVolumeSessionExclusive(ctx, key.symbol, rows[len(rows)-1].Time); err != nil {
 				return err
 			}
 		}
@@ -283,7 +450,7 @@ func (s *Service) firstTradeInWindow(ctx context.Context, symbol string, start, 
 func (s *Service) aggregateTradesRequest(ctx context.Context, symbol string, fromID int64, start, end time.Time) ([]domain.AggregateTrade, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		rows, err := exchange.BinanceAggregateTrades(ctx, symbol, fromID, start, end)
+		rows, err := fetchAggregateTrades(ctx, symbol, fromID, start, end)
 		if err == nil {
 			if waitContext(ctx, 650*time.Millisecond) != nil {
 				return nil, ctx.Err()
@@ -325,7 +492,7 @@ func waitContext(ctx context.Context, duration time.Duration) error {
 
 func (s *Service) VolumeProfile(ctx context.Context, symbol string) (domain.VolumeProfile, error) {
 	now := time.Now().UTC()
-	if !s.backgroundSymbol(symbol) {
+	if !s.backgroundSymbol(symbol) && !s.volumeRequestedSymbol(symbol) {
 		return domain.VolumeProfile{Symbol: symbol, Source: domain.DataSourceBinanceUSDM, State: "unavailable", UpdatedAt: now}, nil
 	}
 	session, err := volumeprofile.SessionAt(now)
@@ -336,7 +503,22 @@ func (s *Service) VolumeProfile(ctx context.Context, symbol string) (domain.Volu
 	if err != nil {
 		return domain.VolumeProfile{}, err
 	}
-	return volumeprofile.Build(symbol, session, levels, through, now, complete), nil
+	profile := volumeprofile.Build(symbol, session, levels, through, now, complete)
+	s.volumeMu.Lock()
+	backfillError := s.volumeBackfillError[symbol]
+	s.volumeMu.Unlock()
+	if backfillError != "" && profile.State != "ok" {
+		profile.State = "unavailable"
+		profile.BackfillError = backfillError
+	}
+	return profile, nil
+}
+
+func (s *Service) volumeRequestedSymbol(symbol string) bool {
+	s.volumeMu.Lock()
+	defer s.volumeMu.Unlock()
+	_, ok := s.volumeRequested[strings.ToUpper(strings.TrimSpace(symbol))]
+	return ok
 }
 
 func (s *Service) saveCurrentVolumeSnapshots(ctx context.Context, at time.Time) {

@@ -550,11 +550,11 @@ function updateMarketBackfillButton() {
     ? '回补中…'
     : automaticMarketBackfill.active
       ? '自动回补中…'
-      : '回补K线';
+      : '回补K线+VAL/VAH';
   button.setAttribute('aria-busy', String(busy));
   button.setAttribute('aria-label', manualMarketBackfill.active || automaticMarketBackfill.active
-    ? '正在按当前周期回补K线'
-    : '回补当前显示的K线');
+    ? '正在按当前周期回补K线和成交量分布'
+    : '回补当前显示的K线、成交量分布、VAL和VAH');
 }
 
 function applyPriceTick(tick, render = true, force = false) {
@@ -1142,7 +1142,19 @@ async function refillVisibleMarket() {
   manualMarketBackfill.active = true;
   updateMarketBackfillButton();
   try {
-    const view = await json(requestPath, { signal: controller.signal });
+    const [marketResult, volumeResult] = await Promise.allSettled([
+      json(requestPath, { signal: controller.signal }),
+      json('volume-profile/backfill?symbol=' + encodeURIComponent(symbol), { method: 'POST', signal: controller.signal })
+    ]);
+    if (marketResult.status !== 'fulfilled') throw marketResult.reason;
+    if (volumeResult.status === 'fulfilled') {
+      cache.volume = volumeResult.value;
+      lastFailures = lastFailures.filter(item => !item.startsWith('成交量分布回补'));
+    } else if (!controller.signal.aborted) {
+      lastFailures = lastFailures.filter(item => !item.startsWith('成交量分布回补'));
+      lastFailures.push('成交量分布回补 · ' + volumeResult.reason.message);
+    }
+    const view = marketResult.value;
     if (controller.signal.aborted || requestID !== visibleMarketBackfill.sequence || requestedSymbol !== symbol || requestedInterval !== chart.interval) return false;
     view.queryCutoff = Date.now();
     mergeMarket(view, false, false);
@@ -1159,6 +1171,7 @@ async function refillVisibleMarket() {
     chart.nextBefore = preserved.nextBefore;
     $('new-data').classList.toggle('hidden', !chart.newData);
     draw(cache.market, cache.map, cache.signal, cache.volume);
+    showFailures(lastFailures);
     ensureWindowLiquidations();
     return true;
   } catch (error) {

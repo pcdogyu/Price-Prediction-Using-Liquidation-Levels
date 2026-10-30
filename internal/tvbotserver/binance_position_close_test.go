@@ -161,6 +161,60 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 	}
 }
 
+func TestTVBotBinancePartialPositionCloseUsesCloseTimeoutForSlowRequests(t *testing.T) {
+	oldTimeout := binancePositionCloseTimeout
+	binancePositionCloseTimeout = 2 * time.Second
+	t.Cleanup(func() { binancePositionCloseTimeout = oldTimeout })
+
+	srv := newTestServer(t)
+	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(25 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v3/positionRisk":
+			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","liquidationPrice":"120","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+		case "/fapi/v1/exchangeInfo":
+			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"BTCUSDT","status":"TRADING","pricePrecision":1,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.1"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]}]}`))
+		case "/fapi/v1/ticker/bookTicker":
+			_, _ = w.Write([]byte(`{"symbol":"BTCUSDT","bidPrice":"100","bidQty":"1","askPrice":"100.2","askQty":"1","time":1784880000000}`))
+		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
+			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/order":
+			_, _ = w.Write([]byte(`{"orderId":789,"symbol":"BTCUSDT","status":"NEW","clientOrderId":"close-slow","price":"100.2","origQty":"0.2","executedQty":"0","type":"LIMIT","side":"BUY","positionSide":"BOTH"}`))
+		default:
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+	}))
+	defer binanceServer.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = binanceServer.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	// This is shorter than one deliberately slow request. The Binance close
+	// client must replace it with the close-operation timeout.
+	srv.BinanceHTTPClient = &http.Client{Timeout: 10 * time.Millisecond}
+	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
+		ID: "main", Active: true,
+		Credentials: binance.Credentials{APIKey: "binance-key", SecretKey: "binance-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tvbot/positions/close", bytes.NewReader([]byte(`{"exchange":"binance","api_id":"main","inst_id":"BTCUSDT","pos_side":"net","mode":"limit","ratio":0.1}`)))
+	req.SetBasicAuth("admin", "Admin123")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("slow partial close status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp positionCloseResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK || resp.Sz != "0.2" || resp.OrdID != "789" {
+		t.Fatalf("bad slow partial close response: %#v", resp)
+	}
+}
+
 func TestTVBotBinanceLimitPositionCloseSplitsWhenQuantityExceedsMaxQty(t *testing.T) {
 	oldPoll := positionClosePollInterval
 	oldTimeout := positionCloseLimitTimeout
