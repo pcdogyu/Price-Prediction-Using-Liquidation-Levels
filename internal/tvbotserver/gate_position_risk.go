@@ -231,6 +231,9 @@ func (s *Server) reconcileGatePositionRiskForRecord(ctx context.Context, record 
 	}
 	marginMode := gateRiskMarginMode(cfg.Trading.DefaultMarginMode)
 	result := record.Result
+	if strings.TrimSpace(result.RiskReference) == tvbottrading.RiskReferencePositionAverage {
+		result.RiskReference = tvbottrading.RiskReferenceLayerAverage
+	}
 	ownedTexts := gateOwnedRiskTexts(record.Result, requestedAPIID, contract)
 	if len(result.Layers) == 0 && strings.TrimSpace(result.OrdID) != "" {
 		// Simple market/limit Gate opens predate layer metadata. Treat the
