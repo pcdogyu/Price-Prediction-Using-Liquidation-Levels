@@ -103,7 +103,7 @@ func (s *Service) startCandidateAggregateStream(ctx context.Context, symbols []s
 func (s *Service) volumeBootstrapSymbols() []string {
 	configured := s.cfg.BootstrapSymbols
 	if len(configured) == 0 {
-		configured = []string{"ETHUSDT"}
+		configured = []string{"BTCUSDT", "ETHUSDT"}
 	}
 	seen := make(map[string]struct{}, len(configured))
 	result := make([]string, 0, len(configured))
@@ -119,7 +119,7 @@ func (s *Service) volumeBootstrapSymbols() []string {
 		result = append(result, symbol)
 	}
 	if len(result) == 0 {
-		return []string{"ETHUSDT"}
+		return []string{"BTCUSDT", "ETHUSDT"}
 	}
 	return result
 }

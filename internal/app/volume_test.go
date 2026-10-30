@@ -21,11 +21,17 @@ func TestVolumeBootstrapSymbolsUsesBoundedConfiguredSet(t *testing.T) {
 	}
 }
 
-func TestVolumeBootstrapSymbolsFallsBackToETH(t *testing.T) {
+func TestVolumeBootstrapSymbolsFallsBackToBTCAndETH(t *testing.T) {
 	svc := &Service{}
 	got := svc.volumeBootstrapSymbols()
-	if len(got) != 1 || got[0] != "ETHUSDT" {
+	want := []string{"BTCUSDT", "ETHUSDT"}
+	if len(got) != len(want) {
 		t.Fatalf("volume bootstrap fallback=%v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("volume bootstrap fallback=%v, want=%v", got, want)
+		}
 	}
 }
 
