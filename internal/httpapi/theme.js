@@ -4,7 +4,14 @@
   const storageKey = 'liquidation.theme';
   const normalize = theme => theme === 'light' ? 'light' : 'dark';
   let saved = 'dark';
-  try { saved = localStorage.getItem(storageKey) || saved; } catch (_) { /* storage is optional */ }
+  let localThemeStored = false;
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if (stored === 'light' || stored === 'dark') {
+      saved = stored;
+      localThemeStored = true;
+    }
+  } catch (_) { /* storage is optional */ }
   let currentTheme = normalize(saved);
   let userChangedTheme = false;
   let saveQueue = Promise.resolve();
@@ -61,16 +68,22 @@
   }
   function set(theme) {
     userChangedTheme = true;
+    localThemeStored = true;
     apply(theme, true);
     saveRemote(currentTheme);
   }
   async function loadRemote() {
-    if (typeof fetch !== 'function') return;
+    // Browser storage is the user's local preference. A server-side default is
+    // only a fallback for a browser that has not selected a theme yet.
+    if (typeof fetch !== 'function' || localThemeStored || userChangedTheme) return;
     try {
       const response = await fetch(themeURL, {credentials: 'same-origin', cache: 'no-store'});
       if (!response.ok || userChangedTheme) return;
       const payload = await response.json();
-      if (payload && (payload.theme === 'dark' || payload.theme === 'light')) apply(payload.theme, true);
+      if (payload && (payload.theme === 'dark' || payload.theme === 'light')) {
+        localThemeStored = true;
+        apply(payload.theme, true);
+      }
     } catch (_) { /* local theme remains usable when persistence is unavailable */ }
   }
   apply(currentTheme, true);

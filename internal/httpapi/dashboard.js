@@ -113,6 +113,7 @@ const liquidationWallWidthScale = .9;
 // Kept for compatibility with the dashboard asset contract tests; rank labels
 // now use a fixed left-overlay width instead of scaling with the right axis.
 const rankLabelWidthScale = .8;
+// Reserve 30% less width for the far-right price axis and its labels.
 const rightPriceAxisWidthScale = .70;
 const rightPriceAxisShift = (1740 - 1510) * (1 - rightPriceAxisWidthScale);
 const liquidationWallRight = 1510 + rightPriceAxisShift;
@@ -127,8 +128,9 @@ const liquidationRight = liquidationLeft + liquidationWallWidth;
 const rankLabelLeft = liquidationRight + liquidationOverlayGap;
 const rankLabelRight = rankLabelLeft + liquidationRankLabelWidth;
 const liquidationOverlayRight = rankLabelRight;
-const rightPriceLabelWidth = Math.round(112 * .7);
-const volumeRight = liquidationWallRight - rightPriceLabelWidth - 8;
+const rightPriceLabelWidth = Math.round(112 * rightPriceAxisWidthScale);
+const volumeToPriceLabelGap = 4;
+const volumeRight = liquidationWallRight - rightPriceLabelWidth - volumeToPriceLabelGap;
 const volumeLeft = volumeRight - (1280 - 1060);
 const dims = { height: 560, width: 1740, left: chartLeft, top: 24, bottom: 42, candleRight: 1025 + rightPriceAxisShift, volumeLeft, volumeRight, liquidationOverlayLeft, liquidationOverlayRight, liquidationLeft, liquidationRight, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft, rankLabelRight, rightPriceLabelWidth };
 const embeddedChartCandleRight = 1668;

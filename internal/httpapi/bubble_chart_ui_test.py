@@ -232,6 +232,9 @@ with sync_playwright() as playwright:
             candle: [dims.left, dims.candleRight],
             volume: [dims.volumeLeft, dims.volumeRight],
             profile: dims.profileRight,
+            rightPriceLabelWidth: dims.rightPriceLabelWidth,
+            volumeToPriceLabelGap: dims.profileRight - dims.volumeRight - dims.rightPriceLabelWidth,
+            rightPriceAxisWidthScale: rightPriceAxisWidthScale,
             walls: Array.from(svg.querySelectorAll('[data-wall]')).map(e => ({
               x: number(e, 'x'), width: number(e, 'width')
             })),
@@ -255,6 +258,9 @@ with sync_playwright() as playwright:
         assert wall_left <= liquidation_layout["title"] <= wall_right, liquidation_layout
         assert overlay_right < liquidation_layout["candle"][1] < liquidation_layout["volume"][0], liquidation_layout
         assert liquidation_layout["volume"][1] < liquidation_layout["profile"], liquidation_layout
+        assert liquidation_layout["rightPriceAxisWidthScale"] == .7, liquidation_layout
+        assert liquidation_layout["rightPriceLabelWidth"] == 78, liquidation_layout
+        assert liquidation_layout["volumeToPriceLabelGap"] == 4, liquidation_layout
         rank_text = page.locator('[data-liquidation-rank] text').first
         rank_box = rank_text.bounding_box()
         page.mouse.move(rank_box["x"] + rank_box["width"] / 2, rank_box["y"] + rank_box["height"] / 2)
@@ -522,6 +528,11 @@ with sync_playwright() as playwright:
             assert page.evaluate("() => Array.from(document.querySelectorAll('[data-event-id]')).every(e => [getComputedStyle(document.documentElement).getPropertyValue('--buy').trim(),getComputedStyle(document.documentElement).getPropertyValue('--sell').trim()].includes(e.getAttribute('stroke')))")
             page.screenshot(path=str(artifacts / f"bubbles-{'production' if production else 'fixture'}-{width}-{theme}.png"), full_page=True)
             assert page.locator("#chart-context").is_visible()
+    page.evaluate("() => window.LiquidationTheme.set('light')")
+    page.reload(wait_until="domcontentloaded")
+    idle()
+    assert page.evaluate("() => document.documentElement.dataset.theme") == "light"
+    assert page.evaluate("() => localStorage.getItem('liquidation.theme')") == "light"
     if not production:
         state["history_fail"] = True
         page.goto(base + "/bubbles", wait_until="domcontentloaded")
