@@ -113,8 +113,8 @@ const liquidationWallWidthScale = .9;
 // Kept for compatibility with the dashboard asset contract tests; rank labels
 // now use a fixed left-overlay width instead of scaling with the right axis.
 const rankLabelWidthScale = .8;
-// Reserve 30% less width for the far-right price axis and its labels.
-const rightPriceAxisWidthScale = .70;
+// Reserve 50% less width for the far-right price axis and its labels.
+const rightPriceAxisWidthScale = .50;
 const rightPriceAxisShift = (1740 - 1510) * (1 - rightPriceAxisWidthScale);
 const liquidationWallRight = 1510 + rightPriceAxisShift;
 const liquidationWallWidth = Math.round((1510 - 1315) * liquidationWallWidthScale);

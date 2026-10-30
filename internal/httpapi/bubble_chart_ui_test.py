@@ -258,8 +258,8 @@ with sync_playwright() as playwright:
         assert wall_left <= liquidation_layout["title"] <= wall_right, liquidation_layout
         assert overlay_right < liquidation_layout["candle"][1] < liquidation_layout["volume"][0], liquidation_layout
         assert liquidation_layout["volume"][1] < liquidation_layout["profile"], liquidation_layout
-        assert liquidation_layout["rightPriceAxisWidthScale"] == .7, liquidation_layout
-        assert liquidation_layout["rightPriceLabelWidth"] == 78, liquidation_layout
+        assert liquidation_layout["rightPriceAxisWidthScale"] == .5, liquidation_layout
+        assert liquidation_layout["rightPriceLabelWidth"] == 56, liquidation_layout
         assert liquidation_layout["volumeToPriceLabelGap"] == 4, liquidation_layout
         rank_text = page.locator('[data-liquidation-rank] text').first
         rank_box = rank_text.bounding_box()
