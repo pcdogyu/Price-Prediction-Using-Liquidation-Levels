@@ -1348,13 +1348,19 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 		if contract == "" {
 			continue
 		}
+		operationKey := gateContractOperationKey(apiID, contract)
+		if !gateContractOperationJobs.start(operationKey) {
+			continue
+		}
 		key := positionCloseKey(trading.ExchangeGate, apiID, position.InstID, position.PosSide)
 		if !positionCloseJobs.start(key) {
+			gateContractOperationJobs.done(operationKey)
 			continue
 		}
 		ack, err := placeGateMarketPositionClose(ctx, cfg, client, contract)
 		if err != nil {
 			positionCloseJobs.done(key)
+			gateContractOperationJobs.done(operationKey)
 			if s.Logger != nil {
 				s.Logger.Warn("failed to submit Gate auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "upl_ratio", ratio, "error", err)
 			}
@@ -2397,6 +2403,7 @@ func (s *Server) watchGateLimitPositionClose(apiID string, cfg config.Config, cl
 func (s *Server) watchGateMarketPositionClose(apiID string, client gate.Client, position okx.Position) {
 	key := positionCloseKey(trading.ExchangeGate, apiID, position.InstID, position.PosSide)
 	defer positionCloseJobs.done(key)
+	defer gateContractOperationJobs.done(gateContractOperationKey(apiID, position.InstID))
 	s.cancelClosedGatePositionOrders(client, position)
 }
 

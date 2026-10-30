@@ -53,9 +53,12 @@ const (
 	PositionSideShort   = "short"
 )
 
-// RiskReferencePositionAverage marks exchange orders whose TP/SL must be
-// created from the exchange-reported position average after entry fills.
+// RiskReferencePositionAverage is retained for records written by the first
+// post-fill Gate implementation. New Gate records use the per-layer value so
+// each filled entry can have its own TP/SL reference price.
 const RiskReferencePositionAverage = "position_average"
+
+const RiskReferenceLayerAverage = "layer_average"
 
 const (
 	MarketStrategyTrend      = "trend"
@@ -209,6 +212,8 @@ type OrderLayerResult struct {
 	OrdID      string            `json:"ord_id,omitempty"`
 	Status     string            `json:"status"`
 	Error      string            `json:"error,omitempty"`
+	FilledQty  string            `json:"filled_qty,omitempty"`
+	FillPrice  string            `json:"fill_price,omitempty"`
 	RiskOrders []RiskOrderResult `json:"risk_orders,omitempty"`
 }
 

@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tvbotgate "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
@@ -22,10 +24,6 @@ const (
 	gatePositionRiskTextPrefix   = "t-rk-"
 )
 
-type gateRiskSpec struct {
-	record tvbotstorage.OrderRecord
-}
-
 type gateRiskPlan struct {
 	contract   string
 	kind       string
@@ -36,12 +34,72 @@ type gateRiskPlan struct {
 	resultType string
 	closeSide  string
 	marginMode string
+	size       string
 }
 
-// StartGatePositionRiskMonitor keeps Gate TP/SL orders synchronized with the
-// actual net position average price. It is intentionally separate from the
-// generic position scanner: this monitor only manages risk for orders created
-// by the post-fill Gate path.
+type gateLayerFill struct {
+	quantity  float64
+	price     float64
+	orderSize float64
+}
+
+type gateRiskReconcileRegistry struct {
+	mu   sync.Mutex
+	jobs map[string]struct{}
+}
+
+func newGateRiskReconcileRegistry() *gateRiskReconcileRegistry {
+	return &gateRiskReconcileRegistry{jobs: make(map[string]struct{})}
+}
+
+func (r *gateRiskReconcileRegistry) start(key string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.jobs[key]; exists {
+		return false
+	}
+	r.jobs[key] = struct{}{}
+	return true
+}
+
+func (r *gateRiskReconcileRegistry) done(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.jobs, key)
+}
+
+var gateRiskReconcileJobs = newGateRiskReconcileRegistry()
+
+type gateContractOperationRegistry struct {
+	mu   sync.Mutex
+	jobs map[string]struct{}
+}
+
+func newGateContractOperationRegistry() *gateContractOperationRegistry {
+	return &gateContractOperationRegistry{jobs: make(map[string]struct{})}
+}
+
+func (r *gateContractOperationRegistry) start(key string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.jobs[key]; exists {
+		return false
+	}
+	r.jobs[key] = struct{}{}
+	return true
+}
+
+func (r *gateContractOperationRegistry) done(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.jobs, key)
+}
+
+var gateContractOperationJobs = newGateContractOperationRegistry()
+
+// StartGatePositionRiskMonitor keeps one exchange-side TP/SL pair per filled
+// Gate entry layer. The generic position monitor is intentionally separate and
+// remains active: it is the page/configured scanner's market-close fallback.
 func (s *Server) StartGatePositionRiskMonitor(ctx context.Context) {
 	if s == nil || s.ConfigStore == nil || s.Orders == nil || (s.GateCredentials == nil && s.GateLiveCredentials == nil) {
 		return
@@ -67,37 +125,18 @@ func (s *Server) reconcileGatePositionRisk(ctx context.Context) {
 	if s == nil || s.ConfigStore == nil || s.Orders == nil {
 		return
 	}
-	records := s.Orders.ListByTargetExchange(tvbottrading.ExchangeGate, 500)
-	specs := make(map[string]gateRiskSpec)
-	for _, record := range records {
+	// Do not select only the newest order for a contract. Net-mode Gate
+	// positions can contain several independently priced entry layers, and each
+	// submitted layer owns its own protection pair.
+	for _, record := range s.Orders.ListByTargetExchange(tvbottrading.ExchangeGate, 500) {
 		if !gatePostFillRiskRecord(record) {
 			continue
 		}
-		contract := strings.TrimSpace(record.Result.InstID)
-		if contract == "" {
-			continue
-		}
-		apiID := strings.TrimSpace(record.Result.APIID)
-		if apiID == "" {
-			apiID = strings.TrimSpace(record.APIID)
-		}
-		key := strings.Join([]string{
-			normalizeGateRiskEnvironment(record.TradeEnv),
-			apiID,
-			strings.ToUpper(contract),
-		}, "|")
-		// ListByTargetExchange is newest-first. The newest order owns the
-		// current risk settings for a net Gate position.
-		if _, exists := specs[key]; !exists {
-			specs[key] = gateRiskSpec{record: record}
-		}
-	}
-	for _, spec := range specs {
 		pollCtx, cancel := context.WithTimeout(ctx, gatePositionRiskPollTimeout)
-		err := s.reconcileGatePositionRiskForRecord(pollCtx, spec.record)
+		err := s.reconcileGatePositionRiskForRecord(pollCtx, record)
 		cancel()
 		if err != nil && s.Logger != nil {
-			s.Logger.Warn("failed to reconcile Gate position TP/SL", "signal_id", spec.record.SignalID, "contract", spec.record.Result.InstID, "error", err)
+			s.Logger.Warn("failed to reconcile Gate layered TP/SL", "signal_id", record.SignalID, "contract", record.Result.InstID, "error", err)
 		}
 	}
 }
@@ -113,7 +152,7 @@ func (s *Server) reconcileGatePositionRiskForSignal(signalID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), gatePositionRiskPollTimeout)
 	defer cancel()
 	if err := s.reconcileGatePositionRiskForRecord(ctx, record); err != nil && s.Logger != nil {
-		s.Logger.Warn("failed to reconcile Gate position TP/SL after order submission", "signal_id", signalID, "contract", record.Result.InstID, "error", err)
+		s.Logger.Warn("failed to reconcile Gate layered TP/SL after order submission", "signal_id", signalID, "contract", record.Result.InstID, "error", err)
 	}
 }
 
@@ -130,13 +169,21 @@ func gatePostFillRiskRecord(record tvbotstorage.OrderRecord) bool {
 	if record.Risk.Type != tvbottrading.RiskTPSL || record.Risk.TPPct == nil || record.Risk.SLPct == nil {
 		return false
 	}
-	return strings.TrimSpace(record.Result.RiskReference) == tvbottrading.RiskReferencePositionAverage
+	// Accept position_average for records written by the previous deployment;
+	// they are migrated to per-layer protection on the next reconciliation.
+	ref := strings.TrimSpace(record.Result.RiskReference)
+	return ref == tvbottrading.RiskReferenceLayerAverage || ref == tvbottrading.RiskReferencePositionAverage
 }
 
 func (s *Server) reconcileGatePositionRiskForRecord(ctx context.Context, record tvbotstorage.OrderRecord) error {
 	if !gatePostFillRiskRecord(record) {
 		return nil
 	}
+	key := gateRiskReconcileKey(record)
+	if !gateRiskReconcileJobs.start(key) {
+		return nil
+	}
+	defer gateRiskReconcileJobs.done(key)
 	cfg := configForTradeEnv(s.ConfigStore.Get(), orderRecordTradeEnv(record))
 	requestedAPIID := strings.TrimSpace(record.Result.APIID)
 	if requestedAPIID == "" {
@@ -150,7 +197,15 @@ func (s *Server) reconcileGatePositionRiskForRecord(ctx context.Context, record 
 	if contract == "" {
 		return errors.New("Gate risk reconciliation requires a contract")
 	}
-	position, found, err := openGatePosition(ctx, client, contract)
+	operationKey := gateContractOperationKey(requestedAPIID, contract)
+	if !gateContractOperationJobs.start(operationKey) {
+		// The page position scanner is currently canceling/submitting a full
+		// close, or another record is synchronizing this contract. Let that
+		// operation finish before creating/amending exchange protection.
+		return nil
+	}
+	defer gateContractOperationJobs.done(operationKey)
+	_, found, err := openGatePosition(ctx, client, contract)
 	if err != nil {
 		return err
 	}
@@ -159,43 +214,203 @@ func (s *Server) reconcileGatePositionRiskForRecord(ctx context.Context, record 
 		return err
 	}
 	if !found {
-		return cancelManagedGateRiskOrders(ctx, client, contract, openRiskOrders)
+		if err := cancelManagedGateRiskOrders(ctx, client, contract, openRiskOrders); err != nil {
+			return err
+		}
+		result := record.Result
+		if clearGateRiskResult(&result) && !reflect.DeepEqual(result, record.Result) {
+			return s.Orders.UpdateResult(record.SignalID, result, s.now())
+		}
+		return nil
 	}
 	contractMeta, err := client.Contract(ctx, contract)
 	if err != nil {
 		return err
 	}
-	plan, err := gatePositionRiskPlan(record, position, contractMeta.OrderPriceRound, requestedAPIID, gateRiskMarginMode(cfg.Trading.DefaultMarginMode))
-	if err != nil {
-		return err
-	}
-	managed := managedGateRiskOrders(openRiskOrders, plan)
+	marginMode := gateRiskMarginMode(cfg.Trading.DefaultMarginMode)
 	result := record.Result
-	result.RiskOrders = result.RiskOrders[:0]
+	ownedTexts := gateOwnedRiskTexts(record.Result, requestedAPIID, contract)
+	if len(result.Layers) == 0 && strings.TrimSpace(result.OrdID) != "" {
+		// Simple market/limit Gate opens predate layer metadata. Treat the
+		// single order as one layer so it receives the same fill-based handling.
+		result.Layers = []tvbottrading.OrderLayerResult{{
+			Name:      "default",
+			OrderType: result.OrdType,
+			Price:     result.Px,
+			OrdID:     strings.TrimSpace(result.OrdID),
+			ClOrdID:   strings.TrimSpace(result.ClOrdID),
+			Status:    "submitted",
+		}}
+	}
+	result.RiskOrders = nil
+	desiredTexts := make(map[string]struct{})
 	var reconcileErr error
-	for _, desired := range plan {
-		orders := managed[desired.clientText]
-		orderID, err := s.ensureGateRiskOrder(ctx, client, desired, orders)
-		if err != nil {
-			reconcileErr = errors.Join(reconcileErr, err)
+	for index := range result.Layers {
+		layer := &result.Layers[index]
+		layer.RiskOrders = nil
+		if strings.TrimSpace(layer.OrdID) == "" {
 			continue
 		}
-		result.RiskOrders = append(result.RiskOrders, tvbottrading.RiskOrderResult{
-			Exchange:     tvbottrading.ExchangeGate,
-			AlgoID:       orderID,
-			ClientAlgoID: desired.clientText,
-			OrderType:    desired.resultType,
-			Side:         desired.closeSide,
-			Quantity:     "0",
-			TriggerPrice: desired.triggerPx,
-		})
+		fill, filled, fillErr := fetchGateLayerFill(ctx, client, contract, *layer)
+		if fillErr != nil {
+			reconcileErr = errors.Join(reconcileErr, fmt.Errorf("layer %s fill lookup: %w", layer.Name, fillErr))
+			continue
+		}
+		if !filled {
+			continue
+		}
+		layer.FilledQty = tvbottrading.NormalizeFloat(fill.quantity)
+		layer.FillPrice = tvbottrading.NormalizeFloat(fill.price)
+		plans, planErr := gateLayerRiskPlans(record, *layer, index, fill, contractMeta.OrderPriceRound, requestedAPIID, marginMode)
+		if planErr != nil {
+			reconcileErr = errors.Join(reconcileErr, planErr)
+			continue
+		}
+		for _, desired := range plans {
+			desiredTexts[desired.clientText] = struct{}{}
+			managed := managedGateRiskOrdersForText(openRiskOrders, desired.clientText)
+			orderID, ensureErr := s.ensureGateRiskOrder(ctx, client, desired, managed)
+			if ensureErr != nil {
+				reconcileErr = errors.Join(reconcileErr, ensureErr)
+				continue
+			}
+			risk := gateRiskOrderResult(desired, orderID)
+			layer.RiskOrders = append(layer.RiskOrders, risk)
+			result.RiskOrders = append(result.RiskOrders, risk)
+		}
 	}
-	if len(result.RiskOrders) > 0 {
-		if err := s.Orders.UpdateResult(record.SignalID, result, s.now()); err != nil {
-			reconcileErr = errors.Join(reconcileErr, err)
+	// Remove protection left behind by an older layer plan, a canceled/empty
+	// layer, or the previous net-position implementation. Never touch other
+	// Gate price orders, including orders owned by the page position scanner.
+	for _, order := range openRiskOrders {
+		text := strings.TrimSpace(order.Initial.Text)
+		if !strings.HasPrefix(text, gatePositionRiskTextPrefix) {
+			continue
+		}
+		if _, owned := ownedTexts[text]; !owned {
+			continue
+		}
+		if _, keep := desiredTexts[text]; keep {
+			continue
+		}
+		if cancelErr := cancelGatePriceTriggeredOrder(ctx, client, order); cancelErr != nil {
+			reconcileErr = errors.Join(reconcileErr, fmt.Errorf("cancel stale Gate risk order %s: %w", order.IDString(), cancelErr))
+		}
+	}
+	if !reflect.DeepEqual(result, record.Result) {
+		if updateErr := s.Orders.UpdateResult(record.SignalID, result, s.now()); updateErr != nil {
+			reconcileErr = errors.Join(reconcileErr, updateErr)
 		}
 	}
 	return reconcileErr
+}
+
+func gateContractOperationKey(apiID, contract string) string {
+	return strings.Join([]string{strings.TrimSpace(apiID), strings.ToUpper(strings.TrimSpace(contract))}, "|")
+}
+
+func gateRiskReconcileKey(record tvbotstorage.OrderRecord) string {
+	key := strings.TrimSpace(record.SignalID)
+	if key == "" {
+		key = strings.TrimSpace(record.Result.OrdID)
+	}
+	return strings.Join([]string{normalizeGateRiskEnvironment(record.TradeEnv), strings.TrimSpace(record.APIID), strings.TrimSpace(record.Result.InstID), key}, "|")
+}
+
+func gateOwnedRiskTexts(result tvbottrading.OrderResult, apiID, contract string) map[string]struct{} {
+	owned := make(map[string]struct{})
+	for _, risk := range result.RiskOrders {
+		if text := strings.TrimSpace(risk.ClientAlgoID); text != "" {
+			owned[text] = struct{}{}
+		}
+	}
+	for _, layer := range result.Layers {
+		for _, risk := range layer.RiskOrders {
+			if text := strings.TrimSpace(risk.ClientAlgoID); text != "" {
+				owned[text] = struct{}{}
+			}
+		}
+	}
+	// The previous deployment used these two net-position IDs. Include them
+	// only as this record's migration targets; never sweep another record's
+	// per-layer protection orders.
+	owned[gateRiskClientText(apiID, contract, "tp")] = struct{}{}
+	owned[gateRiskClientText(apiID, contract, "sl")] = struct{}{}
+	return owned
+}
+
+func fetchGateLayerFill(ctx context.Context, client tvbotgate.Client, contract string, layer tvbottrading.OrderLayerResult) (gateLayerFill, bool, error) {
+	orderID := strings.TrimSpace(layer.OrdID)
+	if orderID == "" {
+		return gateLayerFill{}, false, nil
+	}
+	order, err := client.GetOrder(ctx, contract, orderID)
+	if err != nil {
+		if persisted, ok := persistedGateLayerFill(layer); ok {
+			return persisted, true, nil
+		}
+		return gateLayerFill{}, false, err
+	}
+	total, totalErr := strconv.ParseFloat(strings.TrimSpace(order.Size), 64)
+	left, leftErr := strconv.ParseFloat(strings.TrimSpace(order.Left), 64)
+	filledQty := 0.0
+	if totalErr == nil {
+		filledQty = math.Abs(total)
+		if leftErr == nil {
+			filledQty -= math.Abs(left)
+		}
+		if filledQty < 0 {
+			filledQty = 0
+		}
+	}
+	fillPrice, priceErr := strconv.ParseFloat(strings.TrimSpace(order.FillPrice), 64)
+	if filledQty <= 0 {
+		if persisted, ok := persistedGateLayerFill(layer); ok {
+			return persisted, true, nil
+		}
+		return gateLayerFill{}, false, nil
+	}
+	if priceErr != nil || fillPrice <= 0 {
+		if persisted, ok := persistedGateLayerFill(layer); ok {
+			fillPrice = persisted.price
+		} else {
+			trades, tradeErr := client.MyTrades(ctx, contract)
+			if tradeErr != nil {
+				return gateLayerFill{}, false, tradeErr
+			}
+			var value float64
+			var tradeQty float64
+			for _, trade := range trades {
+				if strings.TrimSpace(trade.OrderID) != orderID {
+					continue
+				}
+				qty, qtyErr := strconv.ParseFloat(strings.TrimSpace(trade.Size), 64)
+				price, tradePriceErr := strconv.ParseFloat(strings.TrimSpace(trade.Price), 64)
+				if qtyErr != nil || tradePriceErr != nil || price <= 0 {
+					continue
+				}
+				tradeQty += math.Abs(qty)
+				value += math.Abs(qty) * price
+			}
+			if tradeQty > 0 {
+				filledQty = tradeQty
+				fillPrice = value / tradeQty
+			}
+		}
+	}
+	if fillPrice <= 0 || math.IsNaN(fillPrice) || math.IsInf(fillPrice, 0) {
+		return gateLayerFill{}, false, fmt.Errorf("Gate order %s has no positive fill price", orderID)
+	}
+	return gateLayerFill{quantity: filledQty, price: fillPrice, orderSize: total}, true, nil
+}
+
+func persistedGateLayerFill(layer tvbottrading.OrderLayerResult) (gateLayerFill, bool) {
+	quantity, qtyErr := strconv.ParseFloat(strings.TrimSpace(layer.FilledQty), 64)
+	price, priceErr := strconv.ParseFloat(strings.TrimSpace(layer.FillPrice), 64)
+	if qtyErr != nil || priceErr != nil || quantity <= 0 || price <= 0 {
+		return gateLayerFill{}, false
+	}
+	return gateLayerFill{quantity: quantity, price: price}, true
 }
 
 func openGatePosition(ctx context.Context, client tvbotgate.Client, contract string) (tvbotgate.Position, bool, error) {
@@ -215,73 +430,75 @@ func openGatePosition(ctx context.Context, client tvbotgate.Client, contract str
 	return tvbotgate.Position{}, false, nil
 }
 
-func gatePositionRiskPlan(record tvbotstorage.OrderRecord, position tvbotgate.Position, priceStep, apiID, marginMode string) ([]gateRiskPlan, error) {
-	entry, err := strconv.ParseFloat(strings.TrimSpace(position.EntryPrice), 64)
-	if err != nil || entry <= 0 {
-		return nil, fmt.Errorf("invalid Gate position entry price %q", position.EntryPrice)
+func gateLayerRiskPlans(record tvbotstorage.OrderRecord, layer tvbottrading.OrderLayerResult, index int, fill gateLayerFill, priceStep, apiID, marginMode string) ([]gateRiskPlan, error) {
+	if fill.quantity <= 0 || fill.price <= 0 {
+		return nil, errors.New("Gate layer fill must have positive quantity and price")
 	}
-	size, err := strconv.ParseFloat(strings.TrimSpace(position.Size), 64)
-	if err != nil || size == 0 {
-		return nil, fmt.Errorf("invalid Gate position size %q", position.Size)
-	}
-	leverage := gatePositionLeverage(position, record.Result.Leverage, record.Leverage)
+	leverage := record.Result.Leverage
 	if leverage <= 0 {
-		return nil, errors.New("Gate position leverage is unavailable")
+		leverage = record.Leverage
 	}
-	tpPct := record.Risk.TPPct.Value
-	slPct := record.Risk.SLPct.Value
-	action := tvbottrading.ActionLong
-	if size < 0 {
+	if leverage <= 0 {
+		return nil, errors.New("Gate layer leverage is unavailable")
+	}
+	action := record.Action
+	if fill.orderSize < 0 {
 		action = tvbottrading.ActionShort
+	} else if fill.orderSize > 0 {
+		action = tvbottrading.ActionLong
 	}
-	tp, sl, err := tvbottrading.FixedTPSLTriggerPrices(action, entry, tpPct, slPct, leverage)
+	tp, sl, err := tvbottrading.FixedTPSLTriggerPrices(action, fill.price, record.Risk.TPPct.Value, record.Risk.SLPct.Value, leverage)
 	if err != nil {
 		return nil, err
+	}
+	contract := strings.ToUpper(strings.TrimSpace(record.Result.InstID))
+	if contract == "" {
+		return nil, errors.New("Gate layer contract is unavailable")
 	}
 	long := action == tvbottrading.ActionLong
 	orderType := "close-long-order"
 	closeSide := "SELL"
+	closeSize := "-" + tvbottrading.NormalizeFloat(fill.quantity)
+	tpRule, slRule := int64(1), int64(2)
 	if !long {
 		orderType = "close-short-order"
 		closeSide = "BUY"
-	}
-	tpRule, slRule := int64(1), int64(2)
-	if !long {
+		closeSize = tvbottrading.NormalizeFloat(fill.quantity)
 		tpRule, slRule = 2, 1
 	}
-	contract := strings.ToUpper(strings.TrimSpace(position.Contract))
+	layerKey := strings.TrimSpace(layer.OrdID)
+	if layerKey == "" {
+		layerKey = strings.TrimSpace(layer.ClOrdID)
+	}
+	if layerKey == "" {
+		layerKey = fmt.Sprintf("layer-%d", index)
+	}
 	return []gateRiskPlan{
-		{contract: contract, kind: "tp", orderType: orderType, triggerPx: tvbotgate.FormatPriceStep(tp, priceStep), rule: tpRule, clientText: gateRiskClientText(apiID, contract, "tp"), resultType: "TAKE_PROFIT", closeSide: closeSide, marginMode: marginMode},
-		{contract: contract, kind: "sl", orderType: orderType, triggerPx: tvbotgate.FormatPriceStep(sl, priceStep), rule: slRule, clientText: gateRiskClientText(apiID, contract, "sl"), resultType: "STOP_LOSS", closeSide: closeSide, marginMode: marginMode},
+		{contract: contract, kind: "tp", orderType: orderType, triggerPx: tvbotgate.FormatPriceStep(tp, priceStep), rule: tpRule, clientText: gateRiskClientText(apiID, contract, record.SignalID, layerKey, "tp"), resultType: "TAKE_PROFIT", closeSide: closeSide, marginMode: marginMode, size: closeSize},
+		{contract: contract, kind: "sl", orderType: orderType, triggerPx: tvbotgate.FormatPriceStep(sl, priceStep), rule: slRule, clientText: gateRiskClientText(apiID, contract, record.SignalID, layerKey, "sl"), resultType: "STOP_LOSS", closeSide: closeSide, marginMode: marginMode, size: closeSize},
 	}, nil
 }
 
-func gatePositionLeverage(position tvbotgate.Position, fallbacks ...int) int {
-	for _, raw := range []string{position.Lever, position.Leverage} {
-		value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-		if err == nil && value > 0 && math.Trunc(value) == value {
-			return int(value)
-		}
-	}
-	for _, fallback := range fallbacks {
-		if fallback > 0 {
-			return fallback
-		}
-	}
-	return 0
-}
-
-func managedGateRiskOrders(orders []tvbotgate.PriceTriggeredOrder, plans []gateRiskPlan) map[string][]tvbotgate.PriceTriggeredOrder {
-	managed := make(map[string][]tvbotgate.PriceTriggeredOrder, len(plans))
-	for _, plan := range plans {
-		managed[plan.clientText] = nil
-	}
+func managedGateRiskOrdersForText(orders []tvbotgate.PriceTriggeredOrder, text string) []tvbotgate.PriceTriggeredOrder {
+	managed := make([]tvbotgate.PriceTriggeredOrder, 0, 1)
 	for _, order := range orders {
-		if _, ok := managed[order.Initial.Text]; ok {
-			managed[order.Initial.Text] = append(managed[order.Initial.Text], order)
+		if order.Initial.Text == text {
+			managed = append(managed, order)
 		}
 	}
 	return managed
+}
+
+func gateRiskOrderResult(desired gateRiskPlan, orderID string) tvbottrading.RiskOrderResult {
+	return tvbottrading.RiskOrderResult{
+		Exchange:     tvbottrading.ExchangeGate,
+		AlgoID:       orderID,
+		ClientAlgoID: desired.clientText,
+		OrderType:    desired.resultType,
+		Side:         desired.closeSide,
+		Quantity:     strings.TrimPrefix(desired.size, "-"),
+		TriggerPrice: desired.triggerPx,
+	}
 }
 
 func (s *Server) ensureGateRiskOrder(ctx context.Context, client tvbotgate.Client, desired gateRiskPlan, existing []tvbotgate.PriceTriggeredOrder) (string, error) {
@@ -289,25 +506,24 @@ func (s *Server) ensureGateRiskOrder(ctx context.Context, client tvbotgate.Clien
 		keep := existing[0]
 		for _, duplicate := range existing[1:] {
 			if err := cancelGatePriceTriggeredOrder(ctx, client, duplicate); err != nil && s.Logger != nil {
-				s.Logger.Warn("failed to cancel duplicate Gate TP/SL order", "order_id", duplicate.IDString(), "error", err)
+				s.Logger.Warn("failed to cancel duplicate Gate layered TP/SL order", "order_id", duplicate.IDString(), "error", err)
 			}
 		}
-		if keep.OrderType != desired.orderType || !gatePriceOrderIsClose(keep) || !gatePriceOrderIsReduceOnly(keep) {
+		if keep.OrderType != desired.orderType || !gatePriceOrderIsReduceOnly(keep) || gatePriceOrderIsClose(keep) {
 			if err := cancelGatePriceTriggeredOrder(ctx, client, keep); err != nil {
 				return "", fmt.Errorf("replace Gate %s order %s: %w", desired.kind, keep.IDString(), err)
 			}
 			return s.ensureGateRiskOrder(ctx, client, desired, nil)
 		}
-		if keep.OrderType == desired.orderType && keep.Trigger.Price == desired.triggerPx && keep.Trigger.Rule == desired.rule && gatePriceOrderIsClose(keep) && gatePriceOrderIsReduceOnly(keep) {
+		if keep.Trigger.Price == desired.triggerPx && keep.Trigger.Rule == desired.rule && gatePriceOrderHasSize(keep, desired.size) {
 			return keep.IDString(), nil
 		}
 		response, err := client.AmendPriceTriggeredOrder(ctx, keep.IDString(), tvbotgate.PriceTriggeredOrderAmendment{
 			OrderID:   keep.IDString(),
-			Size:      "0",
+			Size:      desired.size,
 			Price:     "0",
 			TriggerPx: desired.triggerPx,
 			PriceType: 0,
-			Close:     true,
 		})
 		if err != nil {
 			return "", fmt.Errorf("amend Gate %s order %s: %w", desired.kind, keep.IDString(), err)
@@ -320,11 +536,10 @@ func (s *Server) ensureGateRiskOrder(ctx context.Context, client tvbotgate.Clien
 	response, err := client.PlacePriceTriggeredOrder(ctx, tvbotgate.PriceTriggeredOrderRequest{
 		Initial: tvbotgate.PriceTriggeredInitial{
 			Contract:   desired.contract,
-			Size:       "0",
+			Size:       desired.size,
 			Price:      "0",
 			TIF:        "ioc",
 			Text:       desired.clientText,
-			Close:      true,
 			ReduceOnly: true,
 		},
 		Trigger: tvbotgate.PriceTriggeredTrigger{
@@ -343,6 +558,31 @@ func (s *Server) ensureGateRiskOrder(ctx context.Context, client tvbotgate.Clien
 		return id, nil
 	}
 	return "", fmt.Errorf("create Gate %s order returned no order id", desired.kind)
+}
+
+func gatePriceOrderHasSize(order tvbotgate.PriceTriggeredOrder, desired string) bool {
+	actual := strings.TrimSpace(order.Initial.Size)
+	if actual == "" {
+		actual = strings.TrimSpace(order.Initial.Amount)
+	}
+	got, gotErr := strconv.ParseFloat(actual, 64)
+	want, wantErr := strconv.ParseFloat(strings.TrimSpace(desired), 64)
+	return gotErr == nil && wantErr == nil && math.Abs(got-want) < 1e-9
+}
+
+func clearGateRiskResult(result *tvbottrading.OrderResult) bool {
+	if result == nil {
+		return false
+	}
+	changed := len(result.RiskOrders) > 0
+	result.RiskOrders = nil
+	for i := range result.Layers {
+		if len(result.Layers[i].RiskOrders) > 0 {
+			changed = true
+			result.Layers[i].RiskOrders = nil
+		}
+	}
+	return changed
 }
 
 func cancelManagedGateRiskOrders(ctx context.Context, client tvbotgate.Client, contract string, orders []tvbotgate.PriceTriggeredOrder) error {
@@ -374,8 +614,12 @@ func gatePriceOrderIsReduceOnly(order tvbotgate.PriceTriggeredOrder) bool {
 	return order.Initial.ReduceOnly || order.Initial.IsReduceOnly
 }
 
-func gateRiskClientText(apiID, contract, kind string) string {
-	digest := sha256.Sum256([]byte(strings.Join([]string{apiID, contract, kind}, "|")))
+func gateRiskClientText(parts ...string) string {
+	digest := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	kind := "risk"
+	if len(parts) > 0 && strings.TrimSpace(parts[len(parts)-1]) != "" {
+		kind = strings.TrimSpace(parts[len(parts)-1])
+	}
 	return gatePositionRiskTextPrefix + kind + "-" + hex.EncodeToString(digest[:])[:12]
 }
 

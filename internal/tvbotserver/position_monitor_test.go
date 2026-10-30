@@ -417,12 +417,15 @@ func isolatePositionCloseJobsForTest() func() {
 	oldPoll := positionClosePollInterval
 	oldTimeout := positionCloseLimitTimeout
 	oldJobs := positionCloseJobs
+	oldGateOperations := gateContractOperationJobs
 	positionClosePollInterval = time.Hour
 	positionCloseLimitTimeout = time.Hour
 	positionCloseJobs = newPositionCloseRegistry()
+	gateContractOperationJobs = newGateContractOperationRegistry()
 	return func() {
 		positionClosePollInterval = oldPoll
 		positionCloseLimitTimeout = oldTimeout
 		positionCloseJobs = oldJobs
+		gateContractOperationJobs = oldGateOperations
 	}
 }

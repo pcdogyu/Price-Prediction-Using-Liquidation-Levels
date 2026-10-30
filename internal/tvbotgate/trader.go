@@ -91,7 +91,7 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 	ack, err := client.PlaceOrder(ctx, req)
 	result := trading.OrderResult{APIID: apiID, TargetExchange: trading.ExchangeGate, InstID: contract.Name, ClOrdID: textID, OrdType: string(settings.OrderType), Px: price, Leverage: signal.Leverage, OrdID: ack.IDString(), PositionEffect: signal.PositionEffect, PositionSide: signal.PositionSide}
 	if signal.PositionEffect == trading.PositionEffectOpen && signal.Risk.Type == trading.RiskTPSL {
-		result.RiskReference = trading.RiskReferencePositionAverage
+		result.RiskReference = trading.RiskReferenceLayerAverage
 	}
 	if err != nil {
 		if apiErr := errorAsAPI(err); apiErr != nil {
@@ -156,7 +156,7 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 		PositionSide:   signal.PositionSide,
 	}
 	if signal.PositionEffect == trading.PositionEffectOpen && signal.Risk.Type == trading.RiskTPSL {
-		result.RiskReference = trading.RiskReferencePositionAverage
+		result.RiskReference = trading.RiskReferenceLayerAverage
 	}
 	baseID := gateClientOrderID(signal)
 	var firstErr error

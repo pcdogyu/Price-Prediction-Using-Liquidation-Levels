@@ -61,8 +61,8 @@ func TestTraderPlacesSixLayeredGateOrdersFromOneTicker(t *testing.T) {
 			t.Fatalf("Gate layer %d must not attach static TP/SL before the actual fill: %#v", i, order)
 		}
 	}
-	if len(result.RiskOrders) != 0 || result.RiskReference != trading.RiskReferencePositionAverage {
-		t.Fatalf("Gate TP/SL should be deferred to the actual position average: %#v", result)
+	if len(result.RiskOrders) != 0 || result.RiskReference != trading.RiskReferenceLayerAverage {
+		t.Fatalf("Gate TP/SL should be deferred to each actual layer fill: %#v", result)
 	}
 	for i, layer := range result.Layers {
 		if len(layer.RiskOrders) != 0 {
