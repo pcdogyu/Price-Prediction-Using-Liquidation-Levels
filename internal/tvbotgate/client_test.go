@@ -192,7 +192,7 @@ func TestClientCreatesAmendsAndCancelsPriceTriggeredOrder(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			if req.Initial.Contract != "ETH_USDT" || req.Initial.Size != "0" || req.Initial.Price != "0" || !req.Initial.Close || !req.Initial.ReduceOnly || req.OrderType != "close-short-order" || req.Trigger.Price != "2272.46" || req.Trigger.Rule != 1 {
+			if req.Initial.Contract != "ETH_USDT" || req.Initial.Size != "2" || req.Initial.Price != "0" || req.Initial.Close || !req.Initial.ReduceOnly || req.OrderType != "plan-close-short-position" || req.Trigger.Price != "2272.46" || req.Trigger.Rule != 1 {
 				t.Fatalf("unexpected create request: %#v", req)
 			}
 			_, _ = w.Write([]byte(`{"id":123,"id_string":"123"}`))
@@ -201,7 +201,7 @@ func TestClientCreatesAmendsAndCancelsPriceTriggeredOrder(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			if req.OrderID != "123" || req.TriggerPx != "2272.50" || req.Price != "0" || req.Size != "0" || !req.Close {
+			if req.OrderID != "123" || req.TriggerPx != "2272.50" || req.Price != "0" || req.Size != "2" || req.Close {
 				t.Fatalf("unexpected amend request: %#v", req)
 			}
 			_, _ = w.Write([]byte(`{"id":123,"id_string":"123"}`))
@@ -215,14 +215,14 @@ func TestClientCreatesAmendsAndCancelsPriceTriggeredOrder(t *testing.T) {
 	client := Client{BaseURL: server.URL, Credentials: Credentials{APIKey: "key", SecretKey: "secret"}, HTTPClient: server.Client()}
 
 	created, err := client.PlacePriceTriggeredOrder(context.Background(), PriceTriggeredOrderRequest{
-		Initial:   PriceTriggeredInitial{Contract: "ETH_USDT", Size: "0", Price: "0", Close: true, ReduceOnly: true},
+		Initial:   PriceTriggeredInitial{Contract: "ETH_USDT", Size: "2", Price: "0", ReduceOnly: true},
 		Trigger:   PriceTriggeredTrigger{Price: "2272.46", Rule: 1},
-		OrderType: "close-short-order",
+		OrderType: "plan-close-short-position",
 	})
 	if err != nil || created.IDValue() != "123" {
 		t.Fatalf("created=%#v err=%v", created, err)
 	}
-	amended, err := client.AmendPriceTriggeredOrder(context.Background(), "123", PriceTriggeredOrderAmendment{TriggerPx: "2272.50", Size: "0", Price: "0", Close: true})
+	amended, err := client.AmendPriceTriggeredOrder(context.Background(), "123", PriceTriggeredOrderAmendment{TriggerPx: "2272.50", Size: "2", Price: "0"})
 	if err != nil || amended.IDValue() != "123" {
 		t.Fatalf("amended=%#v err=%v", amended, err)
 	}

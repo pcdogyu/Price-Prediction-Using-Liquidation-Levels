@@ -37,10 +37,10 @@ func TestGateLayerRiskPlansUseEachLayerFillPrice(t *testing.T) {
 	if len(plans) != 2 {
 		t.Fatalf("plans=%#v", plans)
 	}
-	if plans[0].triggerPx != "2226.36" || plans[0].rule != 2 || plans[0].orderType != "close-short-order" || plans[0].size != "8" {
+	if plans[0].triggerPx != "2226.36" || plans[0].rule != 2 || plans[0].orderType != "plan-close-short-position" || plans[0].size != "8" {
 		t.Fatalf("unexpected TP plan=%#v", plans[0])
 	}
-	if plans[1].triggerPx != "2272.46" || plans[1].rule != 1 || plans[1].orderType != "close-short-order" || plans[1].size != "8" {
+	if plans[1].triggerPx != "2272.46" || plans[1].rule != 1 || plans[1].orderType != "plan-close-short-position" || plans[1].size != "8" {
 		t.Fatalf("unexpected SL plan=%#v", plans[1])
 	}
 	otherLayer := layer

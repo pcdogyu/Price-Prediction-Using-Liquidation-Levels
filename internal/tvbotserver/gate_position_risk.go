@@ -458,12 +458,12 @@ func gateLayerRiskPlans(record tvbotstorage.OrderRecord, layer tvbottrading.Orde
 		return nil, errors.New("Gate layer contract is unavailable")
 	}
 	long := action == tvbottrading.ActionLong
-	orderType := "close-long-order"
+	orderType := "plan-close-long-position"
 	closeSide := "SELL"
 	closeSize := "-" + tvbottrading.NormalizeFloat(fill.quantity)
 	tpRule, slRule := int64(1), int64(2)
 	if !long {
-		orderType = "close-short-order"
+		orderType = "plan-close-short-position"
 		closeSide = "BUY"
 		closeSize = tvbottrading.NormalizeFloat(fill.quantity)
 		tpRule, slRule = 2, 1
