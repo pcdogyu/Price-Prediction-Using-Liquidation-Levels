@@ -718,6 +718,10 @@ const tvbotHTML = `<!doctype html>
     td.order-signal-route {
       width: 8%;
     }
+    th.order-strategy,
+    td.order-strategy {
+      width: 10%;
+    }
     th.order-market,
     td.order-market {
       width: 8%;
@@ -2377,7 +2381,7 @@ const tvbotHTML = `<!doctype html>
       <div class="symbol-table-wrap">
         <table class="orders-table">
           <thead>
-            <tr><th>时间</th><th class="order-status">状态</th><th>信号来源</th><th class="order-target">下单去向</th><th>方向</th><th class="order-signal-route">信号执行</th><th class="order-market">市场类型</th><th>币对</th><th>价格</th><th>金额</th><th class="order-okx">交易所 / 返回</th></tr>
+            <tr><th>时间</th><th class="order-status">状态</th><th>信号来源</th><th class="order-target">下单去向</th><th>方向</th><th class="order-strategy">策略</th><th class="order-signal-route">信号执行</th><th class="order-market">市场类型</th><th>币对</th><th>价格</th><th>金额</th><th class="order-okx">交易所 / 返回</th></tr>
           </thead>
           <tbody id="order-rows"></tbody>
         </table>
@@ -5443,6 +5447,39 @@ const tvbotHTML = `<!doctype html>
       return source === executed ? "同步信号" : "反转信号";
     }
 
+    function orderHistoryRawPayload(order) {
+      const raw = order && order.raw_json ? order.raw_json : "";
+      if (!raw) return {};
+      if (typeof raw === "object") return raw;
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : {};
+      } catch (_) {
+        return {};
+      }
+    }
+
+    function orderHistoryStrategyText(order) {
+      const marketStrategy = String(order && order.market_strategy || "").trim().toLowerCase();
+      if (marketStrategy === "trend") return "趋势策略";
+      if (marketStrategy === "scalp") return "震荡策略";
+      if (marketStrategy === "transition") return "过渡策略";
+      const raw = orderHistoryRawPayload(order);
+      const condition = String(raw.condition || "").trim().toLowerCase();
+      const source = String(raw.source || "").trim().toLowerCase();
+      if (condition === "manual_liquidation_trigger" || source === "liquidation_alert_manual") return "爆仓策略（手动）";
+      if (condition === "aggressive_liquidation_signal" || condition === "aggressive_liquidation_preclose") return "爆仓策略（激进）";
+      if (condition === "steady_liquidation_confirmation" || condition === "steady_liquidation_preclose") return "爆仓策略（稳健）";
+      if (condition === "liquidation_alert" || condition === "liquidation_alert_preclose") return "爆仓策略（预警）";
+      if (condition === "value_area_signal" || condition === "value_area_manual" || condition === "value_area_close" || condition === "value_area_preclose" || source.indexOf("value_area") >= 0) return "价值区策略";
+      if (source === "tradingview") return "TradingView策略";
+      if (source === "position_monitor") return "持仓监控策略";
+      if (source === "stop_loss_webhook") return "止损策略";
+      if (source === "take_profit_webhook") return "止盈策略";
+      if (source === "analysis_manual") return "分析手动策略";
+      return "-";
+    }
+
     function orderHistoryMarketText(order) {
       const strategy = String(order && order.market_strategy || "").trim().toLowerCase();
       if (strategy === "trend") return "单边市场";
@@ -7478,6 +7515,7 @@ const tvbotHTML = `<!doctype html>
           "<td>" + escapeHTML(sourceExchange) + "</td>" +
           '<td class="order-target">' + escapeHTML(targetText) + "</td>" +
           "<td>" + escapeHTML(orderHistoryDirectionText(order)) + "</td>" +
+          '<td class="order-strategy">' + escapeHTML(orderHistoryStrategyText(order)) + "</td>" +
           '<td class="order-signal-route">' + escapeHTML(orderHistorySignalRouteText(order)) + "</td>" +
           '<td class="order-market">' + escapeHTML(orderHistoryMarketText(order)) + "</td>" +
           "<td>" + escapeHTML(asText(order.coinpair)) + "</td>" +
@@ -7486,7 +7524,7 @@ const tvbotHTML = `<!doctype html>
           '<td class="order-okx"><div class="okx-cell"><span class="okx-text">' + escapeHTML(exchangeResult) + "</span>" + retryButton + "</div></td>" +
           "</tr>";
       });
-      $("order-rows").innerHTML = rows.join("") || '<tr><td colspan="11" class="muted">' + (filters.length ? "无匹配订单" : "-") + '</td></tr>';
+      $("order-rows").innerHTML = rows.join("") || '<tr><td colspan="12" class="muted">' + (filters.length ? "无匹配订单" : "-") + '</td></tr>';
       const status = $("order-history-status");
       const pageInfo = $("order-page-info");
       const prev = $("order-prev");

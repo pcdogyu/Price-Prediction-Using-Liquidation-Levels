@@ -630,14 +630,21 @@ func TestTVBotUIOrderHistorySearchControls(t *testing.T) {
 		[]byte(`id="clear-order-search"`),
 		[]byte(`class="order-target">下单去向`),
 		[]byte(`td class="order-target"`),
+		[]byte(`class="order-strategy">策略`),
+		[]byte(`td class="order-strategy"`),
 		[]byte(`class="order-signal-route">信号执行`),
 		[]byte(`class="order-market">市场类型`),
 		[]byte(`td class="order-signal-route"`),
 		[]byte(`td class="order-market"`),
 		[]byte(`class="orders-table"`),
-		[]byte(`colspan="11"`),
+		[]byte(`colspan="12"`),
 		[]byte(`function orderHistorySignalRouteText(order)`),
 		[]byte(`return source === executed ? "同步信号" : "反转信号"`),
+		[]byte(`function orderHistoryStrategyText(order)`),
+		[]byte(`return "爆仓策略（手动）"`),
+		[]byte(`return "爆仓策略（激进）"`),
+		[]byte(`return "爆仓策略（稳健）"`),
+		[]byte(`return "价值区策略"`),
 		[]byte(`function orderHistoryMarketText(order)`),
 		[]byte(`if (strategy === "trend") return "单边市场"`),
 		[]byte(`if (strategy === "scalp") return "震荡市场"`),
@@ -686,6 +693,11 @@ func TestTVBotUIOrderHistorySearchControls(t *testing.T) {
 		if !bytes.Contains(body, marker) {
 			t.Fatalf("tvbot ui missing order search marker %q", marker)
 		}
+	}
+	strategyColumn := bytes.Index(body, []byte(`class="order-strategy">策略`))
+	signalRouteColumn := bytes.Index(body, []byte(`class="order-signal-route">信号执行`))
+	if strategyColumn < 0 || signalRouteColumn < 0 || strategyColumn >= signalRouteColumn {
+		t.Fatalf("strategy column must be immediately before signal execution: strategy=%d signal=%d", strategyColumn, signalRouteColumn)
 	}
 	if bytes.Contains(body, []byte(`id="clear-ignored-coinpair"`)) || bytes.Contains(body, []byte(`function clearIgnoredCoinpair()`)) {
 		t.Fatal("tvbot UI should only remove ignored coinpairs one at a time")
