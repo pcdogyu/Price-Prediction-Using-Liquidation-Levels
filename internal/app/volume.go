@@ -40,11 +40,15 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 	// aggregate trades for that set at startup creates a large SQLite/API burst.
 	// Other candidates remain available to alerts and on-demand market views.
 	bootstrapSymbols := s.volumeBootstrapSymbols()
-	s.syncVolumeSymbols(ctx, bootstrapSymbols)
 	input := make(chan domain.AggregateTrade, 100000)
 	streamCtx, cancelStream := context.WithCancel(ctx)
 	s.startAggregateTradeStream(streamCtx, s.volumeStreamSymbolList(), input)
 	close(s.volumeLiveReady)
+	// Do not hold the live/on-demand path behind another startup backfill job.
+	// The shared gate still serializes this bootstrap work with on-demand
+	// sessions and other historical jobs, while the stream and queue are ready
+	// immediately after service startup.
+	go s.syncVolumeSymbols(ctx, bootstrapSymbols)
 
 	flush := time.NewTicker(500 * time.Millisecond)
 	defer flush.Stop()
