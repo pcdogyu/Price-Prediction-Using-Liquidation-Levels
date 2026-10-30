@@ -44,10 +44,16 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 			if len(nextSymbols) == 0 || sameSymbolList(bootstrapSymbols, nextSymbols) {
 				continue
 			}
+			// A candidate refresh can expand the set to 50 symbols. Stop the
+			// aggregate stream while its historical sessions are synchronized so
+			// live volume writes cannot compete with the large backfill on SQLite.
 			cancelStream()
 			bootstrapSymbols = append([]string(nil), nextSymbols...)
+			s.syncVolumeSymbols(ctx, bootstrapSymbols)
+			if ctx.Err() != nil {
+				return
+			}
 			cancelStream = s.startCandidateAggregateStream(ctx, bootstrapSymbols, input)
-			go s.syncVolumeSymbols(ctx, bootstrapSymbols)
 		case trade := <-input:
 			batch = append(batch, trade)
 			if len(batch) >= 2000 {

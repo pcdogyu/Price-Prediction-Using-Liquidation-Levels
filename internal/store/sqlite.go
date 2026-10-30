@@ -25,12 +25,16 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
+	// The unified application database is shared by market, alert, Gamma, and
+	// TVBot writes. Keep one connection so SQLite never has two in-process
+	// writers competing for the same WAL, and use NORMAL sync in WAL mode to
+	// avoid a full fsync for every short transaction while retaining atomicity.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(2)
-	db.SetMaxIdleConns(2)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	s := &Store{db: db}
 	if err = s.migrate(context.Background()); err != nil {
 		db.Close()

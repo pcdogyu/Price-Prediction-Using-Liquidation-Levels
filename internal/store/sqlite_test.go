@@ -77,6 +77,32 @@ func TestRetentionIndexesAndBatchedCleanup(t *testing.T) {
 	}
 }
 
+func TestSQLiteUsesSingleConnectionAndNormalWalSync(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "connection-policy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if stats := s.db.Stats(); stats.MaxOpenConnections != 1 {
+		t.Fatalf("max open connections=%d, want 1", stats.MaxOpenConnections)
+	}
+	var journalMode string
+	if err = s.db.QueryRowContext(context.Background(), `PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ToLower(journalMode) != "wal" {
+		t.Fatalf("journal mode=%q, want wal", journalMode)
+	}
+	var synchronous int
+	if err = s.db.QueryRowContext(context.Background(), `PRAGMA synchronous`).Scan(&synchronous); err != nil {
+		t.Fatal(err)
+	}
+	if synchronous != 1 {
+		t.Fatalf("synchronous=%d, want NORMAL (1)", synchronous)
+	}
+}
+
 func TestLegacySymbolOnlyIndexesAreRemoved(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "index-migration.db"))
 	if err != nil {
