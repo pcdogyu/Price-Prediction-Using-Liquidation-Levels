@@ -54,7 +54,7 @@ func (s *Service) deribitGammaLoop(ctx context.Context) {
 			cancel()
 			if err == nil {
 				// The source timestamps remain in SourceFrom/SourceTo. Time identifies
-				// this service's aligned five-minute sampling slot.
+				// this service's aligned two-minute sampling slot.
 				point.Time = scheduledAt
 			}
 			s.recordOptionGamma(ctx, currency+"USDT", point, err)

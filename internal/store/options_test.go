@@ -63,7 +63,7 @@ func TestOptionGammaPersistenceBoundsZeroAndRetention(t *testing.T) {
 	if err != nil || len(points) != 6 || !points[0].Time.Equal(at.Add(-25*time.Hour)) {
 		t.Fatal(points, err)
 	}
-	// A single archive slot can span several delete batches.
+	// A single archive slot can span several delete batches within the 3-day window.
 	for i := 1; i <= 2001; i++ {
 		p.Time = at.Add(-48*time.Hour + time.Duration(i)*time.Millisecond)
 		if err = s.SaveOptionGamma(ctx, p); err != nil {
@@ -74,7 +74,7 @@ func TestOptionGammaPersistenceBoundsZeroAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Expired != 1 || report.Downsampled != 2004 {
+	if report.Expired != 1 || report.Downsampled != 2003 {
 		t.Fatalf("cleanup report=%+v", report)
 	}
 	start, err := s.OptionGammaAvailableFrom(ctx, cutoff)
@@ -82,7 +82,7 @@ func TestOptionGammaPersistenceBoundsZeroAndRetention(t *testing.T) {
 		t.Fatal(start, err)
 	}
 	points, err = s.OptionGammaHistory(ctx, "BTCUSDT", at.AddDate(0, 0, -200), at.Add(time.Millisecond))
-	if err != nil || len(points) != 5 {
+	if err != nil || len(points) != 6 {
 		t.Fatal(points, err)
 	}
 }

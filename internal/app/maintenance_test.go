@@ -47,7 +47,7 @@ func TestDailyMaintenanceBoundsCapturesAndGammaHistory(t *testing.T) {
 	}
 
 	value := 0.4
-	expiredPoint := domain.OptionGammaPoint{Symbol: "BTCUSDT", Underlying: "BTC", Source: "deribit", Time: now.Add(-91 * 24 * time.Hour), Gamma: &value, Contracts: 80, SelectedContracts: 80, EligibleContracts: 100, State: "ok"}
+	expiredPoint := domain.OptionGammaPoint{Symbol: "BTCUSDT", Underlying: "BTC", Source: "deribit", Time: now.Add(-4 * 24 * time.Hour), Gamma: &value, Contracts: 80, SelectedContracts: 80, EligibleContracts: 100, State: "ok"}
 	currentPoint := expiredPoint
 	currentPoint.Time = now.Add(-time.Minute)
 	archivePoint := expiredPoint
