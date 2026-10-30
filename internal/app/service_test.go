@@ -141,11 +141,11 @@ func TestFallbackBackgroundCandidateSnapshotUsesConfiguredUniverse(t *testing.T)
 	if snapshot.BaseCount != BackgroundCandidateLimit || len(snapshot.Symbols) != BackgroundCandidateLimit+2 {
 		t.Fatalf("fallback snapshot=%+v", snapshot)
 	}
-	if snapshot.Symbols[0].Symbol != "TOKEN00USDT" || snapshot.Symbols[49].Symbol != "TOKEN49USDT" {
-		t.Fatalf("fallback did not use configured universe: first=%q fiftieth=%q", snapshot.Symbols[0].Symbol, snapshot.Symbols[49].Symbol)
+	if snapshot.Symbols[0].Symbol != "TOKEN00USDT" || snapshot.Symbols[19].Symbol != "TOKEN19USDT" {
+		t.Fatalf("fallback did not use configured universe: first=%q twentieth=%q", snapshot.Symbols[0].Symbol, snapshot.Symbols[19].Symbol)
 	}
-	if snapshot.Symbols[50].Symbol != "BTCUSDT" || snapshot.Symbols[51].Symbol != "ETHUSDT" {
-		t.Fatalf("fallback protection symbols=%v", snapshot.Symbols[50:])
+	if snapshot.Symbols[20].Symbol != "BTCUSDT" || snapshot.Symbols[21].Symbol != "ETHUSDT" {
+		t.Fatalf("fallback protection symbols=%v", snapshot.Symbols[20:])
 	}
 }
 

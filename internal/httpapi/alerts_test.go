@@ -51,7 +51,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 		t.Fatalf("alerts page status=%d body=%s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	for _, want := range []string{"报警", "成交额前 50 币对", `data-page="alerts"`, "assets/alerts.js", "assets/alerts.css", "aria-current=\"page\""} {
+	for _, want := range []string{"报警", "成交额前 20 币对", `data-page="alerts"`, "assets/alerts.js", "assets/alerts.css", "aria-current=\"page\""} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the alerts page must contain %q", want)
 		}

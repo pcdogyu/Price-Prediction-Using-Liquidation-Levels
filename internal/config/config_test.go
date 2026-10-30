@@ -11,7 +11,7 @@ func TestLoadDefaultsContinuousBootstrapToAnchorSymbols(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	cfg := Load()
-	if !reflect.DeepEqual(cfg.BootstrapSymbols, []string{"BTCUSDT", "ETHUSDT"}) {
+	if !reflect.DeepEqual(cfg.BootstrapSymbols, []string{"ETHUSDT"}) {
 		t.Fatalf("default bootstrap symbols=%v", cfg.BootstrapSymbols)
 	}
 }

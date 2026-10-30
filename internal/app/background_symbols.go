@@ -8,7 +8,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
 
-const BackgroundCandidateLimit = 50
+const BackgroundCandidateLimit = 20
 
 const backgroundCandidateLimit = BackgroundCandidateLimit
 

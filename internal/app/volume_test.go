@@ -21,10 +21,10 @@ func TestVolumeBootstrapSymbolsUsesBoundedConfiguredSet(t *testing.T) {
 	}
 }
 
-func TestVolumeBootstrapSymbolsFallsBackToBTCAndETH(t *testing.T) {
+func TestVolumeBootstrapSymbolsFallsBackToETH(t *testing.T) {
 	svc := &Service{}
 	got := svc.volumeBootstrapSymbols()
-	if len(got) != 2 || got[0] != "BTCUSDT" || got[1] != "ETHUSDT" {
+	if len(got) != 1 || got[0] != "ETHUSDT" {
 		t.Fatalf("volume bootstrap fallback=%v", got)
 	}
 }

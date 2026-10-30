@@ -213,7 +213,7 @@ func TestUnwatchedAndInvalidEventsAreIgnored(t *testing.T) {
 	}
 }
 
-// TestDroppedSymbolStopsTracking matters because the top 50 list rotates: a symbol
+// TestDroppedSymbolStopsTracking matters because the top 20 list rotates: a symbol
 // that falls out must not keep emitting alerts.
 func TestDroppedSymbolStopsTracking(t *testing.T) {
 	engine := testEngine(t, Defaults(), "BTCUSDT", "ETHUSDT")

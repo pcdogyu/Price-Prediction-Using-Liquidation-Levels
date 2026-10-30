@@ -14,7 +14,7 @@ import (
 )
 
 // RefreshBackgroundCandidates ranks the application-configured Binance pairs
-// by public 24h quote volume and returns the base-50 plus protected Binance
+// by public 24h quote volume and returns the base-20 plus protected Binance
 // positions/orders discovered from the tenant scopes.
 func (b *Bridge) RefreshBackgroundCandidates(ctx context.Context, configured []string) (domain.BackgroundSymbolSnapshot, error) {
 	if b == nil || b.Tenants == nil || b.Handler == nil {

@@ -89,7 +89,7 @@ func Load() Config {
 	}
 	bootstrapSymbols := split(env("APP_BOOTSTRAP_SYMBOLS", ""))
 	if len(bootstrapSymbols) == 0 {
-		bootstrapSymbols = []string{"BTCUSDT", "ETHUSDT"}
+		bootstrapSymbols = []string{"ETHUSDT"}
 	}
 	return Config{
 		Address: env("APP_ADDRESS", ":9090"), DatabasePath: env("APP_DATABASE", "data/liquidation.db"),
