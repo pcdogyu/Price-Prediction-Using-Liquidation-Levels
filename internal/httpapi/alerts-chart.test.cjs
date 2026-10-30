@@ -79,6 +79,33 @@ test('the requested periods are offered', () => {
   assert.equal(K.intervalMs('13m'), 0);
 });
 
+test('the chart exposes current-view K-line refill before latest navigation', () => {
+  const backfill = chartHTML.indexOf('id="kline-backfill"');
+  const latest = chartHTML.indexOf('id="kline-latest"');
+  assert.ok(backfill >= 0 && backfill < latest);
+  assert.match(chartHTML, /<button id="kline-backfill" type="button" aria-busy="false" aria-live="polite" aria-label="回补当前显示的K线">回补K线<\/button>/);
+  assert.match(chartApp, /function visibleCandleRequest\(\)/);
+  assert.match(chartApp, /function backfillVisibleCandles\(\)/);
+  assert.match(chartApp, /state\.view = preserved\.view/);
+  assert.match(chartApp, /await loadChartSignals\(\)/);
+  assert.match(chartApp, /await loadLiquidationDelta\(true\)/);
+  assert.match(chartApp, /aria-busy/);
+});
+
+test('visible K-line refill requests preserve the latest view or align historical cursors', () => {
+  const step = K.intervalMs('15m');
+  const historical = { start: Date.parse('2026-10-30T00:00:00Z'), end: Date.parse('2026-10-30T03:07:00Z') };
+  assert.deepEqual(K.visibleKlineRequest(historical, false, step), {
+    limit: 120,
+    before: '2026-10-30T03:15:00.000Z'
+  });
+  assert.deepEqual(K.visibleKlineRequest({ start: historical.start, end: historical.start + step * 300 }, true, step), {
+    limit: 302,
+    before: ''
+  });
+  assert.equal(K.visibleKlineRequest(null, false, step), null);
+});
+
 test('fitWindow anchors the newest candle with a right margin', () => {
   assert.deepEqual(K.fitWindow(1500000, 1000, 10), { start: 1500000 + 3000 - 10000, end: 1500000 + 3000 });
   assert.equal(K.fitWindow(0, 60000, K.DEFAULT_VISIBLE).end, 3 * 60000);

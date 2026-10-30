@@ -23,6 +23,18 @@
     return { start: end - Math.max(1, count) * step, end };
   }
 
+  // visibleKlineRequest describes the bounded page needed to refill the
+  // currently visible time range. A latest view deliberately omits the cursor
+  // so the server returns the newest page; a historical view rounds its right
+  // edge up to the next candle boundary so the last visible candle is included.
+  function visibleKlineRequest(range, atLatest, step) {
+    if (!range || !finite(range.start) || !finite(range.end) || range.end <= range.start || !finite(step) || step <= 0) return null;
+    const limit = Math.max(120, Math.min(1500, Math.ceil((range.end - range.start) / step) + 2));
+    if (atLatest) return { limit, before: '' };
+    const end = Math.ceil(range.end / step) * step;
+    return { limit, before: new Date(end).toISOString() };
+  }
+
   // clampWindow keeps the span inside the zoom limits and the window inside the
   // data: the right edge stops at the newest candle margin, while the left edge may
   // run one screen into not yet fetched history because that gap triggers a load.
@@ -376,7 +388,7 @@
 
   const exported = { INTERVALS, INTERVAL_MS, DEFAULT_VISIBLE, MIN_VISIBLE, MAX_VISIBLE, RIGHT_PAD, HISTORY_TRIGGER,
     LIQUIDATION_DELTA_INTERVAL_MS, LIQUIDATION_DELTA_MAX_MS, LIQUIDATION_DELTA_CUMULATIVE_HOURS, LIQUIDATION_DELTA_CUMULATIVE_MS,
-    intervalMs, bucketStart, fitWindow, clampWindow, zoomWindow, panWindow, visibleCandles,
+    intervalMs, bucketStart, fitWindow, visibleKlineRequest, clampWindow, zoomWindow, panWindow, visibleCandles,
     liquidationDeltaWindow, liquidationDeltaCumulativeWindow, visibleLiquidationDelta, priceRange, volumeMax,
     niceTicks, mergeCandles, normaliseCandles, normaliseLiquidationDelta, filterSignals, markerGroups, filterAlerts, alertGroups, closeOnlyIgnored, oldestSignal,
     radarZone, radarZones, vwapZoneBounds, vwapSignalAllowed, dragPriceRange, zoomPriceRange };

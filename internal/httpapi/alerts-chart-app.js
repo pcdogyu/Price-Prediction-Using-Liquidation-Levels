@@ -35,7 +35,7 @@
     candles: [], alerts: [], signals: [], liquidationDelta: [], tradeMarkers: [], hits: [],
     view: { start: 0, end: 0 }, yLow: 0, yHigh: 1, yManual: false,
     hasMore: true, nextBefore: '', newest: 0, atLatest: true, newData: false, keepSpan: 0,
-    loading: false, loadingHistory: false, loadingSignals: false, loadingAlerts: false, loadingLiquidationDelta: false, strategyLoading: false, strategySaving: false, strategySettings: null, liquidationDeltaError: '', signalThreshold: 0, signalWindowMinutes: 0, signalReplayText: '按当前参数回放',
+    loading: false, loadingHistory: false, backfillLoading: false, backfillController: null, backfillSequence: 0, loadingSignals: false, loadingAlerts: false, loadingLiquidationDelta: false, strategyLoading: false, strategySaving: false, strategySettings: null, liquidationDeltaError: '', signalThreshold: 0, signalWindowMinutes: 0, signalReplayText: '按当前参数回放',
     drag: null, hoverCandle: null, hoverMarker: null,
     radarConfig: { periodMinutes: 240, zScoreThreshold: .8, rangeMinutes: 1440, minDrawdown: .022, donchianFraction: .35 }, radarZone: null,
     liquidationDeltaHover: null, liquidationDeltaWindow: null, liquidationDeltaPending: false, liquidationDeltaRequestTimer: 0, liquidationDeltaRequestSequence: 0, liquidationDeltaAbortController: null,
@@ -473,6 +473,7 @@
     $('kline-intervals').addEventListener('click', event => {
       const button = event.target.closest('button[data-interval]');
       if (!button || button.dataset.interval === state.interval) return;
+      cancelVisibleBackfill();
       state.keepSpan = state.view.end - state.view.start;
       state.interval = button.dataset.interval;
       state.candles = []; state.hasMore = true; state.nextBefore = ''; state.yManual = false; state.atLatest = true; state.newData = false;
@@ -485,6 +486,24 @@
   }
   function syncIntervals() {
     document.querySelectorAll('#kline-intervals button').forEach(button => button.classList.toggle('selected', button.dataset.interval === state.interval));
+  }
+
+  function updateBackfillButton() {
+    const button = $('kline-backfill');
+    if (!button) return;
+    const busy = state.backfillLoading;
+    button.disabled = positionMode || busy || state.loading || state.loadingHistory || !state.symbol || !state.candles.length;
+    button.textContent = busy ? '回补中…' : '回补K线';
+    button.setAttribute('aria-busy', String(busy));
+    button.setAttribute('aria-label', busy ? '正在回补当前显示的K线' : '回补当前显示的K线');
+  }
+
+  function cancelVisibleBackfill() {
+    state.backfillSequence += 1;
+    state.backfillController?.abort();
+    state.backfillController = null;
+    state.backfillLoading = false;
+    updateBackfillButton();
   }
 
   // candleLimit sizes the first page for the visible window and the radar
@@ -546,8 +565,9 @@
   }
 
   async function loadCandles() {
-    if (state.loading || !state.symbol) return;
+    if (state.loading || state.backfillLoading || !state.symbol) return;
     state.loading = true;
+    updateBackfillButton();
     try {
       const packet = await json('api/v1/alerts/klines?symbol=' + encodeURIComponent(state.symbol) + '&interval=' + encodeURIComponent(state.interval) + '&limit=' + candleLimit('latest'));
       applyCandles(packet);
@@ -562,7 +582,76 @@
       state.keepSpan = 0;
       renderReadout();
       draw();
+      updateBackfillButton();
       if (!positionMode) scheduleLiquidationDelta();
+    }
+  }
+
+  function visibleCandleRequest() {
+    const request = K.visibleKlineRequest(state.view, state.atLatest, step());
+    if (!request) return '';
+    const query = new URLSearchParams({ symbol: state.symbol, interval: state.interval, limit: String(request.limit) });
+    if (request.before) query.set('before', request.before);
+    return 'api/v1/alerts/klines?' + query.toString();
+  }
+
+  // Refill only the current viewport, replacing broken values for matching
+  // timestamps while preserving the user's time and price view. The overlays
+  // are refreshed after the candle response so their markers use the repaired
+  // data without changing the chart's current position.
+  async function backfillVisibleCandles() {
+    if (positionMode || state.backfillLoading || state.loading || state.loadingHistory || !state.symbol || !state.candles.length) return;
+    const requestPath = visibleCandleRequest();
+    if (!requestPath) return;
+    const requestID = ++state.backfillSequence;
+    const requestedSymbol = state.symbol;
+    const requestedInterval = state.interval;
+    const preserved = {
+      view: { ...state.view },
+      yLow: state.yLow,
+      yHigh: state.yHigh,
+      yManual: state.yManual,
+      atLatest: state.atLatest,
+      newData: state.newData,
+      hasMore: state.hasMore,
+      nextBefore: state.nextBefore
+    };
+    const controller = new AbortController();
+    state.backfillController = controller;
+    state.backfillLoading = true;
+    updateBackfillButton();
+    try {
+      const packet = await json(requestPath, { signal: controller.signal });
+      if (controller.signal.aborted || requestID !== state.backfillSequence || requestedSymbol !== state.symbol || requestedInterval !== state.interval) return;
+      state.candles = K.mergeCandles(state.candles, K.normaliseCandles(packet.candles));
+      state.view = preserved.view;
+      state.yLow = preserved.yLow;
+      state.yHigh = preserved.yHigh;
+      state.yManual = preserved.yManual;
+      state.atLatest = preserved.atLatest;
+      state.newData = preserved.newData;
+      state.hasMore = preserved.hasMore;
+      state.nextBefore = preserved.nextBefore;
+      const last = newestCandle();
+      if (last) state.newest = Math.max(state.newest, last.t);
+      $('kline-new-data').classList.toggle('hidden', !state.newData);
+      clearError();
+      renderReadout();
+      draw();
+      await loadChartSignals();
+      await loadLiquidationDelta(true);
+      note('当前视窗 K 线已回补');
+    } catch (error) {
+      if (error && error.name === 'AbortError') return;
+      showError('当前视窗 K 线回补失败：' + error.message);
+    } finally {
+      if (requestID === state.backfillSequence) {
+        state.backfillLoading = false;
+        state.backfillController = null;
+        updateBackfillButton();
+        renderReadout();
+        draw();
+      }
     }
   }
 
@@ -593,6 +682,7 @@
   async function loadRadarWarmupHistory() {
     if (state.loadingHistory || !state.hasMore || !state.nextBefore || !state.candles.length || radarWarmupReady()) return;
     state.loadingHistory = true;
+    updateBackfillButton();
     try {
       let pages = 0;
       while (pages < RADAR_WARMUP_MAX_PAGES && state.hasMore && state.nextBefore && state.candles.length && !radarWarmupReady()) {
@@ -611,15 +701,17 @@
       showError('VWAP/Donchian 预热 K 线读取失败：' + error.message);
     } finally {
       state.loadingHistory = false;
+      updateBackfillButton();
     }
   }
 
   // loadHistory pulls an older page once the view nears the oldest loaded candle,
   // which is what lets the chart be dragged back through time.
   function loadHistory() {
-    if (state.loading || state.loadingHistory || !state.hasMore || !state.nextBefore || !state.candles.length) return;
+    if (state.loading || state.backfillLoading || state.loadingHistory || !state.hasMore || !state.nextBefore || !state.candles.length) return;
     if (state.view.start > state.candles[0].t + K.HISTORY_TRIGGER * step()) return;
     state.loadingHistory = true;
+    updateBackfillButton();
     note('正在读取更早的 K 线');
     json('api/v1/alerts/klines?symbol=' + encodeURIComponent(state.symbol) + '&interval=' + encodeURIComponent(state.interval) + '&limit=1500&before=' + encodeURIComponent(state.nextBefore))
       .then(packet => {
@@ -628,7 +720,7 @@
         state.nextBefore = packet.next_before || '';
       })
       .catch(error => showError('更早 K 线读取失败：' + error.message))
-      .finally(() => { state.loadingHistory = false; note(statusText()); draw(); });
+      .finally(() => { state.loadingHistory = false; updateBackfillButton(); note(statusText()); draw(); });
   }
 
   // loadChartSignals replays this pair with the strategy parameters currently
@@ -1397,6 +1489,7 @@
   }
 
   function resetView() {
+    if (state.backfillLoading) cancelVisibleBackfill();
     state.yManual = false;
     state.keepSpan = 0;
     state.view = initialWindow();
@@ -1409,6 +1502,7 @@
   }
 
   function goLatest() {
+    if (state.backfillLoading) cancelVisibleBackfill();
     const last = newestCandle();
     if (!last) return;
     const span = state.view.end - state.view.start || K.DEFAULT_VISIBLE * step();
@@ -1438,9 +1532,10 @@
       });
     }
     $('kline-radar-settings').addEventListener('submit', saveTenantRadarSettings);
+    $('kline-backfill').addEventListener('click', () => { void backfillVisibleCandles(); });
     $('kline-latest').addEventListener('click', goLatest);
     $('kline-reset').addEventListener('click', resetView);
-    $('kline-refresh').addEventListener('click', () => { loadCandles(); loadChartSignals(); scheduleLiquidationDelta(true); });
+    $('kline-refresh').addEventListener('click', () => { cancelVisibleBackfill(); loadCandles(); loadChartSignals(); scheduleLiquidationDelta(true); });
     $('kline-jump').addEventListener('submit', event => {
       event.preventDefault();
       const target = $('kline-symbol-input').value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32);
@@ -1467,6 +1562,7 @@
     syncIntervals();
     $('kline-symbol-input').value = state.symbol;
     $('kline-symbol-label').textContent = state.symbol || '—';
+    updateBackfillButton();
     $('kline-back').href = standalonePositionMode ? base + 'tvbot?tab=positions' : base + 'alerts';
     $('kline-back').textContent = standalonePositionMode ? '← 返回持仓' : '← 返回报警';
     if (!state.symbol) {
