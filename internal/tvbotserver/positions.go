@@ -2994,10 +2994,10 @@ func (s *Server) fetchBinancePositions(ctx context.Context, cfg config.Config, r
 			return positionsResponse{}, err
 		}
 	}
-	precisions := map[string]symbolDisplayPrecision(nil)
-	if !binanceUserStreamIsActive(client, apiID) {
-		precisions = s.binanceDisplayPrecisions(ctx, client)
-	}
+	// Binance user streams provide live positions but not symbol price
+	// metadata. Keep loading ExchangeInfo so the positions page can format
+	// BTC and every other symbol with its exchange-defined precision.
+	precisions := s.binanceDisplayPrecisions(ctx, client)
 	out := make([]okx.Position, 0, len(positions))
 	for _, position := range positions {
 		converted := binancePositionToOKX(position)
