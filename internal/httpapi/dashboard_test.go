@@ -244,7 +244,10 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"const manualMarketBackfill = { active: false }",
 		"function updateMarketBackfillButton()",
 		"function manualBackfillMarketHistory()",
+		"function currentMarketGap()",
+		"function repairCurrentMarketGap()",
 		"marketPath(chart.nextBefore)",
+		"repair: true",
 		"const candleRight = 1315",
 		"const volumeLeft = candleRight + candleToVolumeGap",
 	} {

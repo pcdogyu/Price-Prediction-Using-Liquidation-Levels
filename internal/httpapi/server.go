@@ -581,6 +581,12 @@ func (s *Server) market(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if strings.TrimSpace(r.URL.Query().Get("repair")) == "1" {
+		if e = s.svc.RepairMarketGaps(r.Context(), sym, interval, before, limit); e != nil {
+			problem(w, http.StatusServiceUnavailable, e)
+			return
+		}
+	}
 	v, e := s.svc.Market(r.Context(), sym, interval, before, limit)
 	if e != nil {
 		problem(w, http.StatusServiceUnavailable, e)

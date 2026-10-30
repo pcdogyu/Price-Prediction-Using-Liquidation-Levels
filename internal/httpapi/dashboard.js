@@ -352,13 +352,15 @@ async function loadSymbolCatalog() {
   }
 }
 
-function marketPath(before = '') {
-  const params = new URLSearchParams({ symbol, interval: chart.interval, limit: String(chart.visibleCount) });
+function marketPath(before = '', options = {}) {
+  const limit = Number.isFinite(options.limit) ? Math.max(1, Math.min(500, Math.round(options.limit))) : chart.visibleCount;
+  const params = new URLSearchParams({ symbol, interval: chart.interval, limit: String(limit) });
   if (before) params.set('before', before);
   else if (tradeView.enabled && Number.isFinite(tradeView.focusAt) && !chart.candles.length) {
     const duration = intervalMilliseconds[chart.interval] || 900000;
     params.set('before', new Date(tradeView.focusAt + duration).toISOString());
   }
+  if (options.repair) params.set('repair', '1');
   return 'market?' + params.toString();
 }
 
@@ -530,9 +532,11 @@ function updateMarketBackfillButton() {
   if (!button) return;
   const hasLoadedMarket = chart.candles.length > 0;
   const hasMore = chart.hasMore && !!chart.nextBefore;
+  const hasGap = hasLoadedMarket && !!currentMarketGap();
+  const hasWork = hasMore || hasGap;
   const busy = manualMarketBackfill.active || chart.loadingOlder || automaticMarketBackfill.active;
-  const exhausted = hasLoadedMarket && !hasMore && !busy;
-  button.disabled = busy || !hasLoadedMarket || !hasMore;
+  const exhausted = hasLoadedMarket && !hasWork && !busy;
+  button.disabled = busy || !hasLoadedMarket || !hasWork;
   button.textContent = manualMarketBackfill.active
     ? '回补中…'
     : automaticMarketBackfill.active
@@ -1041,6 +1045,59 @@ async function loadOlder() {
     if (controller.signal.aborted) return false;
     lastFailures = lastFailures.filter(item => !item.startsWith('历史行情'));
     lastFailures.push('历史行情 · ' + error.message);
+    showFailures(lastFailures);
+    return false;
+  } finally {
+    if (olderController === controller) chart.loadingOlder = false;
+    updateMarketBackfillButton();
+  }
+}
+
+function currentMarketGap() {
+  const candles = visibleCandles();
+  const interval = intervalMilliseconds[chart.interval] || 900000;
+  if (candles.length < 2) return null;
+  for (let index = 1; index < candles.length; index++) {
+    const previous = Date.parse(candles[index - 1].time);
+    const current = Date.parse(candles[index].time);
+    if (!Number.isFinite(previous) || !Number.isFinite(current) || current - previous <= interval) continue;
+    return {
+      before: new Date(current + interval).toISOString(),
+      limit: Math.min(500, Math.max(chart.visibleCount, candles.length))
+    };
+  }
+  return null;
+}
+
+async function repairCurrentMarketGap() {
+  const gap = currentMarketGap();
+  if (!gap || chart.loadingOlder) return false;
+  chart.loadingOlder = true;
+  updateMarketBackfillButton();
+  const requestedSymbol = symbol;
+  const requestedInterval = chart.interval;
+  const controller = new AbortController();
+  olderController = controller;
+  const cutoff = Date.now();
+  const wasAtLatest = chart.atLatest;
+  const anchor = visibleCandles().at(-1)?.time || '';
+  try {
+    const view = await json(marketPath(gap.before, { limit: gap.limit, repair: true }), { signal: controller.signal });
+    if (controller.signal.aborted || requestedSymbol !== symbol || requestedInterval !== chart.interval) return false;
+    view.queryCutoff = cutoff;
+    mergeMarket(view, false, false);
+    if (!wasAtLatest && anchor) {
+      const index = chart.candles.findIndex(item => item.time === anchor);
+      if (index >= 0) chart.windowEnd = index + 1;
+      chart.atLatest = false;
+    }
+    draw(cache.market, cache.map, cache.signal, cache.volume);
+    ensureWindowLiquidations();
+    return true;
+  } catch (error) {
+    if (controller.signal.aborted) return false;
+    lastFailures = lastFailures.filter(item => !item.startsWith('历史行情'));
+    lastFailures.push('历史行情回补 · ' + error.message);
     showFailures(lastFailures);
     return false;
   } finally {
@@ -1640,7 +1697,8 @@ async function manualBackfillMarketHistory() {
   manualMarketBackfill.active = true;
   updateMarketBackfillButton();
   try {
-    await loadOlder();
+    if (currentMarketGap()) await repairCurrentMarketGap();
+    else await loadOlder();
   } finally {
     manualMarketBackfill.active = false;
     updateMarketBackfillButton();
