@@ -1061,8 +1061,9 @@ function currentMarketGap() {
     const previous = Date.parse(candles[index - 1].time);
     const current = Date.parse(candles[index].time);
     if (!Number.isFinite(previous) || !Number.isFinite(current) || current - previous <= interval) continue;
+    const pageEnd = Date.parse(candles.at(-1).time);
     return {
-      before: new Date(current + interval).toISOString(),
+      before: new Date((Number.isFinite(pageEnd) ? pageEnd : current) + interval).toISOString(),
       limit: Math.min(500, Math.max(chart.visibleCount, candles.length))
     };
   }

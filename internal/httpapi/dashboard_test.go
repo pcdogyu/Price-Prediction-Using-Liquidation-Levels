@@ -245,6 +245,7 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"function updateMarketBackfillButton()",
 		"function manualBackfillMarketHistory()",
 		"function currentMarketGap()",
+		"const pageEnd = Date.parse(candles.at(-1).time)",
 		"function repairCurrentMarketGap()",
 		"marketPath(chart.nextBefore)",
 		"repair: true",
