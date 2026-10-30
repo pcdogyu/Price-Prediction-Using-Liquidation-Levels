@@ -12,7 +12,7 @@
   const color = token => getComputedStyle(document.documentElement).getPropertyValue('--' + token).trim();
   let latest = null, controller, sequence = 0;
   // Keep polling even when the very first request fails, then adopt the server cadence.
-  let cadenceSeconds = 120, refreshTimer = null;
+  let cadenceSeconds = 180, refreshTimer = null;
   function scheduleRefresh() {
     const next = Math.max(15, cadenceSeconds) * 1000;
     if (refreshTimer && refreshTimer.ms === next) return;

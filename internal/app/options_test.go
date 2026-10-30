@@ -52,7 +52,7 @@ func TestOptionsFailurePreservesHistoryAndRestart(t *testing.T) {
 	if err != nil || view.Series[1].State != "stale" || s.Health()["deribit_options_ETHUSDT"].Coverage != .5 {
 		t.Fatal(view, err)
 	}
-	if view.RefreshSeconds != 120 || view.RetentionDays != 3 || view.DenseHours != 24 || view.ArchiveMinutes != 30 {
+	if view.RefreshSeconds != 180 || view.RetentionDays != 3 || view.DenseHours != 24 || view.ArchiveMinutes != 30 {
 		t.Fatal(view)
 	}
 	p.Time = time.Now().UTC().Add(-time.Duration(domain.OptionGammaMaxHours+1) * time.Hour)
