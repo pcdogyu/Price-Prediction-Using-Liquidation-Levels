@@ -126,7 +126,7 @@ with sync_playwright() as playwright:
             route.fulfill(json=packet)
         elif parsed.path.endswith("/map"):
             factor = state["wall_factor"]
-            route.fulfill(json={"data_source": "coinglass_binance_liqmap", "bins": [{"price": 2232.9 / factor, "total_usd": 10000}, {"price": 2492, "total_usd": 20000}, {"price": 2749.5 * factor, "total_usd": 30000}], "bin_width": 1, "mark_price": 2495, "captured_at": iso(state["anchor"]), "top_long_liquidations": [{"price": 2232.9, "amount_usd": 10000}], "top_short_liquidations": [{"price": 2749.5, "amount_usd": 30000}]})
+            route.fulfill(json={"data_source": "coinglass_binance_liqmap", "bins": [{"price": 2232.9 / factor, "total_usd": 10000}, {"price": 2492, "total_usd": 20000}, {"price": 2749.5 * factor, "total_usd": 30000}], "bin_width": 1, "mark_price": 2495, "captured_at": iso(state["anchor"]), "top_long_liquidations": [{"price": 2492, "amount_usd": 20000}, {"price": 2232.9, "amount_usd": 10000}], "top_short_liquidations": [{"price": 2498, "amount_usd": 25000}, {"price": 2749.5, "amount_usd": 30000}]})
         elif parsed.path.endswith("/volume-profile"):
             route.fulfill(json={"state": "ok", "val": 100, "vah": 9000, "bins": [{"price_low": 100, "price_high": 200, "volume_usd": 10000}, {"price_low": 9000, "price_high": 9001, "volume_usd": 10000}]})
         elif parsed.path.endswith("/signals/latest"):
@@ -223,6 +223,38 @@ with sync_playwright() as playwright:
         assert set(initial["ids"]) == {r["id"] for r in all_rows if r["price"] != 2800}
         assert "视野外" in page.locator("#liquidation-top3").inner_text()
         assert "上方视野外" in page.locator("#market-chart").text_content() and "下方视野外" in page.locator("#market-chart").text_content()
+        liquidation_layout = page.evaluate("""() => {
+          const svg = document.getElementById('market-chart');
+          const number = (element, name) => Number(element.getAttribute(name));
+          return {
+            overlay: [dims.liquidationOverlayLeft, dims.liquidationRight],
+            candle: [dims.left, dims.candleRight],
+            volume: [dims.volumeLeft, dims.volumeRight],
+            walls: Array.from(svg.querySelectorAll('[data-wall]')).map(e => ({
+              x: number(e, 'x'), width: number(e, 'width')
+            })),
+            ranks: Array.from(svg.querySelectorAll('[data-liquidation-rank] rect')).map(e => ({
+              x: number(e, 'x'), width: number(e, 'width')
+            })),
+            title: number(svg.querySelector('[data-liquidation-title]'), 'x')
+          };
+        }""")
+        overlay_left, overlay_right = liquidation_layout["overlay"]
+        assert liquidation_layout["walls"] and all(
+            overlay_left <= item["x"] and item["x"] + item["width"] <= overlay_right + 0.01
+            for item in liquidation_layout["walls"]
+        ), liquidation_layout
+        assert liquidation_layout["ranks"] and all(
+            overlay_left <= item["x"] and item["x"] + item["width"] <= overlay_right + 0.01
+            for item in liquidation_layout["ranks"]
+        ), liquidation_layout
+        assert overlay_left <= liquidation_layout["title"] <= overlay_right, liquidation_layout
+        assert overlay_right < liquidation_layout["candle"][1] < liquidation_layout["volume"][0], liquidation_layout
+        rank_text = page.locator('[data-liquidation-rank] text').first
+        rank_box = rank_text.bounding_box()
+        page.mouse.move(rank_box["x"] + rank_box["width"] / 2, rank_box["y"] + rank_box["height"] / 2)
+        expect(page.locator("#tooltip")).to_contain_text("Top")
+        page.mouse.move(5, 5)
         # Bubbles clamp to the candle plot, whose right edge follows dims.candleRight after the
         # chart enlargement, so read the live geometry instead of hardcoding pixel bounds.
         outside = page.evaluate("""() => {
@@ -272,7 +304,7 @@ with sync_playwright() as playwright:
         return page.evaluate("""(which) => {
           const rect = document.getElementById('market-chart').getBoundingClientRect();
           const edges = { candle: [dims.left, dims.candleRight], volume: [dims.volumeLeft, dims.volumeRight],
-                          wall: [dims.liquidationLeft, dims.profileRight], gutter: [4, dims.left - 24] };
+          wall: [dims.liquidationLeft, dims.liquidationRight], gutter: [4, dims.left - 24] };
           const x = (edges[which][0] + edges[which][1]) / 2, y = (dims.top + dims.height - dims.bottom) / 2;
           return [rect.left + x * rect.width / dims.width, rect.top + y * rect.height / dims.height];
         }""", column)

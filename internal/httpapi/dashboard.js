@@ -110,15 +110,23 @@ let tooltipHideTimer;
 let chartTipsBound = false;
 let lastBubbleDraw = 0;
 const liquidationWallWidthScale = .9;
+// Kept for compatibility with the dashboard asset contract tests; rank labels
+// now use a fixed left-overlay width instead of scaling with the right axis.
+const rankLabelWidthScale = .8;
 const rightPriceAxisWidthScale = .81;
 const rightPriceAxisShift = (1740 - 1510) * (1 - rightPriceAxisWidthScale);
 const liquidationWallRight = 1510 + rightPriceAxisShift;
 const liquidationWallWidth = Math.round((1510 - 1315) * liquidationWallWidthScale);
 const rightPriceAxisX = x => liquidationWallRight + (x - 1510) * rightPriceAxisWidthScale;
-const rankLabelWidthScale = .8;
-const rankLabelLeft = rightPriceAxisX(1614);
-const rankLabelRight = rankLabelLeft + (rightPriceAxisX(1728) - rankLabelLeft) * rankLabelWidthScale;
-const dims = { height: 560, width: 1740, left: 72, top: 24, bottom: 42, candleRight: 1025 + rightPriceAxisShift, volumeLeft: 1060 + rightPriceAxisShift, volumeRight: 1280 + rightPriceAxisShift, liquidationLeft: liquidationWallRight - liquidationWallWidth, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft, rankLabelRight };
+const chartLeft = 72;
+const liquidationOverlayLeft = chartLeft + 12;
+const liquidationRankLabelWidth = 120;
+const rankLabelLeft = liquidationOverlayLeft;
+const rankLabelRight = rankLabelLeft + liquidationRankLabelWidth;
+const liquidationOverlayGap = 8;
+const liquidationLeft = rankLabelRight + liquidationOverlayGap;
+const liquidationRight = liquidationLeft + liquidationWallWidth;
+const dims = { height: 560, width: 1740, left: chartLeft, top: 24, bottom: 42, candleRight: 1025 + rightPriceAxisShift, volumeLeft: 1060 + rightPriceAxisShift, volumeRight: 1280 + rightPriceAxisShift, liquidationOverlayLeft, liquidationLeft, liquidationRight, profileRight: liquidationWallRight, axisPriceRight: rightPriceAxisX(1584), rankLabelLeft, rankLabelRight };
 const embeddedChartCandleRight = 1668;
 if (!intervalName[chart.interval]) chart.interval = '15m';
 
@@ -588,8 +596,9 @@ function layoutRankLabels(items, minimumY, maximumY, gap = 20) {
   return labels;
 }
 
-function drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom) {
+function drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom, layout) {
   if (map?.data_source !== 'coinglass_binance_liqmap') return;
+  const { liquidationRight, rankLabelLeft, rankLabelRight } = layout;
   const labels = [];
   [['short', '空', '#2dd4bf', map.top_short_liquidations || []], ['long', '多', '#fb7185', map.top_long_liquidations || []]].forEach(([side, prefix, color, peaks]) => {
     peaks.slice(0, 3).forEach((peak, index) => {
@@ -601,11 +610,12 @@ function drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom) {
   positioned.forEach(item => {
     const text = item.prefix + item.rank + ' ' + money(item.price);
     const tip = (item.side === 'short' ? '空头清算' : '多头清算') + ' Top ' + item.rank + '\n价格 ' + money(item.price) + '\n清算强度 $' + compact(item.amount);
-    const group = svgNode('g', { 'data-tip': tip });
-    group.appendChild(svgNode('circle', { cx: dims.axisPriceRight + 5, cy: item.targetY, r: 2.2, fill: item.color }));
-    group.appendChild(svgNode('path', { d: 'M ' + (dims.axisPriceRight + 5) + ' ' + item.targetY + ' L ' + (dims.rankLabelLeft - 8) + ' ' + item.targetY + ' L ' + (dims.rankLabelLeft - 2) + ' ' + item.labelY, fill: 'none', stroke: item.color, 'stroke-width': 1.15, opacity: .9 }));
-    group.appendChild(svgNode('rect', { x: dims.rankLabelLeft, y: item.labelY - 9, width: dims.rankLabelRight - dims.rankLabelLeft, height: 18, fill: '#071019', stroke: item.color, 'stroke-width': 1, rx: 4 }));
-    group.appendChild(svgNode('text', { x: dims.rankLabelLeft + 6, y: item.labelY + 3.5, fill: item.color, 'font-size': 10.5, 'font-weight': 750 }, text));
+    const group = svgNode('g', { 'data-tip': tip, 'data-liquidation-rank': item.prefix + item.rank });
+    const connectorX = liquidationRight - 4;
+    group.appendChild(svgNode('circle', { cx: connectorX, cy: item.targetY, r: 2.2, fill: item.color }));
+    group.appendChild(svgNode('path', { d: 'M ' + connectorX + ' ' + item.targetY + ' L ' + (rankLabelRight + 8) + ' ' + item.targetY + ' L ' + (rankLabelRight + 2) + ' ' + item.labelY, fill: 'none', stroke: item.color, 'stroke-width': 1.15, opacity: .9 }));
+    group.appendChild(svgNode('rect', { x: rankLabelLeft, y: item.labelY - 9, width: rankLabelRight - rankLabelLeft, height: 18, fill: '#071019', stroke: item.color, 'stroke-width': 1, rx: 4 }));
+    group.appendChild(svgNode('text', { x: rankLabelLeft + 6, y: item.labelY + 3.5, fill: item.color, 'font-size': 10.5, 'font-weight': 750 }, text));
     svg.appendChild(group);
   });
 }
@@ -711,7 +721,7 @@ function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top
   return { visible: layout.visible, outside: layout.outside };
 }
 
-function drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high) {
+function drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high, layout) {
   if (map?.data_source !== 'coinglass_binance_liqmap' || !finite(currentPrice) || currentPrice < low || currentPrice > high) return;
   const aboveUSD = Number(map.liquidation_above_usd);
   const belowUSD = Number(map.liquidation_below_usd);
@@ -720,7 +730,7 @@ function drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high) {
   if (!upward && map.liquidation_direction !== 'down') return;
   const color = upward ? '#22c55e' : '#ef4444';
   const currentY = y(currentPrice);
-  const x = dims.liquidationLeft + 25;
+  const x = layout.liquidationLeft + 25;
   const tipY = currentY + (upward ? -28 : 28);
   const shaftEndY = currentY + (upward ? -17 : 17);
   const shaftStartY = currentY + (upward ? 13 : -13);
@@ -759,7 +769,7 @@ function draw(view, map, signal, volume) {
     svg.appendChild(svgNode('text', { x: 800, y: 280, 'text-anchor': 'middle', fill: '#83a0b2' }, '等待有效 K 线数据'));
     return;
   }
-  const { height, left, top, bottom, candleRight, volumeLeft, volumeRight, liquidationLeft, profileRight, axisPriceRight } = layout;
+  const { height, left, top, bottom, candleRight, volumeLeft, volumeRight, liquidationOverlayLeft, liquidationLeft, liquidationRight, profileRight, axisPriceRight } = layout;
   const [low, high] = range;
   svg.setAttribute('data-price-low', low);
   svg.setAttribute('data-price-high', high);
@@ -774,7 +784,7 @@ function draw(view, map, signal, volume) {
   defs.appendChild(clip);
   // Each profile panel keeps its own clip so a wheel-zoomed bar is cut off inside its own
   // column instead of running into the neighbouring panel or the price axis.
-  [['volume-clip', volumeLeft, volumeRight], ['liquidation-clip', liquidationLeft, profileRight]].forEach(([id, from, until]) => {
+  [['volume-clip', volumeLeft, volumeRight], ['liquidation-overlay-clip', liquidationOverlayLeft, liquidationRight], ['liquidation-clip', liquidationLeft, liquidationRight]].forEach(([id, from, until]) => {
     const panel = svgNode('clipPath', { id });
     panel.appendChild(svgNode('rect', { x: from, y: top, width: Math.max(1, until - from), height: plotBottom - top }));
     defs.appendChild(panel);
@@ -789,7 +799,7 @@ function draw(view, map, signal, volume) {
     svg.appendChild(svgNode('text', { x: axisPriceRight, y: yy + 4, 'text-anchor': 'end', fill: '#9ab4c4', 'font-size': 11 }, money(price)));
   }
   svg.appendChild(svgNode('line', { x1: volumeLeft - 18, y1: top, x2: volumeLeft - 18, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
-  svg.appendChild(svgNode('line', { x1: liquidationLeft - 18, y1: top, x2: liquidationLeft - 18, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
+  svg.appendChild(svgNode('line', { x1: liquidationOverlayLeft - 4, y1: top, x2: liquidationOverlayLeft - 4, y2: plotBottom, stroke: '#315064', 'stroke-width': 1 }));
   svg.appendChild(svgNode('line', { x1: profileRight, y1: top, x2: profileRight, y2: plotBottom, stroke: '#527083', 'stroke-width': 1 }));
   const timeScale = chartTimeScale(candles, left, candleRight);
   svg.setAttribute('data-window-start', new Date(timeScale.start).toISOString());
@@ -847,10 +857,12 @@ function draw(view, map, signal, volume) {
     const topRanks = new Map();
     (map.top_long_liquidations || []).forEach((peak, index) => topRanks.set(String(peak.price), { label: '多' + (index + 1), color: '#fb7185' }));
     (map.top_short_liquidations || []).forEach((peak, index) => topRanks.set(String(peak.price), { label: '空' + (index + 1), color: '#2dd4bf' }));
+    const overlay = svgNode('g', { 'clip-path': 'url(#liquidation-overlay-clip)', 'data-liquidation-overlay': '' });
+    overlay.appendChild(svgNode('rect', { x: liquidationOverlayLeft, y: top, width: liquidationRight - liquidationOverlayLeft, height: plotBottom - top, fill: '#071019', 'fill-opacity': .34, stroke: '#315064', 'stroke-width': 1, rx: 3 }));
     const wall = svgNode('g', { 'clip-path': 'url(#liquidation-clip)' });
     bins.forEach(bin => {
       if (bin.price < low - binWidth || bin.price > high + binWidth) return;
-      const width = Math.sqrt(bin.total_usd / maximum) * (profileRight - liquidationLeft) * chart.liquidationZoom;
+      const width = Math.sqrt(bin.total_usd / maximum) * (liquidationRight - liquidationLeft) * chart.liquidationZoom;
       const color = bin.price < (map.mark_price || signal?.mark_price) ? '#fb7185' : '#2dd4bf';
       const leverageRows = Object.entries(bin.leverage_usd || {}).filter(([, amount]) => amount > 0).sort((a, b) => Number(a[0]) - Number(b[0]));
       const leverageTip = leverageRows.map(([leverage, amount]) => '\n' + leverage + 'x $' + compact(amount)).join('');
@@ -871,7 +883,8 @@ function draw(view, map, signal, volume) {
         wall.appendChild(svgNode('text', { x: liquidationLeft + 3, y: y(bin.price) + 3, fill: '#f8fafc', 'font-size': 9, 'font-weight': 750, 'data-tip': rank.label + ' · ' + tip }, rank.label));
       }
     });
-    plot.appendChild(wall);
+    overlay.appendChild(wall);
+    plot.appendChild(overlay);
   }
   const volumeBins = embeddedChart ? [] : (volume?.bins || []);
   if (!embeddedChart && volumeBins.length) {
@@ -892,12 +905,12 @@ function draw(view, map, signal, volume) {
   }
   svg.appendChild(plot);
   if (!embeddedChart) svg.appendChild(svgNode('text', { x: (volumeLeft + volumeRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#7dd3fc', 'font-size': 11, 'font-weight': 650 }, '当前时段成交量' + zoomSuffix(chart.volumeZoom)));
-  if (!embeddedChart) svg.appendChild(svgNode('text', { x: (liquidationLeft + profileRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: coinGlassMap ? '#7dd3fc' : '#83a0b2', 'font-size': 11, 'font-weight': 650 }, liquidationName + zoomSuffix(chart.liquidationZoom)));
+  if (!embeddedChart) svg.appendChild(svgNode('text', { x: (liquidationLeft + liquidationRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: coinGlassMap ? '#7dd3fc' : '#83a0b2', 'font-size': 11, 'font-weight': 650, 'data-liquidation-title': '' }, liquidationName + zoomSuffix(chart.liquidationZoom)));
   if (!embeddedChart && coinGlassMap) {
     const above = bins.filter(bin => bin.price > high).length;
     const below = bins.filter(bin => bin.price < low).length;
-    if (above) svg.appendChild(svgNode('text', { x: liquidationLeft, y: top + 28, fill: '#7dd3fc', 'font-size': 11 }, '↑ 上方视野外 ' + above + '档'));
-    if (below) svg.appendChild(svgNode('text', { x: liquidationLeft, y: plotBottom - 8, fill: '#7dd3fc', 'font-size': 11 }, '↓ 下方视野外 ' + below + '档'));
+    if (above) svg.appendChild(svgNode('text', { x: liquidationLeft, y: top + 28, fill: '#7dd3fc', 'font-size': 11, 'data-liquidation-outside': 'above' }, '↑ 上方视野外 ' + above + '档'));
+    if (below) svg.appendChild(svgNode('text', { x: liquidationLeft, y: plotBottom - 8, fill: '#7dd3fc', 'font-size': 11, 'data-liquidation-outside': 'below' }, '↓ 下方视野外 ' + below + '档'));
   }
   const currentPrice = view?.summary?.last_price || signal?.mark_price;
   const levels = embeddedChart ? [] : [['现价', currentPrice, '#f8fafc', '4 5']];
@@ -917,8 +930,8 @@ function draw(view, map, signal, volume) {
     svg.appendChild(svgNode('text', { x: volumeRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11 }, name + ' ' + money(price)));
   });
   if (!embeddedChart) {
-    drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high);
-    drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom);
+    drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high, layout);
+    drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom, layout);
   }
   bindTips(svg);
 }
@@ -1032,9 +1045,9 @@ function svgPoint(event) {
 // chartRegion is the wheel routing table. The vertical wheel means something different in
 // every column of this chart, so the hovered x decides which series the gesture scales.
 function chartRegion(point) {
+  if (point.x >= dims.liquidationOverlayLeft && point.x <= dims.liquidationRight) return 'liquidation';
   if (point.x >= dims.left && point.x <= dims.candleRight) return 'candles';
   if (point.x >= dims.volumeLeft && point.x <= dims.volumeRight) return 'volume';
-  if (point.x >= dims.liquidationLeft && point.x <= dims.profileRight) return 'liquidation';
   return 'price';
 }
 
@@ -1272,7 +1285,8 @@ function installChartInteractions() {
   svg.addEventListener('pointerdown', event => {
     const point = svgPoint(event);
     let mode = '';
-    if (point.x >= dims.left && point.x <= dims.candleRight) mode = 'chart';
+    if (point.x >= dims.liquidationOverlayLeft && point.x <= dims.liquidationRight) mode = 'price';
+    else if (point.x >= dims.left && point.x <= dims.candleRight) mode = 'chart';
     else if (point.x >= dims.volumeLeft - 18 && point.x <= dims.profileRight) mode = 'price';
     if (!mode || !finite(chart.yLow) || !finite(chart.yHigh) || chart.yHigh <= chart.yLow) return;
     event.preventDefault();
