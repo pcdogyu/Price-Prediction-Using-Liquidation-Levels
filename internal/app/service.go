@@ -194,8 +194,21 @@ func (s *Service) Start(ctx context.Context) {
 	go s.backgroundCandidateRefreshLoop(ctx)
 	s.startVolumeProfiles(ctx)
 	go s.volumeArchiveLoop(ctx)
-	go s.startAlerts(ctx)
+	if s.tenantIsolationEnabled() {
+		// Authenticated alert requests create a tenant-owned runtime on demand.
+		// Do not also start the process-wide runtime: it has default settings and
+		// could emit signals/orders outside the logged-in tenant's switches.
+		if s.log != nil {
+			s.log.Info("tenant alert runtimes enabled; process-wide alert runtime deferred")
+		}
+	} else {
+		go s.startAlerts(ctx)
+	}
 	go s.alertCandleRepairLoop(ctx)
+}
+
+func (s *Service) tenantIsolationEnabled() bool {
+	return s != nil && strings.TrimSpace(s.cfg.AuthUsername) != ""
 }
 
 type marketTaskResult struct {
@@ -603,7 +616,7 @@ func (s *Service) RecordLiquidation(ctx context.Context, event domain.Liquidatio
 	}
 	// The alert engine only tracks the top volume watch list, so this stays cheap
 	// for every event the all-symbol liquidation stream delivers.
-	if s.alerts != nil {
+	if s.alerts != nil && !s.tenantIsolationEnabled() {
 		s.alerts.observe(ctx, event)
 	}
 	s.alertTenantsMu.Lock()

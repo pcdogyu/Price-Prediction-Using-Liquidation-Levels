@@ -449,6 +449,29 @@ func TestOrderSignalSettingsRoundTripAndOpeningCategoryFiltering(t *testing.T) {
 	}
 }
 
+func TestTenantIsolationSkipsProcessWideAlertRuntime(t *testing.T) {
+	ctx := context.Background()
+	svc, _, st := alertTestService(t, "tenant-alert-runtime.db")
+	svc.cfg.AuthUsername = "admin"
+	base := time.Now().UTC().Truncate(time.Second)
+	svc.alerts.engine.SetClock(func() time.Time { return base })
+	svc.alerts.applyWatch(
+		[]alert.WatchEntry{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 1e9}},
+		[]domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 1e9, UpdatedAt: base}},
+		base, "")
+
+	if err := svc.RecordLiquidation(ctx, alertTestEvent("tenant-root-disabled", "BTCUSDT", "short", base, 120000)); err != nil {
+		t.Fatal(err)
+	}
+	page, err := st.LiquidationAlerts(ctx, "BTCUSDT", "", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.AlertCount != 0 {
+		t.Fatalf("tenant-isolated service must not create process-wide alerts: %+v", page.Rows)
+	}
+}
+
 func TestOrderSignalCloseSwitchIsIndependentFromOpeningSwitch(t *testing.T) {
 	ctx := context.Background()
 	svc, _, _ := alertTestService(t, "order-signal-close-switch.db")
