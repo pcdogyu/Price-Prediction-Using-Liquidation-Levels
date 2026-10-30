@@ -249,12 +249,18 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"function repairCurrentMarketGap()",
 		"marketPath(chart.nextBefore)",
 		"repair: true",
+		"const halfHour = 30 * 60 * 1000",
+		"window.BubbleChart.timeGridTicks(scale.start, scale.end, halfHour)",
+		"data-time-grid-kind",
 		"const candleRight = 1315",
 		"const volumeLeft = candleRight + candleToVolumeGap",
 	} {
 		if !strings.Contains(string(dashboardJS), marker) {
 			t.Fatalf("bubble chart script missing television viewport support %q", marker)
 		}
+	}
+	if strings.Contains(string(dashboardJS), "const minorStep =") || strings.Contains(string(dashboardJS), "majorTickSet") {
+		t.Fatal("bubble chart should render only whole-hour and half-hour vertical time grid lines")
 	}
 	for _, marker := range []string{
 		"tvbotAPI",

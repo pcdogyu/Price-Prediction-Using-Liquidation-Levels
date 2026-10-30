@@ -181,13 +181,17 @@ test('timestamp placements apply independent long-down and short-up offsets', ()
 
 test('time grid ticks align to every half hour and exclude the range end', () => {
   const halfHour = 30 * 60 * 1000;
+  const hour = 60 * 60 * 1000;
   const start = Date.parse('2026-01-01T00:07:00Z');
   const end = Date.parse('2026-01-01T02:00:00Z');
-  assert.deepEqual(B.timeGridTicks(start, end, halfHour), [
+  const ticks = B.timeGridTicks(start, end, halfHour);
+  assert.deepEqual(ticks, [
     Date.parse('2026-01-01T00:30:00Z'),
     Date.parse('2026-01-01T01:00:00Z'),
     Date.parse('2026-01-01T01:30:00Z')
   ]);
+  assert.deepEqual(ticks.map(at => at % hour === 0 ? 'hour' : 'half-hour'), ['half-hour', 'hour', 'half-hour']);
+  assert.ok(ticks.every(at => at % halfHour === 0));
   assert.deepEqual(B.timeGridTicks(end, start, halfHour), []);
 });
 
