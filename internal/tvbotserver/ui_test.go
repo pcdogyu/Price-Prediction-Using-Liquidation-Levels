@@ -230,6 +230,38 @@ func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
+	title := strings.Index(page, `id="analysis-trade-history-title"`)
+	toggle := strings.Index(page, `id="analysis-trade-aggregate-toggle"`)
+	status := strings.Index(page, `id="analysis-trade-history-status"`)
+	if title < 0 || toggle < 0 || status < 0 || !(title < toggle && toggle < status) {
+		t.Fatalf("analysis aggregation toggle should be placed on the right side of the trade history heading: title=%d toggle=%d status=%d", title, toggle, status)
+	}
+	for _, want := range []string{
+		`id="analysis-trade-aggregate-toggle" aria-pressed="false"`,
+		`type="button"`,
+		`analysis-trade-history-actions`,
+		`analysisTradeAggregate: false`,
+		`const analysisTradeAggregateWindowMs = 1000;`,
+		`function aggregateAnalysisTrades(rows)`,
+		`function analysisTradesForDisplay()`,
+		`analysisTradeWeightedAverage(members, "entry_px")`,
+		`analysisTradeWeightedAverage(members, "exit_px")`,
+		`analysisTradeSum(members, "fill_count", 1)`,
+		`entry_time_end: entryBounds.end`,
+		`exit_time_end: exitBounds.end`,
+		`analysis-trade-aggregate-toggle").addEventListener("click"`,
+		`state.analysisTradePage = 1`,
+		`共 " + trades.length + " 组（原始 " + rawTrades.length + " 条）`,
+		`analysisTradesForDisplay().find`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("analysis trade aggregation marker is missing %q", want)
+		}
+	}
+}
+
 func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{

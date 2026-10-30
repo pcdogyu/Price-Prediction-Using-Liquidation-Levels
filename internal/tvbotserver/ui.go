@@ -1514,6 +1514,13 @@ const tvbotHTML = `<!doctype html>
       border-top: 1px solid var(--line);
       padding-top: 12px;
     }
+    .analysis-trade-history-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
     .analysis-trade-table {
       min-width: 1560px;
     }
@@ -2156,7 +2163,10 @@ const tvbotHTML = `<!doctype html>
       <div class="analysis-trade-history-card">
         <div class="section-head" style="margin-bottom:10px">
           <h3 id="analysis-trade-history-title">下单盈亏分析</h3>
-          <span class="muted" id="analysis-trade-history-status">-</span>
+          <div class="analysis-trade-history-actions">
+            <button class="btn small" type="button" id="analysis-trade-aggregate-toggle" aria-pressed="false" aria-label="开启按币对和平仓时间聚合订单" title="按币对和平仓时间聚合订单">聚合</button>
+            <span class="muted" id="analysis-trade-history-status">-</span>
+          </div>
         </div>
         <div class="symbol-table-wrap">
           <table class="symbol-table analysis-trade-table">
@@ -2560,6 +2570,7 @@ const tvbotHTML = `<!doctype html>
       analysisError: "",
       selectedExchange: "okx",
       analysisTradePage: 1,
+      analysisTradeAggregate: false,
       symbolPrecisions: {},
       balanceOverview: null,
       balanceOverviewError: "",
@@ -2624,10 +2635,11 @@ const tvbotHTML = `<!doctype html>
     const globalExchangeStorageKey = "tvbot.selectedExchange";
     const ordersPageSize = 20;
     const analysisTradePageSize = 20;
+    const analysisTradeAggregateWindowMs = 1000;
     const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3";
     const analysisTradeColumnDefs = [
-      { id: "entry_time", title: "开仓时间", colClass: "analysis-entry-time-col", tdClass: "time", render: (row) => analysisTimeText(row.entry_time) },
-      { id: "exit_time", title: "平仓时间", colClass: "analysis-exit-time-col", tdClass: "time", render: (row) => analysisTimeText(row.exit_time) },
+      { id: "entry_time", title: "开仓时间", colClass: "analysis-entry-time-col", tdClass: "time", render: (row) => analysisTradeTimeRangeText(row, "entry_time") },
+      { id: "exit_time", title: "平仓时间", colClass: "analysis-exit-time-col", tdClass: "time", render: (row) => analysisTradeTimeRangeText(row, "exit_time") },
       { id: "inst_id", title: "币对", colClass: "analysis-inst-id-col", renderHTML: (row) => analysisTradeSymbolHTML(row) },
       { id: "side", title: "方向", colClass: "analysis-side-col", toneClass: (row) => analysisPositionSideToneClass(row.side), render: (row) => analysisPositionSideText(row.side) },
       { id: "gamma", title: "Gamma", colClass: "analysis-gamma-col", render: (row) => analysisGammaDirectionText(row) },
@@ -2635,7 +2647,7 @@ const tvbotHTML = `<!doctype html>
       { id: "exit_px", title: "平仓价", colClass: "analysis-exit-px-col", render: (row) => analysisPriceText(row, row.exit_px) },
       { id: "qty", title: "数量", colClass: "analysis-qty-col", render: (row) => analysisAmountText(row.qty) },
       { id: "margin", title: "保证金", colClass: "analysis-margin-col", render: (row) => analysisAmountText(row.margin) },
-      { id: "leverage", title: "杠杆", colClass: "analysis-leverage-col", render: (row) => row.leverage ? asText(row.leverage) + "x" : "-" },
+      { id: "leverage", title: "杠杆", colClass: "analysis-leverage-col", render: (row) => analysisTradeLeverageText(row) },
       { id: "realized_pnl", title: "盈亏", colClass: "analysis-realized-pnl-col", signedField: "realized_pnl", render: (row) => analysisAmountText(row.realized_pnl) },
       { id: "pnl_ratio", title: "盈亏比", colClass: "analysis-pnl-ratio-col", toneClass: (row) => signedToneClass(analysisPnLRatioValue(row)), render: (row) => analysisPnLRatioText(row) },
       { id: "fee", title: "手续费", colClass: "analysis-fee-col", render: (row) => tradeFeeText(row) },
@@ -6054,6 +6066,159 @@ const tvbotHTML = `<!doctype html>
       return rows.filter((row) => normalizeExchange(row.exchange) === exchange);
     }
 
+    function analysisTradeTimestamp(row, field) {
+      const value = row && row[field];
+      if (zeroTime(value)) return null;
+      const timestamp = new Date(value).getTime();
+      return Number.isFinite(timestamp) ? timestamp : null;
+    }
+
+    function analysisTradeTimeBounds(rows, field) {
+      let min = Infinity;
+      let max = -Infinity;
+      (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const timestamp = analysisTradeTimestamp(row, field);
+        if (timestamp === null) return;
+        min = Math.min(min, timestamp);
+        max = Math.max(max, timestamp);
+      });
+      if (!Number.isFinite(min) || !Number.isFinite(max)) return { start: "", end: "" };
+      return { start: new Date(min).toISOString(), end: new Date(max).toISOString() };
+    }
+
+    function analysisTradeSum(rows, field, fallback) {
+      let total = 0;
+      let found = false;
+      (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const raw = row && row[field];
+        if (raw === null || raw === undefined || String(raw).trim() === "") {
+          if (fallback !== undefined) {
+            total += fallback;
+            found = true;
+          }
+          return;
+        }
+        const value = Number(raw);
+        if (Number.isFinite(value)) {
+          total += value;
+          found = true;
+        } else if (fallback !== undefined) {
+          total += fallback;
+          found = true;
+        }
+      });
+      return found ? total : "";
+    }
+
+    function analysisTradeWeightedAverage(rows, field) {
+      let weightedTotal = 0;
+      let weight = 0;
+      let fallbackTotal = 0;
+      let fallbackCount = 0;
+      (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const raw = row && row[field];
+        if (raw === null || raw === undefined || String(raw).trim() === "") return;
+        const value = Number(raw);
+        if (!Number.isFinite(value)) return;
+        const quantity = Number(row && row.qty);
+        if (Number.isFinite(quantity) && quantity > 0) {
+          weightedTotal += value * quantity;
+          weight += quantity;
+          return;
+        }
+        fallbackTotal += value;
+        fallbackCount++;
+      });
+      if (weight > 0) return weightedTotal / weight;
+      return fallbackCount > 0 ? fallbackTotal / fallbackCount : "";
+    }
+
+    function analysisTradeUniformField(rows, field, normalizer) {
+      const values = (Array.isArray(rows) ? rows : []).map((row) => {
+        const raw = row && row[field];
+        return raw === null || raw === undefined ? "" : String(raw).trim();
+      });
+      const present = values.filter((value) => value !== "").map((value) => normalizer ? normalizer(value) : value);
+      if (!present.length) return "";
+      return present.every((value) => value === present[0]) && present.length === values.length ? present[0] : "mixed";
+    }
+
+    function analysisTradeUniformNumber(rows, field) {
+      const values = (Array.isArray(rows) ? rows : []).map((row) => {
+        const raw = row && row[field];
+        return raw === null || raw === undefined || String(raw).trim() === "" ? NaN : Number(raw);
+      });
+      if (!values.length || values.some((value) => !Number.isFinite(value))) return values.length ? "mixed" : "";
+      return values.every((value) => value === values[0]) ? values[0] : "mixed";
+    }
+
+    function analysisTradeMaxPrecision(rows) {
+      const values = (Array.isArray(rows) ? rows : []).map((row) => {
+        const raw = row && row.price_precision;
+        return raw === null || raw === undefined || String(raw).trim() === "" ? NaN : Number(raw);
+      }).filter((value) => Number.isFinite(value) && value >= 0);
+      return values.length ? Math.max.apply(null, values) : undefined;
+    }
+
+    function aggregateAnalysisTradeGroup(members) {
+      const first = members[0] || {};
+      const entryBounds = analysisTradeTimeBounds(members, "entry_time");
+      const exitBounds = analysisTradeTimeBounds(members, "exit_time");
+      const side = analysisTradeUniformField(members, "side", (value) => value.toLowerCase());
+      const gamma = analysisTradeUniformField(members, "gamma_direction", (value) => value.toLowerCase());
+      const feeCcy = analysisTradeUniformField(members, "fee_ccy", (value) => value.toUpperCase());
+      return Object.assign({}, first, {
+        aggregate_count: members.length,
+        aggregate_key: "aggregate:" + members.map((row) => analysisTradeRowKey(row)).join("||"),
+        aggregate_members: members.slice(),
+        entry_time: entryBounds.start || first.entry_time || "",
+        entry_time_end: entryBounds.end || entryBounds.start || first.entry_time || "",
+        exit_time: exitBounds.start || first.exit_time || "",
+        exit_time_end: exitBounds.end || exitBounds.start || first.exit_time || "",
+        side: side,
+        gamma_direction: gamma,
+        entry_px: analysisTradeWeightedAverage(members, "entry_px"),
+        exit_px: analysisTradeWeightedAverage(members, "exit_px"),
+        qty: analysisTradeSum(members, "qty"),
+        margin: analysisTradeSum(members, "margin"),
+        leverage: analysisTradeUniformNumber(members, "leverage"),
+        realized_pnl: analysisTradeSum(members, "realized_pnl"),
+        fee: analysisTradeSum(members, "fee"),
+        fee_ccy: feeCcy === "mixed" ? "" : feeCcy,
+        net_pnl: analysisTradeSum(members, "net_pnl"),
+        turnover: analysisTradeSum(members, "turnover"),
+        fill_count: analysisTradeSum(members, "fill_count", 1),
+        price_precision: analysisTradeMaxPrecision(members)
+      });
+    }
+
+    function aggregateAnalysisTrades(rows) {
+      const groups = [];
+      const lastGroupBySymbol = new Map();
+      (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const symbol = String(row && row.inst_id || "").trim().toUpperCase();
+        const exitTimestamp = analysisTradeTimestamp(row, "exit_time");
+        if (!symbol || exitTimestamp === null) {
+          groups.push({ members: [row] });
+          return;
+        }
+        const previous = lastGroupBySymbol.get(symbol);
+        if (previous && Math.abs(exitTimestamp - previous.anchor) <= analysisTradeAggregateWindowMs) {
+          previous.members.push(row);
+          return;
+        }
+        const group = { anchor: exitTimestamp, members: [row] };
+        groups.push(group);
+        lastGroupBySymbol.set(symbol, group);
+      });
+      return groups.map((group) => group.members.length > 1 ? aggregateAnalysisTradeGroup(group.members) : group.members[0]);
+    }
+
+    function analysisTradesForDisplay() {
+      const rows = analysisTradesForActiveExchange();
+      return state.analysisTradeAggregate ? aggregateAnalysisTrades(rows) : rows;
+    }
+
     function analysisTradeColumnIDs() {
       return analysisTradeColumnDefs.map((col) => col.id);
     }
@@ -6134,6 +6299,19 @@ const tvbotHTML = `<!doctype html>
       return formatFixedPrecision(value, row && row.price_precision, formatNumber);
     }
 
+    function analysisTradeTimeRangeText(row, field) {
+      const start = analysisTimeText(row && row[field]);
+      if (!row || !row.aggregate_count || !row[field + "_end"]) return start;
+      const end = analysisTimeText(row[field + "_end"]);
+      return start === "-" || end === "-" || start === end ? start : start + " ~ " + end;
+    }
+
+    function analysisTradeLeverageText(row) {
+      const value = String(row && row.leverage || "").toLowerCase();
+      if (value === "mixed") return "多种";
+      return row && row.leverage ? asText(row.leverage) + "x" : "-";
+    }
+
     function tradeFeeText(row) {
       const fee = analysisAmountText(row && row.fee);
       const ccy = row && row.fee_ccy ? String(row.fee_ccy).trim() : "";
@@ -6166,6 +6344,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function analysisTradeRowKey(row) {
+      if (row && row.aggregate_key) return String(row.aggregate_key);
       return [row && row.inst_id, row && row.side, row && row.entry_time, row && row.exit_time, row && row.entry_px, row && row.exit_px, row && row.net_pnl].map((value) => String(value == null ? "" : value)).join("|");
     }
 
@@ -6430,6 +6609,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function analysisPositionSideText(side) {
+      if (String(side || "").toLowerCase() === "mixed") return "多种";
       return positionDirectionText(side);
     }
 
@@ -6444,6 +6624,7 @@ const tvbotHTML = `<!doctype html>
       const value = String(row && row.gamma_direction || "").trim().toLowerCase();
       if (value === "forward") return "正向开仓";
       if (value === "reverse") return "反向开仓";
+      if (value === "mixed") return "多种";
       return "-";
     }
 
@@ -6488,6 +6669,16 @@ const tvbotHTML = `<!doctype html>
       return "<td" + classAttr + ">" + content + "</td>";
     }
 
+    function renderAnalysisTradeAggregateToggle() {
+      const button = $("analysis-trade-aggregate-toggle");
+      if (!button) return;
+      const enabled = !!state.analysisTradeAggregate;
+      button.setAttribute("aria-pressed", enabled ? "true" : "false");
+      button.classList.toggle("primary", enabled);
+      button.setAttribute("aria-label", enabled ? "关闭按币对和平仓时间聚合订单" : "开启按币对和平仓时间聚合订单");
+      button.title = enabled ? "关闭按币对和平仓时间聚合订单" : "按币对和平仓时间聚合订单";
+    }
+
     function renderAnalysisTradeHistory(errorText) {
       const exchange = activeExchange();
       const label = exchangeLabel(exchange);
@@ -6498,6 +6689,7 @@ const tvbotHTML = `<!doctype html>
       const prev = $("analysis-trade-prev");
       const next = $("analysis-trade-next");
       if (title) title.textContent = label + " 下单盈亏分析";
+      renderAnalysisTradeAggregateToggle();
       renderAnalysisTradeHead();
       if (!rowsEl) return;
       if (errorText) {
@@ -6508,7 +6700,8 @@ const tvbotHTML = `<!doctype html>
         if (next) next.disabled = true;
         return;
       }
-      const trades = analysisTradesForActiveExchange();
+      const rawTrades = analysisTradesForActiveExchange();
+      const trades = analysisTradesForDisplay();
       const totalPages = Math.max(1, Math.ceil(trades.length / analysisTradePageSize));
       state.analysisTradePage = Math.min(Math.max(1, Number(state.analysisTradePage || 1)), totalPages);
       const start = (state.analysisTradePage - 1) * analysisTradePageSize;
@@ -6517,14 +6710,14 @@ const tvbotHTML = `<!doctype html>
       rowsEl.innerHTML = pageRows.map((row) => {
         return "<tr>" + columns.map((col) => analysisTradeCellHTML(col, row)).join("") + "</tr>";
       }).join("") || '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">暂无 ' + escapeHTML(label) + ' 下单盈亏记录</td></tr>';
-      if (status) status.textContent = trades.length ? ("共 " + trades.length + " 条") : "-";
+      if (status) status.textContent = trades.length ? (state.analysisTradeAggregate ? ("共 " + trades.length + " 组（原始 " + rawTrades.length + " 条）") : ("共 " + trades.length + " 条")) : "-";
       if (pageInfo) pageInfo.textContent = trades.length ? ("第 " + state.analysisTradePage + " / " + totalPages + " 页") : "-";
       if (prev) prev.disabled = state.analysisTradePage <= 1;
       if (next) next.disabled = state.analysisTradePage >= totalPages;
     }
 
     function changeAnalysisTradePage(delta) {
-      const trades = analysisTradesForActiveExchange();
+      const trades = analysisTradesForDisplay();
       const totalPages = Math.max(1, Math.ceil(trades.length / analysisTradePageSize));
       state.analysisTradePage = Math.min(Math.max(1, Number(state.analysisTradePage || 1) + delta), totalPages);
       renderAnalysisTradeHistory("");
@@ -8286,13 +8479,18 @@ const tvbotHTML = `<!doctype html>
     });
     $("reset-balance-baseline").addEventListener("click", () => resetBalanceBaseline($("reset-balance-baseline")).catch((err) => toast(err.message)));
     $("sync-balance-history").addEventListener("click", () => syncBalanceHistory($("sync-balance-history")).catch((err) => toast(err.message)));
+    $("analysis-trade-aggregate-toggle").addEventListener("click", () => {
+      state.analysisTradeAggregate = !state.analysisTradeAggregate;
+      state.analysisTradePage = 1;
+      renderAnalysisTradeHistory("");
+    });
     $("analysis-trade-prev").addEventListener("click", () => changeAnalysisTradePage(-1));
     $("analysis-trade-next").addEventListener("click", () => changeAnalysisTradePage(1));
     $("analysis-trade-rows").addEventListener("click", (event) => {
       const button = event.target.closest("button[data-analysis-chart-key]");
       if (!button) return;
       const rowKey = button.dataset.analysisChartKey || "";
-      const row = analysisTradesForActiveExchange().find((item) => analysisTradeRowKey(item) === rowKey);
+      const row = analysisTradesForDisplay().find((item) => analysisTradeRowKey(item) === rowKey);
       if (row) openAnalysisTradeChart(row);
     });
     $("refresh-positions").addEventListener("click", () => loadPositionView(true).then(() => toast("持仓和挂单已刷新")).catch((err) => toast(err.message)));
