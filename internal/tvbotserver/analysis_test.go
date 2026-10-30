@@ -727,6 +727,10 @@ func TestBuildAnalysisPositionTradesCountsClosedPositionsOnly(t *testing.T) {
 	if len(positions) != 2 {
 		t.Fatalf("positions len=%d positions=%#v", len(positions), positions)
 	}
+	_, openPositions := buildAnalysisPositionTradesWithOpen(cfg, trades, periodSince)
+	if len(openPositions) != 1 || openPositions[0].EntryOrdID != "unclosed-open-order" || openPositions[0].Side != trading.PositionSideLong || openPositions[0].Qty != "1" || openPositions[0].EntryPx != "300" || !openPositions[0].ExitTime.IsZero() || openPositions[0].NetPnL != "" {
+		t.Fatalf("unclosed position should be exposed separately: %#v", openPositions)
+	}
 	if positions[0].Side != "short" || positions[0].NetPnL != "-5.12" {
 		t.Fatalf("bad short position: %#v", positions[0])
 	}

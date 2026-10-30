@@ -6062,8 +6062,18 @@ const tvbotHTML = `<!doctype html>
 
     function analysisTradesForActiveExchange() {
       const exchange = activeExchange();
-      const rows = state.analysis && Array.isArray(state.analysis.position_trades) ? state.analysis.position_trades : [];
-      return rows.filter((row) => normalizeExchange(row.exchange) === exchange);
+      const closedRows = state.analysis && Array.isArray(state.analysis.position_trades) ? state.analysis.position_trades : [];
+      const openRows = state.analysis && Array.isArray(state.analysis.open_position_trades) ? state.analysis.open_position_trades : [];
+      return openRows.concat(closedRows)
+        .filter((row) => normalizeExchange(row.exchange) === exchange)
+        .sort((left, right) => {
+          const leftOpen = zeroTime(left && left.exit_time);
+          const rightOpen = zeroTime(right && right.exit_time);
+          if (leftOpen !== rightOpen) return leftOpen ? -1 : 1;
+          const leftValue = analysisTradeTimestamp(left, leftOpen ? "entry_time" : "exit_time") || 0;
+          const rightValue = analysisTradeTimestamp(right, rightOpen ? "entry_time" : "exit_time") || 0;
+          return rightValue - leftValue;
+        });
     }
 
     function analysisTradeTimestamp(row, field) {
@@ -6702,6 +6712,7 @@ const tvbotHTML = `<!doctype html>
       }
       const rawTrades = analysisTradesForActiveExchange();
       const trades = analysisTradesForDisplay();
+      const openTradeCount = rawTrades.filter((row) => zeroTime(row && row.exit_time)).length;
       const totalPages = Math.max(1, Math.ceil(trades.length / analysisTradePageSize));
       state.analysisTradePage = Math.min(Math.max(1, Number(state.analysisTradePage || 1)), totalPages);
       const start = (state.analysisTradePage - 1) * analysisTradePageSize;
@@ -6710,7 +6721,8 @@ const tvbotHTML = `<!doctype html>
       rowsEl.innerHTML = pageRows.map((row) => {
         return "<tr>" + columns.map((col) => analysisTradeCellHTML(col, row)).join("") + "</tr>";
       }).join("") || '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">暂无 ' + escapeHTML(label) + ' 下单盈亏记录</td></tr>';
-      if (status) status.textContent = trades.length ? (state.analysisTradeAggregate ? ("共 " + trades.length + " 组（原始 " + rawTrades.length + " 条）") : ("共 " + trades.length + " 条")) : "-";
+      const openTradeLabel = openTradeCount ? "，含未平仓开仓成交 " + openTradeCount + " 条" : "";
+      if (status) status.textContent = trades.length ? (state.analysisTradeAggregate ? ("共 " + trades.length + " 组（原始 " + rawTrades.length + " 条）" + openTradeLabel) : ("共 " + trades.length + " 条" + openTradeLabel)) : "-";
       if (pageInfo) pageInfo.textContent = trades.length ? ("第 " + state.analysisTradePage + " / " + totalPages + " 页") : "-";
       if (prev) prev.disabled = state.analysisTradePage <= 1;
       if (next) next.disabled = state.analysisTradePage >= totalPages;

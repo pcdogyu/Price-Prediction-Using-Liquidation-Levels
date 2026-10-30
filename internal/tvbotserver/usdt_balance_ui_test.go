@@ -140,6 +140,8 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`function renderAnalysisTradeHistory(errorText)`,
 		`analysisTradesForActiveExchange`,
 		`position_trades`,
+		`open_position_trades`,
+		`未平仓开仓成交`,
 		`function loadAnalysisPositions(forceRefresh)`,
 		`暂无 ' + escapeHTML(label) + ' 下单盈亏记录`,
 		`exchange: activeExchange()`,

@@ -40,27 +40,28 @@ const (
 )
 
 type analysisResponse struct {
-	OK                bool                    `json:"ok"`
-	APIID             string                  `json:"api_id"`
-	BinanceAPIID      string                  `json:"binance_api_id,omitempty"`
-	GateAPIID         string                  `json:"gate_api_id,omitempty"`
-	Env               string                  `json:"env"`
-	PriceDays         int                     `json:"price_days"`
-	PNLDays           int                     `json:"pnl_days"`
-	PNLMinutes        int                     `json:"pnl_minutes"`
-	PriceInstID       string                  `json:"price_inst_id"`
-	PriceBar          string                  `json:"price_bar"`
-	RefreshedAt       time.Time               `json:"refreshed_at"`
-	Cache             analysisCacheStatus     `json:"cache"`
-	Source            analysisSourceStatus    `json:"source"`
-	Balance           analysisBalance         `json:"balance"`
-	PricePoints       []analysisPricePoint    `json:"price_points"`
-	BalancePoints     []analysisBalancePoint  `json:"balance_points"`
-	Summary           analysisSymbolStats     `json:"summary"`
-	ExchangeSummaries []analysisSymbolStats   `json:"exchange_summaries"`
-	Symbols           []analysisSymbolStats   `json:"symbols"`
-	Trades            []analysisTrade         `json:"trades"`
-	PositionTrades    []analysisPositionTrade `json:"position_trades"`
+	OK                 bool                    `json:"ok"`
+	APIID              string                  `json:"api_id"`
+	BinanceAPIID       string                  `json:"binance_api_id,omitempty"`
+	GateAPIID          string                  `json:"gate_api_id,omitempty"`
+	Env                string                  `json:"env"`
+	PriceDays          int                     `json:"price_days"`
+	PNLDays            int                     `json:"pnl_days"`
+	PNLMinutes         int                     `json:"pnl_minutes"`
+	PriceInstID        string                  `json:"price_inst_id"`
+	PriceBar           string                  `json:"price_bar"`
+	RefreshedAt        time.Time               `json:"refreshed_at"`
+	Cache              analysisCacheStatus     `json:"cache"`
+	Source             analysisSourceStatus    `json:"source"`
+	Balance            analysisBalance         `json:"balance"`
+	PricePoints        []analysisPricePoint    `json:"price_points"`
+	BalancePoints      []analysisBalancePoint  `json:"balance_points"`
+	Summary            analysisSymbolStats     `json:"summary"`
+	ExchangeSummaries  []analysisSymbolStats   `json:"exchange_summaries"`
+	Symbols            []analysisSymbolStats   `json:"symbols"`
+	Trades             []analysisTrade         `json:"trades"`
+	PositionTrades     []analysisPositionTrade `json:"position_trades"`
+	OpenPositionTrades []analysisPositionTrade `json:"open_position_trades"`
 }
 
 type analysisCacheStatus struct {
@@ -841,7 +842,7 @@ func analysisCacheKey(apiID, binanceAPIID, envName string, priceDays, pnlMinutes
 	if len(gateAPIIDs) > 0 {
 		gateAPIID = strings.TrimSpace(gateAPIIDs[0])
 	}
-	return "analysis|v2|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
+	return "analysis|v3|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
 }
 
 func (s *Server) refreshAnalysisData(ctx context.Context, client okx.Client, apiID string, priceDays, pnlMinutes int, now time.Time) error {
@@ -2001,8 +2002,7 @@ func applyAnalysisPositionDisplayData(resp *analysisResponse, cfg config.Config,
 	if resp == nil {
 		return
 	}
-	for i := range resp.PositionTrades {
-		position := &resp.PositionTrades[i]
+	apply := func(position *analysisPositionTrade) {
 		exchange := trading.NormalizeExchange(position.Exchange)
 		var precision symbolDisplayPrecision
 		var found bool
@@ -2044,6 +2044,12 @@ func applyAnalysisPositionDisplayData(resp *analysisResponse, cfg config.Config,
 				}
 			}
 		}
+	}
+	for i := range resp.PositionTrades {
+		apply(&resp.PositionTrades[i])
+	}
+	for i := range resp.OpenPositionTrades {
+		apply(&resp.OpenPositionTrades[i])
 	}
 }
 
@@ -2224,8 +2230,13 @@ type analysisPositionTradeAccumulator struct {
 }
 
 func buildAnalysisPositionTrades(cfg config.Config, trades []analysisTrade, closeSince time.Time) []analysisPositionTrade {
+	closed, _ := buildAnalysisPositionTradesWithOpen(cfg, trades, closeSince)
+	return closed
+}
+
+func buildAnalysisPositionTradesWithOpen(cfg config.Config, trades []analysisTrade, closeSince time.Time) ([]analysisPositionTrade, []analysisPositionTrade) {
 	if len(trades) == 0 {
-		return []analysisPositionTrade{}
+		return []analysisPositionTrade{}, []analysisPositionTrade{}
 	}
 	ordered := append([]analysisTrade(nil), trades...)
 	sort.SliceStable(ordered, func(i, j int) bool {
@@ -2271,7 +2282,117 @@ func buildAnalysisPositionTrades(cfg config.Config, trades []analysisTrade, clos
 		}
 		return out[i].ExitTS > out[j].ExitTS
 	})
-	return out
+	return out, buildOpenAnalysisPositionTrades(books)
+}
+
+type analysisOpenPositionAccumulator struct {
+	exchange       string
+	apiID          string
+	instID         string
+	side           string
+	gammaDirection string
+	entryTime      time.Time
+	entryTS        int64
+	entryPxQty     float64
+	qty            float64
+	margin         float64
+	fee            float64
+	turnover       float64
+	entryOrdID     string
+	leverage       int
+	fillCount      int
+}
+
+func buildOpenAnalysisPositionTrades(books map[string][]*analysisOpenLot) []analysisPositionTrade {
+	groups := map[string]*analysisOpenPositionAccumulator{}
+	for _, lots := range books {
+		for _, lot := range lots {
+			if lot == nil || lot.remaining <= positionEntrySizeEpsilon || strings.TrimSpace(lot.entryGroupKey) == "" {
+				continue
+			}
+			acc := groups[lot.entryGroupKey]
+			if acc == nil {
+				acc = &analysisOpenPositionAccumulator{
+					exchange:       lot.exchange,
+					apiID:          lot.apiID,
+					instID:         lot.instID,
+					side:           lot.side,
+					gammaDirection: lot.gammaDirection,
+					entryTime:      lot.entryTime,
+					entryTS:        lot.entryTS,
+					entryOrdID:     lot.ordID,
+					leverage:       lot.leverage,
+				}
+				groups[lot.entryGroupKey] = acc
+			}
+			if acc.entryTime.IsZero() || (!lot.entryTime.IsZero() && lot.entryTime.Before(acc.entryTime)) {
+				acc.entryTime = lot.entryTime
+				acc.entryTS = lot.entryTS
+			}
+			if acc.leverage <= 0 && lot.leverage > 0 {
+				acc.leverage = lot.leverage
+			}
+			if acc.gammaDirection == "" {
+				acc.gammaDirection = lot.gammaDirection
+			}
+			acc.entryPxQty += lot.entryPx * lot.remaining
+			acc.qty += lot.remaining
+			acc.margin += analysisPositionMarginValue(lot.turnoverRemaining, lot.leverage)
+			acc.fee += lot.feeRemaining
+			acc.turnover += lot.turnoverRemaining
+			acc.fillCount += maxInt(1, lot.fillCount)
+		}
+	}
+	rows := make([]analysisPositionTrade, 0, len(groups))
+	for _, acc := range groups {
+		if acc == nil || acc.qty <= positionEntrySizeEpsilon {
+			continue
+		}
+		entryPx := ""
+		if acc.entryPxQty > 0 {
+			entryPx = trading.NormalizeFloat(acc.entryPxQty / acc.qty)
+		}
+		margin := ""
+		if acc.margin > 0 {
+			margin = trading.NormalizeFloat(acc.margin)
+		}
+		fee := ""
+		if acc.fee != 0 {
+			fee = trading.NormalizeFloat(acc.fee)
+		}
+		turnover := ""
+		if acc.turnover > 0 {
+			turnover = trading.NormalizeFloat(acc.turnover)
+		}
+		rows = append(rows, analysisPositionTrade{
+			Exchange:       acc.exchange,
+			APIID:          acc.apiID,
+			InstID:         acc.instID,
+			Side:           acc.side,
+			EntryTime:      acc.entryTime,
+			EntryTS:        acc.entryTS,
+			EntryPx:        entryPx,
+			Qty:            trading.NormalizeFloat(acc.qty),
+			Margin:         margin,
+			Leverage:       acc.leverage,
+			Fee:            fee,
+			FeeCcy:         "USDT",
+			Turnover:       turnover,
+			GammaDirection: acc.gammaDirection,
+			EntryOrdID:     acc.entryOrdID,
+			FillCount:      maxInt(1, acc.fillCount),
+		})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].EntryTS == rows[j].EntryTS {
+			if rows[i].Exchange == rows[j].Exchange {
+				return rows[i].InstID < rows[j].InstID
+			}
+			return rows[i].Exchange < rows[j].Exchange
+		}
+		return rows[i].EntryTS > rows[j].EntryTS
+	})
+	return rows
 }
 
 func applyAnalysisTradeByPositionSide(cfg config.Config, books map[string][]*analysisOpenLot, pending map[string]*analysisPositionTradeAccumulator, trade analysisTrade, qty, price float64, closeSince time.Time, out *[]analysisPositionTrade) {
@@ -2692,7 +2813,7 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, gateA
 	enrichAnalysisTradesWithEvents(cfg, trades, records, events)
 	enrichAnalysisTradesWithEvents(cfg, positionTradesInput, records, events)
 	sortAnalysisTrades(trades)
-	positionTrades := buildAnalysisPositionTrades(cfg, positionTradesInput, pnlSince)
+	positionTrades, openPositionTrades := buildAnalysisPositionTradesWithOpen(cfg, positionTradesInput, pnlSince)
 	positionTrades = append(positionTrades, gatePositions...)
 	sortAnalysisPositionTrades(positionTrades)
 	summary, exchangeSummaries, symbols := computeStats(cfg, positionTrades, trades, pnlSince)
@@ -2713,14 +2834,15 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, gateA
 			Stale:    false,
 			CacheKey: analysisCacheKey(apiID, binanceAPIID, envName, priceDays, pnlMinutes, gateAPIID),
 		},
-		Source:            source,
-		PricePoints:       points,
-		BalancePoints:     balancePoints,
-		Summary:           summary,
-		ExchangeSummaries: exchangeSummaries,
-		Symbols:           symbols,
-		Trades:            trades,
-		PositionTrades:    positionTrades,
+		Source:             source,
+		PricePoints:        points,
+		BalancePoints:      balancePoints,
+		Summary:            summary,
+		ExchangeSummaries:  exchangeSummaries,
+		Symbols:            symbols,
+		Trades:             trades,
+		PositionTrades:     positionTrades,
+		OpenPositionTrades: openPositionTrades,
 	}, nil
 }
 
@@ -2738,29 +2860,30 @@ func (s *Server) analysisFromExternalData(cfg config.Config, apiID, binanceAPIID
 	enrichAnalysisTradesWithEvents(cfg, trades, records, events)
 	enrichAnalysisTradesWithEvents(cfg, positionTradesInput, records, events)
 	sortAnalysisTrades(trades)
-	positionTrades := buildAnalysisPositionTrades(cfg, positionTradesInput, pnlSince)
+	positionTrades, openPositionTrades := buildAnalysisPositionTradesWithOpen(cfg, positionTradesInput, pnlSince)
 	positionTrades = append(positionTrades, gatePositions...)
 	sortAnalysisPositionTrades(positionTrades)
 	summary, exchangeSummaries, symbols := computeStats(cfg, positionTrades, trades, pnlSince)
 	return analysisResponse{
-		OK:                true,
-		APIID:             apiID,
-		BinanceAPIID:      binanceAPIID,
-		GateAPIID:         gateAPIID,
-		Env:               envName,
-		PriceDays:         priceDays,
-		PNLDays:           pnlDays,
-		PNLMinutes:        pnlMinutes,
-		PriceInstID:       analysisPriceInstID,
-		PriceBar:          analysisPriceBar,
-		RefreshedAt:       now.UTC(),
-		Source:            source,
-		BalancePoints:     balancePoints,
-		Summary:           summary,
-		ExchangeSummaries: exchangeSummaries,
-		Symbols:           symbols,
-		Trades:            trades,
-		PositionTrades:    positionTrades,
+		OK:                 true,
+		APIID:              apiID,
+		BinanceAPIID:       binanceAPIID,
+		GateAPIID:          gateAPIID,
+		Env:                envName,
+		PriceDays:          priceDays,
+		PNLDays:            pnlDays,
+		PNLMinutes:         pnlMinutes,
+		PriceInstID:        analysisPriceInstID,
+		PriceBar:           analysisPriceBar,
+		RefreshedAt:        now.UTC(),
+		Source:             source,
+		BalancePoints:      balancePoints,
+		Summary:            summary,
+		ExchangeSummaries:  exchangeSummaries,
+		Symbols:            symbols,
+		Trades:             trades,
+		PositionTrades:     positionTrades,
+		OpenPositionTrades: openPositionTrades,
 	}
 }
 
