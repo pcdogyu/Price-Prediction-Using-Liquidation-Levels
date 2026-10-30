@@ -186,14 +186,37 @@ func TestPositionViewADXMetadataMatchesExactEntryOrder(t *testing.T) {
 	}
 }
 
+func TestPositionSignalKindFromTextDistinguishesStrategies(t *testing.T) {
+	for _, test := range []struct {
+		name, want string
+		values     []string
+	}{
+		{name: "manual liquidation", values: []string{"manual_liquidation_trigger", "liquidation_alert_manual"}, want: "manual"},
+		{name: "value area", values: []string{"value_area_signal", "value_area_signal"}, want: "value_area"},
+		{name: "aggressive liquidation", values: []string{"aggressive_liquidation_signal", "liquidation_alert"}, want: "aggressive"},
+		{name: "steady liquidation", values: []string{"steady_liquidation_confirmation", "liquidation_alert"}, want: "steady"},
+		{name: "alert", values: []string{"liquidation_alert", "liquidation_alert"}, want: "alert"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := signalKindFromText(test.values...); got != test.want {
+				t.Fatalf("signal kind = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestTVBotUIIncludesPositionSignalTriggerAndRemovesADXColumns(t *testing.T) {
 	for _, marker := range []string{
 		`{ id: "strategy", title: "策略"`,
-		`cell: (row) => textTableCell(positionSignalTriggerText(row))`,
+		`cell: (row) => textTableCell(positionStrategyText(row))`,
 		`function positionSignalTriggerText(row)`,
-		`return "预警"`,
-		`return "激进"`,
-		`return "稳健"`,
+		`function positionStrategyText(row)`,
+		`return "趋势策略"`,
+		`return "震荡策略"`,
+		`return "爆仓策略（手动）"`,
+		`return "爆仓策略（激进）"`,
+		`return "爆仓策略（稳健）"`,
+		`return "价值区策略"`,
 	} {
 		if !strings.Contains(tvbotHTML, marker) {
 			t.Fatalf("tvbot UI missing %q", marker)

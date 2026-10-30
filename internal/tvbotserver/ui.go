@@ -2682,7 +2682,7 @@ const tvbotHTML = `<!doctype html>
       { id: "exchange", title: "交易所", colClass: "pos-exchange-col", cell: (row) => textTableCell(exchangeLabel(normalizeExchange(row._exchange || "okx"))) },
       { id: "symbol", title: "币对", colClass: "pos-symbol-col", cell: (row) => positionSymbolCell(row) },
       { id: "side", title: "方向", colClass: "pos-side-col", cell: (row) => positionSideCell(row) },
-      { id: "strategy", title: "策略", colClass: "pos-strategy-col", cell: (row) => textTableCell(positionSignalTriggerText(row)) },
+      { id: "strategy", title: "策略", colClass: "pos-strategy-col", cell: (row) => textTableCell(positionStrategyText(row)) },
       { id: "size", title: "持仓量", colClass: "pos-size-col", cell: (row) => textTableCell(formatQuantityAmount(row, row.pos)) },
       { id: "avg_price", title: "均价", colClass: "pos-price-col", cell: (row) => textTableCell(formatAveragePriceAmount(row, row.avgPx)) },
       { id: "margin", title: "保证金", colClass: "pos-margin-col", cell: (row) => textTableCell(formatFixed2(row.margin)) },
@@ -5403,9 +5403,25 @@ const tvbotHTML = `<!doctype html>
 
     function positionSignalTriggerText(row) {
       const value = String(row && (row.signal_kind || row.signal_type || row.condition || row.source) || "").toLowerCase();
+      if (value === "manual" || value.includes("manual_liquidation")) return "手动";
+      if (value === "value_area" || value.includes("value_area")) return "价值区";
       if (value === "alert" || value.includes("liquidation_alert") || value.includes("预警")) return "预警";
       if (value === "aggressive" || value.includes("aggressive") || value.includes("激进")) return "激进";
       if (value === "steady" || value.includes("steady") || value.includes("稳健")) return "稳健";
+      return "-";
+    }
+
+    function positionStrategyText(row) {
+      const marketStrategy = String(row && row.market_strategy || "").trim().toLowerCase();
+      if (marketStrategy === "trend") return "趋势策略";
+      if (marketStrategy === "scalp") return "震荡策略";
+      if (marketStrategy === "transition") return "过渡策略";
+      const signalKind = String(row && (row.signal_kind || row.signal_type || row.condition || row.source) || "").trim().toLowerCase();
+      if (signalKind === "manual" || signalKind.includes("manual_liquidation") || signalKind.includes("liquidation_alert_manual")) return "爆仓策略（手动）";
+      if (signalKind === "aggressive" || signalKind.includes("aggressive") || signalKind.includes("激进")) return "爆仓策略（激进）";
+      if (signalKind === "steady" || signalKind.includes("steady") || signalKind.includes("稳健")) return "爆仓策略（稳健）";
+      if (signalKind === "alert" || signalKind.includes("liquidation_alert") || signalKind.includes("预警")) return "爆仓策略（预警）";
+      if (signalKind === "value_area" || signalKind.includes("value_area")) return "价值区策略";
       return "-";
     }
 
