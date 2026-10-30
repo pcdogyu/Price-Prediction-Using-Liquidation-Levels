@@ -446,6 +446,48 @@ type PriceTriggeredInitial struct {
 	IsClose      bool   `json:"is_close,omitempty"`
 }
 
+// MarshalJSON emits Gate's size/amount fields as JSON numbers. Gate accepts
+// these fields as numeric values (size is an integer for normal contracts),
+// while the response decoder deliberately keeps them as normalized strings.
+func (p PriceTriggeredInitial) MarshalJSON() ([]byte, error) {
+	size, err := gateNumericMessage(p.Size)
+	if err != nil {
+		return nil, err
+	}
+	amount, err := gateNumericMessage(p.Amount)
+	if err != nil {
+		return nil, err
+	}
+	type wire struct {
+		Contract     string          `json:"contract"`
+		Size         json.RawMessage `json:"size,omitempty"`
+		Amount       json.RawMessage `json:"amount,omitempty"`
+		Price        string          `json:"price"`
+		TIF          string          `json:"tif,omitempty"`
+		Text         string          `json:"text,omitempty"`
+		Close        bool            `json:"close,omitempty"`
+		ReduceOnly   bool            `json:"reduce_only,omitempty"`
+		IsReduceOnly bool            `json:"is_reduce_only,omitempty"`
+		IsClose      bool            `json:"is_close,omitempty"`
+	}
+	return json.Marshal(wire{
+		Contract: p.Contract, Size: size, Amount: amount, Price: p.Price, TIF: p.TIF,
+		Text: p.Text, Close: p.Close, ReduceOnly: p.ReduceOnly,
+		IsReduceOnly: p.IsReduceOnly, IsClose: p.IsClose,
+	})
+}
+
+func gateNumericMessage(raw string) (json.RawMessage, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if _, err := strconv.ParseFloat(raw, 64); err != nil {
+		return nil, fmt.Errorf("Gate numeric field %q is invalid: %w", raw, err)
+	}
+	return json.RawMessage(raw), nil
+}
+
 func (p *PriceTriggeredInitial) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Contract     json.RawMessage `json:"contract"`
@@ -569,6 +611,72 @@ type PriceTriggeredOrderAmendment struct {
 	PriceType int64  `json:"price_type,omitempty"`
 	AutoSize  string `json:"auto_size,omitempty"`
 	Close     bool   `json:"close,omitempty"`
+}
+
+func (p PriceTriggeredOrderAmendment) MarshalJSON() ([]byte, error) {
+	size, err := gateNumericMessage(p.Size)
+	if err != nil {
+		return nil, err
+	}
+	amount, err := gateNumericMessage(p.Amount)
+	if err != nil {
+		return nil, err
+	}
+	type wire struct {
+		OrderID   string          `json:"order_id"`
+		Size      json.RawMessage `json:"size,omitempty"`
+		Amount    json.RawMessage `json:"amount,omitempty"`
+		Price     string          `json:"price,omitempty"`
+		TriggerPx string          `json:"trigger_price,omitempty"`
+		PriceType int64           `json:"price_type,omitempty"`
+		AutoSize  string          `json:"auto_size,omitempty"`
+		Close     bool            `json:"close,omitempty"`
+	}
+	return json.Marshal(wire{
+		OrderID: p.OrderID, Size: size, Amount: amount, Price: p.Price,
+		TriggerPx: p.TriggerPx, PriceType: p.PriceType, AutoSize: p.AutoSize, Close: p.Close,
+	})
+}
+
+func (p *PriceTriggeredOrderAmendment) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		OrderID   json.RawMessage `json:"order_id"`
+		Size      json.RawMessage `json:"size"`
+		Amount    json.RawMessage `json:"amount"`
+		Price     json.RawMessage `json:"price"`
+		TriggerPx json.RawMessage `json:"trigger_price"`
+		PriceType json.RawMessage `json:"price_type"`
+		AutoSize  json.RawMessage `json:"auto_size"`
+		Close     bool            `json:"close"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fields := []struct {
+		raw *json.RawMessage
+		out *string
+	}{
+		{&raw.OrderID, &p.OrderID}, {&raw.Size, &p.Size}, {&raw.Amount, &p.Amount},
+		{&raw.Price, &p.Price}, {&raw.TriggerPx, &p.TriggerPx}, {&raw.AutoSize, &p.AutoSize},
+	}
+	for _, field := range fields {
+		value, err := gateJSONText(*field.raw)
+		if err != nil {
+			return err
+		}
+		*field.out = value
+	}
+	if value, err := gateJSONText(raw.PriceType); err != nil {
+		return err
+	} else if value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return err
+		}
+		p.PriceType = parsed
+	}
+	p.Close = raw.Close
+	return nil
 }
 
 type PriceTriggeredOrderResponse struct {

@@ -30,7 +30,7 @@ func TestGateLayerRiskPlansUseEachLayerFillPrice(t *testing.T) {
 		Name:  "signal_limit",
 		OrdID: "11259000794943386",
 	}
-	plans, err := gateLayerRiskPlans(record, layer, 1, gateLayerFill{quantity: 8, price: 2248.85, orderSize: -8}, "0.01", "default", "isolated")
+	plans, err := gateLayerRiskPlans(record, layer, 1, gateLayerFill{quantity: 8, price: 2248.85, orderSize: -8}, "0.01", false, "default", "isolated")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestGateLayerRiskPlansUseEachLayerFillPrice(t *testing.T) {
 	}
 	otherLayer := layer
 	otherLayer.OrdID = "11259000794943385"
-	other, err := gateLayerRiskPlans(record, otherLayer, 2, gateLayerFill{quantity: 44, price: 2233, orderSize: -44}, "0.01", "default", "isolated")
+	other, err := gateLayerRiskPlans(record, otherLayer, 2, gateLayerFill{quantity: 44, price: 2233, orderSize: -44}, "0.01", false, "default", "isolated")
 	if err != nil || other[0].triggerPx != "2210.67" || other[1].triggerPx != "2256.45" || other[0].size != "44" || other[0].clientText == plans[0].clientText {
 		t.Fatalf("each layer must own a distinct quantity and risk id: plans=%#v other=%#v err=%v", plans, other, err)
 	}

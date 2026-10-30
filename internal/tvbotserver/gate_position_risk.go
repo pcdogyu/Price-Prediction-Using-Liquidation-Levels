@@ -35,6 +35,8 @@ type gateRiskPlan struct {
 	closeSide  string
 	marginMode string
 	size       string
+	amount     string
+	quantity   string
 }
 
 type gateLayerFill struct {
@@ -261,7 +263,7 @@ func (s *Server) reconcileGatePositionRiskForRecord(ctx context.Context, record 
 		}
 		layer.FilledQty = tvbottrading.NormalizeFloat(fill.quantity)
 		layer.FillPrice = tvbottrading.NormalizeFloat(fill.price)
-		plans, planErr := gateLayerRiskPlans(record, *layer, index, fill, contractMeta.OrderPriceRound, requestedAPIID, marginMode)
+		plans, planErr := gateLayerRiskPlans(record, *layer, index, fill, contractMeta.OrderPriceRound, contractMeta.EnableDecimal, requestedAPIID, marginMode)
 		if planErr != nil {
 			reconcileErr = errors.Join(reconcileErr, planErr)
 			continue
@@ -430,7 +432,7 @@ func openGatePosition(ctx context.Context, client tvbotgate.Client, contract str
 	return tvbotgate.Position{}, false, nil
 }
 
-func gateLayerRiskPlans(record tvbotstorage.OrderRecord, layer tvbottrading.OrderLayerResult, index int, fill gateLayerFill, priceStep, apiID, marginMode string) ([]gateRiskPlan, error) {
+func gateLayerRiskPlans(record tvbotstorage.OrderRecord, layer tvbottrading.OrderLayerResult, index int, fill gateLayerFill, priceStep string, enableDecimal bool, apiID, marginMode string) ([]gateRiskPlan, error) {
 	if fill.quantity <= 0 || fill.price <= 0 {
 		return nil, errors.New("Gate layer fill must have positive quantity and price")
 	}
@@ -466,6 +468,11 @@ func gateLayerRiskPlans(record tvbotstorage.OrderRecord, layer tvbottrading.Orde
 		closeSize = tvbottrading.NormalizeFloat(fill.quantity)
 		tpRule, slRule = 2, 1
 	}
+	closeAmount := ""
+	if enableDecimal {
+		closeAmount = closeSize
+		closeSize = "0"
+	}
 	layerKey := strings.TrimSpace(layer.OrdID)
 	if layerKey == "" {
 		layerKey = strings.TrimSpace(layer.ClOrdID)
@@ -474,8 +481,8 @@ func gateLayerRiskPlans(record tvbotstorage.OrderRecord, layer tvbottrading.Orde
 		layerKey = fmt.Sprintf("layer-%d", index)
 	}
 	return []gateRiskPlan{
-		{contract: contract, kind: "tp", orderType: orderType, triggerPx: tvbotgate.FormatPriceStep(tp, priceStep), rule: tpRule, clientText: gateRiskClientText(apiID, contract, record.SignalID, layerKey, "tp"), resultType: "TAKE_PROFIT", closeSide: closeSide, marginMode: marginMode, size: closeSize},
-		{contract: contract, kind: "sl", orderType: orderType, triggerPx: tvbotgate.FormatPriceStep(sl, priceStep), rule: slRule, clientText: gateRiskClientText(apiID, contract, record.SignalID, layerKey, "sl"), resultType: "STOP_LOSS", closeSide: closeSide, marginMode: marginMode, size: closeSize},
+		{contract: contract, kind: "tp", orderType: orderType, triggerPx: tvbotgate.FormatPriceStep(tp, priceStep), rule: tpRule, clientText: gateRiskClientText(apiID, contract, record.SignalID, layerKey, "tp"), resultType: "TAKE_PROFIT", closeSide: closeSide, marginMode: marginMode, size: closeSize, amount: closeAmount, quantity: tvbottrading.NormalizeFloat(fill.quantity)},
+		{contract: contract, kind: "sl", orderType: orderType, triggerPx: tvbotgate.FormatPriceStep(sl, priceStep), rule: slRule, clientText: gateRiskClientText(apiID, contract, record.SignalID, layerKey, "sl"), resultType: "STOP_LOSS", closeSide: closeSide, marginMode: marginMode, size: closeSize, amount: closeAmount, quantity: tvbottrading.NormalizeFloat(fill.quantity)},
 	}, nil
 }
 
@@ -496,7 +503,7 @@ func gateRiskOrderResult(desired gateRiskPlan, orderID string) tvbottrading.Risk
 		ClientAlgoID: desired.clientText,
 		OrderType:    desired.resultType,
 		Side:         desired.closeSide,
-		Quantity:     strings.TrimPrefix(desired.size, "-"),
+		Quantity:     desired.quantity,
 		TriggerPrice: desired.triggerPx,
 	}
 }
@@ -515,12 +522,13 @@ func (s *Server) ensureGateRiskOrder(ctx context.Context, client tvbotgate.Clien
 			}
 			return s.ensureGateRiskOrder(ctx, client, desired, nil)
 		}
-		if keep.Trigger.Price == desired.triggerPx && keep.Trigger.Rule == desired.rule && gatePriceOrderHasSize(keep, desired.size) {
+		if keep.Trigger.Price == desired.triggerPx && keep.Trigger.Rule == desired.rule && gatePriceOrderHasQuantity(keep, desired) {
 			return keep.IDString(), nil
 		}
 		response, err := client.AmendPriceTriggeredOrder(ctx, keep.IDString(), tvbotgate.PriceTriggeredOrderAmendment{
 			OrderID:   keep.IDString(),
 			Size:      desired.size,
+			Amount:    desired.amount,
 			Price:     "0",
 			TriggerPx: desired.triggerPx,
 			PriceType: 0,
@@ -537,6 +545,7 @@ func (s *Server) ensureGateRiskOrder(ctx context.Context, client tvbotgate.Clien
 		Initial: tvbotgate.PriceTriggeredInitial{
 			Contract:   desired.contract,
 			Size:       desired.size,
+			Amount:     desired.amount,
 			Price:      "0",
 			TIF:        "ioc",
 			Text:       desired.clientText,
@@ -560,14 +569,16 @@ func (s *Server) ensureGateRiskOrder(ctx context.Context, client tvbotgate.Clien
 	return "", fmt.Errorf("create Gate %s order returned no order id", desired.kind)
 }
 
-func gatePriceOrderHasSize(order tvbotgate.PriceTriggeredOrder, desired string) bool {
+func gatePriceOrderHasQuantity(order tvbotgate.PriceTriggeredOrder, desired gateRiskPlan) bool {
 	actual := strings.TrimSpace(order.Initial.Size)
-	if actual == "" {
+	want := strings.TrimSpace(desired.size)
+	if strings.TrimSpace(desired.amount) != "" {
 		actual = strings.TrimSpace(order.Initial.Amount)
+		want = strings.TrimSpace(desired.amount)
 	}
 	got, gotErr := strconv.ParseFloat(actual, 64)
-	want, wantErr := strconv.ParseFloat(strings.TrimSpace(desired), 64)
-	return gotErr == nil && wantErr == nil && math.Abs(got-want) < 1e-9
+	wantValue, wantErr := strconv.ParseFloat(want, 64)
+	return gotErr == nil && wantErr == nil && math.Abs(got-wantValue) < 1e-9
 }
 
 func clearGateRiskResult(result *tvbottrading.OrderResult) bool {
