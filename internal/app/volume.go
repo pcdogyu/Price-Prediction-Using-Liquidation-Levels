@@ -72,6 +72,11 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 }
 
 func (s *Service) syncVolumeSymbols(ctx context.Context, symbols []string) {
+	release, ok := s.beginBackfill(ctx)
+	if !ok {
+		return
+	}
+	defer release()
 	for _, symbol := range symbols {
 		if err := s.syncVolumeSession(ctx, symbol, time.Now().UTC()); err != nil && ctx.Err() == nil {
 			s.log.Warn("aggregate trade initial backfill failed", "symbol", symbol, "error", err)

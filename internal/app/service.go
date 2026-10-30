@@ -58,7 +58,7 @@ type Service struct {
 	marketFetchMu       sync.Mutex
 	symbolCatalogMu     sync.Mutex
 	candidateMu         sync.RWMutex
-	backfillMu          sync.Mutex
+	backfillGate        chan struct{}
 	klineCache          map[string]klineCacheEntry
 	alertCandleRepairAt map[string]time.Time
 	marketCache         map[string]marketCacheEntry
@@ -159,10 +159,25 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	if strings.TrimSpace(cfg.AlertTenantDataPath) == "" && strings.TrimSpace(cfg.DatabasePath) != "" {
 		cfg.AlertTenantDataPath = filepath.Join(filepath.Dir(cfg.DatabasePath), "alert-tenants")
 	}
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, backfillGate: make(chan struct{}, 1), volumeLiveReady: make(chan struct{}), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	return s
+}
+
+// beginBackfill serializes the historical jobs that can otherwise flood the
+// small SQLite instance during startup or a candidate refresh. The gate is
+// context-aware so shutdown does not wait behind a queued historical job.
+func (s *Service) beginBackfill(ctx context.Context) (func(), bool) {
+	if s.backfillGate == nil {
+		return func() {}, true
+	}
+	select {
+	case s.backfillGate <- struct{}{}:
+		return func() { <-s.backfillGate }, true
+	case <-ctx.Done():
+		return nil, false
+	}
 }
 
 func (s *Service) Start(ctx context.Context) {
@@ -294,11 +309,14 @@ func (s *Service) bootstrap(ctx context.Context) {
 }
 
 // backfillSymbols synchronizes the selected background set with the configured
-// history window. The mutex prevents a scheduled candidate refresh from
-// starting a second, overlapping backfill while startup is still catching up.
+// history window. The shared historical-work gate prevents a scheduled
+// candidate refresh from overlapping any other large database backfill.
 func (s *Service) backfillSymbols(ctx context.Context, symbols []string) bool {
-	s.backfillMu.Lock()
-	defer s.backfillMu.Unlock()
+	release, ok := s.beginBackfill(ctx)
+	if !ok {
+		return false
+	}
+	defer release()
 
 	now := time.Now().UTC()
 	backfillDays := s.cfg.BackfillDays
@@ -405,6 +423,11 @@ func (s *Service) retentionLoop(ctx context.Context) {
 // runDailyMaintenance is the whole daily cleanup: row retention, the capture
 // files the browser leaves behind, and the space reclamation retention frees.
 func (s *Service) runDailyMaintenance(ctx context.Context) {
+	release, ok := s.beginBackfill(ctx)
+	if !ok {
+		return
+	}
+	defer release()
 	started := time.Now().UTC()
 	failed := false
 	retentionDays := s.cfg.RetentionDays

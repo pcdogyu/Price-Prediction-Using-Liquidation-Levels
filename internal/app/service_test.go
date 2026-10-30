@@ -27,6 +27,41 @@ type backgroundCandidateProviderStub struct {
 	err        error
 }
 
+func TestBeginBackfillSerializesHistoricalWorkAndHonorsCancellation(t *testing.T) {
+	svc := &Service{backfillGate: make(chan struct{}, 1)}
+	release, ok := svc.beginBackfill(context.Background())
+	if !ok {
+		t.Fatal("first backfill should acquire the gate")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	acquired := make(chan bool, 1)
+	go func() {
+		queuedRelease, queuedOK := svc.beginBackfill(ctx)
+		if queuedOK {
+			queuedRelease()
+		}
+		acquired <- queuedOK
+	}()
+
+	select {
+	case <-acquired:
+		t.Fatal("second backfill acquired the gate concurrently")
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case queuedOK := <-acquired:
+		if queuedOK {
+			t.Fatal("cancelled backfill should not acquire the gate")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled backfill remained blocked")
+	}
+	release()
+}
+
 func (p *backgroundCandidateProviderStub) RefreshBackgroundCandidates(_ context.Context, configured []string) (domain.BackgroundSymbolSnapshot, error) {
 	p.calls++
 	p.configured = append([]string(nil), configured...)

@@ -142,6 +142,11 @@ func (s *Service) gammaSymbols() []string {
 }
 
 func (s *Service) backfillMarketMetrics(ctx context.Context) {
+	release, ok := s.beginBackfill(ctx)
+	if !ok {
+		return
+	}
+	defer release()
 	started := time.Now()
 	now := started.UTC()
 	backfillDays := s.cfg.BackfillDays
