@@ -814,6 +814,37 @@ func TestBuildAnalysisPositionTradesEmptyIsJSONArray(t *testing.T) {
 	}
 }
 
+func TestAnalysisExternalDataExposesOpenGateTradeSeparately(t *testing.T) {
+	srv := newTestServer(t)
+	cfg := srv.ConfigStore.Get()
+	now := srv.now()
+	open := analysisTrade{
+		Exchange:       trading.ExchangeGate,
+		APIID:          "gate-main",
+		InstID:         "BTC_USDT",
+		TradeID:        "gate-open-trade",
+		OrdID:          "gate-open-order",
+		Side:           "buy",
+		PosSide:        trading.PositionSideLong,
+		PositionEffect: trading.PositionEffectOpen,
+		FillPx:         "100",
+		FillSz:         "2",
+		Fee:            "-0.1",
+		FeeCcy:         "USDT",
+		FillTime:       now.Add(-time.Hour),
+		FillTS:         now.Add(-time.Hour).UnixMilli(),
+		FillCount:      1,
+	}
+	resp := srv.analysisFromExternalData(cfg, "", "", "gate-main", "demo", 1, 60, now, analysisSourceStatus{Gate: "gate"}, nil, nil, []analysisTrade{open}, nil)
+	if len(resp.PositionTrades) != 0 || len(resp.OpenPositionTrades) != 1 {
+		t.Fatalf("open Gate trade should be separate from closed positions: closed=%#v open=%#v", resp.PositionTrades, resp.OpenPositionTrades)
+	}
+	row := resp.OpenPositionTrades[0]
+	if row.Exchange != trading.ExchangeGate || row.InstID != "BTC_USDT" || row.Side != trading.PositionSideLong || row.EntryOrdID != "gate-open-order" || row.Qty != "2" || row.EntryPx != "100" || !row.ExitTime.IsZero() {
+		t.Fatalf("unexpected open Gate row: %#v", row)
+	}
+}
+
 func TestBuildAnalysisPositionTradesMergesClosedFillsByEntryOrder(t *testing.T) {
 	cfg := config.Config{Symbols: map[string]config.SymbolConfig{
 		"TEST": {InstID: "TEST-USDT-SWAP", CtVal: 1},
