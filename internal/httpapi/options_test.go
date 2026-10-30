@@ -71,7 +71,7 @@ func TestOptionsAssetFollowsServerCadence(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/options", nil))
-	if !strings.Contains(w.Body.String(), "每 2 分钟") || !strings.Contains(w.Body.String(), "最长保留 3 天") || !strings.Contains(w.Body.String(), "整点和半点") {
+	if !strings.Contains(w.Body.String(), "每 2 分钟") || !strings.Contains(w.Body.String(), "最长保留 3 天") || !strings.Contains(w.Body.String(), "整点和半点的值") || strings.Contains(w.Body.String(), "附近") {
 		t.Fatal("options page copy does not describe tiered retention")
 	}
 }

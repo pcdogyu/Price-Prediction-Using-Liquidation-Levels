@@ -64,6 +64,10 @@ func TestOptionGammaPersistenceBoundsZeroAndRetention(t *testing.T) {
 		t.Fatal(points, err)
 	}
 	// A single archive slot can span several delete batches within the 3-day window.
+	p.Time = at.Add(-48 * time.Hour)
+	if err = s.SaveOptionGamma(ctx, p); err != nil {
+		t.Fatal(err)
+	}
 	for i := 1; i <= 2001; i++ {
 		p.Time = at.Add(-48*time.Hour + time.Duration(i)*time.Millisecond)
 		if err = s.SaveOptionGamma(ctx, p); err != nil {
@@ -74,15 +78,20 @@ func TestOptionGammaPersistenceBoundsZeroAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Expired != 1 || report.Downsampled != 2003 {
+	if report.Expired != 1 || report.Downsampled != 2004 {
 		t.Fatalf("cleanup report=%+v", report)
 	}
 	start, err := s.OptionGammaAvailableFrom(ctx, cutoff)
-	if err != nil || start == nil || !start.Equal(at.Add(-48*time.Hour+time.Millisecond)) {
+	if err != nil || start == nil || !start.Equal(at.Add(-48*time.Hour)) {
 		t.Fatal(start, err)
 	}
 	points, err = s.OptionGammaHistory(ctx, "BTCUSDT", at.AddDate(0, 0, -200), at.Add(time.Millisecond))
 	if err != nil || len(points) != 6 {
 		t.Fatal(points, err)
+	}
+	for _, point := range points {
+		if point.Time.Before(at.Add(-24*time.Hour)) && point.Time.Minute() != 0 && point.Time.Minute() != 30 {
+			t.Fatalf("archive point is not on an hour or half-hour: %s", point.Time)
+		}
 	}
 }

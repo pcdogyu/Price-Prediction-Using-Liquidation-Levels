@@ -39,25 +39,16 @@ func (s *Store) OptionGammaHistory(ctx context.Context, symbol string, from, to 
 		denseCutoff = fromMillis
 	}
 	bucketMillis := int64(domain.OptionGammaArchiveMinutes) * int64(time.Minute/time.Millisecond)
-	halfBucket := bucketMillis / 2
-	// Old data is reduced at read time as well as during daily maintenance. This
-	// keeps the API contract deterministic between cleanup runs and avoids
-	// transferring redundant JSON payloads for long windows.
+	// Old data is reduced at read time as well as during daily maintenance. Only
+	// exact UTC :00/:30 samples are part of the archive tier; this keeps the API
+	// contract deterministic between cleanup runs and avoids redundant points.
 	rows, err := s.db.QueryContext(ctx, `
-WITH old_ranked AS (
-  SELECT payload,ts,ROW_NUMBER() OVER (
-    PARTITION BY ((ts+?)/?)
-    ORDER BY ABS(ts-(((ts+?)/?)*?)),ts DESC
-  ) AS keep_rank
-  FROM deribit_gamma_history
-  WHERE symbol=? AND ts>=? AND ts<?
-)
 SELECT payload,ts FROM deribit_gamma_history
 WHERE symbol=? AND ts>=? AND ts<?
 UNION ALL
-SELECT payload,ts FROM old_ranked WHERE keep_rank=1
-ORDER BY ts`, halfBucket, bucketMillis, halfBucket, bucketMillis, bucketMillis,
-		symbol, fromMillis, denseCutoff, symbol, denseCutoff, toMillis)
+SELECT payload,ts FROM deribit_gamma_history
+WHERE symbol=? AND ts>=? AND ts<? AND ts % ? = 0
+ORDER BY ts`, symbol, denseCutoff, toMillis, symbol, fromMillis, denseCutoff, bucketMillis)
 	if err != nil {
 		return nil, err
 	}
@@ -96,9 +87,9 @@ type OptionGammaCleanupReport struct {
 }
 
 // CleanupOptionGamma applies the two storage tiers in bounded transactions:
-// two-minute source data for 24 hours, then one representative nearest each
-// wall-clock :00/:30 slot through day 3. The time slots are UTC, which has the
-// same minute boundaries as Beijing time.
+// two-minute source data for 24 hours, then only exact wall-clock :00/:30
+// samples through day 3. The time slots are UTC, which has the same minute
+// boundaries as Beijing time.
 func (s *Store) CleanupOptionGamma(ctx context.Context, now time.Time) (OptionGammaCleanupReport, error) {
 	report := OptionGammaCleanupReport{}
 	cutoff := now.UTC().Add(-time.Duration(domain.OptionGammaMaxHours) * time.Hour).UnixMilli()
@@ -120,6 +111,9 @@ func (s *Store) CleanupOptionGamma(ctx context.Context, now time.Time) (OptionGa
 
 func (s *Store) downsampleOptionGamma(ctx context.Context, from, to int64, bucketMinutes int) (int64, error) {
 	bucketMillis := int64(bucketMinutes) * int64(time.Minute/time.Millisecond)
+	if bucketMinutes == domain.OptionGammaArchiveMinutes {
+		return s.deleteOptionGammaOutsideSlots(ctx, from, to, bucketMillis)
+	}
 	halfBucket := bucketMillis / 2
 	query := `DELETE FROM deribit_gamma_history WHERE rowid IN (
   SELECT rowid FROM (
@@ -140,6 +134,29 @@ func (s *Store) downsampleOptionGamma(ctx context.Context, from, to int64, bucke
 		count, rowsErr := result.RowsAffected()
 		if rowsErr != nil {
 			return total, rowsErr
+		}
+		total += count
+		if count < pruneBatchSize {
+			return total, nil
+		}
+	}
+}
+
+func (s *Store) deleteOptionGammaOutsideSlots(ctx context.Context, from, to, bucketMillis int64) (int64, error) {
+	query := `DELETE FROM deribit_gamma_history WHERE rowid IN (
+  SELECT rowid FROM deribit_gamma_history
+  WHERE ts>=? AND ts<? AND ts % ? <> 0
+  LIMIT ?
+)`
+	var total int64
+	for {
+		result, err := s.db.ExecContext(ctx, query, from, to, bucketMillis, pruneBatchSize)
+		if err != nil {
+			return total, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return total, err
 		}
 		total += count
 		if count < pruneBatchSize {
