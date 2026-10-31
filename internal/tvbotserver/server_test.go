@@ -242,7 +242,7 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte(`qs.set("refresh", "true")`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("loadPositionView(true)")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("positionViewPollBusy || document.hidden || !positionsTabActive()")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("positionViewPollBusy = true;\n          try {\n            await loadPositionView(true);")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("positionViewPollBusy = true;\n          try {\n            // The user stream keeps account positions current. Automatic\n            // polling should refresh the live position view without forcing\n            // the expensive historical userTrades lookup on every tick.\n            await loadPositionView(false);")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("positionTableColumnDefs")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`tableColumnCount("positions")`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("pending-order-rows")) ||
@@ -3925,6 +3925,71 @@ func TestTVBotBinancePositionsPendingOrdersAndBalanceOverview(t *testing.T) {
 		if !seen[path] {
 			t.Fatalf("expected %s to be called, seen=%#v", path, seen)
 		}
+	}
+}
+
+func TestTVBotBinancePositionsServesLastSnapshotWhenRESTTimesOut(t *testing.T) {
+	srv := newTestServer(t)
+	servePositions := true
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v3/positionRisk":
+			if !servePositions {
+				http.Error(w, "temporary Binance timeout", http.StatusGatewayTimeout)
+				return
+			}
+			_, _ = w.Write([]byte(`[
+				{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"0.2","entryPrice":"50000","markPrice":"50100","unRealizedProfit":"20","notional":"10020","marginAsset":"USDT","leverage":"10","updateTime":1784880000000}
+			]`))
+		case "/fapi/v1/exchangeInfo":
+			_, _ = w.Write([]byte(`{"symbols":[]}`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = upstream.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = upstream.Client()
+	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
+		ID:     "snapshot-test",
+		Active: true,
+		Credentials: binance.Credentials{
+			APIKey:    strings.Repeat("k", 16),
+			SecretKey: strings.Repeat("s", 32),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/tvbot/positions?exchange=binance&api_id=snapshot-test", nil)
+		req.SetBasicAuth("admin", "Admin123")
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+	first := request()
+	if first.Code != http.StatusOK {
+		t.Fatalf("initial Binance positions status=%d body=%s", first.Code, first.Body.String())
+	}
+	baseNow := srv.now()
+	srv.Now = func() time.Time { return baseNow.Add(11 * time.Minute) }
+	servePositions = false
+	second := request()
+	if second.Code != http.StatusOK {
+		t.Fatalf("stale Binance positions status=%d body=%s", second.Code, second.Body.String())
+	}
+	var response positionsResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Stale || response.Warning == "" || len(response.Positions) != 1 || response.Positions[0].InstID != "BTCUSDT" {
+		t.Fatalf("expected stale Binance snapshot, got %#v", response)
 	}
 }
 

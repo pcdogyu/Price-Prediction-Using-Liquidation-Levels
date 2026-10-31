@@ -2653,7 +2653,7 @@ const tvbotHTML = `<!doctype html>
     let tableColumnDrag = null;
     let tableColumnDropSuppressClick = false;
     let templateTitleGeneratedAt = new Date();
-    const positionViewPollIntervalMs = 5000;
+    const positionViewPollIntervalMs = 10000;
     const pendingLimitCloseOrderCacheMs = 90000;
     const missingPositionEntrySyncIntervalMs = 180000;
     const analysisBalanceRefreshIntervalMs = 5 * 60 * 1000;
@@ -3828,7 +3828,10 @@ const tvbotHTML = `<!doctype html>
           if (positionViewPollBusy || document.hidden || !positionsTabActive()) return;
           positionViewPollBusy = true;
           try {
-            await loadPositionView(true);
+            // The user stream keeps account positions current. Automatic
+            // polling should refresh the live position view without forcing
+            // the expensive historical userTrades lookup on every tick.
+            await loadPositionView(false);
           } catch (err) {
             toast(err.message);
           } finally {
@@ -4427,7 +4430,9 @@ const tvbotHTML = `<!doctype html>
       if (exchanges.length === 0) return "-";
       return exchanges.map((result) => {
         const label = exchangeLabel(result.exchange);
-        if (result && result.refreshed_at) return label + " " + shanghaiTime(result.refreshed_at);
+        if (result && result.refreshed_at) {
+          return label + " " + shanghaiTime(result.refreshed_at) + (result.stale ? "（最近成功快照）" : "");
+        }
         if (result && result.error) return label + " 失败";
         return label + " -";
       }).join(" / ");

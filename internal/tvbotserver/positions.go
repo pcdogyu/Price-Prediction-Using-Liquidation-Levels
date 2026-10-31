@@ -83,6 +83,8 @@ type positionsResponse struct {
 	InstType    string         `json:"inst_type"`
 	Count       int            `json:"count"`
 	RefreshedAt time.Time      `json:"refreshed_at"`
+	Stale       bool           `json:"stale,omitempty"`
+	Warning     string         `json:"warning,omitempty"`
 	Positions   []positionView `json:"positions"`
 }
 
@@ -3050,11 +3052,26 @@ func (s *Server) fetchBinancePositions(ctx context.Context, cfg config.Config, r
 		return positionsResponse{}, err
 	}
 	now := s.now()
-	positions, fromStream := cachedBinanceUserStreamPositions(client, apiID, now)
+	positions, snapshotAt, fromStream := cachedBinanceUserStreamPositionsAt(client, apiID, now)
+	stale := false
 	if !fromStream {
 		positions, err = client.Positions(ctx, "")
 		if err != nil {
-			return positionsResponse{}, err
+			// Binance account REST can briefly time out while the user stream is
+			// reconnecting or the process-wide scheduler is busy. Keep the last
+			// successful account snapshot visible for a bounded period; order
+			// placement and position-closing paths still perform their own live
+			// exchange reads before sending any order.
+			positions, snapshotAt, stale = staleBinanceUserStreamPositions(client, apiID, now)
+			if !stale {
+				return positionsResponse{}, err
+			}
+			if s.Logger != nil {
+				s.Logger.Warn("Binance position REST unavailable; serving last successful snapshot", "api_id", apiID, "snapshot_at", snapshotAt, "error", err)
+			}
+		} else {
+			cacheBinanceUserStreamPositions(binanceUserStreamID(client, apiID), positions, now)
+			snapshotAt = now
 		}
 	}
 	// Binance user streams provide live positions but not symbol price
@@ -3102,9 +3119,27 @@ func (s *Server) fetchBinancePositions(ctx context.Context, cfg config.Config, r
 		APIID:       apiID,
 		InstType:    "USDT-M",
 		Count:       len(out),
-		RefreshedAt: now,
+		RefreshedAt: snapshotAt,
+		Stale:       stale,
+		Warning:     staleWarning(stale, snapshotAt),
 		Positions:   views,
 	}, nil
+}
+
+func cacheBinanceUserStreamPositions(streamID string, positions []binance.Position, now time.Time) {
+	binanceUserStreamRegistry.Lock()
+	defer binanceUserStreamRegistry.Unlock()
+	binanceUserStreamRegistry.positions[streamID] = binanceUserPositionSnapshot{
+		updatedAt: now.UTC(),
+		positions: append([]binance.Position(nil), positions...),
+	}
+}
+
+func staleWarning(stale bool, snapshotAt time.Time) string {
+	if !stale {
+		return ""
+	}
+	return fmt.Sprintf("Binance REST 暂时不可用，显示最近成功快照（%s）", snapshotAt.UTC().Format(time.RFC3339))
 }
 
 func (s *Server) fetchBinancePendingOrders(ctx context.Context, cfg config.Config, requestedAPIID string, forceRefresh bool) (pendingOrdersResponse, error) {

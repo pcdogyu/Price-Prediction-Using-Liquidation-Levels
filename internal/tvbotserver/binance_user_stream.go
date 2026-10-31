@@ -28,7 +28,14 @@ var binanceUserStreamRegistry = struct {
 	positions: map[string]binanceUserPositionSnapshot{},
 }
 
-const binanceUserStreamPositionCacheTTL = 10 * time.Minute
+const (
+	// A live user stream snapshot is preferred for the positions page. Keep a
+	// shorter freshness window for normal reads, but retain a bounded stale
+	// window so a brief Binance REST/WebSocket outage does not erase a usable
+	// account snapshot from the dashboard.
+	binanceUserStreamPositionCacheTTL = 10 * time.Minute
+	binanceStalePositionCacheTTL      = 30 * time.Minute
+)
 
 type binanceUserPositionSnapshot struct {
 	updatedAt time.Time
@@ -286,15 +293,32 @@ func updateBinanceUserStreamPositions(streamID string, updates []tvbotbinance.Po
 }
 
 func cachedBinanceUserStreamPositions(client tvbotbinance.Client, apiID string, now time.Time) ([]tvbotbinance.Position, bool) {
+	positions, _, ok := cachedBinanceUserStreamPositionsAt(client, apiID, now)
+	return positions, ok
+}
+
+func cachedBinanceUserStreamPositionsAt(client tvbotbinance.Client, apiID string, now time.Time) ([]tvbotbinance.Position, time.Time, bool) {
 	streamID := binanceUserStreamID(client, apiID)
 	binanceUserStreamRegistry.Lock()
 	defer binanceUserStreamRegistry.Unlock()
 	snapshot, ok := binanceUserStreamRegistry.positions[streamID]
 	if !ok || now.Sub(snapshot.updatedAt) > binanceUserStreamPositionCacheTTL {
-		return nil, false
+		return nil, time.Time{}, false
 	}
 	positions := append([]tvbotbinance.Position(nil), snapshot.positions...)
-	return positions, true
+	return positions, snapshot.updatedAt, true
+}
+
+func staleBinanceUserStreamPositions(client tvbotbinance.Client, apiID string, now time.Time) ([]tvbotbinance.Position, time.Time, bool) {
+	streamID := binanceUserStreamID(client, apiID)
+	binanceUserStreamRegistry.Lock()
+	defer binanceUserStreamRegistry.Unlock()
+	snapshot, ok := binanceUserStreamRegistry.positions[streamID]
+	if !ok || snapshot.updatedAt.IsZero() || now.Sub(snapshot.updatedAt) > binanceStalePositionCacheTTL {
+		return nil, time.Time{}, false
+	}
+	positions := append([]tvbotbinance.Position(nil), snapshot.positions...)
+	return positions, snapshot.updatedAt, true
 }
 
 func binanceUserPositionKey(position tvbotbinance.Position) string {
