@@ -100,6 +100,23 @@ $published = $false
 $remoteUploadPath = "$RemoteAppRoot/liquidation-predictor.upload.$Revision"
 $remoteCollectorUploadPath = "$RemoteAppRoot/market-collector.upload.$Revision"
 
+function Remove-RemoteUploadArtifacts {
+    param(
+        [Parameter(Mandatory = $true)][string]$Remote,
+        [Parameter(Mandatory = $true)][string]$ServerPath,
+        [Parameter(Mandatory = $true)][string]$CollectorPath
+    )
+
+    # An interrupted multi-file scp can leave the exact staging path as a
+    # directory. These are generated upload paths under the application root,
+    # never live data or configuration paths.
+    $cleanup = "if [ -d '$ServerPath' ]; then rm -rf -- '$ServerPath'; else rm -f -- '$ServerPath'; fi; if [ -d '$CollectorPath' ]; then rm -rf -- '$CollectorPath'; else rm -f -- '$CollectorPath'; fi"
+    & $ssh ($sshCommon + @($Remote, $cleanup)) | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "unable to clean remote upload paths"
+    }
+}
+
 try {
     Write-Host "Running local Go tests and vet..."
     Invoke-Checked $go @("test", "./...")
@@ -131,7 +148,9 @@ try {
     $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $tempBinary).Hash.ToLowerInvariant()
 	$collectorSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $tempCollectorBinary).Hash.ToLowerInvariant()
 	Write-Host "Uploading Linux binaries for $Revision..."
-	Invoke-Checked $scp ($sshCommon + @($tempBinary, $tempCollectorBinary, ("{0}:{1}" -f $remote, $remoteUploadPath)))
+    Remove-RemoteUploadArtifacts -Remote $remote -ServerPath $remoteUploadPath -CollectorPath $remoteCollectorUploadPath
+    Invoke-Checked $scp ($sshCommon + @($tempBinary, ("{0}:{1}" -f $remote, $remoteUploadPath)))
+    Invoke-Checked $scp ($sshCommon + @($tempCollectorBinary, ("{0}:{1}" -f $remote, $remoteCollectorUploadPath)))
 
 	Write-Host "Replacing the server and collector binaries atomically..."
     # The repository is commonly checked out with CRLF on Windows. Strip CR
@@ -149,7 +168,7 @@ finally {
     $env:CGO_ENABLED = $previousCgo
     if (-not $published) {
         try {
-			& $ssh ($sshCommon + @($remote, "rm -f -- $remoteUploadPath $remoteCollectorUploadPath")) | Out-Null
+            Remove-RemoteUploadArtifacts -Remote $remote -ServerPath $remoteUploadPath -CollectorPath $remoteCollectorUploadPath
         }
         catch {
             # Preserve the original publish error; the remote path is exact and
