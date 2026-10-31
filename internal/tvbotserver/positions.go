@@ -3052,7 +3052,12 @@ func (s *Server) fetchBinancePositions(ctx context.Context, cfg config.Config, r
 		return positionsResponse{}, err
 	}
 	now := s.now()
-	positions, snapshotAt, fromStream := cachedBinanceUserStreamPositionsAt(client, apiID, now)
+	var positions []binance.Position
+	var snapshotAt time.Time
+	fromStream := false
+	if !refresh {
+		positions, snapshotAt, fromStream = cachedBinanceUserStreamPositionsAt(client, apiID, now)
+	}
 	stale := false
 	if !fromStream {
 		positions, err = client.Positions(ctx, "")

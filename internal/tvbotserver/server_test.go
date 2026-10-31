@@ -3768,6 +3768,7 @@ func TestTVBotPositionsRequiresAdminAndReturnsCurrentPositions(t *testing.T) {
 func TestTVBotBinancePositionsPendingOrdersAndBalanceOverview(t *testing.T) {
 	srv := newTestServer(t)
 	seen := map[string]bool{}
+	positionRiskCalls := 0
 	userTradesCalls := 0
 	entryTradeTime := srv.now().Add(-2 * time.Hour)
 	reduceTradeTime := srv.now().Add(-time.Hour)
@@ -3779,6 +3780,7 @@ func TestTVBotBinancePositionsPendingOrdersAndBalanceOverview(t *testing.T) {
 		seen[r.URL.Path] = true
 		switch r.URL.Path {
 		case "/fapi/v3/positionRisk":
+			positionRiskCalls++
 			_, _ = w.Write([]byte(`[
 				{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"0.2","entryPrice":"50000","markPrice":"50100","unRealizedProfit":"20","liquidationPrice":"40000","isolatedMargin":"1000","notional":"10020","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000},
 				{"symbol":"ETHUSDT","positionSide":"BOTH","positionAmt":"0","entryPrice":"3000","markPrice":"3000","unRealizedProfit":"0","notional":"0","marginAsset":"USDT","updateTime":1784880000000}
@@ -3875,6 +3877,9 @@ func TestTVBotBinancePositionsPendingOrdersAndBalanceOverview(t *testing.T) {
 	}
 	if userTradesCalls != 2 {
 		t.Fatalf("expected refresh=true to reload Binance user trades, calls=%d", userTradesCalls)
+	}
+	if positionRiskCalls != 2 {
+		t.Fatalf("expected refresh=true to bypass the cached Binance user stream snapshot, calls=%d", positionRiskCalls)
 	}
 
 	pendingReq := httptest.NewRequest(http.MethodGet, "/tvbot/pending-orders?exchange=binance", nil)
