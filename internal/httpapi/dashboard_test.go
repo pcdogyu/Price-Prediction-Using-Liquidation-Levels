@@ -238,9 +238,14 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"chartHeightLimits.minimum",
 		"setChartHeight(height, true, render)",
 		"scheduleAutomaticMarketBackfill",
-		"pageLimit: 3",
+		"marketIntervals = ['1m', '2m', '3m', '5m', '10m', '15m', '30m', '1h', '4h', '8h', '12h', '24h']",
+		"marketBackfillPageLimit = 500",
 		"delayMs: 350",
-		"K线自动回填",
+		"多周期K线回补",
+		"marketHistoryCache",
+		"visibilitychange",
+		"pageshow",
+		"visualViewport?.addEventListener",
 		"const manualMarketBackfill = { active: false }",
 		"const visibleMarketBackfill = { controller: null, sequence: 0 }",
 		"const marketRequestTimeoutMs = 15000",
@@ -254,7 +259,7 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"function currentMarketGap()",
 		"const pageEnd = Date.parse(candles.at(-1).time)",
 		"function repairCurrentMarketGap()",
-		"marketPath(chart.nextBefore)",
+		"marketPath(cursor, { symbol: requestedSymbol, interval: requestedInterval",
 		"repair: true",
 		"const halfHour = 30 * 60 * 1000",
 		"window.BubbleChart.timeGridTicks(scale.start, scale.end, halfHour)",
@@ -265,6 +270,9 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		if !strings.Contains(string(dashboardJS), marker) {
 			t.Fatalf("bubble chart script missing television viewport support %q", marker)
 		}
+	}
+	if !strings.Contains(body, `id="market-backfill-state"`) || !strings.Contains(body, `aria-live="polite"`) {
+		t.Fatal("bubble chart is missing multi-interval backfill status")
 	}
 	if strings.Contains(string(dashboardJS), "const minorStep =") || strings.Contains(string(dashboardJS), "majorTickSet") {
 		t.Fatal("bubble chart should render only whole-hour and half-hour vertical time grid lines")
@@ -292,7 +300,6 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		}
 	}
 	for _, marker := range []string{
-		"window.visualViewport?.addEventListener",
 		"new ResizeObserver",
 		"requestAnimationFrame(fitBubbleChartViewport)",
 	} {

@@ -34,6 +34,9 @@ const storedChartHeight = (() => {
 // profile panels cannot fetch anything, so their wheel scales the bar lengths instead.
 const candleZoomLimits = { minimum: 24, maximum: 500 };
 const profileZoomLimits = { minimum: .25, maximum: 12 };
+const marketIntervals = ['1m', '2m', '3m', '5m', '10m', '15m', '30m', '1h', '4h', '8h', '12h', '24h'];
+const marketBackfillPageLimit = 500;
+const marketBackfillRetryDelays = [1000, 3000, 10000];
 const chart = {
   interval: savedInterval,
   candles: [], signals: [], liquidations: [], liquidationsTruncated: false, liquidationMinimumUSD: storedLiquidationMinimumUSD, liquidationLongOffset: storedLiquidationLongOffset, liquidationShortOffset: storedLiquidationShortOffset, latestPriceTradeID: 0, latestPriceTick: null, windowEnd: 0, visibleCount: defaultVisibleCandles, volumeZoom: 1, liquidationZoom: 1,
@@ -85,12 +88,16 @@ let refreshing = false;
 let refreshSequence = 0;
 let refreshController;
 let olderController;
+const marketHistoryCache = new Map();
 const automaticMarketBackfill = {
   generation: 0,
   timer: 0,
-  pages: 0,
-  pageLimit: 3,
+  symbol: '',
+  queue: [],
+  current: '',
   delayMs: 350,
+  running: false,
+  runningGeneration: 0,
   active: false
 };
 const manualMarketBackfill = { active: false };
@@ -327,7 +334,7 @@ function activateSymbol(next) {
   refreshTradeMarkers();
   tradeView.focusAt = NaN;
   tradeView.referenceError = '';
-  resetChartState();
+  resetChartState({ cancelBackfill: true });
   refresh(true);
 }
 
@@ -355,11 +362,13 @@ async function loadSymbolCatalog() {
 }
 
 function marketPath(before = '', options = {}) {
+  const interval = options.interval || chart.interval;
+  const requestedSymbol = options.symbol || symbol;
   const limit = Number.isFinite(options.limit) ? Math.max(1, Math.min(500, Math.round(options.limit))) : chart.visibleCount;
-  const params = new URLSearchParams({ symbol, interval: chart.interval, limit: String(limit) });
+  const params = new URLSearchParams({ symbol: requestedSymbol, interval, limit: String(limit) });
   if (before) params.set('before', before);
-  else if (tradeView.enabled && Number.isFinite(tradeView.focusAt) && !chart.candles.length) {
-    const duration = intervalMilliseconds[chart.interval] || 900000;
+  else if (requestedSymbol === symbol && interval === chart.interval && tradeView.enabled && Number.isFinite(tradeView.focusAt) && !chart.candles.length) {
+    const duration = intervalMilliseconds[interval] || 900000;
     params.set('before', new Date(tradeView.focusAt + duration).toISOString());
   }
   if (options.repair) params.set('repair', '1');
@@ -448,8 +457,103 @@ function mergeSignals(current, incoming) {
   return Array.from(values.values()).sort((a, b) => new Date(a.time) - new Date(b.time));
 }
 
-function mergeLiquidations(current, incoming) {
-  return window.BubbleChart.mergeEvents(current, incoming, symbol);
+function mergeLiquidations(current, incoming, targetSymbol = symbol) {
+  return window.BubbleChart.mergeEvents(current, incoming, targetSymbol);
+}
+
+function marketHistoryKey(targetSymbol = symbol, interval = chart.interval) {
+  return targetSymbol + '|' + interval;
+}
+
+function marketHistoryState(targetSymbol = symbol, interval = chart.interval) {
+  const key = marketHistoryKey(targetSymbol, interval);
+  let state = marketHistoryCache.get(key);
+  if (!state) {
+    state = {
+      symbol: targetSymbol,
+      interval,
+      initialized: false,
+      complete: false,
+      loading: false,
+      controller: null,
+      candles: [],
+      signals: [],
+      liquidations: [],
+      liquidationsTruncated: false,
+      hasMore: false,
+      nextBefore: '',
+      pages: 0,
+      retries: 0,
+      retryAt: 0,
+      failed: false,
+      error: '',
+      cursorHistory: new Set(),
+      view: null
+    };
+    marketHistoryCache.set(key, state);
+  }
+  return state;
+}
+
+function updateMarketHistoryState(state, view, reset = false, targetSymbol = state.symbol) {
+  const incomingCandles = Array.isArray(view?.candles) ? view.candles : [];
+  const incomingSignals = Array.isArray(view?.model_signals) ? view.model_signals : [];
+  const incomingLiquidations = Array.isArray(view?.liquidations) ? view.liquidations : [];
+  state.candles = reset ? incomingCandles.slice() : mergeCandles(state.candles, incomingCandles);
+  state.signals = reset ? incomingSignals.slice() : mergeSignals(state.signals, incomingSignals);
+  state.liquidations = reset ? mergeLiquidations([], incomingLiquidations, targetSymbol) : mergeLiquidations(state.liquidations, incomingLiquidations, targetSymbol);
+  state.liquidationsTruncated = reset ? !!view?.liquidations_truncated : state.liquidationsTruncated || !!view?.liquidations_truncated;
+  state.initialized = true;
+  state.complete = !view?.has_more || !view?.next_before;
+  state.hasMore = !!view?.has_more;
+  state.nextBefore = view?.next_before || '';
+  state.pages += 1;
+  state.error = '';
+  state.retryAt = 0;
+  state.failed = false;
+  if (reset) state.cursorHistory.clear();
+  state.view = Object.assign({}, view, {
+    symbol: targetSymbol,
+    interval: state.interval,
+    candles: state.candles,
+    model_signals: state.signals,
+    liquidations: state.liquidations,
+    liquidations_truncated: state.liquidationsTruncated,
+    has_more: state.hasMore,
+    next_before: state.nextBefore
+  });
+  return state;
+}
+
+function syncActiveMarketHistory(view, older, reset) {
+  const state = marketHistoryState(symbol, chart.interval);
+  state.candles = chart.candles;
+  state.signals = chart.signals;
+  state.liquidations = chart.liquidations;
+  state.liquidationsTruncated = chart.liquidationsTruncated;
+  state.initialized = true;
+  if (older || reset) {
+    state.complete = !view?.has_more || !view?.next_before;
+    state.hasMore = !!view?.has_more;
+    state.nextBefore = view?.next_before || '';
+    state.pages = reset ? 1 : state.pages + 1;
+  }
+  state.pages = Math.max(state.pages, 1);
+  state.error = '';
+  state.failed = false;
+  if (reset) state.cursorHistory.clear();
+  state.view = Object.assign({}, view, {
+    symbol,
+    interval: chart.interval,
+    candles: state.candles,
+    model_signals: state.signals,
+    liquidations: state.liquidations,
+    liquidations_truncated: state.liquidationsTruncated,
+    has_more: state.hasMore,
+    next_before: state.nextBefore
+  });
+  cache.market = state.view;
+  return state;
 }
 
 const bubbleLoader = new window.BubbleChart.WindowLoader(json, rows => {
@@ -507,7 +611,7 @@ function mergeMarket(view, older, reset) {
     chart.hasMore = !!view.has_more;
     chart.nextBefore = view.next_before || '';
   }
-  cache.market = view;
+  syncActiveMarketHistory(view, older, reset);
   if (incomingCandles.length) {
     const start = Date.parse(incomingCandles[0].time);
     const end = Math.min(Date.parse(incomingCandles[incomingCandles.length - 1].time) + intervalMilliseconds[chart.interval], view.queryCutoff || Date.now());
@@ -525,19 +629,143 @@ function mergeMarket(view, older, reset) {
   $('new-data').classList.toggle('hidden', !chart.newData);
 }
 
-function cancelAutomaticMarketBackfill() {
+function cancelAutomaticMarketBackfill(clearCache = false) {
   automaticMarketBackfill.generation++;
   clearTimeout(automaticMarketBackfill.timer);
   automaticMarketBackfill.timer = 0;
-  automaticMarketBackfill.pages = 0;
   automaticMarketBackfill.active = false;
+  automaticMarketBackfill.symbol = '';
+  automaticMarketBackfill.queue = [];
+  automaticMarketBackfill.current = '';
+  automaticMarketBackfill.running = false;
+  automaticMarketBackfill.runningGeneration = 0;
+  marketHistoryCache.forEach(state => {
+    state.controller?.abort();
+    state.controller = null;
+    state.loading = false;
+  });
+  if (clearCache) marketHistoryCache.clear();
   updateMarketBackfillButton();
 }
 
+function marketBackfillProgress() {
+  const jobs = marketIntervals.map(interval => marketHistoryState(symbol, interval));
+  const completed = jobs.filter(state => state.complete).length;
+  const current = automaticMarketBackfill.current || chart.interval;
+  const currentState = marketHistoryState(symbol, current);
+  const pages = currentState.pages ? ' · ' + currentState.pages + '页' : '';
+  return { completed, total: jobs.length, current, pages };
+}
+
 function automaticMarketBackfillLabel() {
-  return automaticMarketBackfill.active
-    ? ' · K线自动回填 ' + automaticMarketBackfill.pages + '/' + automaticMarketBackfill.pageLimit + '页'
-    : '';
+  if (!automaticMarketBackfill.active) return '';
+  const progress = marketBackfillProgress();
+  return ' · 多周期K线回补 ' + progress.current + progress.pages + ' · ' + progress.completed + '/' + progress.total + '周期';
+}
+
+function moveMarketBackfillToFront(interval) {
+  if (!interval || !marketIntervals.includes(interval)) return;
+  automaticMarketBackfill.queue = [interval, ...automaticMarketBackfill.queue.filter(item => item !== interval)];
+}
+
+function nextMarketBackfillInterval() {
+  const now = Date.now();
+  for (const interval of automaticMarketBackfill.queue) {
+    const state = marketHistoryState(symbol, interval);
+    if (state.loading || state.complete || state.failed) continue;
+    if (state.retryAt > now) continue;
+    return interval;
+  }
+  return '';
+}
+
+function finishAutomaticMarketBackfill() {
+  automaticMarketBackfill.active = false;
+  automaticMarketBackfill.timer = 0;
+  automaticMarketBackfill.current = '';
+  updateMarketBackfillButton();
+  if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+}
+
+function scheduleAutomaticMarketBackfillRetry(generation, delay) {
+  clearTimeout(automaticMarketBackfill.timer);
+  automaticMarketBackfill.timer = setTimeout(() => runAutomaticMarketBackfill(generation), Math.max(0, delay));
+}
+
+async function runAutomaticMarketBackfillOnce(generation) {
+  if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active || automaticMarketBackfill.symbol !== symbol) return;
+  if (manualMarketBackfill.active || visibleMarketBackfill.controller) {
+    scheduleAutomaticMarketBackfillRetry(generation, automaticMarketBackfill.delayMs);
+    return;
+  }
+  const interval = nextMarketBackfillInterval();
+  if (!interval) {
+    const retryAt = marketIntervals.map(item => marketHistoryState(symbol, item).retryAt).filter(value => value > Date.now()).sort((a, b) => a - b)[0];
+    if (retryAt) {
+      scheduleAutomaticMarketBackfillRetry(generation, retryAt - Date.now());
+      return;
+    }
+    finishAutomaticMarketBackfill();
+    return;
+  }
+  automaticMarketBackfill.current = interval;
+  updateMarketBackfillButton();
+  const loaded = await loadOlder({ interval, limit: marketBackfillPageLimit, background: true });
+  if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active || automaticMarketBackfill.symbol !== symbol) return;
+  const state = marketHistoryState(symbol, interval);
+  if (loaded) {
+    state.retries = 0;
+    state.retryAt = 0;
+    scheduleAutomaticMarketBackfillRetry(generation, automaticMarketBackfill.delayMs);
+    return;
+  }
+  state.retries += 1;
+  if (state.retries <= marketBackfillRetryDelays.length) {
+    state.retryAt = Date.now() + marketBackfillRetryDelays[state.retries - 1];
+    scheduleAutomaticMarketBackfillRetry(generation, marketBackfillRetryDelays[state.retries - 1]);
+    return;
+  }
+  state.failed = true;
+  state.retryAt = 0;
+  state.error = state.error || '连续回补失败，等待页面恢复后重试';
+  scheduleAutomaticMarketBackfillRetry(generation, automaticMarketBackfill.delayMs);
+}
+
+async function runAutomaticMarketBackfill(generation) {
+  if (automaticMarketBackfill.running) return;
+  automaticMarketBackfill.running = true;
+  automaticMarketBackfill.runningGeneration = generation;
+  try {
+    await runAutomaticMarketBackfillOnce(generation);
+  } finally {
+    if (automaticMarketBackfill.runningGeneration === generation) {
+      automaticMarketBackfill.running = false;
+      automaticMarketBackfill.runningGeneration = 0;
+    }
+  }
+}
+
+function scheduleAutomaticMarketBackfill(preferredInterval = chart.interval) {
+  if (embeddedChart) return;
+  if (automaticMarketBackfill.symbol && automaticMarketBackfill.symbol !== symbol) cancelAutomaticMarketBackfill(true);
+  if (!automaticMarketBackfill.symbol) automaticMarketBackfill.symbol = symbol;
+  marketIntervals.forEach(interval => {
+    const state = marketHistoryState(symbol, interval);
+    if (state.failed) {
+      state.failed = false;
+      state.retries = 0;
+      state.retryAt = 0;
+      state.error = '';
+    }
+  });
+  if (!automaticMarketBackfill.active) {
+    automaticMarketBackfill.active = true;
+    automaticMarketBackfill.queue = marketIntervals.slice();
+    automaticMarketBackfill.generation++;
+  }
+  moveMarketBackfillToFront(preferredInterval);
+  updateMarketBackfillButton();
+  if (!automaticMarketBackfill.timer) runAutomaticMarketBackfill(automaticMarketBackfill.generation);
 }
 
 function updateMarketBackfillButton() {
@@ -549,12 +777,21 @@ function updateMarketBackfillButton() {
   button.textContent = manualMarketBackfill.active
     ? '回补中…'
     : automaticMarketBackfill.active
-      ? '自动回补中…'
+      ? '多周期回补中…'
       : '回补K线+VAL/VAH';
   button.setAttribute('aria-busy', String(busy));
   button.setAttribute('aria-label', manualMarketBackfill.active || automaticMarketBackfill.active
-    ? '正在按当前周期回补K线和成交量分布'
+    ? '正在回补当前周期和其他周期的K线以及成交量分布'
     : '回补当前显示的K线、成交量分布、VAL和VAH');
+  const state = $('market-backfill-state');
+  if (state) {
+    const progress = marketBackfillProgress();
+    state.textContent = automaticMarketBackfill.active
+      ? '后台回补：' + progress.current + progress.pages + ' · 已完成 ' + progress.completed + '/' + progress.total + ' 个周期'
+      : progress.completed === progress.total && progress.total > 0
+        ? '后台回补完成：' + progress.total + ' 个周期'
+        : '';
+  }
 }
 
 function applyPriceTick(tick, render = true, force = false) {
@@ -1025,33 +1262,73 @@ function showFailures(failures) {
   $('api-errors').classList.toggle('hidden', all.length === 0);
 }
 
-async function loadOlder() {
-  if (chart.loadingOlder || manualMarketBackfill.active || !chart.hasMore || !chart.nextBefore) return false;
-  chart.loadingOlder = true;
-  updateMarketBackfillButton();
-  const requestedSymbol = symbol;
-  const requestedInterval = chart.interval;
+async function loadOlder(options = {}) {
+  const interval = options.interval || chart.interval;
+  const targetSymbol = options.symbol || symbol;
+  const background = options.background === true;
+  const state = marketHistoryState(targetSymbol, interval);
+  if (targetSymbol !== symbol || state.loading || manualMarketBackfill.active || (background && visibleMarketBackfill.controller)) return false;
+  if (!background && automaticMarketBackfill.active && automaticMarketBackfill.current && automaticMarketBackfill.current !== interval) {
+    moveMarketBackfillToFront(interval);
+    return false;
+  }
+  if (background && state.complete) return false;
+  if (!background && (chart.loadingOlder || (!state.initialized && !chart.candles.length) || (state.initialized && (!chart.hasMore || !chart.nextBefore)))) return false;
+  if (background && state.initialized && (!state.hasMore || !state.nextBefore)) return false;
+
+  const requestedSymbol = targetSymbol;
+  const requestedInterval = interval;
+  const cursor = state.initialized ? state.nextBefore : '';
+  const previousCursor = cursor;
   const controller = new AbortController();
-  olderController = controller;
+  state.loading = true;
+  state.controller = controller;
+  if (!background) {
+    chart.loadingOlder = true;
+    olderController = controller;
+  }
+  updateMarketBackfillButton();
   const timeout = setTimeout(() => controller.abort(), marketRequestTimeoutMs);
   const cutoff = Date.now();
   try {
-    const view = await json(marketPath(chart.nextBefore), { signal: controller.signal });
-    if (controller.signal.aborted || requestedSymbol !== symbol || requestedInterval !== chart.interval) return false;
+    const view = await json(marketPath(cursor, { symbol: requestedSymbol, interval: requestedInterval, limit: background ? marketBackfillPageLimit : undefined }), { signal: controller.signal });
+    if (controller.signal.aborted || requestedSymbol !== symbol) return false;
+    const nextCursor = view?.next_before || '';
+    const incomingCandles = Array.isArray(view?.candles) ? view.candles : [];
+    if (!incomingCandles.length && (view?.has_more || nextCursor)) throw new Error('K线回补返回空响应');
+    if (nextCursor && nextCursor === previousCursor) throw new Error('K线回补游标未前进');
+    if (nextCursor && state.cursorHistory.has(nextCursor)) throw new Error('K线回补游标重复');
+    if (previousCursor) state.cursorHistory.add(previousCursor);
     view.queryCutoff = cutoff;
-    mergeMarket(view, true, false);
-    draw(cache.market, cache.map, cache.signal, cache.volume);
-    ensureWindowLiquidations();
+    const activeNow = requestedInterval === chart.interval;
+    if (!activeNow) {
+      updateMarketHistoryState(state, view, !state.initialized, requestedSymbol);
+    } else {
+      mergeMarket(view, state.initialized, !state.initialized);
+      draw(cache.market, cache.map, cache.signal, cache.volume);
+      ensureWindowLiquidations();
+    }
+    state.complete = !view?.has_more || !nextCursor;
+    state.retries = 0;
+    state.retryAt = 0;
     return true;
   } catch (error) {
     if (controller.signal.aborted) return false;
-    lastFailures = lastFailures.filter(item => !item.startsWith('历史行情'));
-    lastFailures.push('历史行情 · ' + error.message);
-    showFailures(lastFailures);
+    state.error = error.message || 'K线回补失败';
+    if (!background) {
+      lastFailures = lastFailures.filter(item => !item.startsWith('历史行情'));
+      lastFailures.push('历史行情 · ' + state.error);
+      showFailures(lastFailures);
+    }
     return false;
   } finally {
     clearTimeout(timeout);
-    if (olderController === controller) chart.loadingOlder = false;
+    state.loading = false;
+    if (state.controller === controller) state.controller = null;
+    if (olderController === controller) {
+      chart.loadingOlder = false;
+      olderController = null;
+    }
     updateMarketBackfillButton();
   }
 }
@@ -1190,46 +1467,6 @@ async function refillVisibleMarket() {
   }
 }
 
-function scheduleAutomaticMarketBackfill() {
-  cancelAutomaticMarketBackfill();
-  if (embeddedChart || !chart.hasMore || !chart.nextBefore) return;
-  automaticMarketBackfill.active = true;
-  updateMarketBackfillButton();
-  const generation = automaticMarketBackfill.generation;
-  const step = async () => {
-    if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active) return;
-    if (!chart.hasMore || !chart.nextBefore || automaticMarketBackfill.pages >= automaticMarketBackfill.pageLimit) {
-      automaticMarketBackfill.active = false;
-      automaticMarketBackfill.timer = 0;
-      updateMarketBackfillButton();
-      if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
-      return;
-    }
-    if (chart.loadingOlder) {
-      automaticMarketBackfill.timer = setTimeout(step, automaticMarketBackfill.delayMs);
-      return;
-    }
-    const loaded = await loadOlder();
-    if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active) return;
-    if (!loaded) {
-      automaticMarketBackfill.active = false;
-      automaticMarketBackfill.timer = 0;
-      updateMarketBackfillButton();
-      return;
-    }
-    automaticMarketBackfill.pages++;
-    if (chart.hasMore && chart.nextBefore && automaticMarketBackfill.pages < automaticMarketBackfill.pageLimit) {
-      automaticMarketBackfill.timer = setTimeout(step, automaticMarketBackfill.delayMs);
-    } else {
-      automaticMarketBackfill.active = false;
-      automaticMarketBackfill.timer = 0;
-      updateMarketBackfillButton();
-      if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
-    }
-  };
-  automaticMarketBackfill.timer = setTimeout(step, automaticMarketBackfill.delayMs);
-}
-
 async function refresh(resetMarket = false) {
   if (manualMarketBackfill.active) return;
   const sequence = ++refreshSequence;
@@ -1240,7 +1477,6 @@ async function refresh(resetMarket = false) {
   const requestedSymbol = symbol;
   const requestedInterval = chart.interval;
   refreshing = true;
-  let initializedMarket = false;
   try {
     const specs = embeddedChart
       ? [['market', '市场行情', marketPath()]]
@@ -1255,7 +1491,6 @@ async function refresh(resetMarket = false) {
           result.value.queryCutoff = cutoff;
           const reset = resetMarket || !chart.candles.length;
           mergeMarket(result.value, false, reset);
-          initializedMarket = initializedMarket || reset;
         }
         else if (key === 'schedule') cache.schedule = { ...result.value, received_at_ms: Date.now() };
         else cache[key] = result.value;
@@ -1275,7 +1510,7 @@ async function refresh(resetMarket = false) {
       updateCoinGlassCountdown();
     }
     showFailures(lastFailures);
-    if (initializedMarket && cache.market) scheduleAutomaticMarketBackfill();
+    if (!embeddedChart && cache.market) scheduleAutomaticMarketBackfill(requestedInterval);
   } finally {
     if (sequence === refreshSequence) refreshing = false;
   }
@@ -1284,6 +1519,17 @@ async function refresh(resetMarket = false) {
 function svgPoint(event) {
   const rect = $('market-chart').getBoundingClientRect();
   return { x: (event.clientX - rect.left) * dims.width / rect.width, y: (event.clientY - rect.top) * dims.height / rect.height };
+}
+
+let marketBackfillResumeTimer = 0;
+function scheduleMarketBackfillResume(refreshLatest = false) {
+  clearTimeout(marketBackfillResumeTimer);
+  marketBackfillResumeTimer = setTimeout(() => {
+    if (!cache.market || embeddedChart) return;
+    draw(cache.market, cache.map, cache.signal, cache.volume);
+    scheduleAutomaticMarketBackfill(chart.interval);
+    if (refreshLatest && !document.hidden) refresh(false);
+  }, 120);
 }
 
 // chartRegion is the wheel routing table. The vertical wheel means something different in
@@ -1614,11 +1860,26 @@ function installEmbeddedChartInteractions() {
   svg.addEventListener('pointercancel', endDrag);
 }
 
-function resetChartState() {
+function restoreCachedMarketInterval(interval = chart.interval) {
+  const state = marketHistoryCache.get(marketHistoryKey(symbol, interval));
+  if (!state?.initialized || !state.candles.length || !state.view) return false;
+  chart.candles = state.candles;
+  chart.signals = state.signals;
+  chart.liquidations = state.liquidations;
+  chart.liquidationsTruncated = state.liquidationsTruncated;
+  chart.windowEnd = chart.candles.length;
+  chart.hasMore = state.hasMore;
+  chart.nextBefore = state.nextBefore;
+  chart.atLatest = true;
+  chart.newData = false;
+  cache.market = state.view;
+  return true;
+}
+
+function resetChartState(options = {}) {
   bubbleLoader.reset();
-  cancelAutomaticMarketBackfill();
+  if (options.cancelBackfill) cancelAutomaticMarketBackfill(true);
   refreshController?.abort();
-  olderController?.abort();
   visibleMarketBackfill.sequence++;
   visibleMarketBackfill.controller?.abort();
   visibleMarketBackfill.controller = null;
@@ -1759,7 +2020,13 @@ document.querySelectorAll('button[data-interval]').forEach(button => {
     try { localStorage.setItem('liquidation.interval', chart.interval); } catch (_) { /* keep current interval */ }
     document.querySelectorAll('button[data-interval]').forEach(item => item.classList.toggle('active', item === button));
     resetChartState();
-    refresh(true);
+    const restored = restoreCachedMarketInterval(chart.interval);
+    if (restored) {
+      draw(cache.market, cache.map, cache.signal, cache.volume);
+      ensureWindowLiquidations();
+    }
+    refresh(!restored);
+    scheduleAutomaticMarketBackfill(chart.interval);
   });
 });
 $('chart-latest').addEventListener('click', () => {
@@ -1768,7 +2035,13 @@ $('chart-latest').addEventListener('click', () => {
   tradeView.focusAt = NaN;
   $('new-data').classList.add('hidden');
   resetChartState();
-  refresh(true);
+  const restored = restoreCachedMarketInterval(chart.interval);
+  if (restored) {
+    draw(cache.market, cache.map, cache.signal, cache.volume);
+    ensureWindowLiquidations();
+  }
+  refresh(!restored);
+  scheduleAutomaticMarketBackfill(chart.interval);
 });
 $('chart-reset').addEventListener('click', () => {
   chart.yManual = false;
@@ -1853,4 +2126,9 @@ events.addEventListener('liquidation', event => {
 });
 events.onerror = () => { streamNeedsCalibration = true; streamError = '连接中断，正在重试'; showFailures(lastFailures); };
 window.addEventListener('themechange', () => draw(cache.market, cache.map, cache.signal, cache.volume));
-window.addEventListener('resize', () => draw(cache.market, cache.map, cache.signal, cache.volume));
+window.addEventListener('resize', () => scheduleMarketBackfillResume(true));
+window.visualViewport?.addEventListener('resize', () => scheduleMarketBackfillResume(true));
+window.addEventListener('focus', () => scheduleMarketBackfillResume(true));
+window.addEventListener('pageshow', () => scheduleMarketBackfillResume(true));
+window.addEventListener('online', () => scheduleMarketBackfillResume(true));
+document.addEventListener('visibilitychange', () => scheduleMarketBackfillResume(!document.hidden));

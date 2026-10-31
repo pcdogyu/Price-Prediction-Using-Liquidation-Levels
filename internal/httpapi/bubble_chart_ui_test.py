@@ -71,7 +71,7 @@ with sync_playwright() as playwright:
 
     baseline = context.request.get(base + "/api/v1/market?symbol=ETHUSDT&interval=1m").json()
     history_base = context.request.get(base + "/api/v1/liquidations?symbol=ETHUSDT&limit=1").json()
-    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
+    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "market_fail_once": set(), "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
     history_rows = [
         {"row_key": "history-eth-long", "exchange": "binance", "inst_id": "ETHUSDT", "side": "long", "entry_time": iso(state["anchor"] - 20 * intervals["1m"]), "entry_px": "2490", "exit_time": iso(state["anchor"] - 10 * intervals["1m"]), "exit_px": "2498", "entry_ord_id": "binance-open-1", "exit_ord_id": "binance-close-1"},
         {"row_key": "history-eth-short", "exchange": "gate", "inst_id": "ETH_USDT", "side": "short", "entry_time": iso(state["anchor"] - 18 * intervals["1m"]), "entry_px": "2498", "exit_time": iso(state["anchor"] - 8 * intervals["1m"]), "exit_px": "2492", "entry_ord_id": "gate-open-1", "exit_ord_id": "gate-close-1"},
@@ -102,8 +102,16 @@ with sync_playwright() as playwright:
             symbol, interval = query["symbol"], query["interval"]
             state["interval"] = interval
             candles, rows = dataset(symbol, interval, query.get("before"))
+            anchor_bucket = state["anchor"] // intervals[interval] * intervals[interval]
+            page_number = 0 if not query.get("before") else max(1, round((anchor_bucket - int(ms(query["before"]))) / (120 * intervals[interval])))
+            fail_key = (symbol, interval, page_number)
+            if fail_key in state["market_fail_once"]:
+                state["market_fail_once"].remove(fail_key)
+                route.fulfill(status=503, json={"detail": "fixture market page unavailable"})
+                return
+            has_more = page_number < 3
             view = copy.deepcopy(baseline)
-            view.update(symbol=symbol, candles=[] if state["empty"] else candles, liquidations=rows[-5000:], liquidation_minimum_usd=0, liquidations_truncated=True, realtime_price=None, model_signals=[], has_more=True, next_before=candles[0]["time"])
+            view.update(symbol=symbol, candles=[] if state["empty"] else candles, liquidations=rows[-5000:], liquidation_minimum_usd=0, liquidations_truncated=True, realtime_price=None, model_signals=[], has_more=has_more, next_before=candles[0]["time"] if has_more else None)
             view["summary"].update(last_price=2495, change_24h=0, change_pct_24h=0, updated_at=iso(state["anchor"]))
             route.fulfill(json=view)
         elif parsed.path.endswith("/liquidations"):
@@ -150,6 +158,7 @@ with sync_playwright() as playwright:
         page.route("**/api/v1/volume-profile?**", fixture)
         page.route("**/api/v1/signals/latest?**", fixture)
         page.route("**/tvbot/analysis?**", fixture)
+        state["market_fail_once"].add(("ETHUSDT", "30m", 1))
 
     def idle():
         page.wait_for_function("() => window.__testActiveRequests === 0")
@@ -184,6 +193,23 @@ with sync_playwright() as playwright:
     page.goto(base + "/bubbles", wait_until="domcontentloaded")
     idle()
     page.wait_for_function("() => !automaticMarketBackfill.active && !chart.loadingOlder")
+    if not production:
+        market_requests = [(query.get("symbol"), query.get("interval"), query.get("before"), query.get("limit")) for path, query in requests if path.endswith("/market")]
+        assert set(interval for _, interval, _, _ in market_requests) == set(intervals), market_requests
+        for interval in intervals:
+            pages = [item for item in market_requests if item[1] == interval]
+            assert len(pages) >= 4, (interval, pages)
+            assert all(item[3] == ("120" if interval == "1m" and not item[2] else "500") for item in pages), (interval, pages)
+        assert any(interval == "30m" and before for _, interval, before, _ in market_requests), market_requests
+        assert page.locator("#market-backfill-state").inner_text() == "后台回补完成：12 个周期"
+        cached_counts = page.evaluate("() => ({one: chart.candles.length, states: marketIntervals.map(interval => marketHistoryState(symbol, interval).candles.length)})")
+        assert cached_counts["one"] >= 480 and min(cached_counts["states"]) >= 480, cached_counts
+        page.locator('button[data-interval="15m"]').click()
+        page.wait_for_function("() => chart.interval === '15m' && chart.candles.length >= 480")
+        page.evaluate("() => { window.dispatchEvent(new Event('resize')); window.dispatchEvent(new Event('pageshow')); window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange')); }")
+        page.wait_for_function("() => !automaticMarketBackfill.active && chart.interval === '15m'")
+        page.locator('button[data-interval="1m"]').click()
+        page.wait_for_function("() => chart.interval === '1m' && chart.candles.length >= 480")
     if not production:
         assert page.locator("#upper-status").count() == 0
         assert page.locator("#lower-status").count() == 0
