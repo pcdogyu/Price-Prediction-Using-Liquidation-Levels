@@ -99,7 +99,9 @@ const automaticMarketBackfill = {
   delayMs: 350,
   running: false,
   runningGeneration: 0,
-  active: false
+  active: false,
+  paused: false,
+  idleWaiters: []
 };
 const manualMarketBackfill = { active: false };
 const visibleMarketBackfill = { controller: null, sequence: 0 };
@@ -642,6 +644,7 @@ function cancelAutomaticMarketBackfill(clearCache = false) {
   clearTimeout(automaticMarketBackfill.timer);
   automaticMarketBackfill.timer = 0;
   automaticMarketBackfill.active = false;
+  automaticMarketBackfill.paused = false;
   automaticMarketBackfill.symbol = '';
   automaticMarketBackfill.queue = [];
   automaticMarketBackfill.current = '';
@@ -652,8 +655,47 @@ function cancelAutomaticMarketBackfill(clearCache = false) {
     state.controller = null;
     state.loading = false;
   });
+  notifyAutomaticMarketBackfillIdle();
   if (clearCache) marketHistoryCache.clear();
   updateMarketBackfillButton();
+}
+
+function waitForAutomaticMarketBackfillIdle() {
+  if (!automaticMarketBackfill.running) return Promise.resolve();
+  return new Promise(resolve => automaticMarketBackfill.idleWaiters.push(resolve));
+}
+
+function notifyAutomaticMarketBackfillIdle() {
+  const waiters = automaticMarketBackfill.idleWaiters.splice(0);
+  waiters.forEach(resolve => resolve());
+}
+
+async function pauseAutomaticMarketBackfillForManual() {
+  const shouldResume = automaticMarketBackfill.active && automaticMarketBackfill.symbol === symbol;
+  if (!shouldResume) return false;
+  const idle = waitForAutomaticMarketBackfillIdle();
+  automaticMarketBackfill.paused = true;
+  clearTimeout(automaticMarketBackfill.timer);
+  automaticMarketBackfill.timer = 0;
+  const currentState = automaticMarketBackfill.current
+    ? marketHistoryState(symbol, automaticMarketBackfill.current)
+    : null;
+  currentState?.controller?.abort();
+  updateMarketBackfillButton();
+  await idle;
+  return shouldResume;
+}
+
+function resumeAutomaticMarketBackfill() {
+  automaticMarketBackfill.paused = false;
+  if (!automaticMarketBackfill.active || automaticMarketBackfill.symbol !== symbol) {
+    updateMarketBackfillButton();
+    return;
+  }
+  updateMarketBackfillButton();
+  if (!automaticMarketBackfill.timer && !automaticMarketBackfill.running) {
+    runAutomaticMarketBackfill(automaticMarketBackfill.generation);
+  }
 }
 
 function marketBackfillProgress() {
@@ -693,6 +735,7 @@ function nextMarketBackfillInterval() {
 
 function finishAutomaticMarketBackfill() {
   automaticMarketBackfill.active = false;
+  automaticMarketBackfill.paused = false;
   automaticMarketBackfill.timer = 0;
   automaticMarketBackfill.current = '';
   updateMarketBackfillButton();
@@ -701,11 +744,15 @@ function finishAutomaticMarketBackfill() {
 
 function scheduleAutomaticMarketBackfillRetry(generation, delay) {
   clearTimeout(automaticMarketBackfill.timer);
+  if (automaticMarketBackfill.paused || !automaticMarketBackfill.active) {
+    automaticMarketBackfill.timer = 0;
+    return;
+  }
   automaticMarketBackfill.timer = setTimeout(() => runAutomaticMarketBackfill(generation), Math.max(0, delay));
 }
 
 async function runAutomaticMarketBackfillOnce(generation) {
-  if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active || automaticMarketBackfill.symbol !== symbol) return;
+  if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active || automaticMarketBackfill.symbol !== symbol || automaticMarketBackfill.paused) return;
   if (manualMarketBackfill.active || visibleMarketBackfill.controller) {
     scheduleAutomaticMarketBackfillRetry(generation, automaticMarketBackfill.delayMs);
     return;
@@ -724,7 +771,7 @@ async function runAutomaticMarketBackfillOnce(generation) {
   updateMarketBackfillButton();
   let loaded = await loadMarketHistorySnapshot({ interval, background: true });
   if (!loaded) loaded = await loadOlder({ interval, limit: marketBackfillPageLimit, background: true });
-  if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active || automaticMarketBackfill.symbol !== symbol) return;
+  if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active || automaticMarketBackfill.symbol !== symbol || automaticMarketBackfill.paused) return;
   const state = marketHistoryState(symbol, interval);
   if (loaded) {
     state.retries = 0;
@@ -745,7 +792,7 @@ async function runAutomaticMarketBackfillOnce(generation) {
 }
 
 async function runAutomaticMarketBackfill(generation) {
-  if (automaticMarketBackfill.running) return;
+  if (automaticMarketBackfill.running || automaticMarketBackfill.paused) return;
   automaticMarketBackfill.running = true;
   automaticMarketBackfill.runningGeneration = generation;
   try {
@@ -754,6 +801,7 @@ async function runAutomaticMarketBackfill(generation) {
     if (automaticMarketBackfill.runningGeneration === generation) {
       automaticMarketBackfill.running = false;
       automaticMarketBackfill.runningGeneration = 0;
+      notifyAutomaticMarketBackfillIdle();
     }
   }
 }
@@ -771,6 +819,10 @@ function scheduleAutomaticMarketBackfill(preferredInterval = chart.interval) {
       state.error = '';
     }
   });
+  if (manualMarketBackfill.active || automaticMarketBackfill.paused) {
+    updateMarketBackfillButton();
+    return;
+  }
   if (!automaticMarketBackfill.active) {
     automaticMarketBackfill.active = true;
     automaticMarketBackfill.queue = marketIntervals.slice();
@@ -785,22 +837,24 @@ function updateMarketBackfillButton() {
   const button = $('market-backfill');
   if (!button) return;
   const hasLoadedMarket = chart.candles.length > 0;
-  const busy = manualMarketBackfill.active || chart.loadingOlder || automaticMarketBackfill.active;
+  const busy = manualMarketBackfill.active || chart.loadingOlder;
   button.disabled = busy || !hasLoadedMarket;
   button.textContent = manualMarketBackfill.active
     ? '回补中…'
-    : automaticMarketBackfill.active
-      ? '多周期回补中…'
-      : '回补K线+VAL/VAH';
+    : '回补K线+VAL/VAH';
   button.setAttribute('aria-busy', String(busy));
-  button.setAttribute('aria-label', manualMarketBackfill.active || automaticMarketBackfill.active
-    ? '正在回补当前周期和其他周期的K线以及成交量分布'
-    : '回补当前显示的K线、成交量分布、VAL和VAH');
+  button.setAttribute('aria-label', manualMarketBackfill.active
+    ? '正在回补当前显示的K线、成交量分布、VAL和VAH'
+    : automaticMarketBackfill.active
+      ? '后台多周期回补进行中，点击优先回补当前显示的K线、成交量分布、VAL和VAH'
+      : '回补当前显示的K线、成交量分布、VAL和VAH');
   const state = $('market-backfill-state');
   if (state) {
     const progress = marketBackfillProgress();
-    state.textContent = automaticMarketBackfill.active
-      ? '后台回补：' + progress.current + progress.pages + ' · 已完成 ' + progress.completed + '/' + progress.total + ' 个周期'
+    state.textContent = manualMarketBackfill.active
+      ? '手动回补当前 ' + chart.interval + ' · 后台队列已暂停'
+      : automaticMarketBackfill.active
+      ? '后台回补：' + progress.current + progress.pages + ' · 已完成 ' + progress.completed + '/' + progress.total + ' 个周期 · 手动回补可用'
       : progress.completed === progress.total && progress.total > 0
         ? '后台回补完成：' + progress.total + ' 个周期'
         : '';
@@ -1517,7 +1571,6 @@ async function refillVisibleMarket() {
   refreshController?.abort();
   visibleMarketBackfill.controller = controller;
   const timeout = setTimeout(() => controller.abort(), marketRequestTimeoutMs);
-  manualMarketBackfill.active = true;
   updateMarketBackfillButton();
   try {
     const [marketResult, volumeResult] = await Promise.allSettled([
@@ -1561,10 +1614,7 @@ async function refillVisibleMarket() {
   } finally {
     clearTimeout(timeout);
     if (visibleMarketBackfill.controller === controller) visibleMarketBackfill.controller = null;
-    if (requestID === visibleMarketBackfill.sequence) {
-      manualMarketBackfill.active = false;
-      updateMarketBackfillButton();
-    }
+    updateMarketBackfillButton();
   }
 }
 
@@ -2157,7 +2207,21 @@ $('chart-reset').addEventListener('click', () => {
 async function manualBackfillMarketHistory() {
   const button = $('market-backfill');
   if (!button || manualMarketBackfill.active || button.disabled) return;
-  await refillVisibleMarket();
+  const resumeAutomatic = automaticMarketBackfill.active && automaticMarketBackfill.symbol === symbol;
+  const requestSequence = visibleMarketBackfill.sequence;
+  const requestedSymbol = symbol;
+  const requestedInterval = chart.interval;
+  manualMarketBackfill.active = true;
+  updateMarketBackfillButton();
+  try {
+    if (resumeAutomatic) await pauseAutomaticMarketBackfillForManual();
+    if (requestSequence !== visibleMarketBackfill.sequence || requestedSymbol !== symbol || requestedInterval !== chart.interval) return;
+    await refillVisibleMarket();
+  } finally {
+    manualMarketBackfill.active = false;
+    if (resumeAutomatic) resumeAutomaticMarketBackfill();
+    updateMarketBackfillButton();
+  }
 }
 $('market-backfill').addEventListener('click', manualBackfillMarketHistory);
 $('bubble-retry').addEventListener('click', () => ensureWindowLiquidations(true));

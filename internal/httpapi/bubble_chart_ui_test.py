@@ -6,6 +6,7 @@ import os
 import pathlib
 import re
 import sys
+import time
 from urllib.parse import parse_qs, urlsplit
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -71,7 +72,7 @@ with sync_playwright() as playwright:
 
     baseline = context.request.get(base + "/api/v1/market?symbol=ETHUSDT&interval=1m").json()
     history_base = context.request.get(base + "/api/v1/liquidations?symbol=ETHUSDT&limit=1").json()
-    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "market_fail_once": set(), "market_history_fail_once": set(), "history_active": 0, "history_max_active": 0, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
+    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "market_fail_once": set(), "market_history_fail_once": set(), "history_active": 0, "history_max_active": 0, "market_active": 0, "market_max_active": 0, "history_delay_once": True, "backfill_delay_once": True, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
     history_rows = [
         {"row_key": "history-eth-long", "exchange": "binance", "inst_id": "ETHUSDT", "side": "long", "entry_time": iso(state["anchor"] - 20 * intervals["1m"]), "entry_px": "2490", "exit_time": iso(state["anchor"] - 10 * intervals["1m"]), "exit_px": "2498", "entry_ord_id": "binance-open-1", "exit_ord_id": "binance-close-1"},
         {"row_key": "history-eth-short", "exchange": "gate", "inst_id": "ETH_USDT", "side": "short", "entry_time": iso(state["anchor"] - 18 * intervals["1m"]), "entry_px": "2498", "exit_time": iso(state["anchor"] - 8 * intervals["1m"]), "exit_px": "2492", "entry_ord_id": "gate-open-1", "exit_ord_id": "gate-close-1"},
@@ -99,6 +100,8 @@ with sync_playwright() as playwright:
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
         requests.append((parsed.path, query))
         if parsed.path.endswith("/market"):
+            state["market_active"] += 1
+            state["market_max_active"] = max(state["market_max_active"], state["market_active"])
             symbol, interval = query["symbol"], query["interval"]
             state["interval"] = interval
             candles, rows = dataset(symbol, interval, query.get("before"))
@@ -107,6 +110,7 @@ with sync_playwright() as playwright:
             fail_key = (symbol, interval, page_number)
             if fail_key in state["market_fail_once"]:
                 state["market_fail_once"].remove(fail_key)
+                state["market_active"] -= 1
                 route.fulfill(status=503, json={"detail": "fixture market page unavailable"})
                 return
             has_more = page_number < 3
@@ -114,6 +118,7 @@ with sync_playwright() as playwright:
             view.update(symbol=symbol, candles=[] if state["empty"] else candles, liquidations=rows[-5000:], liquidation_minimum_usd=0, liquidations_truncated=True, realtime_price=None, model_signals=[], has_more=has_more, next_before=candles[0]["time"] if has_more else None)
             view["summary"].update(last_price=2495, change_24h=0, change_pct_24h=0, updated_at=iso(state["anchor"]))
             route.fulfill(json=view)
+            state["market_active"] -= 1
         elif parsed.path.endswith("/market-history"):
             symbol, interval = query["symbol"], query["interval"]
             if (symbol, interval) in state["market_history_fail_once"]:
@@ -123,6 +128,9 @@ with sync_playwright() as playwright:
             state["history_active"] += 1
             state["history_max_active"] = max(state["history_max_active"], state["history_active"])
             try:
+                if state["history_delay_once"]:
+                    state["history_delay_once"] = False
+                    time.sleep(0.2)
                 duration = intervals[interval]
                 anchor_bucket = state["anchor"] // duration * duration
                 candles = []
@@ -159,6 +167,11 @@ with sync_playwright() as playwright:
             route.fulfill(json={"data_source": "coinglass_binance_liqmap", "bins": [{"price": 2232.9 / factor, "total_usd": 10000}, {"price": 2492, "total_usd": 20000}, {"price": 2749.5 * factor, "total_usd": 30000}], "bin_width": 1, "mark_price": 2495, "captured_at": iso(state["anchor"]), "top_long_liquidations": [{"price": 2492, "amount_usd": 20000}, {"price": 2232.9, "amount_usd": 10000}], "top_short_liquidations": [{"price": 2498, "amount_usd": 25000}, {"price": 2749.5, "amount_usd": 30000}]})
         elif parsed.path.endswith("/volume-profile"):
             route.fulfill(json={"state": "ok", "val": 100, "vah": 9000, "bins": [{"price_low": 100, "price_high": 200, "volume_usd": 10000}, {"price_low": 9000, "price_high": 9001, "volume_usd": 10000}]})
+        elif parsed.path.endswith("/volume-profile/backfill"):
+            if state["backfill_delay_once"]:
+                state["backfill_delay_once"] = False
+                time.sleep(0.2)
+            route.fulfill(json={"state": "ok", "val": 100, "vah": 9000, "bins": [{"price_low": 100, "price_high": 200, "volume_usd": 10000}, {"price_low": 9000, "price_high": 9001, "volume_usd": 10000}]})
         elif parsed.path.endswith("/signals/latest"):
             route.fulfill(json={
                 "state": "data_insufficient", "mark_price": 2495, "atr": 10, "reason": "模型尚未完成首次训练",
@@ -179,6 +192,7 @@ with sync_playwright() as playwright:
         page.route("**/api/v1/liquidations?**", fixture)
         page.route("**/api/v1/map?**", fixture)
         page.route("**/api/v1/volume-profile?**", fixture)
+        page.route("**/api/v1/volume-profile/backfill?**", fixture)
         page.route("**/api/v1/signals/latest?**", fixture)
         page.route("**/tvbot/analysis?**", fixture)
         state["market_history_fail_once"].add(("ETHUSDT", "30m"))
@@ -216,6 +230,22 @@ with sync_playwright() as playwright:
 
     page.goto(base + "/bubbles", wait_until="domcontentloaded")
     idle()
+    if not production:
+        page.wait_for_function("() => chart.candles.length > 0 && automaticMarketBackfill.active")
+        assert not page.locator("#market-backfill").is_disabled()
+        queue_before_manual = page.evaluate("() => ({current: automaticMarketBackfill.current, queue: automaticMarketBackfill.queue.slice(), paused: automaticMarketBackfill.paused})")
+        state["market_fail_once"].add(("ETHUSDT", "1m", 0))
+        page.locator("#market-backfill").click()
+        page.wait_for_function("() => manualMarketBackfill.active && automaticMarketBackfill.paused")
+        assert page.locator("#market-backfill").is_disabled()
+        assert "后台队列已暂停" in page.locator("#market-backfill-state").inner_text()
+        page.wait_for_function("() => !manualMarketBackfill.active")
+        page.wait_for_function("() => !automaticMarketBackfill.paused")
+        assert not page.locator("#market-backfill").is_disabled()
+        assert "当前K线回补" in page.locator("#api-errors").inner_text()
+        queue_after_manual = page.evaluate("() => ({current: automaticMarketBackfill.current, queue: automaticMarketBackfill.queue.slice(), paused: automaticMarketBackfill.paused})")
+        assert queue_after_manual["queue"] == queue_before_manual["queue"], (queue_before_manual, queue_after_manual)
+        assert state["market_max_active"] == 1, state
     page.wait_for_function("() => !automaticMarketBackfill.active && !chart.loadingOlder")
     if not production:
         market_requests = [(query.get("symbol"), query.get("interval"), query.get("before"), query.get("limit")) for path, query in requests if path.endswith("/market")]
