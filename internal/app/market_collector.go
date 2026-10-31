@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -17,7 +18,6 @@ func (s *Service) startMarketCollector(ctx context.Context) {
 	}
 	s.volumeMu.Lock()
 	input := s.volumeLiveInput
-	aggregateSymbols := s.volumeStreamSymbolListLocked()
 	s.volumeMu.Unlock()
 	if input == nil {
 		if s.log != nil {
@@ -26,10 +26,12 @@ func (s *Service) startMarketCollector(ctx context.Context) {
 		return
 	}
 	client := marketcollector.NewClient(s.cfg.MarketCollectorSocket, s.health, s.log)
+	s.marketCollectorMu.Lock()
 	s.marketCollector = client
+	s.marketCollectorMu.Unlock()
 	go client.Run(ctx, marketcollector.Subscription{
 		Liquidations:     true,
-		AggregateSymbols: aggregateSymbols,
+		AggregateSymbols: s.collectorAggregateSymbols(),
 		DepthSymbols:     append([]string(nil), s.cfg.DepthSymbols...),
 	}, marketcollector.Handler{
 		Liquidation: s.RecordLiquidation,
@@ -46,13 +48,38 @@ func (s *Service) startMarketCollector(ctx context.Context) {
 	})
 }
 
-func (s *Service) updateMarketCollectorAggregateSymbols(symbols []string) {
-	if s == nil || s.marketCollector == nil {
+func (s *Service) updateMarketCollectorAggregateSymbols() {
+	if s == nil {
 		return
 	}
-	s.marketCollector.SetSubscription(marketcollector.Subscription{
+	s.marketCollectorMu.RLock()
+	client := s.marketCollector
+	s.marketCollectorMu.RUnlock()
+	if client == nil {
+		return
+	}
+	client.SetSubscription(marketcollector.Subscription{
 		Liquidations:     true,
-		AggregateSymbols: append([]string(nil), symbols...),
+		AggregateSymbols: s.collectorAggregateSymbols(),
 		DepthSymbols:     append([]string(nil), s.cfg.DepthSymbols...),
 	})
+}
+
+func (s *Service) collectorAggregateSymbols() []string {
+	combined := append(s.backgroundSymbols(), s.volumeStreamSymbolList()...)
+	seen := make(map[string]struct{}, len(combined))
+	result := make([]string, 0, len(combined))
+	for _, raw := range combined {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		if symbol == "" {
+			continue
+		}
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		result = append(result, symbol)
+	}
+	sort.Strings(result)
+	return result
 }

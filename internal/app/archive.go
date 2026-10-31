@@ -48,10 +48,10 @@ func (s *Service) importVolumeArchives(ctx context.Context) {
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	start, before := today.AddDate(0, 0, -31), today.AddDate(0, 0, -1)
 	allReady := true
-	// Historical volume archives are as expensive as the live aggregate-trade
-	// feed. Keep them aligned with the bounded volume bootstrap set so the
-	// candidate alert catalog does not fan out dozens of downloads at startup.
-	for _, symbol := range s.volumeBootstrapSymbols() {
+	// Historical volume archives follow the same resident alert watch list as
+	// the live aggregate-trade feed, while the shared backfill gate serializes
+	// the downloads with other historical work.
+	for _, symbol := range s.volumeProfileSymbols() {
 		for day := start; day.Before(before); day = day.AddDate(0, 0, 1) {
 			if ctx.Err() != nil {
 				return

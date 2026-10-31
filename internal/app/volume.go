@@ -16,7 +16,7 @@ import (
 var fetchAggregateTrades = exchange.BinanceAggregateTrades
 
 func (s *Service) startVolumeProfiles(ctx context.Context) {
-	bootstrapSymbols := s.volumeBootstrapSymbols()
+	profileSymbols := s.volumeProfileSymbols()
 	s.volumeMu.Lock()
 	s.volumeContext = ctx
 	if s.volumeRequested == nil {
@@ -25,7 +25,7 @@ func (s *Service) startVolumeProfiles(ctx context.Context) {
 	if s.volumeStreamSymbols == nil {
 		s.volumeStreamSymbols = make(map[string]struct{})
 	}
-	for _, symbol := range bootstrapSymbols {
+	for _, symbol := range profileSymbols {
 		s.volumeRequested[symbol] = struct{}{}
 		s.volumeStreamSymbols[symbol] = struct{}{}
 	}
@@ -35,12 +35,30 @@ func (s *Service) startVolumeProfiles(ctx context.Context) {
 	go s.volumeBackfillLoop(ctx)
 }
 
+func (s *Service) registerVolumeSymbols(symbols []string) {
+	s.volumeMu.Lock()
+	defer s.volumeMu.Unlock()
+	if s.volumeRequested == nil {
+		s.volumeRequested = make(map[string]struct{})
+	}
+	if s.volumeStreamSymbols == nil {
+		s.volumeStreamSymbols = make(map[string]struct{})
+	}
+	for _, raw := range symbols {
+		symbol := normalizeVolumeSymbol(raw)
+		if symbol == "" {
+			continue
+		}
+		s.volumeRequested[symbol] = struct{}{}
+		s.volumeStreamSymbols[symbol] = struct{}{}
+	}
+}
+
 func (s *Service) volumeProfileLoop(ctx context.Context) {
-	// Volume profiles use the deliberately small bootstrap set. The alert and
-	// candle candidate set may contain up to 50 symbols, but replaying exact
-	// aggregate trades for that set at startup creates a large SQLite/API burst.
-	// Other candidates remain available to alerts and on-demand market views.
-	bootstrapSymbols := s.volumeBootstrapSymbols()
+	// The resident alert watch list and the configured bootstrap symbols all
+	// receive aggregate trades. The same bounded gate and batch writer protect
+	// SQLite while each symbol keeps its own cursor and gap repair path.
+	profileSymbols := s.volumeProfileSymbols()
 	s.volumeMu.Lock()
 	input := s.volumeLiveInput
 	if input == nil {
@@ -53,7 +71,7 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 	// The shared gate still serializes this bootstrap work with on-demand
 	// sessions and other historical jobs, while the stream and queue are ready
 	// immediately after service startup.
-	go s.syncVolumeSymbols(ctx, bootstrapSymbols)
+	go s.syncVolumeSymbols(ctx, profileSymbols)
 
 	flush := time.NewTicker(500 * time.Millisecond)
 	defer flush.Stop()
@@ -68,9 +86,9 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 			}
 			return
 		case <-s.candidateUpdates:
-			// Candidate refreshes control alert/candle coverage, not the bounded
-			// volume-profile feed. Do not restart the stream and replay a newly
-			// expanded 50-symbol set into SQLite.
+			// Candidate refreshes register and synchronize their symbols in the
+			// background-candidate path. The live collector updates its
+			// subscription independently, so this loop only needs to continue.
 			continue
 		case trade := <-input:
 			batch = append(batch, trade)
@@ -122,16 +140,16 @@ func (s *Service) volumeBackfillLoop(ctx context.Context) {
 			if !alreadyStreaming {
 				s.volumeStreamSymbols[symbol] = struct{}{}
 			}
-			streamSymbols := s.volumeStreamSymbolListLocked()
 			s.volumeMu.Unlock()
 			if !alreadyStreaming {
-				s.updateMarketCollectorAggregateSymbols(streamSymbols)
+				s.updateMarketCollectorAggregateSymbols()
 			}
 		}
 	}
 }
 
 func (s *Service) syncVolumeSymbols(ctx context.Context, symbols []string) {
+	s.registerVolumeSymbols(symbols)
 	release, ok := s.beginBackfill(ctx)
 	if !ok {
 		return
@@ -214,12 +232,6 @@ func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force 
 		s.volumeMu.Unlock()
 		return nil
 	}
-	if !force {
-		if _, streaming := s.volumeStreamSymbols[symbol]; streaming {
-			s.volumeMu.Unlock()
-			return nil
-		}
-	}
 	s.volumePending[symbol] = struct{}{}
 	delete(s.volumeBackfillError, symbol)
 	queue := s.volumeBackfillQueue
@@ -270,6 +282,26 @@ func (s *Service) volumeBootstrapSymbols() []string {
 	if len(result) == 0 {
 		return []string{"BTCUSDT", "ETHUSDT"}
 	}
+	return result
+}
+
+func (s *Service) volumeProfileSymbols() []string {
+	configured := append([]string(nil), s.volumeBootstrapSymbols()...)
+	configured = append(configured, s.backgroundSymbols()...)
+	seen := make(map[string]struct{}, len(configured))
+	result := make([]string, 0, len(configured))
+	for _, raw := range configured {
+		symbol := normalizeVolumeSymbol(raw)
+		if symbol == "" {
+			continue
+		}
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		result = append(result, symbol)
+	}
+	sort.Strings(result)
 	return result
 }
 
@@ -504,7 +536,7 @@ func (s *Service) volumeRequestedSymbol(symbol string) bool {
 }
 
 func (s *Service) saveCurrentVolumeSnapshots(ctx context.Context, at time.Time) {
-	for _, symbol := range s.volumeBootstrapSymbols() {
+	for _, symbol := range s.volumeProfileSymbols() {
 		profile, err := s.VolumeProfile(ctx, symbol)
 		if err != nil || profile.State != "ok" || profile.VAL == nil || profile.VAH == nil {
 			continue

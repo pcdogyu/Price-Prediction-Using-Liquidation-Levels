@@ -91,6 +91,7 @@ type Service struct {
 	volumePending          map[string]struct{}
 	volumeBackfillError    map[string]string
 	volumeBackfillQueue    chan string
+	marketCollectorMu      sync.RWMutex
 	marketCollector        *marketcollector.Client
 	webhookTargetMu        sync.RWMutex
 	webhookTarget          WebhookTargetResolver
