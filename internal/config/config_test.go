@@ -28,6 +28,9 @@ func TestLoadHonorsExplicitBootstrapSymbols(t *testing.T) {
 func TestLoadUsesSeparateBackfillAndRetentionDefaults(t *testing.T) {
 	t.Setenv("APP_BACKFILL_DAYS", "")
 	t.Setenv("APP_RETENTION_DAYS", "")
+	t.Setenv("APP_MARKET_POLL_INTERVAL", "")
+	t.Setenv("APP_MARKET_INFO_INTERVAL", "")
+	t.Setenv("APP_MARKET_FETCH_CONCURRENCY", "")
 	cfg := Load()
 	if cfg.BackfillDays != 1 || cfg.RetentionDays != 180 {
 		t.Fatalf("backfill=%d retention=%d", cfg.BackfillDays, cfg.RetentionDays)
