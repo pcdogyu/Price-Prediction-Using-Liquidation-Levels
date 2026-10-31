@@ -60,6 +60,18 @@ type OrderRecord struct {
 	RawJSON        string              `json:"raw_json,omitempty"`
 }
 
+// ActiveOpeningOrderFilter identifies the account scope used by the
+// execution-side strategy conflict guard. Symbols are matched against both
+// the stored coinpair and ticker columns so legacy records and exchange-native
+// instrument ids can be compared without a schema migration.
+type ActiveOpeningOrderFilter struct {
+	TargetExchange string
+	TradeEnv       string
+	APIID          string
+	APIIDs         []string
+	Symbols        []string
+}
+
 type OrderStore struct {
 	mu     sync.Mutex
 	path   string
@@ -569,6 +581,104 @@ func (s *OrderStore) Get(signalID string) (OrderRecord, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.findLocked(signalID)
+}
+
+// ListActiveOpeningOrders returns accepted or submitted opening orders in one
+// account scope. The caller remains responsible for classifying the source
+// strategy from RawJSON because the storage layer deliberately does not know
+// the application-level signal taxonomy.
+func (s *OrderStore) ListActiveOpeningOrders(filter ActiveOpeningOrderFilter) ([]OrderRecord, error) {
+	filter.TargetExchange = trading.NormalizeExchange(filter.TargetExchange)
+	filter.TradeEnv = trading.NormalizeTradeEnv(filter.TradeEnv)
+	filter.APIID = strings.TrimSpace(filter.APIID)
+	filter.APIIDs = normalizeOrderFilterAPIIDs(filter.APIIDs)
+	if filter.APIID != "" {
+		filter.APIIDs = normalizeOrderFilterAPIIDs(append(filter.APIIDs, filter.APIID))
+	}
+	filter.Symbols = normalizeOrderFilterSymbols(filter.Symbols)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		return s.listSQLiteActiveOpeningOrdersLocked(filter)
+	}
+	out := make([]OrderRecord, 0)
+	for i := len(s.state.Orders) - 1; i >= 0; i-- {
+		rec := s.state.Orders[i]
+		if !activeOpeningOrderMatches(rec, filter) {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+func normalizeOrderFilterSymbols(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToUpper(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeOrderFilterAPIIDs(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func activeOpeningOrderMatches(rec OrderRecord, filter ActiveOpeningOrderFilter) bool {
+	if rec.Status != StatusAccepted && rec.Status != StatusSubmitted && rec.Status != StatusPartial {
+		return false
+	}
+	if strings.TrimSpace(rec.PositionEffect) != trading.PositionEffectOpen {
+		return false
+	}
+	if filter.TargetExchange != "" && trading.NormalizeExchange(rec.TargetExchange) != filter.TargetExchange {
+		return false
+	}
+	if filter.TradeEnv != "" && trading.NormalizeTradeEnv(rec.TradeEnv) != filter.TradeEnv {
+		return false
+	}
+	if len(filter.APIIDs) > 0 && !containsFold(filter.APIIDs, rec.APIID) {
+		return false
+	}
+	if len(filter.Symbols) == 0 {
+		return true
+	}
+	for _, symbol := range filter.Symbols {
+		if strings.EqualFold(strings.TrimSpace(rec.Coinpair), symbol) || strings.EqualFold(strings.TrimSpace(rec.Ticker), symbol) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFold(values []string, wanted string) bool {
+	wanted = strings.TrimSpace(wanted)
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), wanted) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *OrderStore) findLocked(signalID string) (OrderRecord, bool) {
@@ -1285,6 +1395,59 @@ func (s *OrderStore) listSQLiteLocked(limit int) ([]OrderRecord, error) {
 
 func (s *OrderStore) listSQLitePageLocked(limit, offset int) ([]OrderRecord, error) {
 	return s.listSQLiteSearchPageLocked("", "", limit, offset)
+}
+
+func (s *OrderStore) listSQLiteActiveOpeningOrdersLocked(filter ActiveOpeningOrderFilter) ([]OrderRecord, error) {
+	where := []string{
+		"status IN (?, ?, ?)",
+		"position_effect = ?",
+	}
+	args := []any{string(StatusAccepted), string(StatusSubmitted), string(StatusPartial), trading.PositionEffectOpen}
+	if filter.TargetExchange != "" {
+		where = append(where, "target_exchange = ?")
+		args = append(args, filter.TargetExchange)
+	}
+	if filter.TradeEnv != "" {
+		where = append(where, "trade_env = ?")
+		args = append(args, filter.TradeEnv)
+	}
+	if len(filter.APIIDs) > 0 {
+		placeholders := make([]string, 0, len(filter.APIIDs))
+		for _, apiID := range filter.APIIDs {
+			placeholders = append(placeholders, "?")
+			args = append(args, apiID)
+		}
+		where = append(where, "api_id IN ("+strings.Join(placeholders, ",")+")")
+	}
+	if len(filter.Symbols) > 0 {
+		placeholders := make([]string, 0, len(filter.Symbols))
+		for _, symbol := range filter.Symbols {
+			placeholders = append(placeholders, "?")
+			args = append(args, symbol)
+		}
+		where = append(where, "(UPPER(COALESCE(coinpair, '')) IN ("+strings.Join(placeholders, ",")+") OR UPPER(COALESCE(ticker, '')) IN ("+strings.Join(placeholders, ",")+"))")
+		// The query contains the symbol list twice: once for coinpair and once
+		// for ticker. Keep the argument order explicit for SQLite.
+		for _, symbol := range filter.Symbols {
+			args = append(args, symbol)
+		}
+	}
+	rows, err := s.db.Query(`SELECT signal_id, dedupe_key, status, action, source_action, api_id, source_exchange, target_exchange, trade_env, coinpair, ticker, price,
+		leverage, amount, adx, market_strategy, risk_json, order_intent, position_effect, position_side, token_hash, accepted_at, updated_at, result_json, error_code, error, raw_json
+		FROM orders WHERE `+strings.Join(where, " AND ")+` ORDER BY accepted_at DESC, signal_id DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]OrderRecord, 0)
+	for rows.Next() {
+		rec, err := scanOrder(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
 }
 
 func (s *OrderStore) listSQLiteByTargetExchangeLocked(exchange string, limit int) ([]OrderRecord, error) {

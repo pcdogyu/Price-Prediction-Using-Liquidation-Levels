@@ -61,7 +61,11 @@ type Server struct {
 	LogoutUnified          func(http.ResponseWriter, *http.Request)
 	TopMenuProvider        func(*http.Request) []TopMenuItem
 	GammaProvider          GammaProvider
-	positionEntryCache     *positionEntryFillCache
+	// valueAreaOpenConflictChecker is injectable for deterministic webhook
+	// tests. Production uses the exchange-backed checker in
+	// value_area_order_gate.go when this is nil.
+	valueAreaOpenConflictChecker func(context.Context, trading.Signal, config.Config) (bool, error)
+	positionEntryCache           *positionEntryFillCache
 }
 
 type UserCredentials struct {
@@ -297,8 +301,54 @@ func (s *Server) handleTVOrder(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	var releaseValueAreaLock func()
+	if isAutomaticValueAreaOpenSignal(signal) {
+		if reason := valueAreaOpenTimeRejection(signal); reason != "" {
+			record, err := s.Orders.RecordIgnoredReason(signal, reason, "automatic value-area opening is outside the configured China-time window", now)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"status":    "ignored",
+				"signal_id": record.SignalID,
+				"reason":    reason,
+			})
+			return
+		}
+
+		releaseValueAreaLock = valueAreaOrderLocks.lock(valueAreaOrderLockKey(signal))
+		checkCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		conflict, checkErr := s.valueAreaOpenConflict(checkCtx, signal, cfg)
+		cancel()
+		if checkErr != nil {
+			releaseValueAreaLock()
+			releaseValueAreaLock = nil
+			s.recordTVOrderRejected(r, signal, "value_area_conflict_check_failed", checkErr, now)
+			writeError(w, http.StatusServiceUnavailable, "value_area_conflict_check_failed", checkErr.Error())
+			return
+		}
+		if conflict {
+			record, err := s.Orders.RecordIgnoredReason(signal, "value_area_conflicting_strategy", "same account coinpair is occupied by another strategy or unknown entry", now)
+			releaseValueAreaLock()
+			releaseValueAreaLock = nil
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"status":    "ignored",
+				"signal_id": record.SignalID,
+				"reason":    "value_area_conflicting_strategy",
+			})
+			return
+		}
+	}
 	dedupeKey := storage.DedupeKey(signal)
 	record, duplicate, err := s.Orders.RecordAccepted(signal, dedupeKey, now)
+	if releaseValueAreaLock != nil {
+		releaseValueAreaLock()
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "store_error", err.Error())
 		return

@@ -3599,7 +3599,7 @@ func orderRecordSignalKind(rec storage.OrderRecord) string {
 func signalKindFromText(values ...string) string {
 	text := strings.ToLower(strings.Join(values, " "))
 	switch {
-	case strings.Contains(text, "manual_liquidation") || strings.Contains(text, "liquidation_alert_manual"):
+	case strings.Contains(text, "manual") || strings.Contains(text, "手动") || strings.Contains(text, "人工"):
 		return "manual"
 	case strings.Contains(text, "value_area"):
 		return "value_area"
