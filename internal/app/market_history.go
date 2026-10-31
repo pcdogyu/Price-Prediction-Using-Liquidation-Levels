@@ -109,7 +109,7 @@ func (s *Service) buildMarketHistory(ctx context.Context, symbol, intervalName s
 
 	raw := localRaw
 	summary := localSummary
-	if s.cfg.BackfillDays > 0 && intervalName != "1m" && intervalName != "2m" {
+	if s.cfg.BackfillDays > 0 {
 		if upstream, upstreamErr := fetchMarketHistoryKlines(ctx, symbol, intervalName, historyStart, historyEnd); upstreamErr == nil && len(upstream) > 0 {
 			raw = marketCandlesToDomain(symbol, upstream)
 		} else if upstreamErr != nil {

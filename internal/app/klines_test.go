@@ -212,6 +212,36 @@ func TestMarketLoadsUnconfiguredSymbolOnDemand(t *testing.T) {
 	}
 }
 
+func TestMarketUsesNativeOneMinuteKlinesWhenBackfillIsEnabled(t *testing.T) {
+	svc := klineService(t)
+	svc.cfg.BackfillDays = 1
+	original := fetchAlertKlines
+	var calls []string
+	fetchAlertKlines = func(_ context.Context, symbol, interval string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+		calls = append(calls, symbol+":"+interval)
+		step := time.Minute
+		if interval == "1h" {
+			step = time.Hour
+		}
+		end := until.UTC().Truncate(step)
+		rows := make([]domain.MarketCandle, 0, limit)
+		for i := limit; i > 0; i-- {
+			at := end.Add(-time.Duration(i) * step)
+			rows = append(rows, domain.MarketCandle{Time: at, Open: 100, High: 101, Low: 99, Close: 100.5, VolumeUSD: 10, ExchangeCount: 1, Complete: true})
+		}
+		return rows, false, nil
+	}
+	t.Cleanup(func() { fetchAlertKlines = original })
+
+	view, err := svc.Market(context.Background(), "ETHUSDT", "1m", time.Date(2026, 10, 31, 1, 0, 0, 0, time.UTC), 120)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Source != "binance_usdm_ondemand" || len(view.Candles) != 120 || len(calls) != 2 || calls[0] != "ETHUSDT:1m" || calls[1] != "ETHUSDT:1h" {
+		t.Fatalf("one-minute market did not use native data: source=%s candles=%d calls=%v", view.Source, len(view.Candles), calls)
+	}
+}
+
 func TestUnconfiguredVolumeProfileIsUnavailable(t *testing.T) {
 	svc := klineService(t)
 	profile, err := svc.VolumeProfile(context.Background(), "SOLUSDT")

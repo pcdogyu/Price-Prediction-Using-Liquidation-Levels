@@ -1116,6 +1116,7 @@ function draw(view, map, signal, volume) {
   const coinGlassMap = map?.data_source === 'coinglass_binance_liqmap';
   const liquidationName = coinGlassMap ? 'CoinGlass Binance 清算墙' : 'CoinGlass 清算墙不可用';
   const range = currentRange(candles);
+  const candleCountText = candles.length < chart.visibleCount ? 'K线 ' + candles.length + '/' + chart.visibleCount + '根' : 'K线 ' + chart.visibleCount + '根';
   if (!embeddedChart) renderLiquidationTop3(map, range);
   $('trade-marker-legend').classList.toggle('hidden', !tradeView.enabled);
   bubbleHits = () => [];
@@ -1124,7 +1125,7 @@ function draw(view, map, signal, volume) {
   const loadState = state.status === 'loading' ? '补齐中 · ' + state.pages + '页 / ' + state.loaded + '笔' : state.status === 'error' ? '补齐失败：' + state.error + '（可重试）' : state.status === 'complete' ? '窗口已补齐' : '等待数据';
   const context = embeddedChart
     ? (chart.atLatest ? '最新K线' : '历史K线')
-    : (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · K线 ' + chart.visibleCount + '根 · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom) + automaticMarketBackfillLabel();
+    : (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · ' + candleCountText + ' · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom) + automaticMarketBackfillLabel();
   if (!range || !chartTimeScale(candles, layout.left, layout.candleRight)) {
     ['price-low', 'price-high', 'window-start', 'window-end', 'bubble-count', 'trade-marker-count'].forEach(key => svg.removeAttribute('data-' + key));
     $('chart-context').textContent = context + ' · 等待有效K线';

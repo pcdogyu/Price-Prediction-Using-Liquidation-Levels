@@ -326,6 +326,11 @@ func TestMarketHistorySharesCompleteSnapshotAcrossRequests(t *testing.T) {
 }
 
 func TestMarketHistoryUsesConfiguredBackfillWindow(t *testing.T) {
+	originalFetch := fetchMarketHistoryKlines
+	fetchMarketHistoryKlines = func(context.Context, string, string, time.Time, time.Time) ([]domain.MarketCandle, error) {
+		return nil, errors.New("upstream unavailable")
+	}
+	t.Cleanup(func() { fetchMarketHistoryKlines = originalFetch })
 	st, err := store.Open(filepath.Join(t.TempDir(), "history-window.db"))
 	if err != nil {
 		t.Fatal(err)

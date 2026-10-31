@@ -535,7 +535,7 @@ func (s *Service) Latest(ctx context.Context, symbol string) (domain.Prediction,
 }
 
 func (s *Service) Market(ctx context.Context, symbol, intervalName string, before time.Time, limit int) (domain.MarketView, error) {
-	if s.cfg.BackfillDays > 0 && intervalName != "1m" {
+	if s.cfg.BackfillDays > 0 {
 		if direct, err := s.onDemandMarket(ctx, symbol, intervalName, before, limit); err == nil {
 			return direct, nil
 		} else if s.backgroundSymbol(symbol) {
