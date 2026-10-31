@@ -920,9 +920,6 @@ const tvbotHTML = `<!doctype html>
       font-size: 12px;
       white-space: nowrap;
     }
-    .positions-table {
-      min-width: 1600px;
-    }
     .position-open-mode-toggle input {
       appearance: none;
       width: 32px;
@@ -1597,7 +1594,7 @@ const tvbotHTML = `<!doctype html>
       white-space: nowrap;
     }
     .positions-table {
-      min-width: 1400px;
+      min-width: 1600px;
     }
     .positions-table th,
     .positions-table td {
