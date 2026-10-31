@@ -26,11 +26,14 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 	if w.Code != 302 || w.Header().Get("Location") != "/liquidation/alerts" {
 		t.Fatal(w.Code, w.Header())
 	}
-	for _, path := range []string{"/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/menu"} {
+	for _, path := range []string{"/bubbles", "/liquidations", "/hedge-wall", "/market-info", "/options", "/menu", "/logs"} {
 		w = httptest.NewRecorder()
 		srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `href="/liquidation/options"`) || !strings.Contains(w.Body.String(), `content="/liquidation/"`) {
 			t.Fatal(path, w.Code, w.Body.String())
+		}
+		if path == "/logs" && (!strings.Contains(w.Body.String(), `data-page="logs"`) || !strings.Contains(w.Body.String(), `id="nav-logs"`) || !strings.Contains(w.Body.String(), `data-unified-menu="true"`)) {
+			t.Fatalf("logs page is missing the standard active navigation: %s", w.Body.String())
 		}
 	}
 	for _, path := range []string{"/api/v1/liquidations?minimum=NaN", "/api/v1/liquidations?minimum=-1", "/api/v1/liquidations?side=buy", "/api/v1/liquidations?field=bad", "/api/v1/liquidations?cursor=bad", "/api/v1/hedge-wall?symbol=ETHUSDT&half_life=0", "/api/v1/hedge-wall/history?symbol=ETHUSDT&kind=bad", "/api/v1/market-info?symbol=ETHUSDT&range=100d", "/api/v1/options?hours=0", "/api/v1/options?hours=73", "/api/v1/options?hours=1.5", "/api/v1/options?hours=NaN"} {

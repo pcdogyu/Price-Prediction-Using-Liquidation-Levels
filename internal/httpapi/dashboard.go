@@ -93,8 +93,7 @@ func (s *Server) registerDashboard(mux *http.ServeMux) {
 	mux.HandleFunc("/bubbles", getOnly(s.index))
 	mux.HandleFunc("/logs", getOnly(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		base := html.EscapeString(s.auth.BasePath())
-		_, _ = w.Write([]byte(strings.ReplaceAll(string(logsHTML), "{{BASE}}", base)))
+		_, _ = w.Write(s.renderPage(logsHTML, "logs", "程序日志", r))
 	}))
 	mux.HandleFunc("/options", getOnly(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
