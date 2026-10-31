@@ -293,6 +293,35 @@ func TestRealtimePriceBroadcastAndMarketOverlay(t *testing.T) {
 	}
 }
 
+func TestMarketHistorySharesCompleteSnapshotAcrossRequests(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "history.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(config.Config{Symbols: []string{"BTCUSDT"}, ModelPath: filepath.Join(t.TempDir(), "model.json")}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	base := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Minute)
+	rows := make([]domain.Candle, 0, 3)
+	for index := 0; index < 3; index++ {
+		price := 100 + float64(index)
+		rows = append(rows, domain.Candle{Exchange: "binance", Symbol: "BTCUSDT", Time: base.Add(time.Duration(index) * time.Minute), Open: price, High: price + 1, Low: price - 1, Close: price, VolumeUSD: 10})
+	}
+	if err := st.UpsertCandles(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.MarketHistory(context.Background(), "BTCUSDT", "1m")
+	if err != nil || len(first.Candles) != 3 || first.HasMore || first.Source != "binance_usdm_shared_snapshot" {
+		t.Fatalf("unexpected first snapshot: len=%d has_more=%v source=%s error=%v", len(first.Candles), first.HasMore, first.Source, err)
+	}
+	if err := st.UpsertCandles(context.Background(), []domain.Candle{{Exchange: "binance", Symbol: "BTCUSDT", Time: base.Add(-time.Minute), Open: 99, High: 100, Low: 98, Close: 99, VolumeUSD: 10}}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.MarketHistory(context.Background(), "BTCUSDT", "1m")
+	if err != nil || len(second.Candles) != len(first.Candles) {
+		t.Fatalf("shared snapshot was rebuilt unexpectedly: first=%d second=%d error=%v", len(first.Candles), len(second.Candles), err)
+	}
+}
+
 func TestBootstrapRequestsOnlyMissingOlderRange(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

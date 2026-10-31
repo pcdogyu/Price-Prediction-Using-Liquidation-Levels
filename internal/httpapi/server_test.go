@@ -148,6 +148,12 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"binance_usdm"`) || !strings.Contains(w.Body.String(), `"exchange_count":1`) || !strings.Contains(w.Body.String(), `"model_signals":[]`) || !strings.Contains(w.Body.String(), `"id":"binance-live"`) || !strings.Contains(w.Body.String(), `"position_side":"long"`) || !strings.Contains(w.Body.String(), `"liquidations_truncated":false`) || !strings.Contains(w.Body.String(), `"liquidation_minimum_usd":0`) || !strings.Contains(w.Body.String(), `"last_price":101.5`) || !strings.Contains(w.Body.String(), `"realtime_price":{"trade_id":12345`) || !strings.Contains(w.Body.String(), `"id":"binance-small"`) || strings.Contains(w.Body.String(), `"id":"other-exchange"`) || strings.Contains(w.Body.String(), `"last_price":102`) {
 		t.Fatalf("market status=%d body=%s", w.Code, w.Body.String())
 	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/market-history?symbol=BTCUSDT&interval=1m", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"binance_usdm_shared_snapshot"`) || !strings.Contains(w.Body.String(), `"has_more":false`) || !strings.Contains(w.Body.String(), `"time":"`+now.Format(time.RFC3339)) {
+		t.Fatalf("market history snapshot status=%d body=%s", w.Code, w.Body.String())
+	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/map?symbol=BTCUSDT", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)

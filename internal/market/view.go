@@ -113,6 +113,17 @@ func Aggregate(minutes []domain.MarketCandle, interval time.Duration, now time.T
 }
 
 func BuildPagedView(symbol string, raw, summaryRaw []domain.Candle, predictions []domain.Prediction, intervalName string, before time.Time, limit int, now, availableFrom time.Time, backfillComplete bool) (domain.MarketView, error) {
+	return buildView(symbol, raw, summaryRaw, predictions, intervalName, before, limit, now, availableFrom, backfillComplete, false)
+}
+
+// BuildHistoryView builds the complete available history for a shared server
+// snapshot. Unlike a paged view it never reports a next cursor, because the
+// caller has already loaded all stored raw candles for the symbol.
+func BuildHistoryView(symbol string, raw, summaryRaw []domain.Candle, predictions []domain.Prediction, intervalName string, now, availableFrom time.Time, backfillComplete bool) (domain.MarketView, error) {
+	return buildView(symbol, raw, summaryRaw, predictions, intervalName, time.Time{}, 0, now, availableFrom, backfillComplete, true)
+}
+
+func buildView(symbol string, raw, summaryRaw []domain.Candle, predictions []domain.Prediction, intervalName string, before time.Time, limit int, now, availableFrom time.Time, backfillComplete, fullHistory bool) (domain.MarketView, error) {
 	interval, ok := ParseInterval(intervalName)
 	if !ok {
 		return domain.MarketView{}, errors.New("unsupported market interval")
@@ -123,16 +134,18 @@ func BuildPagedView(symbol string, raw, summaryRaw []domain.Candle, predictions 
 		return domain.MarketView{}, errors.New("market data unavailable")
 	}
 	candles := Aggregate(minutes, interval, now)
-	end := sort.Search(len(candles), func(i int) bool { return !candles[i].Time.Before(before) })
-	candles = candles[:end]
+	if !fullHistory {
+		end := sort.Search(len(candles), func(i int) bool { return !candles[i].Time.Before(before) })
+		candles = candles[:end]
+	}
 	if len(candles) == 0 {
 		return domain.MarketView{}, errors.New("market candles unavailable")
 	}
 	DetectPatterns(candles)
-	if limit < 1 {
+	if !fullHistory && limit < 1 {
 		limit = 120
 	}
-	if len(candles) > limit {
+	if !fullHistory && len(candles) > limit {
 		candles = candles[len(candles)-limit:]
 	}
 	summaryMinutes := CompositeMinutes(summaryRaw)
@@ -140,7 +153,7 @@ func BuildPagedView(symbol string, raw, summaryRaw []domain.Candle, predictions 
 		summaryMinutes = minutes
 	}
 	first := candles[0].Time
-	hasMore := !availableFrom.IsZero() && availableFrom.Before(first)
+	hasMore := !fullHistory && !availableFrom.IsZero() && availableFrom.Before(first)
 	var next *time.Time
 	if hasMore {
 		cursor := first

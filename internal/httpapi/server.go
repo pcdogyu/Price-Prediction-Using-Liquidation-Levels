@@ -116,6 +116,7 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.HandleFunc("/api/v1/symbols", getOnly(s.dashboardSymbols))
 	mux.HandleFunc("/api/v1/map", getOnly(s.liquidationMap))
 	mux.HandleFunc("/api/v1/market", getOnly(s.market))
+	mux.HandleFunc("/api/v1/market-history", getOnly(s.marketHistory))
 	mux.HandleFunc("/api/v1/volume-profile", getOnly(s.volumeProfile))
 	mux.HandleFunc("/api/v1/volume-profile/backfill", postOnly(s.volumeProfileBackfill))
 	mux.HandleFunc("/api/v1/backtest", getOnly(s.backtest))
@@ -589,6 +590,29 @@ func (s *Server) market(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	v, e := s.svc.Market(r.Context(), sym, interval, before, limit)
+	if e != nil {
+		problem(w, http.StatusServiceUnavailable, e)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+func (s *Server) marketHistory(w http.ResponseWriter, r *http.Request) {
+	sym, e := s.symbol(r)
+	if e != nil {
+		problem(w, http.StatusBadRequest, e)
+		return
+	}
+	interval := strings.TrimSpace(r.URL.Query().Get("interval"))
+	if interval == "" {
+		interval = "15m"
+	}
+	allowed := map[string]bool{"1m": true, "2m": true, "3m": true, "5m": true, "10m": true, "15m": true, "30m": true, "1h": true, "4h": true, "8h": true, "12h": true, "24h": true}
+	if !allowed[interval] {
+		problem(w, http.StatusBadRequest, errors.New("interval must be one of 1m,2m,3m,5m,10m,15m,30m,1h,4h,8h,12h,24h"))
+		return
+	}
+	v, e := s.svc.MarketHistory(r.Context(), sym, interval)
 	if e != nil {
 		problem(w, http.StatusServiceUnavailable, e)
 		return

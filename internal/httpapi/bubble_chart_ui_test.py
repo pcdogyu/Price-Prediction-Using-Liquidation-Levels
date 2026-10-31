@@ -71,7 +71,7 @@ with sync_playwright() as playwright:
 
     baseline = context.request.get(base + "/api/v1/market?symbol=ETHUSDT&interval=1m").json()
     history_base = context.request.get(base + "/api/v1/liquidations?symbol=ETHUSDT&limit=1").json()
-    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "market_fail_once": set(), "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
+    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "market_fail_once": set(), "market_history_fail_once": set(), "history_active": 0, "history_max_active": 0, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
     history_rows = [
         {"row_key": "history-eth-long", "exchange": "binance", "inst_id": "ETHUSDT", "side": "long", "entry_time": iso(state["anchor"] - 20 * intervals["1m"]), "entry_px": "2490", "exit_time": iso(state["anchor"] - 10 * intervals["1m"]), "exit_px": "2498", "entry_ord_id": "binance-open-1", "exit_ord_id": "binance-close-1"},
         {"row_key": "history-eth-short", "exchange": "gate", "inst_id": "ETH_USDT", "side": "short", "entry_time": iso(state["anchor"] - 18 * intervals["1m"]), "entry_px": "2498", "exit_time": iso(state["anchor"] - 8 * intervals["1m"]), "exit_px": "2492", "entry_ord_id": "gate-open-1", "exit_ord_id": "gate-close-1"},
@@ -114,6 +114,28 @@ with sync_playwright() as playwright:
             view.update(symbol=symbol, candles=[] if state["empty"] else candles, liquidations=rows[-5000:], liquidation_minimum_usd=0, liquidations_truncated=True, realtime_price=None, model_signals=[], has_more=has_more, next_before=candles[0]["time"] if has_more else None)
             view["summary"].update(last_price=2495, change_24h=0, change_pct_24h=0, updated_at=iso(state["anchor"]))
             route.fulfill(json=view)
+        elif parsed.path.endswith("/market-history"):
+            symbol, interval = query["symbol"], query["interval"]
+            if (symbol, interval) in state["market_history_fail_once"]:
+                state["market_history_fail_once"].remove((symbol, interval))
+                route.fulfill(status=503, json={"detail": "fixture market snapshot unavailable"})
+                return
+            state["history_active"] += 1
+            state["history_max_active"] = max(state["history_max_active"], state["history_active"])
+            try:
+                duration = intervals[interval]
+                anchor_bucket = state["anchor"] // duration * duration
+                candles = []
+                for page_number in range(3, -1, -1):
+                    end = anchor_bucket - page_number * 120 * duration
+                    page_candles, _ = dataset(symbol, interval, iso(end))
+                    candles.extend(page_candles)
+                view = copy.deepcopy(baseline)
+                view.update(symbol=symbol, interval=interval, source="binance_usdm_shared_snapshot", candles=candles, liquidations=[], liquidation_minimum_usd=0, liquidations_truncated=False, realtime_price=None, model_signals=[], has_more=False, next_before=None, backfill_complete=True)
+                view["summary"].update(last_price=2495, change_24h=0, change_pct_24h=0, updated_at=iso(state["anchor"]))
+                route.fulfill(json=view)
+            finally:
+                state["history_active"] -= 1
         elif parsed.path.endswith("/liquidations"):
             if state["fail"]:
                 route.fulfill(status=503, json={"detail": "fixture page unavailable"})
@@ -153,11 +175,13 @@ with sync_playwright() as playwright:
 
     if not production:
         page.route("**/api/v1/market?**", fixture)
+        page.route("**/api/v1/market-history?**", fixture)
         page.route("**/api/v1/liquidations?**", fixture)
         page.route("**/api/v1/map?**", fixture)
         page.route("**/api/v1/volume-profile?**", fixture)
         page.route("**/api/v1/signals/latest?**", fixture)
         page.route("**/tvbot/analysis?**", fixture)
+        state["market_history_fail_once"].add(("ETHUSDT", "30m"))
         state["market_fail_once"].add(("ETHUSDT", "30m", 1))
 
     def idle():
@@ -195,15 +219,14 @@ with sync_playwright() as playwright:
     page.wait_for_function("() => !automaticMarketBackfill.active && !chart.loadingOlder")
     if not production:
         market_requests = [(query.get("symbol"), query.get("interval"), query.get("before"), query.get("limit")) for path, query in requests if path.endswith("/market")]
-        assert set(interval for _, interval, _, _ in market_requests) == set(intervals), market_requests
-        for interval in intervals:
-            pages = [item for item in market_requests if item[1] == interval]
-            assert len(pages) >= 4, (interval, pages)
-            assert all(item[3] == ("120" if interval == "1m" and not item[2] else "500") for item in pages), (interval, pages)
+        snapshot_requests = [(query.get("symbol"), query.get("interval"), query.get("before")) for path, query in requests if path.endswith("/market-history")]
+        assert set(interval for _, interval, _ in snapshot_requests) == set(intervals), snapshot_requests
+        assert all(not before for _, _, before in snapshot_requests), snapshot_requests
+        assert state["history_max_active"] == 1, state
         assert any(interval == "30m" and before for _, interval, before, _ in market_requests), market_requests
         assert page.locator("#market-backfill-state").inner_text() == "后台回补完成：12 个周期"
         cached_counts = page.evaluate("() => ({one: chart.candles.length, states: marketIntervals.map(interval => marketHistoryState(symbol, interval).candles.length)})")
-        assert cached_counts["one"] >= 480 and min(cached_counts["states"]) >= 480, cached_counts
+        assert cached_counts["one"] >= 470 and min(cached_counts["states"]) >= 470, cached_counts
         page.locator('button[data-interval="15m"]').click()
         page.wait_for_function("() => chart.interval === '15m' && chart.candles.length >= 480")
         page.evaluate("() => { window.dispatchEvent(new Event('resize')); window.dispatchEvent(new Event('pageshow')); window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange')); }")

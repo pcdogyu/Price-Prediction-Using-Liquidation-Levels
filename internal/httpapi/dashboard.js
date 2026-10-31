@@ -375,6 +375,10 @@ function marketPath(before = '', options = {}) {
   return 'market?' + params.toString();
 }
 
+function marketHistoryPath(interval = chart.interval, targetSymbol = symbol) {
+  return 'market-history?' + new URLSearchParams({ symbol: targetSymbol, interval }).toString();
+}
+
 function visibleMarketPath() {
   const candles = visibleCandles();
   if (!candles.length) return '';
@@ -488,6 +492,7 @@ function marketHistoryState(targetSymbol = symbol, interval = chart.interval) {
       failed: false,
       error: '',
       cursorHistory: new Set(),
+      snapshot: false,
       view: null
     };
     marketHistoryCache.set(key, state);
@@ -511,6 +516,7 @@ function updateMarketHistoryState(state, view, reset = false, targetSymbol = sta
   state.error = '';
   state.retryAt = 0;
   state.failed = false;
+  state.snapshot = reset ? view?.snapshot === true : state.snapshot || view?.snapshot === true;
   if (reset) state.cursorHistory.clear();
   state.view = Object.assign({}, view, {
     symbol: targetSymbol,
@@ -541,6 +547,7 @@ function syncActiveMarketHistory(view, older, reset) {
   state.pages = Math.max(state.pages, 1);
   state.error = '';
   state.failed = false;
+  if (reset) state.snapshot = false;
   if (reset) state.cursorHistory.clear();
   state.view = Object.assign({}, view, {
     symbol,
@@ -653,7 +660,9 @@ function marketBackfillProgress() {
   const completed = jobs.filter(state => state.complete).length;
   const current = automaticMarketBackfill.current || chart.interval;
   const currentState = marketHistoryState(symbol, current);
-  const pages = currentState.pages ? ' · ' + currentState.pages + '页' : '';
+  const pages = currentState.snapshot
+    ? ' · 服务端快照 ' + currentState.candles.length + '根'
+    : currentState.pages ? ' · ' + currentState.pages + '页' : '';
   return { completed, total: jobs.length, current, pages };
 }
 
@@ -710,7 +719,8 @@ async function runAutomaticMarketBackfillOnce(generation) {
   }
   automaticMarketBackfill.current = interval;
   updateMarketBackfillButton();
-  const loaded = await loadOlder({ interval, limit: marketBackfillPageLimit, background: true });
+  let loaded = await loadMarketHistorySnapshot({ interval, background: true });
+  if (!loaded) loaded = await loadOlder({ interval, limit: marketBackfillPageLimit, background: true });
   if (generation !== automaticMarketBackfill.generation || !automaticMarketBackfill.active || automaticMarketBackfill.symbol !== symbol) return;
   const state = marketHistoryState(symbol, interval);
   if (loaded) {
@@ -1329,6 +1339,94 @@ async function loadOlder(options = {}) {
       chart.loadingOlder = false;
       olderController = null;
     }
+    updateMarketBackfillButton();
+  }
+}
+
+function applyMarketHistorySnapshot(state, snapshot, targetSymbol) {
+  const activeNow = state.interval === chart.interval && targetSymbol === symbol;
+  if (!activeNow) {
+    updateMarketHistoryState(state, snapshot, true, targetSymbol);
+    return;
+  }
+  const previous = {
+    candles: chart.candles.slice(),
+    signals: chart.signals.slice(),
+    liquidations: chart.liquidations.slice(),
+    liquidationsTruncated: chart.liquidationsTruncated,
+    windowEnd: chart.windowEnd,
+    atLatest: chart.atLatest,
+    newData: chart.newData,
+    liveView: cache.market
+  };
+  const anchor = !previous.atLatest && previous.candles.length
+    ? previous.candles[Math.max(0, Math.min(previous.windowEnd, previous.candles.length) - 1)]?.time
+    : '';
+  updateMarketHistoryState(state, snapshot, true, targetSymbol);
+  chart.candles = mergeCandles(state.candles, previous.candles);
+  chart.signals = mergeSignals(state.signals, previous.signals);
+  chart.liquidations = mergeLiquidations(state.liquidations, previous.liquidations, targetSymbol);
+  chart.liquidationsTruncated = previous.liquidationsTruncated || state.liquidationsTruncated;
+  chart.hasMore = false;
+  chart.nextBefore = '';
+  chart.atLatest = previous.atLatest;
+  chart.newData = previous.newData;
+  if (chart.atLatest) chart.windowEnd = chart.candles.length;
+  else {
+    const index = anchor ? chart.candles.findIndex(item => item.time === anchor) : -1;
+    chart.windowEnd = index >= 0 ? index + 1 : Math.min(previous.windowEnd, chart.candles.length);
+  }
+  state.candles = chart.candles;
+  state.signals = chart.signals;
+  state.liquidations = chart.liquidations;
+  state.liquidationsTruncated = chart.liquidationsTruncated;
+  state.view = Object.assign({}, snapshot, previous.liveView || {}, {
+    snapshot: true,
+    candles: state.candles,
+    model_signals: state.signals,
+    liquidations: state.liquidations,
+    liquidations_truncated: state.liquidationsTruncated,
+    has_more: false,
+    next_before: ''
+  });
+  cache.market = state.view;
+  $('new-data').classList.toggle('hidden', !chart.newData);
+  draw(cache.market, cache.map, cache.signal, cache.volume);
+  ensureWindowLiquidations();
+}
+
+async function loadMarketHistorySnapshot(options = {}) {
+  const interval = options.interval || chart.interval;
+  const targetSymbol = options.symbol || symbol;
+  const state = marketHistoryState(targetSymbol, interval);
+  if (targetSymbol !== symbol || state.loading || manualMarketBackfill.active || visibleMarketBackfill.controller) return false;
+  const controller = new AbortController();
+  state.loading = true;
+  state.controller = controller;
+  updateMarketBackfillButton();
+  const timeout = setTimeout(() => controller.abort(), marketRequestTimeoutMs * 4);
+  try {
+    const snapshot = await json(marketHistoryPath(interval, targetSymbol), { signal: controller.signal });
+    if (controller.signal.aborted || targetSymbol !== symbol) return false;
+    if (!Array.isArray(snapshot?.candles) || !snapshot.candles.length) throw new Error('服务端历史快照为空');
+    snapshot.snapshot = true;
+    snapshot.has_more = false;
+    snapshot.next_before = '';
+    snapshot.model_signals = Array.isArray(snapshot.model_signals) ? snapshot.model_signals : [];
+    snapshot.liquidations = Array.isArray(snapshot.liquidations) ? snapshot.liquidations : [];
+    applyMarketHistorySnapshot(state, snapshot, targetSymbol);
+    state.complete = true;
+    state.retries = 0;
+    state.retryAt = 0;
+    return true;
+  } catch (error) {
+    if (controller.signal.aborted) return false;
+    state.error = error.message || '服务端历史快照失败';
+    return false;
+  } finally {
+    clearTimeout(timeout);
+    state.loading = false;
+    if (state.controller === controller) state.controller = null;
     updateMarketBackfillButton();
   }
 }
