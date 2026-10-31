@@ -520,6 +520,24 @@ func TestManualCloseOnlySignalTriggerClosesOppositePosition(t *testing.T) {
 	}
 }
 
+func TestManualFilteredSignalTriggerAllowsExplicitEntry(t *testing.T) {
+	signal := domain.TradeSignal{
+		Symbol: "BTCUSDT", Kind: domain.SignalAggressive, Side: "long", ReferencePrice: 77585.1,
+		FilterApplied: true, OpenAllowed: false, CloseAllowed: false,
+	}
+	raw, err := buildManualWebhookPayload(signal, config.Config{})
+	if err != nil {
+		t.Fatalf("filtered manual entry payload: %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	if got["action"] != "buy" || got["position_effect"] != "open" || got["position_side"] != "long" || got["order_intent"] != "entry_long" {
+		t.Fatalf("filtered manual signal must allow an explicit entry: %s", raw)
+	}
+}
+
 func TestManualSignalTriggerAddsCurrentTenantToLegacyHistory(t *testing.T) {
 	requests := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

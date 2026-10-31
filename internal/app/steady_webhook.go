@@ -47,9 +47,11 @@ func buildManualWebhookPayload(signal domain.TradeSignal, cfg config.Config) ([]
 	if signal.PositionEffect == "close" || (signal.FilterApplied && !signal.OpenAllowed && signal.CloseAllowed) {
 		return buildPositionCloseWebhookPayload(signal, cfg, "manual_liquidation_trigger", "liquidation_alert_manual")
 	}
-	if signal.FilterApplied && !signal.OpenAllowed {
-		return nil, fmt.Errorf("manual signal does not allow opening or closing")
-	}
+	// A manual trigger is an explicit operator override of the radar's
+	// automatic open decision. Keep the close-only branch above intact, but do
+	// not reject a filtered history row that has neither automatic opening nor
+	// closing permission: the alert page intentionally keeps that row's
+	// historical "触发下单" action available for a manual entry test.
 	return buildWebhookPayload(signal, cfg, "manual_liquidation_trigger", "liquidation_alert_manual")
 }
 
