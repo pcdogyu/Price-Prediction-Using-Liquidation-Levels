@@ -322,6 +322,40 @@ func TestMarketHistorySharesCompleteSnapshotAcrossRequests(t *testing.T) {
 	}
 }
 
+func TestMarketHistoryPrefersNativeExchangeHistory(t *testing.T) {
+	original := fetchMarketHistoryKlines
+	t.Cleanup(func() { fetchMarketHistoryKlines = original })
+	var calls []string
+	fetchMarketHistoryKlines = func(_ context.Context, symbol, interval string, from, until time.Time) ([]domain.MarketCandle, error) {
+		calls = append(calls, symbol+"|"+interval)
+		base := from.UTC().Truncate(5 * time.Minute)
+		if interval == "1h" {
+			base = until.UTC().Add(-time.Hour).Truncate(time.Hour)
+		}
+		return []domain.MarketCandle{{Time: base, Open: 100, High: 101, Low: 99, Close: 100, VolumeUSD: 10}, {Time: base.Add(5 * time.Minute), Open: 100, High: 102, Low: 98, Close: 101, VolumeUSD: 20}}, nil
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "native-history.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	base := time.Now().UTC().Truncate(5 * time.Minute).Add(-15 * time.Minute)
+	if err := st.UpsertCandles(context.Background(), []domain.Candle{{Exchange: "binance", Symbol: "BTCUSDT", Time: base, Open: 99, High: 100, Low: 98, Close: 99}}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(config.Config{Symbols: []string{"BTCUSDT"}, BackfillDays: 1, ModelPath: filepath.Join(t.TempDir(), "model.json")}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	view, err := svc.MarketHistory(context.Background(), "BTCUSDT", "5m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Source != "binance_usdm_shared_snapshot" || len(view.Candles) != 2 || view.Candles[0].Open != 100 {
+		t.Fatalf("native history was not used: source=%s candles=%+v", view.Source, view.Candles)
+	}
+	if !reflect.DeepEqual(calls, []string{"BTCUSDT|5m", "BTCUSDT|1h"}) {
+		t.Fatalf("native history calls=%v", calls)
+	}
+}
+
 func TestBootstrapRequestsOnlyMissingOlderRange(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

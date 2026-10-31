@@ -18,7 +18,7 @@ production = "--production" in sys.argv
 root = pathlib.Path(__file__).resolve().parents[2]
 artifacts = root / "build"
 artifacts.mkdir(exist_ok=True)
-intervals = {"1m": 60000, "2m": 120000, "3m": 180000, "5m": 300000, "10m": 600000, "15m": 900000, "30m": 1800000, "1h": 3600000, "4h": 14400000, "8h": 28800000, "12h": 43200000, "24h": 86400000}
+intervals = {"1m": 60000, "2m": 120000, "3m": 180000, "5m": 300000, "15m": 900000, "30m": 1800000, "1h": 3600000, "4h": 14400000, "8h": 28800000, "12h": 43200000, "24h": 86400000}
 errors, requests, evidence = [], [], []
 iso = lambda ms: dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 ms = lambda text: dt.datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp() * 1000
@@ -224,7 +224,7 @@ with sync_playwright() as playwright:
         assert all(not before for _, _, before in snapshot_requests), snapshot_requests
         assert state["history_max_active"] == 1, state
         assert any(interval == "30m" and before for _, interval, before, _ in market_requests), market_requests
-        assert page.locator("#market-backfill-state").inner_text() == "后台回补完成：12 个周期"
+        assert page.locator("#market-backfill-state").inner_text() == "后台回补完成：11 个周期"
         cached_counts = page.evaluate("() => ({one: chart.candles.length, states: marketIntervals.map(interval => marketHistoryState(symbol, interval).candles.length)})")
         assert cached_counts["one"] >= 470 and min(cached_counts["states"]) >= 470, cached_counts
         page.locator('button[data-interval="15m"]').click()

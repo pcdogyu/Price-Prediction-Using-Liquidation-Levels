@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
 	marketview "github.com/pcdogyu/price-prediction-liquidation-levels/internal/market"
 )
 
 const (
 	marketHistorySnapshotTTL        = 10 * time.Minute
-	marketHistorySnapshotMaxEntries = 12
+	marketHistorySnapshotMaxEntries = 11
 )
 
 type marketHistorySnapshotEntry struct {
@@ -27,10 +28,14 @@ type marketHistorySnapshotBuild struct {
 	err  error
 }
 
-// MarketHistory reads the complete locally stored history for one configured
-// symbol and interval. The result is shared by all authenticated tenants in
-// this process; the browser no longer needs to replay the same cursor pages
-// for every newly opened tab.
+// fetchMarketHistoryKlines is replaceable in app tests. Production uses the
+// Binance native interval endpoint for the complete shared snapshot.
+var fetchMarketHistoryKlines = exchange.BinanceKlineHistory
+
+// MarketHistory reads the complete exchange history bounded by the locally
+// retained window for one configured symbol and interval. The result is shared
+// by all authenticated tenants in this process; the browser no longer needs to
+// replay the same cursor pages for every newly opened tab.
 func (s *Service) MarketHistory(ctx context.Context, symbol, intervalName string) (domain.MarketView, error) {
 	if !s.backgroundSymbol(symbol) {
 		return domain.MarketView{}, errors.New("shared market history unavailable for on-demand symbol")
@@ -84,13 +89,30 @@ func (s *Service) buildMarketHistory(ctx context.Context, symbol, intervalName s
 	if !exists {
 		return domain.MarketView{}, errors.New("market history unavailable")
 	}
-	raw, err := s.store.CandlesRange(ctx, symbol, first, now.Add(time.Minute))
+	historyEnd := marketHistoryEnd(now, intervalName)
+	localRaw, err := s.store.CandlesRange(ctx, symbol, first, historyEnd)
 	if err != nil {
 		return domain.MarketView{}, err
 	}
-	summary, err := s.store.CandlesRange(ctx, symbol, now.Add(-25*time.Hour), now.Add(time.Minute))
+	summaryEnd := now.UTC().Truncate(time.Hour).Add(time.Hour)
+	localSummary, err := s.store.CandlesRange(ctx, symbol, now.Add(-25*time.Hour), summaryEnd)
 	if err != nil {
 		return domain.MarketView{}, err
+	}
+
+	raw := localRaw
+	summary := localSummary
+	if s.cfg.BackfillDays > 0 {
+		if upstream, upstreamErr := fetchMarketHistoryKlines(ctx, symbol, intervalName, first, historyEnd); upstreamErr == nil && len(upstream) > 0 {
+			raw = marketCandlesToDomain(symbol, upstream)
+		} else if upstreamErr != nil {
+			s.log.Warn("Binance native K-line history unavailable; serving local snapshot", "symbol", symbol, "interval", intervalName, "error", upstreamErr)
+		}
+		if upstream, upstreamErr := fetchMarketHistoryKlines(ctx, symbol, "1h", now.Add(-25*time.Hour), summaryEnd); upstreamErr == nil && len(upstream) > 0 {
+			summary = marketCandlesToDomain(symbol, upstream)
+		} else if upstreamErr != nil {
+			s.log.Warn("Binance native summary K-lines unavailable; serving local summary", "symbol", symbol, "error", upstreamErr)
+		}
 	}
 	s.mu.RLock()
 	backfillComplete := s.backfillDone
@@ -106,6 +128,17 @@ func (s *Service) buildMarketHistory(ctx context.Context, symbol, intervalName s
 	view.LiquidationsTruncated = false
 	view.LiquidationMinimumUSD = domain.DefaultLiquidationMinimumUSD
 	return view, nil
+}
+
+func marketHistoryEnd(now time.Time, intervalName string) time.Time {
+	if intervalName == "24h" {
+		return now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+	}
+	interval, ok := marketview.ParseInterval(intervalName)
+	if !ok {
+		return now.UTC().Add(time.Minute)
+	}
+	return now.UTC().Truncate(interval).Add(interval)
 }
 
 func (s *Service) evictMarketHistorySnapshots(now time.Time) {

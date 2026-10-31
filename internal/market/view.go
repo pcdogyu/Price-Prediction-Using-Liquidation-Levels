@@ -16,7 +16,7 @@ const (
 
 var intervals = map[string]time.Duration{
 	"1m": time.Minute, "2m": 2 * time.Minute, "3m": 3 * time.Minute,
-	"5m": 5 * time.Minute, "10m": 10 * time.Minute, "15m": 15 * time.Minute,
+	"5m": 5 * time.Minute, "15m": 15 * time.Minute,
 	"30m": 30 * time.Minute, "1h": time.Hour, "4h": 4 * time.Hour,
 	"8h": 8 * time.Hour, "12h": 12 * time.Hour, "24h": 24 * time.Hour,
 }

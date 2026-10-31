@@ -238,7 +238,7 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"chartHeightLimits.minimum",
 		"setChartHeight(height, true, render)",
 		"scheduleAutomaticMarketBackfill",
-		"marketIntervals = ['1m', '2m', '3m', '5m', '10m', '15m', '30m', '1h', '4h', '8h', '12h', '24h']",
+		"marketIntervals = ['1m', '2m', '3m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '24h']",
 		"marketBackfillPageLimit = 500",
 		"marketHistoryPath",
 		"loadMarketHistorySnapshot",
@@ -381,7 +381,7 @@ func TestMarketZeroMinimumAndCappedWindowHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		for _, interval := range []string{"1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "4h", "8h", "12h", "24h"} {
+		for _, interval := range []string{"1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", "8h", "12h", "24h"} {
 			w := httptest.NewRecorder()
 			srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/market?symbol="+symbol+"&interval="+interval, nil))
 			var view domain.MarketView

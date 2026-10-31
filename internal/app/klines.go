@@ -233,8 +233,6 @@ func onDemandKlineSource(interval string) (string, int) {
 	switch interval {
 	case "2m":
 		return "1m", 2
-	case "10m":
-		return "1m", 10
 	case "24h":
 		return "1d", 1
 	default:

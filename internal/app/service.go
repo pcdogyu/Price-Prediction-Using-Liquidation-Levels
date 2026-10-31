@@ -532,6 +532,15 @@ func (s *Service) Latest(ctx context.Context, symbol string) (domain.Prediction,
 }
 
 func (s *Service) Market(ctx context.Context, symbol, intervalName string, before time.Time, limit int) (domain.MarketView, error) {
+	if s.cfg.BackfillDays > 0 {
+		if direct, err := s.onDemandMarket(ctx, symbol, intervalName, before, limit); err == nil {
+			return direct, nil
+		} else if s.backgroundSymbol(symbol) {
+			s.log.Warn("Binance native K-line page unavailable; serving local market page", "symbol", symbol, "interval", intervalName, "error", err)
+		} else {
+			return domain.MarketView{}, err
+		}
+	}
 	if !s.backgroundSymbol(symbol) {
 		return s.onDemandMarket(ctx, symbol, intervalName, before, limit)
 	}

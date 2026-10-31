@@ -43,6 +43,77 @@ func BinanceDailyKlines(ctx context.Context, symbol string, limit int, until tim
 	return binanceKlines(ctx, symbol, "1d", limit, until, true)
 }
 
+// BinanceKlineHistory reads a bounded complete history from Binance using the
+// exchange's native interval whenever it exists. The 2m display period keeps
+// its existing 1m aggregation path, while 24h uses Binance's 1d candles.
+// Pages are requested oldestward with an exclusive cursor and are returned in
+// chronological order.
+func BinanceKlineHistory(ctx context.Context, symbol, interval string, from, until time.Time) ([]domain.MarketCandle, error) {
+	if from.IsZero() {
+		from = time.Unix(0, 0).UTC()
+	}
+	if until.IsZero() {
+		until = time.Now().UTC().Add(time.Minute)
+	}
+	if !from.Before(until) {
+		return nil, nil
+	}
+	fetch := func(ctx context.Context, symbol, interval string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+		return BinanceKlines(ctx, symbol, interval, limit, until)
+	}
+	if interval == "24h" {
+		fetch = func(ctx context.Context, symbol, _ string, limit int, until time.Time) ([]domain.MarketCandle, bool, error) {
+			return BinanceDailyKlines(ctx, symbol, limit, until)
+		}
+	}
+
+	rows := make([]domain.MarketCandle, 0)
+	seen := make(map[int64]struct{})
+	cursor := until
+	for {
+		page, hasMore, err := fetch(ctx, symbol, interval, KlinePageLimit, cursor)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, row := range page {
+			at := row.Time.UTC()
+			if at.Before(from) || !at.Before(until) {
+				continue
+			}
+			key := at.UnixMilli()
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			rows = append(rows, row)
+		}
+
+		oldest := page[0].Time.UTC()
+		if oldest.IsZero() || !oldest.Before(cursor) && !cursor.IsZero() {
+			if hasMore {
+				return nil, fmt.Errorf("binance kline history cursor did not move for %s %s", symbol, interval)
+			}
+			break
+		}
+		if !oldest.After(from) || !hasMore {
+			break
+		}
+		cursor = oldest
+		timer := time.NewTimer(80 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Time.Before(rows[j].Time) })
+	return rows, nil
+}
+
 // binanceTwoMinuteKlines implements the chart's custom 2m period from Binance
 // 1m candles. The upstream API rejects interval=2m, while the UI and alert
 // history use 2m as a useful display period. Fetching whole 1m pages here also

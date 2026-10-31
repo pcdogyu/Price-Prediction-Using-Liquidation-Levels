@@ -53,7 +53,7 @@ func TestAggregateSupportedIntervalsAndCompleteness(t *testing.T) {
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	for name, wantStart := range map[string]time.Time{
 		"1m": start.Add(17*time.Hour + 7*time.Minute), "2m": start.Add(17*time.Hour + 6*time.Minute), "3m": start.Add(17*time.Hour + 6*time.Minute),
-		"5m": start.Add(17*time.Hour + 5*time.Minute), "10m": start.Add(17 * time.Hour), "15m": start.Add(17 * time.Hour),
+		"5m": start.Add(17*time.Hour + 5*time.Minute), "15m": start.Add(17 * time.Hour),
 		"30m": start.Add(17 * time.Hour), "1h": start.Add(17 * time.Hour), "4h": start.Add(16 * time.Hour),
 		"8h": start.Add(16 * time.Hour), "12h": start.Add(12 * time.Hour), "24h": start,
 	} {

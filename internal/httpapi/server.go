@@ -562,9 +562,9 @@ func (s *Server) market(w http.ResponseWriter, r *http.Request) {
 	if interval == "" {
 		interval = "15m"
 	}
-	allowed := map[string]bool{"1m": true, "2m": true, "3m": true, "5m": true, "10m": true, "15m": true, "30m": true, "1h": true, "4h": true, "8h": true, "12h": true, "24h": true}
+	allowed := map[string]bool{"1m": true, "2m": true, "3m": true, "5m": true, "15m": true, "30m": true, "1h": true, "4h": true, "8h": true, "12h": true, "24h": true}
 	if !allowed[interval] {
-		problem(w, http.StatusBadRequest, errors.New("interval must be one of 1m,2m,3m,5m,10m,15m,30m,1h,4h,8h,12h,24h"))
+		problem(w, http.StatusBadRequest, errors.New("interval must be one of 1m,2m,3m,5m,15m,30m,1h,4h,8h,12h,24h"))
 		return
 	}
 	limit := 120
@@ -607,9 +607,9 @@ func (s *Server) marketHistory(w http.ResponseWriter, r *http.Request) {
 	if interval == "" {
 		interval = "15m"
 	}
-	allowed := map[string]bool{"1m": true, "2m": true, "3m": true, "5m": true, "10m": true, "15m": true, "30m": true, "1h": true, "4h": true, "8h": true, "12h": true, "24h": true}
+	allowed := map[string]bool{"1m": true, "2m": true, "3m": true, "5m": true, "15m": true, "30m": true, "1h": true, "4h": true, "8h": true, "12h": true, "24h": true}
 	if !allowed[interval] {
-		problem(w, http.StatusBadRequest, errors.New("interval must be one of 1m,2m,3m,5m,10m,15m,30m,1h,4h,8h,12h,24h"))
+		problem(w, http.StatusBadRequest, errors.New("interval must be one of 1m,2m,3m,5m,15m,30m,1h,4h,8h,12h,24h"))
 		return
 	}
 	v, e := s.svc.MarketHistory(r.Context(), sym, interval)

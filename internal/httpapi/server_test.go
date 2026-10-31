@@ -186,7 +186,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("volume profile backfill GET status=%d", w.Code)
 	}
-	for _, interval := range []string{"1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "4h", "8h", "12h", "24h"} {
+	for _, interval := range []string{"1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", "8h", "12h", "24h"} {
 		r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=BTCUSDT&limit=120&interval="+interval, nil)
 		w = httptest.NewRecorder()
 		srv.http.Handler.ServeHTTP(w, r)
@@ -205,6 +205,12 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	srv.http.Handler.ServeHTTP(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid interval status=%d body=%s", w.Code, w.Body.String())
+	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=BTCUSDT&interval=10m", nil)
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("removed 10m interval status=%d body=%s", w.Code, w.Body.String())
 	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/market?symbol=BTCUSDT&interval=1m&limit=501", nil)
 	w = httptest.NewRecorder()

@@ -34,7 +34,8 @@ const storedChartHeight = (() => {
 // profile panels cannot fetch anything, so their wheel scales the bar lengths instead.
 const candleZoomLimits = { minimum: 24, maximum: 500 };
 const profileZoomLimits = { minimum: .25, maximum: 12 };
-const marketIntervals = ['1m', '2m', '3m', '5m', '10m', '15m', '30m', '1h', '4h', '8h', '12h', '24h'];
+const marketIntervals = ['1m', '2m', '3m', '5m', '15m', '30m', '1h', '4h', '8h', '12h', '24h'];
+if (!marketIntervals.includes(savedInterval)) savedInterval = '15m';
 const marketBackfillPageLimit = 500;
 const marketBackfillRetryDelays = [1000, 3000, 10000];
 const chart = {
@@ -121,8 +122,8 @@ const pct = value => finite(value) ? (value * 100).toFixed(1) + '%' : '—';
 const zoomLabel = value => '×' + (Math.round(value * 100) / 100);
 const zoomSuffix = value => value === 1 ? '' : ' ' + zoomLabel(value);
 const when = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
-const intervalName = { '1m': '1分钟', '2m': '2分钟', '3m': '3分钟', '5m': '5分钟', '10m': '10分钟', '15m': '15分钟', '30m': '30分钟', '1h': '1小时', '4h': '4小时', '8h': '8小时', '12h': '12小时', '24h': '24小时' };
-const intervalMilliseconds = { '1m': 60000, '2m': 120000, '3m': 180000, '5m': 300000, '10m': 600000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000, '8h': 28800000, '12h': 43200000, '24h': 86400000 };
+const intervalName = { '1m': '1分钟', '2m': '2分钟', '3m': '3分钟', '5m': '5分钟', '15m': '15分钟', '30m': '30分钟', '1h': '1小时', '4h': '4小时', '8h': '8小时', '12h': '12小时', '24h': '24小时' };
+const intervalMilliseconds = { '1m': 60000, '2m': 120000, '3m': 180000, '5m': 300000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000, '8h': 28800000, '12h': 43200000, '24h': 86400000 };
 let bubbleHits = () => [];
 let tooltipHideTimer;
 let chartTipsBound = false;
