@@ -13,7 +13,7 @@ import (
 
 const (
 	marketHistorySnapshotTTL        = 10 * time.Minute
-	marketHistorySnapshotMaxEntries = 11
+	marketHistorySnapshotMaxEntries = 12
 )
 
 type marketHistorySnapshotEntry struct {
@@ -102,7 +102,7 @@ func (s *Service) buildMarketHistory(ctx context.Context, symbol, intervalName s
 
 	raw := localRaw
 	summary := localSummary
-	if s.cfg.BackfillDays > 0 {
+	if s.cfg.BackfillDays > 0 && intervalName != "1m" && intervalName != "2m" {
 		if upstream, upstreamErr := fetchMarketHistoryKlines(ctx, symbol, intervalName, first, historyEnd); upstreamErr == nil && len(upstream) > 0 {
 			raw = marketCandlesToDomain(symbol, upstream)
 		} else if upstreamErr != nil {
