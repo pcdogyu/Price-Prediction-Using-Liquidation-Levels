@@ -243,6 +243,7 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"marketHistoryPath",
 		"loadMarketHistorySnapshot",
 		"服务端快照",
+		"服务端快照读取中",
 		"delayMs: 350",
 		"多周期K线回补",
 		"marketHistoryCache",

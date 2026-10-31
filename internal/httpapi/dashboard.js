@@ -660,9 +660,11 @@ function marketBackfillProgress() {
   const completed = jobs.filter(state => state.complete).length;
   const current = automaticMarketBackfill.current || chart.interval;
   const currentState = marketHistoryState(symbol, current);
-  const pages = currentState.snapshot
-    ? ' · 服务端快照 ' + currentState.candles.length + '根'
-    : currentState.pages ? ' · ' + currentState.pages + '页' : '';
+  const pages = currentState.loading
+    ? ' · 服务端快照读取中…'
+    : currentState.snapshot
+      ? ' · 服务端快照 ' + currentState.candles.length + '根'
+      : currentState.pages ? ' · ' + currentState.pages + '页' : '';
   return { completed, total: jobs.length, current, pages };
 }
 
