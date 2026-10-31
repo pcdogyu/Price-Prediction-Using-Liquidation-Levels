@@ -3,22 +3,24 @@ set -euo pipefail
 
 # Root-only release procedure for the binance unified runtime. Secrets are read
 # from existing systemd environment files and are never echoed or committed.
-# The Linux binary is built on the publishing machine and uploaded before this
-# script runs; the server never compiles it.
+# The target host synchronizes the requested source revision and builds the
+# Linux binaries locally. This keeps the release architecture-native and avoids
+# uploading locally built artifacts.
 app_root=/opt/Price-Prediction-Using-Liquidation-Levels
+if [[ $# -ge 3 && -n "${3:-}" ]]; then
+  app_root="$3"
+fi
 source_root="$app_root/source"
 data_root=/var/lib/liquidation-predictor
 legacy_root=/opt/tv_okx_bot
 legacy_state=/var/lib/tv-okx-bot
-revision="${1:?usage: unified-upgrade.sh <binance-revision> <build-branch> <uploaded-server-binary> <uploaded-collector-binary> [server-sha256] [collector-sha256]}"
+revision="${1:?usage: unified-upgrade.sh <binance-revision> <build-branch> [app-root]}"
 build_branch="${2:-binance}"
-artifact="${3:?usage: unified-upgrade.sh <binance-revision> <build-branch> <uploaded-server-binary> <uploaded-collector-binary> [server-sha256] [collector-sha256]}"
-collector_artifact="${4:?usage: unified-upgrade.sh <binance-revision> <build-branch> <uploaded-server-binary> <uploaded-collector-binary> [server-sha256] [collector-sha256]}"
-expected_sha256="${5:-}"
-expected_collector_sha256="${6:-}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 short_revision="${revision:0:12}"
 backup="$data_root/backups/$stamp-$short_revision"
+build_stage="$data_root/builds/$revision.$stamp"
+release_package="$data_root/builds/liquidation-predictor-$revision-linux.tar.gz"
 backup_retention_days=7
 backup_retention_minutes=$((backup_retention_days * 24 * 60))
 binary="$app_root/liquidation-predictor"
@@ -29,26 +31,6 @@ new_collector_binary="$app_root/market-collector.new"
 case "$revision" in
   (*[!0-9a-fA-F]*) echo "invalid revision" >&2; exit 1 ;;
 esac
-case "$artifact" in
-  "$app_root"/liquidation-predictor.upload.*) ;;
-  (*) echo "uploaded binary must be staged under $app_root" >&2; exit 1 ;;
-esac
-case "$collector_artifact" in
-  "$app_root"/market-collector.upload.*) ;;
-  (*) echo "uploaded collector binary must be staged under $app_root" >&2; exit 1 ;;
-esac
-test -f "$artifact"
-test -f "$collector_artifact"
-if [[ -n "$expected_sha256" ]]; then
-  actual_sha256="$(sha256sum "$artifact" | awk '{print $1}')"
-  test "$actual_sha256" = "$expected_sha256"
-fi
-if [[ -n "$expected_collector_sha256" ]]; then
-  actual_collector_sha256="$(sha256sum "$collector_artifact" | awk '{print $1}')"
-  test "$actual_collector_sha256" = "$expected_collector_sha256"
-fi
-trap 'rm -f -- "$artifact" "$collector_artifact" "$new_binary" "$new_collector_binary"' EXIT
-
 test -d "$source_root/.git"
 test -f "$data_root/liquidation.db"
 git config --global --add safe.directory "$source_root" || true
@@ -62,6 +44,66 @@ git -C "$source_root" merge --ff-only origin/binance
 test "$(git -C "$source_root" rev-parse HEAD)" = "$revision"
 test -z "$(git -C "$source_root" status --porcelain)"
 git -C "$source_root" diff --check
+case "$(uname -m)" in
+  x86_64) go_arch=amd64 ;;
+  aarch64|arm64) go_arch=arm64 ;;
+  *) echo "unsupported remote architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+go_bin="$(command -v go || true)"
+test -n "$go_bin" -a -x "$go_bin"
+command -v runuser >/dev/null
+command -v /usr/bin/time >/dev/null
+builder=liquidation
+
+chown -R "$builder:$builder" "$app_root"
+install -d -o "$builder" -g "$builder" -m 0750 \
+  "$data_root/.cache/go-build" "$data_root/go/pkg/mod" "$data_root/builds" "$build_stage"
+chown -R "$builder:$builder" "$data_root/.cache/go-build" "$data_root/go/pkg/mod"
+build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+ldflags="-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=$build_time -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=$revision -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=$build_branch"
+builder_path="$(dirname "$go_bin"):/usr/bin:/bin"
+cd "$source_root"
+
+run_builder_step() {
+  local label="$1"
+  shift
+  echo "remote_build_step=$label"
+  /usr/bin/time -f "remote_build_${label}_elapsed_seconds=%e remote_build_${label}_max_rss_kb=%M" \
+    runuser -u "$builder" -- env CGO_ENABLED=0 GOOS=linux GOARCH="$go_arch" \
+      GOCACHE="$data_root/.cache/go-build" GOMODCACHE="$data_root/go/pkg/mod" \
+      PATH="$builder_path" "$go_bin" "$@"
+}
+
+trap 'rm -rf -- "$build_stage" "$new_binary" "$new_collector_binary"' EXIT
+
+echo "remote_build_arch=$go_arch"
+echo "remote_go_version=$("$go_bin" version)"
+run_builder_step test test ./...
+run_builder_step vet vet ./...
+run_builder_step server-build build -buildvcs=false -trimpath "-ldflags=$ldflags" -o "$build_stage/liquidation-predictor" ./cmd/server
+run_builder_step collector-build build -buildvcs=false -trimpath "-ldflags=$ldflags" -o "$build_stage/market-collector" ./cmd/market-collector
+test -x "$build_stage/liquidation-predictor"
+test -x "$build_stage/market-collector"
+
+server_sha256="$(sha256sum "$build_stage/liquidation-predictor" | awk '{print $1}')"
+collector_sha256="$(sha256sum "$build_stage/market-collector" | awk '{print $1}')"
+manifest="$build_stage/manifest.txt"
+{
+  printf 'revision=%s\n' "$revision"
+  printf 'branch=%s\n' "$build_branch"
+  printf 'architecture=%s\n' "$go_arch"
+  printf 'go_version=%s\n' "$($go_bin version)"
+  printf 'build_time=%s\n' "$build_time"
+  printf 'liquidation_predictor_sha256=%s\n' "$server_sha256"
+  printf 'market_collector_sha256=%s\n' "$collector_sha256"
+} > "$manifest"
+chown "$builder:$builder" "$manifest"
+tar -czf "$release_package.tmp" -C "$build_stage" liquidation-predictor market-collector manifest.txt
+mv -f -- "$release_package.tmp" "$release_package"
+chown "$builder:$builder" "$release_package"
+chmod 0640 "$release_package"
+echo "remote_release_package=$release_package"
+echo "remote_release_package_sha256=$(sha256sum "$release_package" | awk '{print $1}')"
 mkdir -p "$backup"
 
 backup_file() {
@@ -118,12 +160,14 @@ if [[ -f "$legacy_state/okx-credentials.json" && ! -f "$data_root/okx-credential
 fi
 
 cd "$source_root"
-install -o liquidation -g liquidation -m 0755 "$artifact" "$new_binary"
+install -o liquidation -g liquidation -m 0755 "$build_stage/liquidation-predictor" "$new_binary"
 mv -f -- "$new_binary" "$binary"
-echo "uploaded_binary_sha256=$(sha256sum "$binary" | awk '{print $1}')"
-install -o liquidation -g liquidation -m 0755 "$collector_artifact" "$new_collector_binary"
+test "$(sha256sum "$binary" | awk '{print $1}')" = "$server_sha256"
+echo "built_binary_sha256=$server_sha256"
+install -o liquidation -g liquidation -m 0755 "$build_stage/market-collector" "$new_collector_binary"
 mv -f -- "$new_collector_binary" "$collector_binary"
-echo "uploaded_collector_binary_sha256=$(sha256sum "$collector_binary" | awk '{print $1}')"
+test "$(sha256sum "$collector_binary" | awk '{print $1}')" = "$collector_sha256"
+echo "built_collector_sha256=$collector_sha256"
 
 install -o root -g root -m 0644 deploy/liquidation-predictor.service /etc/systemd/system/liquidation-predictor.service
 install -o root -g root -m 0644 deploy/market-collector.service /etc/systemd/system/market-collector.service

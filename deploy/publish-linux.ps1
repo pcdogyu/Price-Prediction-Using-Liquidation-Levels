@@ -43,9 +43,11 @@ function Get-CheckedOutput {
 $git = (Get-Command git -ErrorAction Stop).Source
 $go = (Get-Command go -ErrorAction Stop).Source
 $ssh = (Get-Command ssh -ErrorAction Stop).Source
-$scp = (Get-Command scp -ErrorAction Stop).Source
 $sourceScript = Join-Path $repoRoot "deploy\unified-upgrade.sh"
-$buildDir = Join-Path $repoRoot "build"
+
+if ($RemoteAppRoot -notmatch '^/[A-Za-z0-9._/-]+$') {
+    throw "RemoteAppRoot must be a simple absolute Linux path"
+}
 
 $currentBranch = Get-CheckedOutput $git @("-C", $repoRoot, "branch", "--show-current")
 if ($currentBranch -ne $Branch) {
@@ -81,106 +83,21 @@ $sshCommon = @(
 )
 $remote = "{0}@{1}" -f $RemoteUser, $HostName
 $remoteArch = Get-CheckedOutput $ssh ($sshCommon + @($remote, "uname -m"))
-$goArch = switch ($remoteArch) {
-    "x86_64" { "amd64"; break }
-    "aarch64" { "arm64"; break }
-    "arm64" { "arm64"; break }
-    default { throw "unsupported remote architecture '$remoteArch'" }
+if ($remoteArch -notin @("x86_64", "aarch64", "arm64")) {
+    throw "unsupported remote architecture '$remoteArch'"
 }
 
-New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
-$tempBinary = Join-Path $buildDir ("liquidation-predictor-linux-{0}" -f $Revision)
-$tempCollectorBinary = Join-Path $buildDir ("market-collector-linux-{0}" -f $Revision)
-$buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-$ldflags = "-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=$buildTime -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=$Revision -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=$Branch"
-$previousGoos = $env:GOOS
-$previousGoarch = $env:GOARCH
-$previousCgo = $env:CGO_ENABLED
-$published = $false
-$remoteUploadPath = "$RemoteAppRoot/liquidation-predictor.upload.$Revision"
-$remoteCollectorUploadPath = "$RemoteAppRoot/market-collector.upload.$Revision"
+Write-Host "Running local Go tests and vet before remote build..."
+Invoke-Checked $go @("test", "./...")
+Invoke-Checked $go @("vet", "./...")
 
-function Remove-RemoteUploadArtifacts {
-    param(
-        [Parameter(Mandatory = $true)][string]$Remote,
-        [Parameter(Mandatory = $true)][string]$ServerPath,
-        [Parameter(Mandatory = $true)][string]$CollectorPath
-    )
-
-    # An interrupted multi-file scp can leave the exact staging path as a
-    # directory. These are generated upload paths under the application root,
-    # never live data or configuration paths.
-    $cleanup = "if [ -d '$ServerPath' ]; then rm -rf -- '$ServerPath'; else rm -f -- '$ServerPath'; fi; if [ -d '$CollectorPath' ]; then rm -rf -- '$CollectorPath'; else rm -f -- '$CollectorPath'; fi"
-    & $ssh ($sshCommon + @($Remote, $cleanup)) | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "unable to clean remote upload paths"
-    }
+Write-Host "Synchronizing source and building Linux binaries on $remote ($remoteArch)..."
+# The repository is commonly checked out with CRLF on Windows. Strip CR
+# remotely before bash parses the streamed deployment script.
+$remoteCommand = "tr -d '\r' | bash -s -- $Revision $Branch $RemoteAppRoot"
+Get-Content -Raw -LiteralPath $sourceScript | & $ssh ($sshCommon + @($remote, $remoteCommand))
+if ($LASTEXITCODE -ne 0) {
+    throw "remote build and replacement failed with exit code $LASTEXITCODE"
 }
 
-try {
-    Write-Host "Running local Go tests and vet..."
-    Invoke-Checked $go @("test", "./...")
-    Invoke-Checked $go @("vet", "./...")
-
-    Write-Host "Building GOOS=linux GOARCH=$goArch..."
-    $env:CGO_ENABLED = "0"
-    $env:GOOS = "linux"
-    $env:GOARCH = $goArch
-    Invoke-Checked $go @(
-        "build",
-        "-buildvcs=false",
-        "-trimpath",
-        ("-ldflags=$ldflags"),
-        "-o",
-        $tempBinary,
-        "./cmd/server"
-    )
-	Invoke-Checked $go @(
-		"build",
-		"-buildvcs=false",
-		"-trimpath",
-		("-ldflags=$ldflags"),
-		"-o",
-		$tempCollectorBinary,
-		"./cmd/market-collector"
-	)
-
-    $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $tempBinary).Hash.ToLowerInvariant()
-	$collectorSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $tempCollectorBinary).Hash.ToLowerInvariant()
-	Write-Host "Uploading Linux binaries for $Revision..."
-    Remove-RemoteUploadArtifacts -Remote $remote -ServerPath $remoteUploadPath -CollectorPath $remoteCollectorUploadPath
-    Invoke-Checked $scp ($sshCommon + @($tempBinary, ("{0}:{1}" -f $remote, $remoteUploadPath)))
-    Invoke-Checked $scp ($sshCommon + @($tempCollectorBinary, ("{0}:{1}" -f $remote, $remoteCollectorUploadPath)))
-
-	Write-Host "Replacing the server and collector binaries atomically..."
-    # The repository is commonly checked out with CRLF on Windows. Strip CR
-    # remotely before bash parses the streamed deployment script.
-	$remoteCommand = "tr -d '\r' | bash -s -- $Revision $Branch $remoteUploadPath $remoteCollectorUploadPath $sha256 $collectorSha256"
-    Get-Content -Raw -LiteralPath $sourceScript | & $ssh ($sshCommon + @($remote, $remoteCommand))
-    if ($LASTEXITCODE -ne 0) {
-        throw "remote replacement failed with exit code $LASTEXITCODE"
-    }
-    $published = $true
-}
-finally {
-    $env:GOOS = $previousGoos
-    $env:GOARCH = $previousGoarch
-    $env:CGO_ENABLED = $previousCgo
-    if (-not $published) {
-        try {
-            Remove-RemoteUploadArtifacts -Remote $remote -ServerPath $remoteUploadPath -CollectorPath $remoteCollectorUploadPath
-        }
-        catch {
-            # Preserve the original publish error; the remote path is exact and
-            # can be removed by the next publish attempt.
-        }
-    }
-    if (Test-Path -LiteralPath $tempBinary) {
-        Remove-Item -LiteralPath $tempBinary -Force
-    }
-	if (Test-Path -LiteralPath $tempCollectorBinary) {
-		Remove-Item -LiteralPath $tempCollectorBinary -Force
-	}
-}
-
-Write-Host "Published $Revision to $HostName."
+Write-Host "Published $Revision to $HostName using a remote native Linux build."
