@@ -488,6 +488,9 @@ func TestRenderTVBotHTMLUsesConfiguredTopMenu(t *testing.T) {
 func TestRenderTVBotOrderHistoryLocalizesExchangeErrors(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{
+		`const ordersPromise = loadOrders();`,
+		`const bootstrapPromise = Promise.allSettled([loadConfig(), loadAPIKeys(), loadCoinpairBlocks(), loadUpgrade()]);`,
+		`await Promise.allSettled([ordersPromise, bootstrapPromise]);`,
 		`function orderHistoryMarketScope(errorDetails)`,
 		`function orderHistoryErrorText(order)`,
 		`outside_market_(top5|top10|top20|top50|top100|top200|top500|all)`,

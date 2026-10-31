@@ -4014,7 +4014,12 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadAll() {
-      await Promise.allSettled([loadConfig(), loadAPIKeys(), loadOrders(), loadCoinpairBlocks(), loadUpgrade()]);
+      // Start the visible order history before the six API-key requests. Browsers
+      // limit concurrent connections per origin, so loading API-key status first
+      // can leave the history request queued behind those background requests.
+      const ordersPromise = loadOrders();
+      const bootstrapPromise = Promise.allSettled([loadConfig(), loadAPIKeys(), loadCoinpairBlocks(), loadUpgrade()]);
+      await Promise.allSettled([ordersPromise, bootstrapPromise]);
       const target = activeTabID();
       const tabLoads = [];
       if (target === "dashboard") {
