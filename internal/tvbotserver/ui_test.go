@@ -489,7 +489,11 @@ func TestRenderTVBotOrderHistoryLocalizesExchangeErrors(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{
 		`const ordersPromise = loadOrders();`,
-		`const bootstrapPromise = Promise.allSettled([loadConfig(), loadAPIKeys(), loadCoinpairBlocks(), loadUpgrade()]);`,
+		`const configPromise = loadConfig();`,
+		`const apiKeysPromise = configPromise.then(() => loadInitialAPIKeys(), () => loadAPIKeys(activeExchange(), "demo"));`,
+		`async function loadAPIKeyStatus(exchange, env)`,
+		`async function loadInitialAPIKeys()`,
+		`loadAPIKeys(state.apiKeyExchange, state.apiKeyEnv).catch((err) => toast(err.message));`,
 		`await Promise.allSettled([ordersPromise, bootstrapPromise]);`,
 		`function orderHistoryMarketScope(errorDetails)`,
 		`function orderHistoryErrorText(order)`,
@@ -504,6 +508,9 @@ func TestRenderTVBotOrderHistoryLocalizesExchangeErrors(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Fatalf("order history localization marker missing %q", want)
 		}
+	}
+	if strings.Contains(page, `const exchanges = ["okx", "binance", "gate"]`) || strings.Contains(page, `const environments = ["demo", "live"]`) {
+		t.Fatal("initial API-key loading should not request every exchange and environment")
 	}
 }
 

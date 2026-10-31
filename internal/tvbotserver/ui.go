@@ -2644,6 +2644,7 @@ const tvbotHTML = `<!doctype html>
     let analysisBalanceRefreshBusy = false;
     let dashboardBalanceRefreshTimer = null;
     let dashboardBalanceRefreshBusy = false;
+    const apiKeyLoadPromises = {};
     let coinpairBlockPollTimer = null;
     let coinpairBlockPollBusy = false;
     let coinpairBlockCountdownTimer = null;
@@ -3063,6 +3064,20 @@ const tvbotHTML = `<!doctype html>
       return configured === "live" ? "live" : "demo";
     }
 
+    function normalizeTradeEnvironment(value) {
+      return String(value || "").trim().toLowerCase() === "live" ? "live" : "demo";
+    }
+
+    function configuredAPIKeyTarget() {
+      const trading = state.config && state.config.trading ? state.config.trading : {};
+      const configuredExchange = String(trading.target_exchange || "").trim();
+      const configuredEnvironment = String(trading.target_trade_env || trading.env || "").trim();
+      return {
+        exchange: configuredExchange ? normalizeExchange(configuredExchange) : activeExchange(),
+        env: normalizeTradeEnvironment(configuredEnvironment)
+      };
+    }
+
     function addRequestedPositionEnvironment(body) {
       const env = requestedPositionEnvironment();
       if (env) body.env = env;
@@ -3099,12 +3114,15 @@ const tvbotHTML = `<!doctype html>
     function exchangeConfiguredForCurrentEnvironment(exchange) {
       if (!state.exchangeAvailabilityReady || !state.config) return true;
       const status = apiKeyStatusForEnv(exchange, positionEnvironment());
+      if (!apiKeyStatusLoaded(exchange, positionEnvironment())) return true;
       return !!(status && status.configured);
     }
 
     function allExchangesUnconfiguredForCurrentEnvironment() {
       if (!state.exchangeAvailabilityReady || !state.config) return false;
-      return !positionExchanges.some((exchange) => exchangeConfiguredForCurrentEnvironment(exchange));
+      const env = positionEnvironment();
+      const loaded = positionExchanges.filter((exchange) => apiKeyStatusLoaded(exchange, env));
+      return loaded.length > 0 && !loaded.some((exchange) => exchangeConfiguredForCurrentEnvironment(exchange));
     }
 
     function exchangeSelectionAllowed(exchange) {
@@ -3113,8 +3131,9 @@ const tvbotHTML = `<!doctype html>
 
     function ensureSelectedExchangeAvailable() {
       const selected = activeExchange();
-      if (!state.exchangeAvailabilityReady || exchangeConfiguredForCurrentEnvironment(selected)) return selected;
-      const fallback = ["okx", "binance", "gate"].find((exchange) => exchangeConfiguredForCurrentEnvironment(exchange));
+      const env = positionEnvironment();
+      if (!state.exchangeAvailabilityReady || !apiKeyStatusLoaded(selected, env) || exchangeConfiguredForCurrentEnvironment(selected)) return selected;
+      const fallback = ["okx", "binance", "gate"].find((exchange) => apiKeyStatusLoaded(exchange, env) && exchangeConfiguredForCurrentEnvironment(exchange));
       if (!fallback) return selected;
       state.selectedExchange = fallback;
       try {
@@ -3160,6 +3179,7 @@ const tvbotHTML = `<!doctype html>
       renderOrders();
       updateMetrics();
       loadOrders(true).catch((err) => toast(err.message));
+      loadAPIKeys(selected, positionEnvironment()).catch((err) => toast(err.message));
       if (sectionActive("dashboard")) {
         Promise.all([loadBalanceOverview(true), loadDashboardOrderAnalysis(true)]).then(() => renderDashboard()).catch((err) => toast(err.message));
       }
@@ -4014,11 +4034,12 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadAll() {
-      // Start the visible order history before the six API-key requests. Browsers
-      // limit concurrent connections per origin, so loading API-key status first
-      // can leave the history request queued behind those background requests.
+      // Start the visible order history before the API-key request. The active
+      // exchange and environment are loaded after config; other keys are lazy.
       const ordersPromise = loadOrders();
-      const bootstrapPromise = Promise.allSettled([loadConfig(), loadAPIKeys(), loadCoinpairBlocks(), loadUpgrade()]);
+      const configPromise = loadConfig();
+      const apiKeysPromise = configPromise.then(() => loadInitialAPIKeys(), () => loadAPIKeys(activeExchange(), "demo"));
+      const bootstrapPromise = Promise.allSettled([configPromise, apiKeysPromise, loadCoinpairBlocks(), loadUpgrade()]);
       await Promise.allSettled([ordersPromise, bootstrapPromise]);
       const target = activeTabID();
       const tabLoads = [];
@@ -4054,19 +4075,33 @@ const tvbotHTML = `<!doctype html>
       updateMetrics();
     }
 
-    async function loadAPIKeys() {
-      const exchanges = ["okx", "binance", "gate"];
-      const environments = ["demo", "live"];
-      const requests = [];
-      environments.forEach((env) => exchanges.forEach((exchange) => {
-        requests.push({ env: env, exchange: exchange, promise: api("/tvbot/api-keys?exchange=" + exchange + "&env=" + env) });
-      }));
-      const results = await Promise.allSettled(requests.map((item) => item.promise));
-      requests.forEach((item, index) => {
-        const result = results[index];
-        const value = result.status === "fulfilled" ? result.value : { configured: false, credentials: [], error: result.reason ? result.reason.message : exchangeLabel(item.exchange) + " API Key 读取失败" };
-        state.apiKeysByEnvironment[item.env][item.exchange] = value;
+    async function loadAPIKeyStatus(exchange, env) {
+      exchange = normalizeExchange(exchange);
+      env = normalizeTradeEnvironment(env);
+      const cached = state.apiKeysByEnvironment[env][exchange];
+      if (cached !== null && cached !== undefined) return cached;
+      const requestKey = env + ":" + exchange;
+      if (apiKeyLoadPromises[requestKey]) return apiKeyLoadPromises[requestKey];
+      const request = api("/tvbot/api-keys?exchange=" + exchange + "&env=" + env).then((value) => {
+        state.apiKeysByEnvironment[env][exchange] = value;
+        return value;
+      }).catch((error) => {
+        const value = { configured: false, credentials: [], error: error && error.message ? error.message : exchangeLabel(exchange) + " API Key 读取失败" };
+        state.apiKeysByEnvironment[env][exchange] = value;
+        return value;
       });
+      apiKeyLoadPromises[requestKey] = request;
+      try {
+        return await request;
+      } finally {
+        delete apiKeyLoadPromises[requestKey];
+      }
+    }
+
+    async function loadAPIKeys(exchange, env) {
+      exchange = normalizeExchange(exchange || activeExchange());
+      env = normalizeTradeEnvironment(env || positionEnvironment());
+      await loadAPIKeyStatus(exchange, env);
       state.apiKeysByExchange = state.apiKeysByEnvironment[state.apiKeyEnv];
       state.apiKeys = apiKeyStatus(state.apiKeyExchange);
       state.exchangeAvailabilityReady = true;
@@ -4076,6 +4111,13 @@ const tvbotHTML = `<!doctype html>
       renderPositionAPIs();
       renderOrders();
       updateMetrics();
+    }
+
+    async function loadInitialAPIKeys() {
+      const target = configuredAPIKeyTarget();
+      state.apiKeyExchange = target.exchange;
+      state.apiKeyEnv = target.env;
+      return loadAPIKeys(target.exchange, target.env);
     }
 
     async function loadBalanceOverview(forceRefresh, minutes) {
@@ -5267,6 +5309,12 @@ const tvbotHTML = `<!doctype html>
 
     function apiKeyStatus(exchange) {
       return apiKeyStatusForEnv(exchange, state.apiKeyEnv);
+    }
+
+    function apiKeyStatusLoaded(exchange, env) {
+      const byEnvironment = state.apiKeysByEnvironment && state.apiKeysByEnvironment[normalizeTradeEnvironment(env)];
+      const normalizedExchange = normalizeExchange(exchange);
+      return !!byEnvironment && byEnvironment[normalizedExchange] !== null && byEnvironment[normalizedExchange] !== undefined;
     }
 
     function configuredTradeTarget() {
@@ -8591,6 +8639,7 @@ const tvbotHTML = `<!doctype html>
         renderTemplateAPIs();
         renderPositionAPIs();
         updateMetrics();
+        loadAPIKeys(state.apiKeyExchange, state.apiKeyEnv).catch((err) => toast(err.message));
       });
     });
     const apiKeyEnvironment = $("api-key-environment");
@@ -8605,6 +8654,7 @@ const tvbotHTML = `<!doctype html>
         renderTemplateAPIs();
         renderPositionAPIs();
         updateMetrics();
+        loadAPIKeys(state.apiKeyExchange, state.apiKeyEnv).catch((err) => toast(err.message));
       });
     }
     document.querySelectorAll("[data-balance-minutes]").forEach((button) => {
