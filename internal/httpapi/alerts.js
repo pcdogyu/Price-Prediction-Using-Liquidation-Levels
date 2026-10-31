@@ -474,7 +474,7 @@
     if (document.activeElement !== vwapFilter) vwapFilter.checked = settings.vwap_filter_enabled !== false;
     if (document.activeElement !== donchianFilter) donchianFilter.checked = settings.donchian_filter_enabled !== false;
     $('alerts-monitor-window').textContent = settings.window_minutes || 3;
-    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 20) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健 / 交易所刷单下单信号';
+    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 50) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健 / 交易所刷单下单信号';
     if (!strategyLoaded) strategyLoaded = true;
   }
 

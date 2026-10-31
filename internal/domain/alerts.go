@@ -38,7 +38,7 @@ const (
 const (
 	// AlertTopSymbolsDefault is how many configured Binance USDM pairs by 24h
 	// quote volume the alert strategy watches.
-	AlertTopSymbolsDefault = 20
+	AlertTopSymbolsDefault = 50
 	// AlertTimelinePageSize is the fixed page size used by the alert history UI.
 	AlertTimelinePageSize = 20
 	// AlertRetentionDays keeps alerts and signals for one year for backtesting
