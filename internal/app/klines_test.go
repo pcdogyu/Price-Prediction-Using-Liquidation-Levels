@@ -123,7 +123,7 @@ func TestAlertKlinesFallsBackToStoredMinutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Source != "binance_usdm_local_fallback" || len(view.Candles) != 2 {
+	if view.Source != "binance_usdm_local" || len(view.Candles) != 2 {
 		t.Fatalf("unexpected fallback view: %+v", view)
 	}
 	if view.Candles[0].Time != end.Add(-10*time.Minute) || view.Candles[1].Time != end.Add(-5*time.Minute) {

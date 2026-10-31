@@ -87,7 +87,12 @@ func (s *Service) RepairMarketGaps(ctx context.Context, symbol, intervalName str
 			return fmt.Errorf("market gap too large to repair: %s to %s", gap.from.Format(time.RFC3339), gap.until.Format(time.RFC3339))
 		}
 		fetchCtx, cancelFetch := context.WithTimeout(repairCtx, marketGapRepairTimeout)
-		rows, _, fetchErr := fetchAlertKlines(fetchCtx, symbol, "1m", gap.minutes, gap.until)
+		var rows []domain.MarketCandle
+		var fetchErr error
+		fetchErr = s.withMarketSyncSlot(fetchCtx, func() error {
+			rows, _, fetchErr = fetchAlertKlines(fetchCtx, symbol, "1m", gap.minutes, gap.until)
+			return fetchErr
+		})
 		cancelFetch()
 		if fetchErr != nil {
 			return fmt.Errorf("market gap fetch failed: %w", fetchErr)

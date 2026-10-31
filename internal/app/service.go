@@ -67,6 +67,12 @@ type Service struct {
 	marketHistorySnapshots map[string]marketHistorySnapshotEntry
 	marketHistoryBuilds    map[string]*marketHistorySnapshotBuild
 	marketFetchSlots       chan struct{}
+	marketSyncMu           sync.Mutex
+	marketSyncQueue        []marketSyncTask
+	marketSyncWake         chan struct{}
+	marketSyncStates       map[string]marketSyncState
+	marketSyncStarted      bool
+	marketSyncGate         chan struct{}
 	symbolCatalog          []exchange.ContractSymbol
 	symbolCatalogAt        time.Time
 	candidateProvider      BackgroundCandidateProvider
@@ -91,6 +97,8 @@ type Service struct {
 	volumePending          map[string]struct{}
 	volumeBackfillError    map[string]string
 	volumeBackfillQueue    chan string
+	localCandleMu          sync.Mutex
+	localCandles           map[string]domain.Candle
 	marketCollectorMu      sync.RWMutex
 	marketCollector        *marketcollector.Client
 	webhookTargetMu        sync.RWMutex
@@ -173,7 +181,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	if strings.TrimSpace(cfg.AlertTenantDataPath) == "" && strings.TrimSpace(cfg.DatabasePath) != "" {
 		cfg.AlertTenantDataPath = filepath.Join(filepath.Dir(cfg.DatabasePath), "alert-tenants")
 	}
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, marketHistorySnapshots: make(map[string]marketHistorySnapshotEntry), marketHistoryBuilds: make(map[string]*marketHistorySnapshotBuild), backfillGate: make(chan struct{}, 1), volumeLiveReady: make(chan struct{}), volumeRequested: make(map[string]struct{}), volumeStreamSymbols: make(map[string]struct{}), volumePending: make(map[string]struct{}), volumeBackfillError: make(map[string]string), volumeBackfillQueue: make(chan string, 128), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, marketHistorySnapshots: make(map[string]marketHistorySnapshotEntry), marketHistoryBuilds: make(map[string]*marketHistorySnapshotBuild), marketSyncWake: make(chan struct{}, 1), marketSyncStates: make(map[string]marketSyncState), marketSyncGate: make(chan struct{}, 1), backfillGate: make(chan struct{}, 1), volumeLiveReady: make(chan struct{}), volumeRequested: make(map[string]struct{}), volumeStreamSymbols: make(map[string]struct{}), volumePending: make(map[string]struct{}), volumeBackfillError: make(map[string]string), volumeBackfillQueue: make(chan string, 128), localCandles: make(map[string]domain.Candle), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	return s
@@ -201,12 +209,16 @@ func (s *Service) Start(ctx context.Context) {
 	s.alertTenantsMu.Unlock()
 	s.startDashboard(ctx)
 	go s.priceBroadcastLoop(ctx)
+	s.startVolumeProfiles(ctx)
+	s.startMarketCollector(ctx)
+	s.marketSyncMu.Lock()
+	s.marketSyncStarted = true
+	s.marketSyncMu.Unlock()
+	go s.marketSyncLoop(ctx)
 	go s.pollLoop(ctx)
 	go s.bootstrap(ctx)
 	go s.retentionLoop(ctx)
 	go s.backgroundCandidateRefreshLoop(ctx)
-	s.startVolumeProfiles(ctx)
-	s.startMarketCollector(ctx)
 	go s.volumeArchiveLoop(ctx)
 	if s.tenantIsolationEnabled() {
 		// Authenticated alert requests create a tenant-owned runtime on demand.
@@ -377,7 +389,12 @@ func (s *Service) backfillSymbols(ctx context.Context, symbols []string) bool {
 			}
 			for _, window := range ranges {
 				s.log.Info("backfill started", "exchange", c.Name(), "symbol", sym, "from", window.from, "until", window.until)
-				rows, historyErr := s.historyWithRetry(ctx, c, sym, window.from, window.until)
+				var rows []domain.Candle
+				var historyErr error
+				historyErr = s.withMarketSyncSlot(ctx, func() error {
+					rows, historyErr = s.historyWithRetry(ctx, c, sym, window.from, window.until)
+					return historyErr
+				})
 				if historyErr != nil {
 					complete = false
 					s.log.Warn("backfill failed", "exchange", c.Name(), "symbol", sym, "from", window.from, "until", window.until, "error", historyErr)
@@ -402,12 +419,41 @@ func (s *Service) backfillSymbols(ctx context.Context, symbols []string) bool {
 
 func (s *Service) bootstrapSymbols() []string {
 	if symbols := s.backgroundSymbols(); len(symbols) > 0 {
-		return symbols
+		if containsBootstrapETH(symbols) || containsBootstrapETH(s.cfg.Symbols) || containsBootstrapETH(s.cfg.BootstrapSymbols) {
+			return prioritizeBootstrapSymbols(symbols)
+		}
+		return append([]string(nil), symbols...)
 	}
 	if len(s.cfg.BootstrapSymbols) > 0 {
-		return append([]string(nil), s.cfg.BootstrapSymbols...)
+		return prioritizeBootstrapSymbols(s.cfg.BootstrapSymbols)
 	}
-	return append([]string(nil), s.cfg.Symbols...)
+	return prioritizeBootstrapSymbols(s.cfg.Symbols)
+}
+
+func containsBootstrapETH(symbols []string) bool {
+	for _, symbol := range symbols {
+		if strings.EqualFold(strings.TrimSpace(symbol), "ETHUSDT") {
+			return true
+		}
+	}
+	return false
+}
+
+func prioritizeBootstrapSymbols(symbols []string) []string {
+	out := append([]string(nil), symbols...)
+	hasETH := false
+	for index, symbol := range out {
+		if strings.EqualFold(strings.TrimSpace(symbol), "ETHUSDT") {
+			hasETH = true
+			copy(out[1:index+1], out[0:index])
+			out[0] = symbol
+			break
+		}
+	}
+	if !hasETH {
+		out = append([]string{"ETHUSDT"}, out...)
+	}
+	return out
 }
 
 func (s *Service) historyWithRetry(ctx context.Context, client exchange.Client, symbol string, from, until time.Time) ([]domain.Candle, error) {
@@ -535,18 +581,25 @@ func (s *Service) Latest(ctx context.Context, symbol string) (domain.Prediction,
 }
 
 func (s *Service) Market(ctx context.Context, symbol, intervalName string, before time.Time, limit int) (domain.MarketView, error) {
-	if s.cfg.BackfillDays > 0 {
-		if direct, err := s.onDemandMarket(ctx, symbol, intervalName, before, limit); err == nil {
-			return direct, nil
-		} else if s.backgroundSymbol(symbol) {
-			s.log.Warn("Binance native K-line page unavailable; serving local market page", "symbol", symbol, "interval", intervalName, "error", err)
-		} else {
-			return domain.MarketView{}, err
+	if s.store != nil {
+		if view, err := s.localMarket(ctx, symbol, intervalName, before, limit); err == nil {
+			now := time.Now().UTC()
+			interval, _ := marketview.ParseInterval(intervalName)
+			requestBefore := before
+			if requestBefore.IsZero() {
+				requestBefore = now.Add(time.Minute)
+			}
+			s.requestMarketSync(symbol, requestBefore.Add(-time.Duration(limit+3)*interval), requestBefore, intervalName)
+			s.decorateMarketView(&view, symbol, "binance_usdm_local")
+			return view, nil
+		} else if s.log != nil {
+			s.log.Warn("local market page unavailable; using Binance fallback", "symbol", symbol, "interval", intervalName, "error", err)
 		}
 	}
-	if !s.backgroundSymbol(symbol) {
-		return s.onDemandMarket(ctx, symbol, intervalName, before, limit)
-	}
+	return s.onDemandMarket(ctx, symbol, intervalName, before, limit)
+}
+
+func (s *Service) localMarket(ctx context.Context, symbol, intervalName string, before time.Time, limit int) (domain.MarketView, error) {
 	now := time.Now().UTC()
 	latestRequest := before.IsZero()
 	interval, ok := marketview.ParseInterval(intervalName)

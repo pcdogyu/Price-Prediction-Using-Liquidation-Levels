@@ -313,7 +313,7 @@ func TestMarketHistorySharesCompleteSnapshotAcrossRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := svc.MarketHistory(context.Background(), "BTCUSDT", "1m")
-	if err != nil || len(first.Candles) != 3 || first.HasMore || first.Source != "binance_usdm_shared_snapshot" {
+	if err != nil || len(first.Candles) != 3 || first.HasMore || first.Source != "binance_usdm_local" {
 		t.Fatalf("unexpected first snapshot: len=%d has_more=%v source=%s error=%v", len(first.Candles), first.HasMore, first.Source, err)
 	}
 	if err := st.UpsertCandles(context.Background(), []domain.Candle{{Exchange: "binance", Symbol: "BTCUSDT", Time: base.Add(-time.Minute), Open: 99, High: 100, Low: 98, Close: 99, VolumeUSD: 10}}); err != nil {
@@ -354,7 +354,7 @@ func TestMarketHistoryUsesConfiguredBackfillWindow(t *testing.T) {
 	}
 }
 
-func TestMarketHistoryPrefersNativeExchangeHistory(t *testing.T) {
+func TestMarketHistoryPrefersLocalHistory(t *testing.T) {
 	original := fetchMarketHistoryKlines
 	t.Cleanup(func() { fetchMarketHistoryKlines = original })
 	var calls []string
@@ -380,11 +380,11 @@ func TestMarketHistoryPrefersNativeExchangeHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Source != "binance_usdm_shared_snapshot" || len(view.Candles) != 2 || view.Candles[0].Open != 100 {
-		t.Fatalf("native history was not used: source=%s candles=%+v", view.Source, view.Candles)
+	if view.Source != "binance_usdm_local" || len(view.Candles) != 1 || view.Candles[0].Open != 99 {
+		t.Fatalf("local history was not used first: source=%s candles=%+v", view.Source, view.Candles)
 	}
-	if !reflect.DeepEqual(calls, []string{"BTCUSDT|5m", "BTCUSDT|1h"}) {
-		t.Fatalf("native history calls=%v", calls)
+	if len(calls) != 0 {
+		t.Fatalf("local history request unexpectedly called Binance: %v", calls)
 	}
 }
 

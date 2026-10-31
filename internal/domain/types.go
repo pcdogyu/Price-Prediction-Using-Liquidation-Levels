@@ -162,6 +162,10 @@ type MarketView struct {
 	Symbol                string              `json:"symbol"`
 	Interval              string              `json:"interval"`
 	Source                string              `json:"source"`
+	RemoteSyncing         bool                `json:"remote_syncing"`
+	RemoteSyncError       string              `json:"remote_sync_error,omitempty"`
+	LocalThrough          *time.Time          `json:"local_through,omitempty"`
+	RemoteSyncedAt        *time.Time          `json:"remote_synced_at,omitempty"`
 	Summary               PriceSummary        `json:"summary"`
 	Candles               []MarketCandle      `json:"candles"`
 	HasMore               bool                `json:"has_more"`

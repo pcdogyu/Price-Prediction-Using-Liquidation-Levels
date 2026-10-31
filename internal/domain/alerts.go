@@ -398,19 +398,22 @@ type AlertBacktestReport struct {
 	Rows                  []AlertBacktestRow `json:"rows"`
 }
 
-// KlineView backs the per symbol K-line chart on the alert page. The candles come
-// straight from the Binance USDⓈ-M klines endpoint, so every monitored pair can be
-// charted even though only the configured symbols are stored locally. NextBefore
-// is the cursor the chart sends back to page further into history.
+// KlineView backs the per-symbol K-line chart on the alert page. Local candles
+// are served first; symbols without local coverage can still use the Binance
+// proxy. NextBefore is the cursor the chart sends back to page further into history.
 type KlineView struct {
-	Symbol     string         `json:"symbol"`
-	Interval   string         `json:"interval"`
-	IntervalMS int64          `json:"interval_ms"`
-	Candles    []MarketCandle `json:"candles"`
-	HasMore    bool           `json:"has_more"`
-	NextBefore *time.Time     `json:"next_before,omitempty"`
-	Source     string         `json:"source"`
-	FetchedAt  time.Time      `json:"fetched_at"`
+	Symbol          string         `json:"symbol"`
+	Interval        string         `json:"interval"`
+	IntervalMS      int64          `json:"interval_ms"`
+	Candles         []MarketCandle `json:"candles"`
+	HasMore         bool           `json:"has_more"`
+	NextBefore      *time.Time     `json:"next_before,omitempty"`
+	Source          string         `json:"source"`
+	RemoteSyncing   bool           `json:"remote_syncing"`
+	RemoteSyncError string         `json:"remote_sync_error,omitempty"`
+	LocalThrough    *time.Time     `json:"local_through,omitempty"`
+	RemoteSyncedAt  *time.Time     `json:"remote_synced_at,omitempty"`
+	FetchedAt       time.Time      `json:"fetched_at"`
 }
 
 // NotificationSettings is persisted in SQLite. The bot token is deliberately

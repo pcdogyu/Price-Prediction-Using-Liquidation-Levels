@@ -306,6 +306,9 @@ func (s *Service) volumeProfileSymbols() []string {
 }
 
 func (s *Service) applyLiveAggregateTrades(ctx context.Context, trades []domain.AggregateTrade) error {
+	if err := s.persistLiveCandles(ctx, trades); err != nil {
+		return err
+	}
 	type groupKey struct {
 		symbol string
 		start  int64

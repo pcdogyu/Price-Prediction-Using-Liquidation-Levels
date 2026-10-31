@@ -494,6 +494,10 @@ function marketHistoryState(targetSymbol = symbol, interval = chart.interval) {
       retryAt: 0,
       failed: false,
       error: '',
+      remoteSyncing: false,
+      remoteSyncError: '',
+      localThrough: '',
+      remoteSyncedAt: '',
       cursorHistory: new Set(),
       snapshot: false,
       view: null
@@ -512,7 +516,11 @@ function updateMarketHistoryState(state, view, reset = false, targetSymbol = sta
   state.liquidations = reset ? mergeLiquidations([], incomingLiquidations, targetSymbol) : mergeLiquidations(state.liquidations, incomingLiquidations, targetSymbol);
   state.liquidationsTruncated = reset ? !!view?.liquidations_truncated : state.liquidationsTruncated || !!view?.liquidations_truncated;
   state.initialized = true;
-  state.complete = !view?.has_more || !view?.next_before;
+  state.remoteSyncing = !!view?.remote_syncing;
+  state.remoteSyncError = view?.remote_sync_error || '';
+  state.localThrough = view?.local_through || '';
+  state.remoteSyncedAt = view?.remote_synced_at || '';
+  state.complete = (!view?.has_more || !view?.next_before) && !state.remoteSyncing && !state.remoteSyncError;
   state.hasMore = !!view?.has_more;
   state.nextBefore = view?.next_before || '';
   state.pages += 1;
@@ -541,8 +549,12 @@ function syncActiveMarketHistory(view, older, reset) {
   state.liquidations = chart.liquidations;
   state.liquidationsTruncated = chart.liquidationsTruncated;
   state.initialized = true;
+  state.remoteSyncing = !!view?.remote_syncing;
+  state.remoteSyncError = view?.remote_sync_error || '';
+  state.localThrough = view?.local_through || '';
+  state.remoteSyncedAt = view?.remote_synced_at || '';
   if (older || reset) {
-    state.complete = !view?.has_more || !view?.next_before;
+    state.complete = (!view?.has_more || !view?.next_before) && !state.remoteSyncing && !state.remoteSyncError;
     state.hasMore = !!view?.has_more;
     state.nextBefore = view?.next_before || '';
     state.pages = reset ? 1 : state.pages + 1;
@@ -705,6 +717,10 @@ function marketBackfillProgress() {
   const currentState = marketHistoryState(symbol, current);
   const pages = currentState.loading
     ? ' · 服务端快照读取中…'
+    : currentState.remoteSyncing
+      ? ' · 本地快照 · Binance后台同步中'
+    : currentState.remoteSyncError
+      ? ' · 本地快照 · Binance同步失败，等待重试'
     : currentState.snapshot
       ? ' · 服务端快照 ' + currentState.candles.length + '根'
       : currentState.pages ? ' · ' + currentState.pages + '页' : '';
@@ -776,7 +792,7 @@ async function runAutomaticMarketBackfillOnce(generation) {
   if (loaded) {
     state.retries = 0;
     state.retryAt = 0;
-    scheduleAutomaticMarketBackfillRetry(generation, automaticMarketBackfill.delayMs);
+    scheduleAutomaticMarketBackfillRetry(generation, state.remoteSyncing ? 2500 : automaticMarketBackfill.delayMs);
     return;
   }
   state.retries += 1;
@@ -1117,6 +1133,7 @@ function draw(view, map, signal, volume) {
   const liquidationName = coinGlassMap ? 'CoinGlass Binance 清算墙' : 'CoinGlass 清算墙不可用';
   const range = currentRange(candles);
   const candleCountText = candles.length < chart.visibleCount ? 'K线 ' + candles.length + '/' + chart.visibleCount + '根' : 'K线 ' + chart.visibleCount + '根';
+  const marketSourceText = view?.remote_syncing ? '本地K线 · Binance后台同步中' : view?.remote_sync_error ? '本地K线 · Binance同步失败，等待重试' : String(view?.source || '').includes('local') ? '本地K线' : '';
   if (!embeddedChart) renderLiquidationTop3(map, range);
   $('trade-marker-legend').classList.toggle('hidden', !tradeView.enabled);
   bubbleHits = () => [];
@@ -1125,7 +1142,7 @@ function draw(view, map, signal, volume) {
   const loadState = state.status === 'loading' ? '补齐中 · ' + state.pages + '页 / ' + state.loaded + '笔' : state.status === 'error' ? '补齐失败：' + state.error + '（可重试）' : state.status === 'complete' ? '窗口已补齐' : '等待数据';
   const context = embeddedChart
     ? (chart.atLatest ? '最新K线' : '历史K线')
-    : (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · ' + candleCountText + ' · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom) + automaticMarketBackfillLabel();
+    : (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + (marketSourceText ? ' · ' + marketSourceText : '') + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · ' + candleCountText + ' · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom) + automaticMarketBackfillLabel();
   if (!range || !chartTimeScale(candles, layout.left, layout.candleRight)) {
     ['price-low', 'price-high', 'window-start', 'window-end', 'bubble-count', 'trade-marker-count'].forEach(key => svg.removeAttribute('data-' + key));
     $('chart-context').textContent = context + ' · 等待有效K线';
@@ -1473,7 +1490,6 @@ async function loadMarketHistorySnapshot(options = {}) {
     snapshot.model_signals = Array.isArray(snapshot.model_signals) ? snapshot.model_signals : [];
     snapshot.liquidations = Array.isArray(snapshot.liquidations) ? snapshot.liquidations : [];
     applyMarketHistorySnapshot(state, snapshot, targetSymbol);
-    state.complete = true;
     state.retries = 0;
     state.retryAt = 0;
     return true;

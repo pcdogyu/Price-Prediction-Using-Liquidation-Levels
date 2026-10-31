@@ -53,11 +53,9 @@ type marketCacheEntry struct {
 	expiresAt time.Time
 }
 
-// AlertKlines proxies Binance klines for any monitored pair. The alert strategy
-// watches the 100 busiest USDT perpetuals while only APP_SYMBOLS candles are
-// stored locally, and the browser is not allowed to call Binance directly, so
-// the chart has to read them through here. A zero until asks for the newest
-// candles; passing the oldest candle time pages further into history.
+// AlertKlines serves local candles first. Symbols without local coverage still
+// use the Binance proxy as a synchronous fallback, while local symbols enqueue
+// a slow background repair for missing or stale minutes.
 func (s *Service) AlertKlines(ctx context.Context, symbol, interval string, limit int, until time.Time) (domain.KlineView, error) {
 	if interval == "1d" {
 		return domain.KlineView{}, fmt.Errorf("unsupported kline interval %q", interval)
@@ -72,6 +70,18 @@ func (s *Service) AlertKlines(ctx context.Context, symbol, interval string, limi
 	if limit > exchange.KlinePageLimit {
 		limit = exchange.KlinePageLimit
 	}
+	if s.store != nil {
+		if local, localErr := s.localAlertKlines(ctx, symbol, interval, limit, until); localErr == nil {
+			end := until.UTC()
+			if until.IsZero() {
+				end = time.Now().UTC()
+			}
+			step := time.Duration(minutes) * time.Minute
+			s.requestMarketSync(symbol, end.Truncate(step).Add(-time.Duration(limit)*step), end.Truncate(step).Add(step), interval)
+			s.decorateKlineView(&local, symbol)
+			return local, nil
+		}
+	}
 	key := klineCacheKey(symbol, interval, limit, until)
 	if cached, ok := s.cachedKlines(key); ok {
 		return cached, nil
@@ -83,6 +93,7 @@ func (s *Service) AlertKlines(ctx context.Context, symbol, interval string, limi
 			return domain.KlineView{}, fmt.Errorf("%w (local candle fallback unavailable: %v)", err, fallbackErr)
 		}
 		s.log.Warn("Binance K-line request failed; serving local candles", "symbol", symbol, "interval", interval, "error", err)
+		s.decorateKlineView(&fallback, symbol)
 		s.rememberKlines(key, fallback)
 		return fallback, nil
 	}
@@ -319,7 +330,7 @@ func (s *Service) localAlertKlines(ctx context.Context, symbol, interval string,
 	hasMore := exists && first.Before(candles[0].Time)
 	view := domain.KlineView{
 		Symbol: symbol, Interval: interval, IntervalMS: int64(step / time.Millisecond), Candles: candles,
-		HasMore: hasMore, Source: "binance_usdm_local_fallback", FetchedAt: now,
+		HasMore: hasMore, Source: "binance_usdm_local", FetchedAt: now,
 	}
 	if hasMore {
 		next := candles[0].Time.UTC()

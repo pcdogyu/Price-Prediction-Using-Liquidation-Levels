@@ -37,9 +37,6 @@ var fetchMarketHistoryKlines = exchange.BinanceKlineHistory
 // by all authenticated tenants in this process; the browser no longer needs to
 // replay the same cursor pages for every newly opened tab.
 func (s *Service) MarketHistory(ctx context.Context, symbol, intervalName string) (domain.MarketView, error) {
-	if !s.backgroundSymbol(symbol) {
-		return domain.MarketView{}, errors.New("shared market history unavailable for on-demand symbol")
-	}
 	if _, ok := marketview.ParseInterval(intervalName); !ok {
 		return domain.MarketView{}, fmt.Errorf("unsupported market interval %q", intervalName)
 	}
@@ -52,6 +49,7 @@ func (s *Service) MarketHistory(ctx context.Context, symbol, intervalName string
 		s.marketHistorySnapshots[key] = entry
 		view := entry.view
 		s.marketHistoryMu.Unlock()
+		s.decorateMarketView(&view, symbol, view.Source)
 		return view, nil
 	}
 	if build, ok := s.marketHistoryBuilds[key]; ok {
@@ -68,6 +66,20 @@ func (s *Service) MarketHistory(ctx context.Context, symbol, intervalName string
 	s.marketHistoryMu.Unlock()
 
 	view, err := s.buildMarketHistory(ctx, symbol, intervalName)
+	if err != nil {
+		// A completely empty local database is the only case where the request
+		// waits for Binance. Once one local candle exists, all future requests
+		// return it immediately and use the background sync queue instead.
+		from, until := s.marketHistorySyncWindow(ctx, symbol, intervalName, now)
+		if syncErr := s.syncMarketNow(ctx, symbol, from, until); syncErr == nil {
+			view, err = s.buildMarketHistory(ctx, symbol, intervalName)
+			if err == nil {
+				s.decorateMarketView(&view, symbol, "binance_usdm_remote_fallback")
+			}
+		} else {
+			err = fmt.Errorf("local market history unavailable: %w (Binance fallback: %v)", err, syncErr)
+		}
+	}
 	s.marketHistoryMu.Lock()
 	delete(s.marketHistoryBuilds, key)
 	build.view, build.err = view, err
@@ -89,14 +101,7 @@ func (s *Service) buildMarketHistory(ctx context.Context, symbol, intervalName s
 	if !exists {
 		return domain.MarketView{}, errors.New("market history unavailable")
 	}
-	historyEnd := marketHistoryEnd(now, intervalName)
-	historyStart := first
-	if s.cfg.BackfillDays > 0 {
-		lookback := now.Add(-time.Duration(s.cfg.BackfillDays) * 24 * time.Hour)
-		if lookback.After(historyStart) {
-			historyStart = lookback
-		}
-	}
+	historyStart, historyEnd := s.marketHistorySyncWindowFromFirst(first, intervalName, now)
 	localRaw, err := s.store.CandlesRange(ctx, symbol, historyStart, historyEnd)
 	if err != nil {
 		return domain.MarketView{}, err
@@ -107,34 +112,50 @@ func (s *Service) buildMarketHistory(ctx context.Context, symbol, intervalName s
 		return domain.MarketView{}, err
 	}
 
-	raw := localRaw
-	summary := localSummary
-	if s.cfg.BackfillDays > 0 {
-		if upstream, upstreamErr := fetchMarketHistoryKlines(ctx, symbol, intervalName, historyStart, historyEnd); upstreamErr == nil && len(upstream) > 0 {
-			raw = marketCandlesToDomain(symbol, upstream)
-		} else if upstreamErr != nil {
-			s.log.Warn("Binance native K-line history unavailable; serving local snapshot", "symbol", symbol, "interval", intervalName, "error", upstreamErr)
-		}
-		if upstream, upstreamErr := fetchMarketHistoryKlines(ctx, symbol, "1h", now.Add(-25*time.Hour), summaryEnd); upstreamErr == nil && len(upstream) > 0 {
-			summary = marketCandlesToDomain(symbol, upstream)
-		} else if upstreamErr != nil {
-			s.log.Warn("Binance native summary K-lines unavailable; serving local summary", "symbol", symbol, "error", upstreamErr)
-		}
+	if len(localRaw) == 0 {
+		return domain.MarketView{}, errors.New("market history unavailable locally")
 	}
 	s.mu.RLock()
 	backfillComplete := s.backfillDone
 	s.mu.RUnlock()
-	view, err := marketview.BuildHistoryView(symbol, raw, summary, nil, intervalName, now, first, backfillComplete)
+	view, err := marketview.BuildHistoryView(symbol, localRaw, localSummary, nil, intervalName, now, first, backfillComplete)
 	if err != nil {
 		return domain.MarketView{}, err
 	}
-	view.Source = "binance_usdm_shared_snapshot"
+	s.requestMarketSync(symbol, historyStart, historyEnd, intervalName)
+	s.decorateMarketView(&view, symbol, "binance_usdm_local")
 	view.HasMore = false
 	view.NextBefore = nil
 	view.Liquidations = []domain.LiquidationEvent{}
 	view.LiquidationsTruncated = false
 	view.LiquidationMinimumUSD = domain.DefaultLiquidationMinimumUSD
 	return view, nil
+}
+
+func (s *Service) marketHistorySyncWindow(ctx context.Context, symbol, intervalName string, now time.Time) (time.Time, time.Time) {
+	first, _, exists, err := s.store.SymbolBounds(ctx, symbol)
+	if err != nil || !exists {
+		lookback := 24 * time.Hour
+		if s.cfg.BackfillDays > 0 {
+			lookback = time.Duration(s.cfg.BackfillDays) * 24 * time.Hour
+		}
+		return now.Add(-lookback), marketHistoryEnd(now, intervalName)
+	}
+	return s.marketHistorySyncWindowFromFirst(first, intervalName, now)
+}
+
+func (s *Service) marketHistorySyncWindowFromFirst(first time.Time, intervalName string, now time.Time) (time.Time, time.Time) {
+	historyEnd := marketHistoryEnd(now, intervalName)
+	historyStart := first
+	lookbackDays := s.cfg.BackfillDays
+	if lookbackDays <= 0 {
+		lookbackDays = 1
+	}
+	lookback := now.Add(-time.Duration(lookbackDays) * 24 * time.Hour)
+	if lookback.After(historyStart) {
+		historyStart = lookback
+	}
+	return historyStart, historyEnd
 }
 
 func marketHistoryEnd(now time.Time, intervalName string) time.Time {
@@ -166,5 +187,16 @@ func (s *Service) evictMarketHistorySnapshots(now time.Time) {
 			return
 		}
 		delete(s.marketHistorySnapshots, oldestKey)
+	}
+}
+
+func (s *Service) invalidateMarketHistorySnapshots(symbol string) {
+	prefix := marketSyncKey(symbol) + "|"
+	s.marketHistoryMu.Lock()
+	defer s.marketHistoryMu.Unlock()
+	for key := range s.marketHistorySnapshots {
+		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+			delete(s.marketHistorySnapshots, key)
+		}
 	}
 }
