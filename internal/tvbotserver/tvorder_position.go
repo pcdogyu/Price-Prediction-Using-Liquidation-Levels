@@ -240,6 +240,20 @@ func (s *Server) executePositionCloseSignal(signalID string, signal trading.Sign
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	result, err := s.closePositionFromSignal(ctx, signal, cfg)
+	if errors.Is(err, errPositionNotOpen) && isManualLiquidationTrigger(signal) {
+		fallback := manualLiquidationOpeningSignal(signal)
+		if updateErr := s.Orders.UpdatePositionIntent(signalID, fallback.OrderIntent, fallback.PositionEffect, fallback.PositionSide, s.now()); updateErr != nil {
+			if s.Logger != nil {
+				s.Logger.Error("failed to persist manual liquidation opening fallback", "signal_id", signalID, "error", updateErr)
+			}
+			_ = s.Orders.MarkFailedCode(signalID, "manual_open_fallback_failed", updateErr, s.now())
+			return
+		}
+		// The manual trigger is deliberately retried through the normal opening
+		// executor. Automatic close/preclose requests never enter this branch.
+		s.execute(signalID, fallback, cfg)
+		return
+	}
 	result.SignalID = signalID
 	result.PositionEffect = trading.PositionEffectClose
 	result.PositionSide = signal.PositionSide
@@ -285,6 +299,21 @@ func (s *Server) executePositionCloseSignal(signalID string, signal trading.Sign
 	); err != nil && s.Logger != nil {
 		s.Logger.Error("failed to record TP/SL webhook coinpair cooldown", "signal_id", signalID, "coinpair", signal.Coinpair, "source", cooldownSource, "error", err)
 	}
+}
+
+func isManualLiquidationTrigger(signal trading.Signal) bool {
+	return strings.EqualFold(strings.TrimSpace(signal.Condition), "manual_liquidation_trigger")
+}
+
+func manualLiquidationOpeningSignal(signal trading.Signal) trading.Signal {
+	signal.PositionEffect = trading.PositionEffectOpen
+	signal.PositionSide, _ = tvOrderPositionSideFromAction(signal.Action, trading.PositionEffectOpen)
+	signal.OrderIntent = tvOrderEntryIntent(signal.Action)
+	signal.Intent = signal.OrderIntent
+	// The profit gate protects a close only. It must not leak into the fallback
+	// opening request after the close lookup found no position.
+	signal.MinProfitSpread = 0
+	return signal
 }
 
 func (s *Server) closePositionFromSignal(ctx context.Context, signal trading.Signal, cfg config.Config) (trading.OrderResult, error) {

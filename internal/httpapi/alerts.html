@@ -75,7 +75,7 @@
         </table>
       </div>
       <div class="alerts-order-signal-footer"><span id="alerts-order-signal-summary" class="muted">—</span><button id="alerts-order-signal-save" type="submit">保存策略开关</button></div>
-      <p class="muted alerts-note">每类实时信号按本页开关独立发送平仓和开仓指令。交易所刷单策略在 Gamma 小于 0 时只发送 close-only JSON，平仓是否发送仍由交易所刷单平仓开关决定；历史记录中的“触发下单”会按信号保存的 open/close 效果执行。</p>
+      <p class="muted alerts-note">每类实时信号按本页开关独立发送平仓和开仓指令。交易所刷单策略在 Gamma 小于 0 时只发送 close-only JSON，平仓是否发送仍由交易所刷单平仓开关决定；历史记录中的“触发下单”会按信号保存的 open/close 效果执行，手动仅平仓且检测不到对应仓位时自动转为同方向开仓。</p>
     </form>
     </div>
   </section>

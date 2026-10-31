@@ -221,6 +221,55 @@ func TestTVOrderCloseSignalDoesNotCloseOppositeBinanceNetPosition(t *testing.T) 
 	}
 }
 
+func TestTVOrderManualLiquidationCloseFallsBackToOpeningWhenPositionMissing(t *testing.T) {
+	withSlowPositionCloseWatcher(t)
+
+	srv := newTestServer(t)
+	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/fapi/v3/positionRisk" {
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+		if r.Header.Get("X-MBX-APIKEY") != "binance-key" {
+			t.Fatalf("missing Binance API key for %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("symbol") != "ESPORTSUSDT" {
+			t.Fatalf("bad positions query: %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`[{"symbol":"ESPORTSUSDT","positionSide":"BOTH","positionAmt":"0","entryPrice":"0.02261","markPrice":"0.02264","unRealizedProfit":"0","liquidationPrice":"0","isolatedMargin":"0","notional":"0","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+	}))
+	defer binanceServer.Close()
+	configureBinanceCloseTestServer(t, srv, binanceServer)
+
+	signal := validSignal(t, srv)
+	signal.TargetExchange = trading.ExchangeBinance
+	signal.APIID = "tvbot"
+	signal.Exchange = "BINANCE"
+	signal.Coinpair = "ESPORTSUSDT.P"
+	signal.Ticker = "ESPORTSUSDT.P"
+	signal.Price = trading.NewFlexibleFloat(0.02264)
+	signal.Action = trading.ActionLong
+	signal.Condition = "manual_liquidation_trigger"
+	signal.PositionEffect = trading.PositionEffectClose
+	signal.PositionSide = trading.PositionSideShort
+	signal.OrderIntent = "close_short"
+	signal.Token = srv.Token.Generate(signal.CanonicalTokenPayload())
+	resp := postTVOrderSignal(t, srv, signal)
+	rec := waitOrderStatus(t, srv.Orders, resp.SignalID, storage.StatusSubmitted)
+
+	select {
+	case got := <-srv.Executor.(fakeExecutor).calls:
+		if got.Action != trading.ActionLong || got.PositionEffect != trading.PositionEffectOpen || got.PositionSide != trading.PositionSideLong || got.OrderIntent != "entry_long" {
+			t.Fatalf("manual missing-position fallback should open in signal direction: %#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("manual missing-position fallback did not reach opening executor")
+	}
+	if rec.PositionEffect != trading.PositionEffectOpen || rec.PositionSide != trading.PositionSideLong || rec.OrderIntent != "entry_long" {
+		t.Fatalf("fallback order history must record the opening intent: %#v", rec)
+	}
+}
+
 func TestTVOrderCloseIntentConflictFailsBeforeExecution(t *testing.T) {
 	srv := newTestServer(t)
 	signal := validSignal(t, srv)

@@ -247,6 +247,44 @@ func (s *OrderStore) MarkSubmitted(signalID string, result trading.OrderResult, 
 	return errors.New("signal record not found")
 }
 
+// UpdatePositionIntent records a change in the effective action before an
+// accepted order is executed. Manual liquidation signals can fall back from
+// close to open when the requested opposite position is not present; keeping
+// the persisted intent aligned with that fallback prevents order history and
+// analysis from reporting a close for an opening order.
+func (s *OrderStore) UpdatePositionIntent(signalID, orderIntent, positionEffect, positionSide string, now time.Time) error {
+	orderIntent = strings.TrimSpace(orderIntent)
+	positionEffect = strings.TrimSpace(positionEffect)
+	positionSide = strings.TrimSpace(positionSide)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		res, err := s.db.Exec(`UPDATE orders SET order_intent = ?, position_effect = ?, position_side = ?, updated_at = ? WHERE signal_id = ?`,
+			orderIntent, positionEffect, positionSide, now.UTC().Format(time.RFC3339Nano), signalID)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return errors.New("signal record not found")
+		}
+		return nil
+	}
+	for i := range s.state.Orders {
+		if s.state.Orders[i].SignalID == signalID {
+			s.state.Orders[i].UpdatedAt = now.UTC()
+			s.state.Orders[i].OrderIntent = orderIntent
+			s.state.Orders[i].PositionEffect = positionEffect
+			s.state.Orders[i].PositionSide = positionSide
+			return s.saveLocked()
+		}
+	}
+	return errors.New("signal record not found")
+}
+
 // UpdateResult persists exchange-side follow-up details, such as TP/SL orders
 // created after a Gate position fill, without changing the original order
 // status or error state.

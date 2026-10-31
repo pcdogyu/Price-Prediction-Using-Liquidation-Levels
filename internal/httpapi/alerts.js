@@ -727,6 +727,8 @@
 
   async function triggerOrder(button) {
     button.disabled = true;
+    button.classList.add('is-saving');
+    button.setAttribute('aria-busy', 'true');
     const original = button.textContent;
     button.textContent = '下单中';
     try {
@@ -744,11 +746,17 @@
       button.disabled = false;
       button.textContent = original;
       error('手动下单信号发送失败：' + caught.message);
+    } finally {
+      button.disabled = false;
+      button.classList.remove('is-saving');
+      button.removeAttribute('aria-busy');
     }
   }
 
   async function triggerNotify(button) {
     button.disabled = true;
+    button.classList.add('is-saving');
+    button.setAttribute('aria-busy', 'true');
     const original = button.textContent;
     button.textContent = '发送中';
     try {
@@ -762,6 +770,10 @@
       button.disabled = false;
       button.textContent = original;
       error('手动报警发送失败：' + caught.message);
+    } finally {
+      button.disabled = false;
+      button.classList.remove('is-saving');
+      button.removeAttribute('aria-busy');
     }
   }
 
