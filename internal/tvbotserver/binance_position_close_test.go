@@ -161,6 +161,141 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 	}
 }
 
+func TestTVBotBinanceMarketCloseCleansOrdersVisibleAfterClose(t *testing.T) {
+	oldDelay := binanceOrderCleanupRetryDelay
+	binanceOrderCleanupRetryDelay = 0
+	t.Cleanup(func() { binanceOrderCleanupRetryDelay = oldDelay })
+
+	srv := newTestServer(t)
+	var mu sync.Mutex
+	positionOpen := true
+	lateOrderOpen := false
+	cleanupDone := make(chan struct{})
+	cleanupSignaled := false
+	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v3/positionRisk":
+			mu.Lock()
+			open := positionOpen
+			mu.Unlock()
+			if open {
+				_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"2","entryPrice":"100","markPrice":"100","unRealizedProfit":"0","notional":"200","marginAsset":"USDT","leverage":"5","marginType":"isolated","updateTime":1784880000000}]`))
+			} else {
+				_, _ = w.Write([]byte(`[]`))
+			}
+		case "/fapi/v1/openOrders":
+			mu.Lock()
+			open := lateOrderOpen
+			mu.Unlock()
+			if open {
+				_, _ = w.Write([]byte(`[{"orderId":101,"symbol":"BTCUSDT","clientOrderId":"late-entry","status":"NEW","price":"99","origQty":"1","executedQty":"0","type":"LIMIT","side":"BUY","positionSide":"BOTH"}]`))
+			} else {
+				_, _ = w.Write([]byte(`[]`))
+			}
+		case "/fapi/v1/openAlgoOrders":
+			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/order":
+			if r.Method == http.MethodDelete {
+				if r.URL.Query().Get("orderId") != "101" {
+					t.Fatalf("unexpected late order cancellation: %s", r.URL.RawQuery)
+				}
+				mu.Lock()
+				lateOrderOpen = false
+				if !cleanupSignaled {
+					cleanupSignaled = true
+					close(cleanupDone)
+				}
+				mu.Unlock()
+				_, _ = w.Write([]byte(`{"orderId":101,"symbol":"BTCUSDT","status":"CANCELED","clientOrderId":"late-entry"}`))
+				return
+			}
+			mu.Lock()
+			positionOpen = false
+			lateOrderOpen = true
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"orderId":789,"symbol":"BTCUSDT","status":"FILLED","clientOrderId":"close-1","price":"0","origQty":"2","executedQty":"2","type":"MARKET","side":"SELL","positionSide":"BOTH"}`))
+		default:
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+	}))
+	defer binanceServer.Close()
+
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = binanceServer.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = binanceServer.Client()
+	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
+		ID: "main", Active: true,
+		Credentials: binance.Credentials{APIKey: "binance-key", SecretKey: "binance-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"exchange":"binance","api_id":"main","inst_id":"BTCUSDT","pos_side":"net","mode":"market"}`)
+	req := httptest.NewRequest(http.MethodPost, "/tvbot/positions/close", bytes.NewReader(body))
+	req.SetBasicAuth("admin", "Admin123")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("market close status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	select {
+	case <-cleanupDone:
+	case <-time.After(time.Second):
+		t.Fatal("late Binance order was not cleaned up after the market close")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if lateOrderOpen {
+		t.Fatal("late Binance order remained open")
+	}
+}
+
+func TestCancelAllBinanceSymbolOrdersRetriesEventuallyVisibleCancellation(t *testing.T) {
+	oldDelay := binanceOrderCleanupRetryDelay
+	binanceOrderCleanupRetryDelay = 0
+	t.Cleanup(func() { binanceOrderCleanupRetryDelay = oldDelay })
+
+	regularChecks := 0
+	cancelCount := 0
+	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v1/openOrders":
+			regularChecks++
+			if regularChecks <= 2 {
+				_, _ = w.Write([]byte(`[{"orderId":101,"symbol":"BTCUSDT","clientOrderId":"late-entry","status":"NEW"}]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/openAlgoOrders":
+			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/order":
+			if r.Method != http.MethodDelete || r.URL.Query().Get("orderId") != "101" {
+				t.Fatalf("unexpected Binance cancellation: %s %s", r.Method, r.URL.String())
+			}
+			cancelCount++
+			_, _ = w.Write([]byte(`{"orderId":101,"symbol":"BTCUSDT","status":"CANCELED"}`))
+		default:
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+	}))
+	defer binanceServer.Close()
+
+	client := binance.Client{
+		BaseURL:     binanceServer.URL,
+		Credentials: binance.Credentials{APIKey: "binance-key", SecretKey: "binance-secret"},
+		HTTPClient:  binanceServer.Client(),
+	}
+	if err := cancelAllBinanceSymbolOrders(context.Background(), client, "BTCUSDT"); err != nil {
+		t.Fatalf("cancel Binance symbol orders: %v", err)
+	}
+	if regularChecks != 4 || cancelCount != 1 {
+		t.Fatalf("expected retry after eventual cancellation visibility, checks=%d cancels=%d", regularChecks, cancelCount)
+	}
+}
+
 func TestTVBotBinancePartialPositionCloseUsesCloseTimeoutForSlowRequests(t *testing.T) {
 	oldTimeout := binancePositionCloseTimeout
 	binancePositionCloseTimeout = 2 * time.Second
