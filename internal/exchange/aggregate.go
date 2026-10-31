@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
 
@@ -19,6 +20,17 @@ type AggregateTradeSink func(context.Context, domain.AggregateTrade) error
 func StartAggregateTradeStreams(ctx context.Context, symbols []string, sink AggregateTradeSink, health *HealthRegistry, log *slog.Logger) {
 	go reconnect(ctx, "binance_agg_trades", 1, health, log, func(ctx context.Context) error {
 		return runBinanceAggregateTrades(ctx, symbols, sink, health)
+	})
+}
+
+// StartDynamicAggregateTradeStreams keeps one Binance WebSocket alive while
+// the caller changes the subscribed symbols. This avoids reconnecting every
+// existing symbol when a signal requests one more on-demand profile. The
+// provider is also consulted after a reconnect so the latest subscription is
+// restored even when the update was already consumed before the disconnect.
+func StartDynamicAggregateTradeStreams(ctx context.Context, symbols func() []string, updates <-chan []string, sink AggregateTradeSink, health *HealthRegistry, log *slog.Logger) {
+	go reconnect(ctx, "binance_agg_trades", 1, health, log, func(ctx context.Context) error {
+		return runDynamicBinanceAggregateTrades(ctx, symbols, updates, sink, health)
 	})
 }
 
@@ -49,6 +61,121 @@ func runBinanceAggregateTrades(ctx context.Context, symbols []string, sink Aggre
 		health.Touch("binance_agg_trades", 1)
 	}
 	return fmt.Errorf("proactive 24h reconnect")
+}
+
+func runDynamicBinanceAggregateTrades(ctx context.Context, symbols func() []string, updates <-chan []string, sink AggregateTradeSink, health *HealthRegistry) error {
+	c, err := dial(ctx, binanceMarketStreamBase+"/ws")
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	current := normalizeAggregateSymbols(symbols())
+	if err = updateAggregateSubscriptions(c, nil, current); err != nil {
+		return err
+	}
+	health.Set("binance_agg_trades", Health{Connected: true, Coverage: 1})
+
+	frames := make(chan []byte, 8192)
+	readErr := make(chan error, 1)
+	go func() {
+		for {
+			_, payload, readError := c.ReadMessage()
+			if readError != nil {
+				readErr <- readError
+				return
+			}
+			select {
+			case frames <- payload:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	deadline := time.NewTimer(23*time.Hour + 50*time.Minute)
+	defer deadline.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-readErr:
+			return err
+		case next := <-updates:
+			next = normalizeAggregateSymbols(next)
+			if equalAggregateSymbols(current, next) {
+				continue
+			}
+			if err = updateAggregateSubscriptions(c, current, next); err != nil {
+				return err
+			}
+			current = next
+		case <-deadline.C:
+			return fmt.Errorf("proactive 24h reconnect")
+		case payload := <-frames:
+			trade, ok := ParseBinanceAggregateTrade(payload, current)
+			if !ok {
+				continue
+			}
+			if err = sink(ctx, trade); err != nil {
+				return err
+			}
+			health.Touch("binance_agg_trades", 1)
+		}
+	}
+}
+
+func updateAggregateSubscriptions(c *websocket.Conn, old, next []string) error {
+	params := make([]string, 0, len(next))
+	for _, symbol := range next {
+		if !allowed(symbol, old) {
+			params = append(params, strings.ToLower(symbol)+"@aggTrade")
+		}
+	}
+	if len(params) > 0 {
+		if err := c.WriteJSON(map[string]any{"method": "SUBSCRIBE", "params": params, "id": time.Now().UnixNano()}); err != nil {
+			return err
+		}
+	}
+	removed := make([]string, 0, len(old))
+	for _, symbol := range old {
+		if !allowed(symbol, next) {
+			removed = append(removed, strings.ToLower(symbol)+"@aggTrade")
+		}
+	}
+	if len(removed) > 0 {
+		if err := c.WriteJSON(map[string]any{"method": "UNSUBSCRIBE", "params": removed, "id": time.Now().UnixNano()}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeAggregateSymbols(symbols []string) []string {
+	seen := make(map[string]struct{}, len(symbols))
+	out := make([]string, 0, len(symbols))
+	for _, raw := range symbols {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		if symbol == "" {
+			continue
+		}
+		if _, ok := seen[symbol]; !ok {
+			seen[symbol] = struct{}{}
+			out = append(out, symbol)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func equalAggregateSymbols(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func ParseBinanceAggregateTrade(payload []byte, symbols []string) (domain.AggregateTrade, bool) {

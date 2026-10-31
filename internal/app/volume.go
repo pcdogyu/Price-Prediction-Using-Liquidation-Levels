@@ -29,6 +29,7 @@ func (s *Service) startVolumeProfiles(ctx context.Context) {
 		s.volumeRequested[symbol] = struct{}{}
 		s.volumeStreamSymbols[symbol] = struct{}{}
 	}
+	s.volumeLiveInput = make(chan domain.AggregateTrade, 100000)
 	s.volumeMu.Unlock()
 	go s.volumeProfileLoop(ctx)
 	go s.volumeBackfillLoop(ctx)
@@ -40,9 +41,13 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 	// aggregate trades for that set at startup creates a large SQLite/API burst.
 	// Other candidates remain available to alerts and on-demand market views.
 	bootstrapSymbols := s.volumeBootstrapSymbols()
-	input := make(chan domain.AggregateTrade, 100000)
-	streamCtx, cancelStream := context.WithCancel(ctx)
-	s.startAggregateTradeStream(streamCtx, s.volumeStreamSymbolList(), input)
+	s.volumeMu.Lock()
+	input := s.volumeLiveInput
+	if input == nil {
+		input = make(chan domain.AggregateTrade, 100000)
+		s.volumeLiveInput = input
+	}
+	s.volumeMu.Unlock()
 	close(s.volumeLiveReady)
 	// Do not hold the live/on-demand path behind another startup backfill job.
 	// The shared gate still serializes this bootstrap work with on-demand
@@ -58,15 +63,10 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			cancelStream()
 			if len(batch) > 0 {
 				_ = s.applyLiveAggregateTrades(context.Background(), batch)
 			}
 			return
-		case symbols := <-s.volumeStreamUpdates:
-			cancelStream()
-			streamCtx, cancelStream = context.WithCancel(ctx)
-			s.startAggregateTradeStream(streamCtx, symbols, input)
 		case <-s.candidateUpdates:
 			// Candidate refreshes control alert/candle coverage, not the bounded
 			// volume-profile feed. Do not restart the stream and replay a newly
@@ -125,11 +125,7 @@ func (s *Service) volumeBackfillLoop(ctx context.Context) {
 			streamSymbols := s.volumeStreamSymbolListLocked()
 			s.volumeMu.Unlock()
 			if !alreadyStreaming {
-				select {
-				case s.volumeStreamUpdates <- streamSymbols:
-				case <-ctx.Done():
-					return
-				}
+				s.updateMarketCollectorAggregateSymbols(streamSymbols)
 			}
 		}
 	}
@@ -146,24 +142,6 @@ func (s *Service) syncVolumeSymbols(ctx context.Context, symbols []string) {
 			s.log.Warn("aggregate trade initial backfill failed", "symbol", symbol, "error", err)
 		}
 	}
-}
-
-func (s *Service) startAggregateTradeStream(ctx context.Context, symbols []string, input chan<- domain.AggregateTrade) {
-	exchange.StartAggregateTradeStreams(ctx, symbols, func(ctx context.Context, trade domain.AggregateTrade) error {
-		s.RecordAggregateTrade(trade)
-		select {
-		case input <- trade:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}, s.health, s.log)
-}
-
-func (s *Service) startCandidateAggregateStream(ctx context.Context, symbols []string, input chan<- domain.AggregateTrade) context.CancelFunc {
-	streamCtx, cancel := context.WithCancel(ctx)
-	s.startAggregateTradeStream(streamCtx, symbols, input)
-	return cancel
 }
 
 func (s *Service) volumeStreamSymbolList() []string {

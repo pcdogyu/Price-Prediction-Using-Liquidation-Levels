@@ -1,0 +1,26 @@
+[Unit]
+Description=Market data collector for liquidation wall service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=liquidation
+Group=liquidation
+WorkingDirectory=/opt/Price-Prediction-Using-Liquidation-Levels
+EnvironmentFile=/etc/liquidation-predictor.env
+Environment=HOME=/var/lib/liquidation-predictor
+Environment=GOCACHE=/var/lib/liquidation-predictor/.cache/go-build
+Environment=GOMODCACHE=/var/lib/liquidation-predictor/go/pkg/mod
+ExecStart=/opt/Price-Prediction-Using-Liquidation-Levels/market-collector
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/liquidation-predictor /opt/Price-Prediction-Using-Liquidation-Levels
+
+[Install]
+WantedBy=multi-user.target

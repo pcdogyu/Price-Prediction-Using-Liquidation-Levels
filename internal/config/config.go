@@ -24,9 +24,11 @@ type Config struct {
 	UpgradeBinaryPath                string
 	UpgradeServiceName               string
 	UpgradeStatusPath                string
+	MarketCollectorSocket            string
 	AuthUsername                     string
 	AuthPasswordHash                 string
 	LogPath                          string
+	MarketCollectorLogPath           string
 	CoinGlassDebugURL                string
 	CoinGlassCaptureDir              string
 	CoinGlassCaptureInterval         time.Duration
@@ -95,7 +97,7 @@ func Load() Config {
 		Address: env("APP_ADDRESS", ":9090"), DatabasePath: env("APP_DATABASE", "data/liquidation.db"),
 		ModelPath: env("APP_MODEL", "models/model.json"), Symbols: symbols, DepthSymbols: depthSymbols, BootstrapSymbols: bootstrapSymbols,
 		BasePath: env("APP_BASE_PATH", "/"), AuthUsername: strings.TrimSpace(os.Getenv("APP_AUTH_USERNAME")),
-		AuthPasswordHash: strings.TrimSpace(os.Getenv("APP_AUTH_PASSWORD_HASH")), LogPath: strings.TrimSpace(os.Getenv("APP_LOG_PATH")),
+		AuthPasswordHash: strings.TrimSpace(os.Getenv("APP_AUTH_PASSWORD_HASH")), LogPath: strings.TrimSpace(os.Getenv("APP_LOG_PATH")), MarketCollectorLogPath: strings.TrimSpace(os.Getenv("APP_MARKET_COLLECTOR_LOG_PATH")),
 		TVBotConfigPath:           env("APP_TVBOT_CONFIG", "data/tvbot-config.json"),
 		TVBotDataPath:             env("APP_TVBOT_DATA", "data"),
 		TVBotLegacyDatabasePath:   env("APP_TVBOT_LEGACY_DATABASE", "tvbot.db"),
@@ -108,6 +110,7 @@ func Load() Config {
 		UpgradeBinaryPath:         env("APP_UPGRADE_BINARY", ""),
 		UpgradeServiceName:        env("APP_UPGRADE_SERVICE", "liquidation-predictor.service"),
 		UpgradeStatusPath:         env("APP_UPGRADE_STATUS", ""),
+		MarketCollectorSocket:     env("APP_MARKET_COLLECTOR_SOCKET", "data/market-collector.sock"),
 		CoinGlassDebugURL:         env("APP_COINGLASS_DEBUG_URL", "http://127.0.0.1:9222"), CoinGlassCaptureDir: env("APP_COINGLASS_CAPTURE_DIR", "data/coinglass-captures"), CoinGlassCaptureInterval: envDuration("APP_COINGLASS_CAPTURE_INTERVAL", 10*time.Minute),
 		LogRetentionDays: envInt("APP_LOG_RETENTION_DAYS", 7),
 		BackfillDays:     envInt("APP_BACKFILL_DAYS", 1), RetentionDays: envInt("APP_RETENTION_DAYS", 180), TrainingDays: envInt("APP_TRAINING_DAYS", 30), SnapshotInterval: envDuration("APP_SNAPSHOT_INTERVAL", 5*time.Minute),

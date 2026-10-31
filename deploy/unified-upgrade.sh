@@ -10,10 +10,12 @@ source_root="$app_root/source"
 data_root=/var/lib/liquidation-predictor
 legacy_root=/opt/tv_okx_bot
 legacy_state=/var/lib/tv-okx-bot
-revision="${1:?usage: unified-upgrade.sh <binance-revision> <build-branch> <uploaded-binary> [sha256]}"
+revision="${1:?usage: unified-upgrade.sh <binance-revision> <build-branch> <uploaded-server-binary> <uploaded-collector-binary> [server-sha256] [collector-sha256]}"
 build_branch="${2:-binance}"
-artifact="${3:?usage: unified-upgrade.sh <binance-revision> <build-branch> <uploaded-binary> [sha256]}"
-expected_sha256="${4:-}"
+artifact="${3:?usage: unified-upgrade.sh <binance-revision> <build-branch> <uploaded-server-binary> <uploaded-collector-binary> [server-sha256] [collector-sha256]}"
+collector_artifact="${4:?usage: unified-upgrade.sh <binance-revision> <build-branch> <uploaded-server-binary> <uploaded-collector-binary> [server-sha256] [collector-sha256]}"
+expected_sha256="${5:-}"
+expected_collector_sha256="${6:-}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 short_revision="${revision:0:12}"
 backup="$data_root/backups/$stamp-$short_revision"
@@ -21,6 +23,8 @@ backup_retention_days=7
 backup_retention_minutes=$((backup_retention_days * 24 * 60))
 binary="$app_root/liquidation-predictor"
 new_binary="$app_root/liquidation-predictor.new"
+collector_binary="$app_root/market-collector"
+new_collector_binary="$app_root/market-collector.new"
 
 case "$revision" in
   (*[!0-9a-fA-F]*) echo "invalid revision" >&2; exit 1 ;;
@@ -29,12 +33,21 @@ case "$artifact" in
   "$app_root"/liquidation-predictor.upload.*) ;;
   (*) echo "uploaded binary must be staged under $app_root" >&2; exit 1 ;;
 esac
+case "$collector_artifact" in
+  "$app_root"/market-collector.upload.*) ;;
+  (*) echo "uploaded collector binary must be staged under $app_root" >&2; exit 1 ;;
+esac
 test -f "$artifact"
+test -f "$collector_artifact"
 if [[ -n "$expected_sha256" ]]; then
   actual_sha256="$(sha256sum "$artifact" | awk '{print $1}')"
   test "$actual_sha256" = "$expected_sha256"
 fi
-trap 'rm -f -- "$artifact" "$new_binary"' EXIT
+if [[ -n "$expected_collector_sha256" ]]; then
+  actual_collector_sha256="$(sha256sum "$collector_artifact" | awk '{print $1}')"
+  test "$actual_collector_sha256" = "$expected_collector_sha256"
+fi
+trap 'rm -f -- "$artifact" "$collector_artifact" "$new_binary" "$new_collector_binary"' EXIT
 
 test -d "$source_root/.git"
 test -f "$data_root/liquidation.db"
@@ -83,6 +96,7 @@ backup_file "$legacy_state/upgrade-status.json" tvbot-upgrade-status.json
 backup_file /etc/tv-okx-bot/config.json tvbot-config.json
 backup_file /etc/liquidation-predictor.env liquidation-predictor.env
 backup_file "$binary" liquidation-predictor
+backup_file "$collector_binary" market-collector
 sha256sum "$backup"/* > "$backup/sha256.txt"
 backup_tree "$data_root/users" "$backup/tvbot-user-credentials"
 
@@ -107,8 +121,12 @@ cd "$source_root"
 install -o liquidation -g liquidation -m 0755 "$artifact" "$new_binary"
 mv -f -- "$new_binary" "$binary"
 echo "uploaded_binary_sha256=$(sha256sum "$binary" | awk '{print $1}')"
+install -o liquidation -g liquidation -m 0755 "$collector_artifact" "$new_collector_binary"
+mv -f -- "$new_collector_binary" "$collector_binary"
+echo "uploaded_collector_binary_sha256=$(sha256sum "$collector_binary" | awk '{print $1}')"
 
 install -o root -g root -m 0644 deploy/liquidation-predictor.service /etc/systemd/system/liquidation-predictor.service
+install -o root -g root -m 0644 deploy/market-collector.service /etc/systemd/system/market-collector.service
 install -o root -g root -m 0644 deploy/liquidation-predictor.env /etc/liquidation-predictor.env
 if [[ -f "$backup/liquidation-predictor.env" ]]; then
   # Preserve operator-managed authentication and tvorder webhook settings
@@ -177,6 +195,7 @@ install -o root -g root -m 0644 deploy/nginx-tvbot.lmitis.com /etc/nginx/sites-e
 visudo -cf /etc/sudoers.d/liquidation-predictor-upgrade
 nginx -t
 systemctl daemon-reload
+systemctl restart market-collector.service
 systemctl restart liquidation-predictor.service
 
 prune_old_backups() {
@@ -194,7 +213,7 @@ prune_old_backups() {
 # A first-time legacy SQLite import can take longer than the normal restart
 # while the service keeps its health port closed during the transaction.
 for _ in $(seq 1 150); do
-  if systemctl is-active --quiet liquidation-predictor.service && curl -fsS http://127.0.0.1:9090/healthz >/dev/null && curl -fsS http://127.0.0.1:9090/readyz >/dev/null; then
+  if systemctl is-active --quiet market-collector.service && systemctl is-active --quiet liquidation-predictor.service && curl -fsS http://127.0.0.1:9090/healthz >/dev/null && curl -fsS http://127.0.0.1:9090/readyz >/dev/null; then
     prune_old_backups
     printf '%s\n' "$backup" > "$app_root/dashboard-backup-path"
     echo "deployed_revision=$revision"

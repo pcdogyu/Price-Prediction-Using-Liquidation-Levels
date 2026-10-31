@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
-	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 )
 
@@ -47,7 +46,6 @@ func (s *Service) startDashboard(ctx context.Context) {
 			s.dashboard.gamma[anchor] = g
 		}
 	}
-	exchange.StartDepthStreams(ctx, s.cfg.DepthSymbols, s.recordBook, s.health, s.log)
 	go s.marketInfoLoop(ctx)
 	go s.gammaLoop(ctx)
 	for _, symbol := range []string{"BTCUSDT", "ETHUSDT"} {

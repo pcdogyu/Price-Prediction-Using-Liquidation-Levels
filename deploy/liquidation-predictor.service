@@ -1,7 +1,8 @@
 [Unit]
 Description=Liquidation wall probability service
-After=network-online.target coinglass-browser.service
-Wants=network-online.target coinglass-browser.service
+After=network-online.target coinglass-browser.service market-collector.service
+Wants=network-online.target coinglass-browser.service market-collector.service
+Requires=market-collector.service
 
 [Service]
 Type=simple

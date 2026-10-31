@@ -128,7 +128,6 @@ func TestOnDemandVolumeBackfillGeneratesProfile(t *testing.T) {
 		volumePending:       make(map[string]struct{}),
 		volumeBackfillError: make(map[string]string),
 		volumeBackfillQueue: make(chan string, 4),
-		volumeStreamUpdates: make(chan []string, 4),
 		volumeLiveReady:     make(chan struct{}),
 	}
 	close(svc.volumeLiveReady)
@@ -147,19 +146,10 @@ func TestOnDemandVolumeBackfillGeneratesProfile(t *testing.T) {
 			if len(profile.Bins) != 24 || profile.VAL == nil || profile.VAH == nil || profile.TotalVolumeUSD <= 0 {
 				t.Fatalf("profile=%+v", profile)
 			}
-			select {
-			case symbols := <-svc.volumeStreamUpdates:
-				found := false
-				for _, symbol := range symbols {
-					if symbol == "SOLUSDT" {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Fatalf("stream symbols=%v, missing SOLUSDT", symbols)
-				}
-			case <-time.After(time.Second):
+			svc.volumeMu.Lock()
+			_, found := svc.volumeStreamSymbols["SOLUSDT"]
+			svc.volumeMu.Unlock()
+			if !found {
 				t.Fatal("on-demand symbol was not added to the volume stream")
 			}
 			return

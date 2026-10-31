@@ -15,6 +15,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/engine"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
 	marketview "github.com/pcdogyu/price-prediction-liquidation-levels/internal/market"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/marketcollector"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 )
 
@@ -84,12 +85,13 @@ type Service struct {
 	volumeLiveReady        chan struct{}
 	volumeMu               sync.Mutex
 	volumeContext          context.Context
+	volumeLiveInput        chan domain.AggregateTrade
 	volumeRequested        map[string]struct{}
 	volumeStreamSymbols    map[string]struct{}
 	volumePending          map[string]struct{}
 	volumeBackfillError    map[string]string
 	volumeBackfillQueue    chan string
-	volumeStreamUpdates    chan []string
+	marketCollector        *marketcollector.Client
 	webhookTargetMu        sync.RWMutex
 	webhookTarget          WebhookTargetResolver
 	gammaPolicyMu          sync.RWMutex
@@ -170,7 +172,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	if strings.TrimSpace(cfg.AlertTenantDataPath) == "" && strings.TrimSpace(cfg.DatabasePath) != "" {
 		cfg.AlertTenantDataPath = filepath.Join(filepath.Dir(cfg.DatabasePath), "alert-tenants")
 	}
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, marketHistorySnapshots: make(map[string]marketHistorySnapshotEntry), marketHistoryBuilds: make(map[string]*marketHistorySnapshotBuild), backfillGate: make(chan struct{}, 1), volumeLiveReady: make(chan struct{}), volumeRequested: make(map[string]struct{}), volumeStreamSymbols: make(map[string]struct{}), volumePending: make(map[string]struct{}), volumeBackfillError: make(map[string]string), volumeBackfillQueue: make(chan string, 128), volumeStreamUpdates: make(chan []string, 128), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, marketHistorySnapshots: make(map[string]marketHistorySnapshotEntry), marketHistoryBuilds: make(map[string]*marketHistorySnapshotBuild), backfillGate: make(chan struct{}, 1), volumeLiveReady: make(chan struct{}), volumeRequested: make(map[string]struct{}), volumeStreamSymbols: make(map[string]struct{}), volumePending: make(map[string]struct{}), volumeBackfillError: make(map[string]string), volumeBackfillQueue: make(chan string, 128), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	return s
@@ -196,7 +198,6 @@ func (s *Service) Start(ctx context.Context) {
 	s.alertTenantsMu.Lock()
 	s.alertContext = ctx
 	s.alertTenantsMu.Unlock()
-	exchange.StartLiquidationStreams(ctx, nil, s.RecordLiquidation, s.health, s.log)
 	s.startDashboard(ctx)
 	go s.priceBroadcastLoop(ctx)
 	go s.pollLoop(ctx)
@@ -204,6 +205,7 @@ func (s *Service) Start(ctx context.Context) {
 	go s.retentionLoop(ctx)
 	go s.backgroundCandidateRefreshLoop(ctx)
 	s.startVolumeProfiles(ctx)
+	s.startMarketCollector(ctx)
 	go s.volumeArchiveLoop(ctx)
 	if s.tenantIsolationEnabled() {
 		// Authenticated alert requests create a tenant-owned runtime on demand.
@@ -620,7 +622,14 @@ func (s *Service) Backtest(ctx context.Context, symbol string) (domain.BacktestR
 }
 func (s *Service) Health() map[string]exchange.Health { return s.health.Snapshot() }
 func (s *Service) Ready(ctx context.Context) bool {
-	return s.store.Ping(ctx) == nil
+	if s.store.Ping(ctx) != nil {
+		return false
+	}
+	if s.marketCollector != nil {
+		health, ok := s.health.Snapshot()["market_collector"]
+		return ok && health.Connected
+	}
+	return true
 }
 func (s *Service) Subscribe() (chan domain.Prediction, func()) {
 	ch := make(chan domain.Prediction, 8)

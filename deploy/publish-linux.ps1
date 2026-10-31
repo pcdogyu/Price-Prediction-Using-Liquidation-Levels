@@ -90,6 +90,7 @@ $goArch = switch ($remoteArch) {
 
 New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 $tempBinary = Join-Path $buildDir ("liquidation-predictor-linux-{0}" -f $Revision)
+$tempCollectorBinary = Join-Path $buildDir ("market-collector-linux-{0}" -f $Revision)
 $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $ldflags = "-s -w -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildTime=$buildTime -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildRevision=$Revision -X github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi.BuildBranch=$Branch"
 $previousGoos = $env:GOOS
@@ -97,6 +98,7 @@ $previousGoarch = $env:GOARCH
 $previousCgo = $env:CGO_ENABLED
 $published = $false
 $remoteUploadPath = "$RemoteAppRoot/liquidation-predictor.upload.$Revision"
+$remoteCollectorUploadPath = "$RemoteAppRoot/market-collector.upload.$Revision"
 
 try {
     Write-Host "Running local Go tests and vet..."
@@ -116,15 +118,25 @@ try {
         $tempBinary,
         "./cmd/server"
     )
+	Invoke-Checked $go @(
+		"build",
+		"-buildvcs=false",
+		"-trimpath",
+		("-ldflags=$ldflags"),
+		"-o",
+		$tempCollectorBinary,
+		"./cmd/market-collector"
+	)
 
     $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $tempBinary).Hash.ToLowerInvariant()
-    Write-Host "Uploading Linux binary for $Revision..."
-    Invoke-Checked $scp ($sshCommon + @($tempBinary, ("{0}:{1}" -f $remote, $remoteUploadPath)))
+	$collectorSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $tempCollectorBinary).Hash.ToLowerInvariant()
+	Write-Host "Uploading Linux binaries for $Revision..."
+	Invoke-Checked $scp ($sshCommon + @($tempBinary, $tempCollectorBinary, ("{0}:{1}" -f $remote, $remoteUploadPath)))
 
-    Write-Host "Replacing the server binary atomically..."
+	Write-Host "Replacing the server and collector binaries atomically..."
     # The repository is commonly checked out with CRLF on Windows. Strip CR
     # remotely before bash parses the streamed deployment script.
-    $remoteCommand = "tr -d '\r' | bash -s -- $Revision $Branch $remoteUploadPath $sha256"
+	$remoteCommand = "tr -d '\r' | bash -s -- $Revision $Branch $remoteUploadPath $remoteCollectorUploadPath $sha256 $collectorSha256"
     Get-Content -Raw -LiteralPath $sourceScript | & $ssh ($sshCommon + @($remote, $remoteCommand))
     if ($LASTEXITCODE -ne 0) {
         throw "remote replacement failed with exit code $LASTEXITCODE"
@@ -137,7 +149,7 @@ finally {
     $env:CGO_ENABLED = $previousCgo
     if (-not $published) {
         try {
-            & $ssh ($sshCommon + @($remote, "rm -f -- $remoteUploadPath")) | Out-Null
+			& $ssh ($sshCommon + @($remote, "rm -f -- $remoteUploadPath $remoteCollectorUploadPath")) | Out-Null
         }
         catch {
             # Preserve the original publish error; the remote path is exact and
@@ -147,6 +159,9 @@ finally {
     if (Test-Path -LiteralPath $tempBinary) {
         Remove-Item -LiteralPath $tempBinary -Force
     }
+	if (Test-Path -LiteralPath $tempCollectorBinary) {
+		Remove-Item -LiteralPath $tempCollectorBinary -Force
+	}
 }
 
 Write-Host "Published $Revision to $HostName."
