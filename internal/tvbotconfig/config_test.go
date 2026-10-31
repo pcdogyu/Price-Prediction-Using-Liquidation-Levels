@@ -110,6 +110,19 @@ func TestNormalizeTableColumns(t *testing.T) {
 	if countString(cfg.UI.TableColumns.Positions, "upl") != 1 || countString(cfg.UI.TableColumns.PendingOrders, "actions") != 1 || countString(cfg.UI.TableColumns.Symbols, "turnover") != 1 {
 		t.Fatalf("duplicate columns should be removed: %#v", cfg.UI.TableColumns)
 	}
+	strategyIndex := indexString(cfg.UI.TableColumns.Positions, "strategy")
+	sideIndex := indexString(cfg.UI.TableColumns.Positions, "side")
+	if strategyIndex != sideIndex+1 {
+		t.Fatalf("strategy column should follow direction: %#v", cfg.UI.TableColumns.Positions)
+	}
+
+	cfg.UI.TableColumns.Positions = []string{"actions", "strategy", "side", "size"}
+	cfg.Normalize()
+	strategyIndex = indexString(cfg.UI.TableColumns.Positions, "strategy")
+	sideIndex = indexString(cfg.UI.TableColumns.Positions, "side")
+	if strategyIndex != sideIndex+1 {
+		t.Fatalf("legacy strategy column order should be migrated beside direction: %#v", cfg.UI.TableColumns.Positions)
+	}
 
 	cfg.UI.TableColumns.PendingOrders = []string{"pending_age", "actions", "state"}
 	cfg.Normalize()

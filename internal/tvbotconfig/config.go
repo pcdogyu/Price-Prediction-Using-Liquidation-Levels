@@ -841,10 +841,17 @@ func defaultTableColumns() TableColumnsConfig {
 
 func normalizeTableColumns(columns TableColumnsConfig) TableColumnsConfig {
 	return TableColumnsConfig{
-		Positions:     normalizeColumnOrder(columns.Positions, DefaultPositionTableColumns),
+		Positions:     normalizePositionColumnOrder(columns.Positions),
 		PendingOrders: normalizePendingOrderColumnOrder(columns.PendingOrders),
 		Symbols:       normalizeColumnOrder(columns.Symbols, DefaultSymbolTableColumns),
 	}
+}
+
+func normalizePositionColumnOrder(columns []string) []string {
+	normalized := normalizeColumnOrder(columns, DefaultPositionTableColumns)
+	// Keep the strategy column beside direction even when an older tenant
+	// configuration persisted it at the end of the table.
+	return moveColumnAfter(normalized, "strategy", "side")
 }
 
 func normalizePendingOrderColumnOrder(columns []string) []string {
@@ -918,6 +925,43 @@ func moveColumnBefore(columns []string, col, before string) []string {
 		return out
 	}
 	out = append(out[:beforeIdx], append([]string{col}, out[beforeIdx:]...)...)
+	return out
+}
+
+func moveColumnAfter(columns []string, col, after string) []string {
+	colIdx := -1
+	afterIdx := -1
+	for i, item := range columns {
+		switch item {
+		case col:
+			colIdx = i
+		case after:
+			afterIdx = i
+		}
+	}
+	if colIdx < 0 || afterIdx < 0 || colIdx == afterIdx+1 {
+		return columns
+	}
+	out := make([]string, 0, len(columns))
+	for i, item := range columns {
+		if i != colIdx {
+			out = append(out, item)
+		}
+	}
+	afterIdx = -1
+	for i, item := range out {
+		if item == after {
+			afterIdx = i
+			break
+		}
+	}
+	if afterIdx < 0 {
+		return out
+	}
+	insertAt := afterIdx + 1
+	out = append(out, "")
+	copy(out[insertAt+1:], out[insertAt:])
+	out[insertAt] = col
 	return out
 }
 

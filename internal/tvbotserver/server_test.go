@@ -228,11 +228,13 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte(".positions-table .pos-exchange-col { width: 3.84%; }")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(".positions-table .pos-side-col { width: 5.44%; }")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(".positions-table .pos-strategy-col { width: 5.76%; }")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(".positions-table {\n      min-width: 1600px;\n    }")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(".positions-table .pos-holding-time-col { width: 5.94%; }")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("width: 36px")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("border-radius: 999px")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("font-size: 7px")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(".positions-table .position-actions")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("flex-wrap: nowrap;\n      white-space: nowrap;")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("gap: 6px")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("missingPositionEntrySyncIntervalMs = 180000")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("positionEntryTimesMissing")) ||

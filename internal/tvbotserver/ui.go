@@ -876,19 +876,22 @@ const tvbotHTML = `<!doctype html>
     }
     .positions-table .position-actions {
       gap: 6px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+      white-space: nowrap;
     }
     .position-action-groups {
       display: flex;
       flex-direction: column;
       align-items: flex-start;
       gap: 6px;
+      min-width: max-content;
     }
     .position-action-group {
       display: flex;
       align-items: center;
       gap: 6px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+      white-space: nowrap;
     }
     .position-action-label {
       color: var(--muted);
@@ -916,6 +919,9 @@ const tvbotHTML = `<!doctype html>
       color: var(--muted);
       font-size: 12px;
       white-space: nowrap;
+    }
+    .positions-table {
+      min-width: 1600px;
     }
     .position-open-mode-toggle input {
       appearance: none;
@@ -2791,6 +2797,9 @@ const tvbotHTML = `<!doctype html>
       if (tableID === "pending_orders" && !hadPendingAge) {
         moveColumnBefore(out, "pending_age", "state");
       }
+      if (tableID === "positions") {
+        moveColumnAfter(out, "strategy", "side");
+      }
       return out;
     }
 
@@ -2801,6 +2810,16 @@ const tvbotHTML = `<!doctype html>
       order.splice(from, 1);
       const nextTo = order.indexOf(beforeID);
       if (nextTo >= 0) order.splice(nextTo, 0, columnID);
+      return order;
+    }
+
+    function moveColumnAfter(order, columnID, afterID) {
+      const from = order.indexOf(columnID);
+      const after = order.indexOf(afterID);
+      if (from < 0 || after < 0 || from === after + 1) return order;
+      order.splice(from, 1);
+      const nextAfter = order.indexOf(afterID);
+      if (nextAfter >= 0) order.splice(nextAfter + 1, 0, columnID);
       return order;
     }
 

@@ -308,6 +308,13 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 	if strings.Contains(page[positionsStart:positionsEnd], `cell: (row) => textTableCell(displayInstID(row.instId))`) {
 		t.Fatal("position symbol column should no longer render as plain text")
 	}
+	positionColumns := page[positionsStart:positionsEnd]
+	directionIndex := strings.Index(positionColumns, `id: "side", title: "方向"`)
+	strategyIndex := strings.Index(positionColumns, `id: "strategy", title: "策略"`)
+	sizeIndex := strings.Index(positionColumns, `id: "size", title: "持仓量"`)
+	if directionIndex < 0 || strategyIndex < 0 || sizeIndex < 0 || strategyIndex <= directionIndex || sizeIndex <= strategyIndex {
+		t.Fatalf("position strategy column should follow direction before size: direction=%d strategy=%d size=%d", directionIndex, strategyIndex, sizeIndex)
+	}
 	positionOpen := strings.Index(page, "async function openPositionSymbolDetails(row)")
 	if positionOpen < 0 {
 		t.Fatal("position symbol detail handler is missing")
