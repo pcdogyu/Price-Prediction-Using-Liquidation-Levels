@@ -377,6 +377,41 @@ func (s *OrderStore) MarkFailedCode(signalID, code string, err error, now time.T
 	return errors.New("signal record not found")
 }
 
+// Delete removes a transient order record that never represented an exchange
+// action, such as an automatic close signal arriving after its position was
+// already closed. Callers should only use this for records that must not appear
+// in order history at all; real submission failures should remain failed.
+func (s *OrderStore) Delete(signalID string) error {
+	signalID = strings.TrimSpace(signalID)
+	if signalID == "" {
+		return errors.New("signal id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		result, err := s.db.Exec(`DELETE FROM orders WHERE signal_id = ?`, signalID)
+		if err != nil {
+			return err
+		}
+		removed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if removed == 0 {
+			return errors.New("signal record not found")
+		}
+		return nil
+	}
+	for i := range s.state.Orders {
+		if s.state.Orders[i].SignalID != signalID {
+			continue
+		}
+		s.state.Orders = append(s.state.Orders[:i], s.state.Orders[i+1:]...)
+		return s.saveLocked()
+	}
+	return errors.New("signal record not found")
+}
+
 func (s *OrderStore) List(limit int) []OrderRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()

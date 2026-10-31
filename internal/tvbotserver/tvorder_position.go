@@ -258,10 +258,17 @@ func (s *Server) executePositionCloseSignal(signalID string, signal trading.Sign
 	result.PositionEffect = trading.PositionEffectClose
 	result.PositionSide = signal.PositionSide
 	if err != nil {
-		code := "position_close_failed"
 		if errors.Is(err, errPositionNotOpen) {
-			code = "position_not_open"
-		} else if errors.Is(err, errMinProfitSpreadNotReached) {
+			if deleteErr := s.Orders.Delete(signalID); deleteErr != nil {
+				if s.Logger != nil {
+					s.Logger.Error("failed to remove position-not-open close record", "signal_id", signalID, "error", deleteErr)
+				}
+				_ = s.Orders.MarkFailedCode(signalID, "position_not_open", err, s.now())
+			}
+			return
+		}
+		code := "position_close_failed"
+		if errors.Is(err, errMinProfitSpreadNotReached) {
 			code = "position_profit_gate"
 		}
 		_ = s.Orders.MarkFailedCode(signalID, code, err, s.now())

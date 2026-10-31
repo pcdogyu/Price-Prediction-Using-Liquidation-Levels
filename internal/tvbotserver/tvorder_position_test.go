@@ -202,15 +202,21 @@ func TestTVOrderCloseSignalDoesNotCloseOppositeBinanceNetPosition(t *testing.T) 
 	signal.Condition = "空单止损"
 	signal.Token = srv.Token.Generate(signal.CanonicalWebhookTokenPayload())
 	resp := postTVOrderSignal(t, srv, signal)
-	rec := waitOrderStatus(t, srv.Orders, resp.SignalID, storage.StatusFailed)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := srv.Orders.Get(resp.SignalID); !ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, ok := srv.Orders.Get(resp.SignalID); ok {
+		t.Fatalf("position-not-open close should not remain in order history: %#v", srv.Orders.List(10))
+	}
 
 	select {
 	case got := <-srv.Executor.(fakeExecutor).calls:
 		t.Fatalf("close signal should not use opening executor: %#v", got)
 	case <-time.After(50 * time.Millisecond):
-	}
-	if rec.ErrorCode != "position_not_open" || rec.PositionEffect != trading.PositionEffectClose || rec.PositionSide != trading.PositionSideShort {
-		t.Fatalf("target short position should be reported missing: %#v", rec)
 	}
 	blocks, err := srv.Orders.ListActiveCoinpairBlocks(srv.now())
 	if err != nil {

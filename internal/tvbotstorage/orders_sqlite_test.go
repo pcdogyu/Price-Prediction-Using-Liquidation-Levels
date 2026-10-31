@@ -160,6 +160,49 @@ func TestSQLiteOrderStoreRecordDuplicateAndMarkResults(t *testing.T) {
 	}
 }
 
+func TestOrderStoreDeleteRemovesTransientRecordMemoryAndSQLite(t *testing.T) {
+	run := func(t *testing.T, store *OrderStore) {
+		t.Helper()
+		signal := trading.Signal{
+			Action:         trading.ActionShort,
+			TargetExchange: trading.ExchangeBinance,
+			Coinpair:       "ETHUSDT",
+			Ticker:         "BINANCE:ETHUSDT.P",
+			PositionEffect: trading.PositionEffectClose,
+			PositionSide:   trading.PositionSideLong,
+		}
+		record, duplicate, err := store.RecordAccepted(signal, "transient-close", time.Now().UTC())
+		if err != nil || duplicate {
+			t.Fatalf("record transient close: record=%#v duplicate=%v err=%v", record, duplicate, err)
+		}
+		if err := store.Delete(record.SignalID); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := store.Get(record.SignalID); ok || store.Count() != 0 {
+			t.Fatalf("deleted order still present: %#v", store.List(10))
+		}
+		if err := store.Delete(record.SignalID); err == nil {
+			t.Fatal("expected deleting a missing order to fail")
+		}
+	}
+
+	t.Run("memory", func(t *testing.T) {
+		store, err := NewOrderStore("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		run(t, store)
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		store, err := NewSQLiteOrderStore(filepath.Join(t.TempDir(), "tvbot.db"), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		run(t, store)
+	})
+}
+
 func TestOrderStoreRecordIgnoredDoesNotBlockLaterAcceptance(t *testing.T) {
 	run := func(t *testing.T, store *OrderStore) {
 		t.Helper()
