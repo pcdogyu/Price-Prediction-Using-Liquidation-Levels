@@ -224,7 +224,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `src="assets/dashboard.js"`) || strings.Contains(w.Body.String(), `id="classic-pivot-title"`) || strings.Contains(w.Body.String(), `id="upper-status"`) || strings.Contains(w.Body.String(), `id="lower-status"`) || !strings.Contains(w.Body.String(), `data-interval="24h"`) || !strings.Contains(w.Body.String(), `viewBox="0 0 1740 560"`) || !strings.Contains(w.Body.String(), "Binance USDⓈ-M") || !strings.Contains(w.Body.String(), "多单爆仓") || !strings.Contains(w.Body.String(), "空单爆仓") || !strings.Contains(w.Body.String(), `id="coinglass-button"`) || !strings.Contains(w.Body.String(), `id="coinglass-capture"`) || !strings.Contains(w.Body.String(), `id="coinglass-json"`) || !strings.Contains(w.Body.String(), `id="liquidation-top3"`) || !strings.Contains(w.Body.String(), `id="browser-frame"`) || !strings.Contains(w.Body.String(), "正在读取下次时间") || strings.Contains(w.Body.String(), "async function refresh") {
 		t.Fatal("dashboard script was not externalized")
 	}
-	if !strings.Contains(w.Body.String(), `data-symbol="ETHUSDT" class="active"`) || strings.Contains(w.Body.String(), `data-symbol="BTCUSDT" class="active"`) {
+	if !strings.Contains(w.Body.String(), `data-symbol="ETHUSDT" class="active"`) || strings.Contains(w.Body.String(), `data-symbol="BTCUSDT" class="active"`) || !strings.Contains(w.Body.String(), `id="ticker-symbol">ETHUSDT · Binance 永续价格`) {
 		t.Fatal("ETH should be the default dashboard symbol")
 	}
 	r = httptest.NewRequest(http.MethodGet, "/assets/dashboard.js", nil)

@@ -325,6 +325,30 @@ func TestMarketHistorySharesCompleteSnapshotAcrossRequests(t *testing.T) {
 	}
 }
 
+func TestMarketHistoryUsesConfiguredBackfillWindow(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "history-window.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC().Truncate(time.Minute)
+	rows := []domain.Candle{
+		{Exchange: "binance", Symbol: "BTCUSDT", Time: now.Add(-48 * time.Hour), Open: 90, High: 91, Low: 89, Close: 90},
+		{Exchange: "binance", Symbol: "BTCUSDT", Time: now.Add(-30 * time.Minute), Open: 100, High: 101, Low: 99, Close: 100},
+	}
+	if err := st.UpsertCandles(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(config.Config{Symbols: []string{"BTCUSDT"}, BackfillDays: 1, ModelPath: filepath.Join(t.TempDir(), "model.json")}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	view, err := svc.MarketHistory(context.Background(), "BTCUSDT", "1m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Candles) != 1 || view.Candles[0].Open != 100 {
+		t.Fatalf("history window returned %#v, want only the recent candle", view.Candles)
+	}
+}
+
 func TestMarketHistoryPrefersNativeExchangeHistory(t *testing.T) {
 	original := fetchMarketHistoryKlines
 	t.Cleanup(func() { fetchMarketHistoryKlines = original })

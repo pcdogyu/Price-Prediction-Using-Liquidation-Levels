@@ -2252,7 +2252,8 @@ if (embeddedChart) installEmbeddedChartInteractions();
 if (embeddedChart) refresh(true);
 else {
   loadHistoricalTradeView();
-  loadSymbolCatalog().finally(() => refresh(true));
+  loadSymbolCatalog();
+  refresh(true);
 }
 setInterval(() => refresh(false), 10000);
 setInterval(updateCoinGlassCountdown, 1000);

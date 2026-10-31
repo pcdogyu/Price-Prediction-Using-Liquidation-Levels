@@ -32,8 +32,8 @@ type marketHistorySnapshotBuild struct {
 // Binance native interval endpoint for the complete shared snapshot.
 var fetchMarketHistoryKlines = exchange.BinanceKlineHistory
 
-// MarketHistory reads the complete exchange history bounded by the locally
-// retained window for one configured symbol and interval. The result is shared
+// MarketHistory reads the complete chart history within the configured
+// backfill window for one configured symbol and interval. The result is shared
 // by all authenticated tenants in this process; the browser no longer needs to
 // replay the same cursor pages for every newly opened tab.
 func (s *Service) MarketHistory(ctx context.Context, symbol, intervalName string) (domain.MarketView, error) {
@@ -90,7 +90,14 @@ func (s *Service) buildMarketHistory(ctx context.Context, symbol, intervalName s
 		return domain.MarketView{}, errors.New("market history unavailable")
 	}
 	historyEnd := marketHistoryEnd(now, intervalName)
-	localRaw, err := s.store.CandlesRange(ctx, symbol, first, historyEnd)
+	historyStart := first
+	if s.cfg.BackfillDays > 0 {
+		lookback := now.Add(-time.Duration(s.cfg.BackfillDays) * 24 * time.Hour)
+		if lookback.After(historyStart) {
+			historyStart = lookback
+		}
+	}
+	localRaw, err := s.store.CandlesRange(ctx, symbol, historyStart, historyEnd)
 	if err != nil {
 		return domain.MarketView{}, err
 	}
@@ -103,7 +110,7 @@ func (s *Service) buildMarketHistory(ctx context.Context, symbol, intervalName s
 	raw := localRaw
 	summary := localSummary
 	if s.cfg.BackfillDays > 0 && intervalName != "1m" && intervalName != "2m" {
-		if upstream, upstreamErr := fetchMarketHistoryKlines(ctx, symbol, intervalName, first, historyEnd); upstreamErr == nil && len(upstream) > 0 {
+		if upstream, upstreamErr := fetchMarketHistoryKlines(ctx, symbol, intervalName, historyStart, historyEnd); upstreamErr == nil && len(upstream) > 0 {
 			raw = marketCandlesToDomain(symbol, upstream)
 		} else if upstreamErr != nil {
 			s.log.Warn("Binance native K-line history unavailable; serving local snapshot", "symbol", symbol, "interval", intervalName, "error", upstreamErr)
