@@ -3825,10 +3825,10 @@ const tvbotHTML = `<!doctype html>
     function startPositionViewPolling() {
       if (!positionViewPollTimer) {
         positionViewPollTimer = window.setInterval(async () => {
-          if (positionViewPollBusy) return;
+          if (positionViewPollBusy || document.hidden || !positionsTabActive()) return;
           positionViewPollBusy = true;
           try {
-            await loadPositionView();
+            await loadPositionView(true);
           } catch (err) {
             toast(err.message);
           } finally {
@@ -8279,7 +8279,7 @@ const tvbotHTML = `<!doctype html>
         const result = await submitPositionOpen(body);
         const percent = Math.round(Number(body.ratio) * 100) + "%";
         toast(modeLabel + "开仓已提交 " + instID + " " + percent + " " + (positionKind === "long" ? "多单" : "空单"));
-        await Promise.all([loadPositionView(), loadOrders()]);
+        await Promise.all([loadPositionView(true), loadOrders()]);
         if (result && result.signal_id) toast("开仓信号 " + asText(result.signal_id) + " 已记录");
       } finally {
         delete state.positionOpening[key];
@@ -8317,7 +8317,7 @@ const tvbotHTML = `<!doctype html>
             delete state.positionClosing[key];
           }
         }
-        await loadPositionView();
+        await loadPositionView(true);
       } finally {
         state.positionClosingAll = false;
         renderPositions();
@@ -8366,8 +8366,8 @@ const tvbotHTML = `<!doctype html>
           toast(mode === "market" ? marketCloseText + ratioText : limitCloseText + asText(result.px) + ratioText);
         }
         rememberLimitClosePendingOrder(result, Object.assign({}, body, { pos: pos }));
-        await loadPositionView();
-        window.setTimeout(() => loadPositionView().catch((err) => toast(err.message)), mode === "market" ? 1600 : 5200);
+        await loadPositionView(true);
+        window.setTimeout(() => loadPositionView(true).catch((err) => toast(err.message)), mode === "market" ? 1600 : 5200);
       } finally {
         delete state.positionClosing[key];
         renderPositions();

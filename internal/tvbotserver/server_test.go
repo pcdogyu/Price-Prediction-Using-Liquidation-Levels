@@ -241,6 +241,8 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("syncMissingPositionEntryTimes")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`qs.set("refresh", "true")`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("loadPositionView(true)")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("positionViewPollBusy || document.hidden || !positionsTabActive()")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("positionViewPollBusy = true;\n          try {\n            await loadPositionView(true);")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("positionTableColumnDefs")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`tableColumnCount("positions")`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("pending-order-rows")) ||
