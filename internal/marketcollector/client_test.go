@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestSubscriptionNormalizesAndDeduplicatesSymbols(t *testing.T) {
 }
 
 func TestClientReceivesEventsFromCollectorSocket(t *testing.T) {
-	socket := `C:\mc-test-` + strconv.FormatInt(time.Now().UnixNano(), 10) + `.sock`
+	socket := filepath.Join(os.TempDir(), "mc-test-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
