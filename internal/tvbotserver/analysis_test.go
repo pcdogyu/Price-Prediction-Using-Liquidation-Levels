@@ -112,6 +112,112 @@ func TestBuildAnalysisUsesStaleCacheWhenOKXBalanceIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestAnalysisCacheRejectsResponsesWithUpstreamErrors(t *testing.T) {
+	valid := analysisResponse{
+		OK: true,
+		Source: analysisSourceStatus{
+			Balance: "binance",
+			Fills:   "binance",
+			Funding: "binance",
+		},
+	}
+	if !analysisResponseCacheable(valid) {
+		t.Fatal("successful analysis response should be cacheable")
+	}
+	for _, source := range []analysisSourceStatus{
+		{Fills: "binance_error"},
+		{Fills: "okx+binance_error"},
+		{Funding: "binance_error"},
+		{Balance: "gate_error"},
+	} {
+		if analysisResponseCacheable(analysisResponse{OK: true, Source: source}) {
+			t.Fatalf("analysis response with upstream error should not be cacheable: %#v", source)
+		}
+	}
+	if analysisResponseCacheable(analysisResponse{Source: valid.Source}) {
+		t.Fatal("analysis response without OK marker should not be cacheable")
+	}
+}
+
+func TestStaleAnalysisCacheIgnoresUpstreamErrorPayload(t *testing.T) {
+	srv := newTestServer(t)
+	cfg := srv.ConfigStore.Get()
+	now := srv.now()
+	cacheKey := analysisCacheKey("", "binance_bot", analysisEnvName(cfg), 3, 1440)
+	failed := analysisResponse{
+		OK:          true,
+		RefreshedAt: now.Add(-15 * time.Minute),
+		Source: analysisSourceStatus{
+			Fills:   "binance_error",
+			Funding: "binance_error",
+		},
+	}
+	if err := srv.Orders.CachePayload(cacheKey, failed, failed.RefreshedAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := srv.staleAnalysisFromCache(cacheKey); ok {
+		t.Fatal("stale analysis should not reuse an upstream-error payload")
+	}
+}
+
+func TestBuildAnalysisDoesNotCacheBinanceUpstreamError(t *testing.T) {
+	srv := newTestServer(t)
+	var userTradeCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v1/exchangeInfo":
+			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"BADUSDT","status":"TRADING","pricePrecision":2,"quantityPrecision":3}]}`))
+		case "/fapi/v1/userTrades":
+			userTradeCalls++
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`temporary upstream failure`))
+		case "/fapi/v1/income":
+			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v3/balance":
+			_, _ = w.Write([]byte(`[{"asset":"USDT","balance":"100","availableBalance":"100","crossWalletBalance":"100","updateTime":1784862000000}]`))
+		case "/fapi/v3/positionRisk":
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	cfg := srv.ConfigStore.Get()
+	cfg.Symbols = map[string]config.SymbolConfig{"BAD": {Coinpair: "BADUSDT"}}
+	cfg.Trading.BinanceDemoBaseURL = upstream.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = upstream.Client()
+	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
+		ID:     "binance_bot",
+		Active: true,
+		Credentials: binance.Credentials{
+			APIKey:    "binance-key",
+			SecretKey: "binance-secret",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := srv.buildAnalysis(context.Background(), cfg, "", "binance_bot", 3, 1440, true)
+	if err != nil {
+		t.Fatalf("build analysis should return a diagnostic response: %v", err)
+	}
+	if got.Source.Fills != "binance_error" {
+		t.Fatalf("expected Binance fill source error, got %#v", got.Source)
+	}
+	if userTradeCalls == 0 {
+		t.Fatal("Binance user-trades endpoint was not called")
+	}
+	cacheKey := analysisCacheKey("", "binance_bot", analysisEnvName(cfg), 3, 1440)
+	if _, ok, err := srv.Orders.CachedPayload(cacheKey); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Fatal("analysis with an upstream error must not be cached")
+	}
+}
+
 func TestBalanceOverviewUsesLatestSnapshotWhenOKXIsUnavailable(t *testing.T) {
 	srv := newTestServer(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

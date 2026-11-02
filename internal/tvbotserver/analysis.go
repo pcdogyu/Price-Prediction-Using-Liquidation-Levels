@@ -500,11 +500,13 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 			if err := json.Unmarshal([]byte(cached.PayloadJSON), &resp); err != nil {
 				return analysisResponse{}, err
 			}
-			resp.Cache.Hit = true
-			resp.Cache.Stale = false
-			resp.Cache.CachedAt = cached.RefreshedAt
-			resp.Cache.CacheKey = cacheKey
-			return resp, nil
+			if analysisResponseCacheable(resp) {
+				resp.Cache.Hit = true
+				resp.Cache.Stale = false
+				resp.Cache.CachedAt = cached.RefreshedAt
+				resp.Cache.CacheKey = cacheKey
+				return resp, nil
+			}
 		}
 	}
 	var balance analysisBalance
@@ -669,11 +671,13 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 		resp, buildErr = s.analysisFromStore(analysisCfg, apiID, binanceAPIID, gateAPIID, envName, priceDays, pnlMinutes, now, source, binanceTrades, gateTrades, gatePositions)
 	}
 	if !okxConfigured || buildErr != nil {
-		if buildErr != nil && !binanceDataReady && !gateDataReady {
+		if !binanceDataReady && !gateDataReady {
 			if stale, ok := s.staleAnalysisFromCache(cacheKey); ok {
 				return stale, nil
 			}
-			return analysisResponse{}, buildErr
+			if buildErr != nil {
+				return analysisResponse{}, buildErr
+			}
 		}
 		balancePoints := []analysisBalancePoint{}
 		if balanceReady {
@@ -702,8 +706,10 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 	applyAnalysisPositionDisplayData(&resp, analysisCfg, okxAnalysisPrecisions, binanceAnalysisPrecisions, gateAnalysisContracts)
 	resp.Balance = balance
 	resp.Cache.CacheKey = cacheKey
-	if err := s.Orders.CachePayload(cacheKey, resp, now); err != nil && s.Logger != nil {
-		s.Logger.Warn("failed to write analysis cache", "error", err)
+	if analysisResponseCacheable(resp) {
+		if err := s.Orders.CachePayload(cacheKey, resp, now); err != nil && s.Logger != nil {
+			s.Logger.Warn("failed to write analysis cache", "error", err)
+		}
 	}
 	return resp, nil
 }
@@ -717,12 +723,30 @@ func (s *Server) staleAnalysisFromCache(cacheKey string) (analysisResponse, bool
 	if err := json.Unmarshal([]byte(cached.PayloadJSON), &resp); err != nil {
 		return analysisResponse{}, false
 	}
+	if !analysisResponseCacheable(resp) {
+		return analysisResponse{}, false
+	}
 	resp.Cache.Hit = true
 	resp.Cache.Stale = true
 	resp.Cache.CachedAt = cached.RefreshedAt
 	resp.Cache.CacheKey = cacheKey
 	resp.Source = analysisSourceStatus{Balance: "cache", Price: "cache", Fills: "cache", Funding: "cache", Gate: "cache"}
 	return resp, true
+}
+
+func analysisResponseCacheable(resp analysisResponse) bool {
+	return resp.OK && !analysisSourceHasError(resp.Source)
+}
+
+func analysisSourceHasError(source analysisSourceStatus) bool {
+	for _, value := range []string{source.Balance, source.Price, source.Fills, source.Funding, source.Gate} {
+		for _, part := range strings.Split(strings.ToLower(value), "+") {
+			if strings.HasSuffix(strings.TrimSpace(part), "_error") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) analysisOKXCredentials(cfg config.Config, requestedAPIID string) (okx.Credentials, string, bool) {
