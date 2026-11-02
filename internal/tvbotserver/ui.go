@@ -457,6 +457,26 @@ const tvbotHTML = `<!doctype html>
       font: inherit;
       cursor: pointer;
       min-height: 36px;
+      transition: transform .18s ease, box-shadow .2s ease, background-color .2s ease, border-color .2s ease, color .2s ease;
+    }
+    nav button:hover, .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 5px 14px rgba(23, 32, 51, 0.14);
+    }
+    nav button:active, .btn:active {
+      transform: scale(.98);
+      box-shadow: 0 2px 6px rgba(23, 32, 51, 0.12);
+      transition-duration: .08s;
+    }
+    nav button:focus-visible, .btn:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
+    }
+    nav button:disabled, .btn:disabled {
+      opacity: .48;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
     }
     nav button {
       min-height: 34px;
@@ -525,6 +545,13 @@ const tvbotHTML = `<!doctype html>
       100% { transform: scale(1); box-shadow: 0 0 0 8px color-mix(in srgb, var(--blue) 0%, transparent); }
     }
     @media (prefers-reduced-motion: reduce) {
+      nav button, .btn {
+        transition-duration: .01ms;
+      }
+      nav button:hover, .btn:hover,
+      nav button:active, .btn:active {
+        transform: none;
+      }
       #save-order-settings.is-saving,
       #save-order-settings.is-saving::before,
       #save-order-settings.is-saved {
@@ -599,6 +626,9 @@ const tvbotHTML = `<!doctype html>
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
     }
+    .order-settings-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
     .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .gamma-policy-field {
       grid-column: 1 / -1;
@@ -646,6 +676,10 @@ const tvbotHTML = `<!doctype html>
       color: var(--text);
       background: var(--control-bg);
       font: inherit;
+    }
+    input:disabled, select:disabled, textarea:disabled {
+      opacity: .48;
+      cursor: not-allowed;
     }
     textarea {
       min-height: 190px;
@@ -1791,8 +1825,11 @@ const tvbotHTML = `<!doctype html>
     }
     .toast {
       position: fixed;
-      right: 18px;
-      bottom: 18px;
+      top: 50%;
+      left: 50%;
+      right: auto;
+      bottom: auto;
+      transform: translate(-50%, -50%);
       max-width: 420px;
       background: var(--nav-bg);
       color: var(--text);
@@ -1801,6 +1838,9 @@ const tvbotHTML = `<!doctype html>
       box-shadow: var(--shadow);
       display: none;
       z-index: 10;
+      font-size: 16px;
+      line-height: 1.5;
+      text-align: center;
     }
     .toast.show { display: block; }
     .build-footer {
@@ -2324,7 +2364,7 @@ const tvbotHTML = `<!doctype html>
         <h2>下单设置</h2>
         <button class="btn primary" type="button" id="save-order-settings">保存下单设置</button>
       </div>
-      <div class="grid">
+      <div class="grid order-settings-grid">
         <label>USDT 下单金额<input id="order-amount" type="number" min="0" step="0.01"></label>
         <label>杠杆<input id="order-leverage" type="number" min="1" step="1"></label>
         <label>订单类型<select id="order-type"><option value="market">市价单</option><option value="limit">限价单</option><option value="layered">多层订单</option></select></label>
@@ -5121,6 +5161,7 @@ const tvbotHTML = `<!doctype html>
         input.checked = input.value === gammaPolicy;
       });
       $("order-risk-type").value = trading.risk_type || "tp_sl";
+      updateOrderRiskFields();
       $("order-tp").value = trading.take_profit_pct || 2;
       $("order-sl").value = trading.stop_loss_pct || 1;
       $("order-trailing").value = trading.trailing_pct || 1;
@@ -5169,6 +5210,15 @@ const tvbotHTML = `<!doctype html>
     function updateLayeredOrderFields() {
       const visible = $("order-type").value === "layered";
       $("layered-order-fields").style.display = visible ? "block" : "none";
+    }
+
+    function updateOrderRiskFields() {
+      const riskType = String($("order-risk-type").value || "none").toLowerCase();
+      const fixedEnabled = riskType === "tp_sl";
+      const trailingEnabled = riskType === "trailing";
+      $("order-tp").disabled = !fixedEnabled;
+      $("order-sl").disabled = !fixedEnabled;
+      $("order-trailing").disabled = !trailingEnabled;
     }
 
     function gammaNegativePolicy(trading) {
@@ -8606,6 +8656,7 @@ const tvbotHTML = `<!doctype html>
       $(id).addEventListener("change", () => renderOrderSettingsPreview());
     });
     $("order-type").addEventListener("change", () => { updateLayeredOrderFields(); renderOrderSettingsPreview(); });
+    $("order-risk-type").addEventListener("change", () => { updateOrderRiskFields(); renderOrderSettingsPreview(); });
     $("save-position-monitor").addEventListener("click", () => savePositionMonitor().catch((err) => toast(err.message)));
     $("save-menu-settings").addEventListener("click", () => saveMenuSettings().catch((err) => toast(err.message)));
     $("menu-settings-rows").addEventListener("input", (event) => {

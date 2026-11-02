@@ -141,6 +141,8 @@ func TestRenderTVBotOrderSettingsSaveButtonHasAnimatedStates(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=orderSettings", nil))
 	for _, want := range []string{
 		`id="save-order-settings"`,
+		`class="grid order-settings-grid"`,
+		`grid-template-columns: repeat(4, minmax(0, 1fr));`,
 		`#save-order-settings.is-saving`,
 		`#save-order-settings.is-saved`,
 		`#save-order-settings.is-error`,
@@ -151,6 +153,15 @@ func TestRenderTVBotOrderSettingsSaveButtonHasAnimatedStates(t *testing.T) {
 		`保存中…`,
 		`保存完成 ✓`,
 		`保存失败，重试`,
+		`.toast {`,
+		`top: 50%;`,
+		`left: 50%;`,
+		`transform: translate(-50%, -50%);`,
+		`font-size: 16px;`,
+		`function updateOrderRiskFields()`,
+		`$("order-tp").disabled = !fixedEnabled`,
+		`$("order-sl").disabled = !fixedEnabled`,
+		`$("order-trailing").disabled = !trailingEnabled`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("order settings save button is missing state marker %q", want)
@@ -159,6 +170,9 @@ func TestRenderTVBotOrderSettingsSaveButtonHasAnimatedStates(t *testing.T) {
 	saveStart := strings.Index(page, "async function saveOrderSettings()")
 	if saveStart < 0 || !strings.Contains(page[saveStart:], `setOrderSettingsSaveButtonState("saving")`) || !strings.Contains(page[saveStart:], `setOrderSettingsSaveButtonState("saved")`) || !strings.Contains(page[saveStart:], `setOrderSettingsSaveButtonState("error")`) {
 		t.Fatal("order settings save flow should expose saving, saved, and error button states")
+	}
+	if !strings.Contains(page, `$("order-risk-type").addEventListener("change", () => { updateOrderRiskFields(); renderOrderSettingsPreview(); });`) {
+		t.Fatal("changing the risk type should refresh disabled risk controls")
 	}
 }
 
