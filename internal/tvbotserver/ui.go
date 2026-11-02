@@ -1545,6 +1545,7 @@ const tvbotHTML = `<!doctype html>
     .analysis-trade-table .analysis-inst-id-col { width: 6.4%; }
     .analysis-trade-table .analysis-side-col { width: 5.4%; }
     .analysis-trade-table .analysis-gamma-col { width: 7.2%; }
+    .analysis-trade-table .analysis-strategy-col { width: 9.2%; }
     .analysis-trade-table .analysis-entry-px-col { width: 7%; }
     .analysis-trade-table .analysis-exit-px-col { width: 7%; }
     .analysis-trade-table .analysis-qty-col { width: 7%; }
@@ -2686,6 +2687,7 @@ const tvbotHTML = `<!doctype html>
       { id: "inst_id", title: "币对", colClass: "analysis-inst-id-col", renderHTML: (row) => analysisTradeSymbolHTML(row) },
       { id: "side", title: "方向", colClass: "analysis-side-col", toneClass: (row) => analysisPositionSideToneClass(row.side), render: (row) => analysisPositionSideText(row.side) },
       { id: "gamma", title: "Gamma", colClass: "analysis-gamma-col", render: (row) => analysisGammaDirectionText(row) },
+      { id: "strategy", title: "策略", colClass: "analysis-strategy-col", render: (row) => analysisStrategyText(row) },
       { id: "entry_px", title: "开仓价", colClass: "analysis-entry-px-col", render: (row) => analysisPriceText(row, row.entry_px) },
       { id: "exit_px", title: "平仓价", colClass: "analysis-exit-px-col", render: (row) => analysisPriceText(row, row.exit_px) },
       { id: "qty", title: "数量", colClass: "analysis-qty-col", render: (row) => analysisAmountText(row.qty) },
@@ -6352,6 +6354,7 @@ const tvbotHTML = `<!doctype html>
       const exitBounds = analysisTradeTimeBounds(members, "exit_time");
       const side = analysisTradeUniformField(members, "side", (value) => value.toLowerCase());
       const gamma = analysisTradeUniformField(members, "gamma_direction", (value) => value.toLowerCase());
+      const strategy = analysisTradeUniformField(members, "strategy", (value) => value.toLowerCase());
       const feeCcy = analysisTradeUniformField(members, "fee_ccy", (value) => value.toUpperCase());
       return Object.assign({}, first, {
         aggregate_count: members.length,
@@ -6363,6 +6366,7 @@ const tvbotHTML = `<!doctype html>
         exit_time_end: exitBounds.end || exitBounds.start || first.exit_time || "",
         side: side,
         gamma_direction: gamma,
+        strategy: strategy,
         entry_px: analysisTradeWeightedAverage(members, "entry_px"),
         exit_px: analysisTradeWeightedAverage(members, "exit_px"),
         qty: analysisTradeSum(members, "qty"),
@@ -6427,6 +6431,12 @@ const tvbotHTML = `<!doctype html>
         if (gammaIndex >= 0) next.splice(gammaIndex, 1);
         const sideIndex = next.indexOf("side");
         next.splice(sideIndex >= 0 ? sideIndex + 1 : 0, 0, "gamma");
+      }
+      if (!source.some((id) => String(id || "").trim() === "strategy")) {
+        const strategyIndex = next.indexOf("strategy");
+        if (strategyIndex >= 0) next.splice(strategyIndex, 1);
+        const gammaIndex = next.indexOf("gamma");
+        next.splice(gammaIndex >= 0 ? gammaIndex + 1 : 0, 0, "strategy");
       }
       if (!hadEntryTime) {
         const entryIndex = next.indexOf("entry_time");
@@ -6810,6 +6820,25 @@ const tvbotHTML = `<!doctype html>
       const value = String(row && row.gamma_direction || "").trim().toLowerCase();
       if (value === "forward") return "正向开仓";
       if (value === "reverse") return "反向开仓";
+      if (value === "mixed") return "多种";
+      return "-";
+    }
+
+    function analysisStrategyText(row) {
+      const value = String(row && row.strategy || "").trim().toLowerCase();
+      if (value === "trend") return "趋势策略";
+      if (value === "scalp") return "震荡策略";
+      if (value === "transition") return "过渡策略";
+      if (value === "manual") return "爆仓策略（手动）";
+      if (value === "aggressive") return "爆仓策略（激进）";
+      if (value === "steady") return "爆仓策略（稳健）";
+      if (value === "alert") return "爆仓策略（预警）";
+      if (value === "value_area") return "价值区策略";
+      if (value === "tradingview") return "TradingView策略";
+      if (value === "position_monitor") return "持仓监控策略";
+      if (value === "stop_loss_webhook") return "止损策略";
+      if (value === "take_profit_webhook") return "止盈策略";
+      if (value === "analysis_manual") return "分析手动策略";
       if (value === "mixed") return "多种";
       return "-";
     }

@@ -28,13 +28,34 @@ func (f analysisRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, err
 
 func TestAnalysisTradeOperationMetadataClassifiesOrderAndMonitorActions(t *testing.T) {
 	record := storage.OrderRecord{
+		APIID:          "binance-main",
+		TargetExchange: trading.ExchangeBinance,
+		Coinpair:       "ETHUSDT",
 		OrderIntent:    "sl_long",
 		PositionEffect: trading.PositionEffectClose,
+		MarketStrategy: trading.MarketStrategyScalp,
 		RawJSON:        `{"source":"liquidation_alert"}`,
+		Result: trading.OrderResult{
+			TargetExchange: trading.ExchangeBinance,
+			APIID:          "binance-main",
+			InstID:         "ETHUSDT",
+			OrdID:          "entry-1",
+			Leverage:       10,
+		},
 	}
 	operation, source := analysisOrderOperation(record, record.PositionEffect)
 	if operation != "stop_loss" || source != "auto" {
 		t.Fatalf("unexpected order metadata operation=%q source=%q", operation, source)
+	}
+	meta, ok := analysisOrderMetaIndex([]storage.OrderRecord{record})[analysisOrderKey(trading.ExchangeBinance, record.APIID, "ETHUSDT", "entry-1")]
+	if !ok || meta.Strategy != trading.MarketStrategyScalp {
+		t.Fatalf("market strategy should be preferred for analysis metadata: %#v found=%v", meta, ok)
+	}
+	record.MarketStrategy = ""
+	record.RawJSON = `{"condition":"value_area_signal","source":"value_area_signal"}`
+	meta, ok = analysisOrderMetaIndex([]storage.OrderRecord{record})[analysisOrderKey(trading.ExchangeBinance, record.APIID, "ETHUSDT", "entry-1")]
+	if !ok || meta.Strategy != "value_area" {
+		t.Fatalf("signal source should provide a fallback strategy: %#v found=%v", meta, ok)
 	}
 
 	f := storage.BinanceFill{Symbol: "ETHUSDT", OrderID: "exit-1", FillTime: time.Now().UnixMilli()}
@@ -49,7 +70,7 @@ func TestAnalysisTradeOperationMetadataClassifiesOrderAndMonitorActions(t *testi
 		Status:    storage.TradeLifecycleTPHit,
 		RawJSON:   string(raw),
 	}}
-	meta, ok := analysisTradeMonitorEventIndex(events)[analysisOrderKey(trading.ExchangeBinance, "binance-main", "ETHUSDT", "exit-1")]
+	meta, ok = analysisTradeMonitorEventIndex(events)[analysisOrderKey(trading.ExchangeBinance, "binance-main", "ETHUSDT", "exit-1")]
 	if !ok || meta.Operation != "take_profit" || meta.OperationSource != "auto" {
 		t.Fatalf("unexpected monitor metadata: %#v found=%v", meta, ok)
 	}
@@ -903,6 +924,54 @@ func TestBuildAnalysisPositionTradesCapturesGammaDirection(t *testing.T) {
 	}
 	if got := byEntry["reverse-entry"].GammaDirection; got != "reverse" {
 		t.Fatalf("reverse Gamma direction=%q, want reverse", got)
+	}
+}
+
+func TestBuildAnalysisPositionTradesCapturesStrategy(t *testing.T) {
+	base := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	trades := []analysisTrade{
+		{
+			Exchange:       trading.ExchangeBinance,
+			APIID:          "default",
+			InstID:         "TESTUSDT",
+			TradeID:        "strategy-open",
+			OrdID:          "strategy-entry",
+			Side:           "buy",
+			PosSide:        trading.PositionSideLong,
+			PositionEffect: trading.PositionEffectOpen,
+			SourceAction:   string(trading.ActionLong),
+			Strategy:       "value_area",
+			FillPx:         "100",
+			FillSz:         "1",
+			Fee:            "-0.01",
+			Leverage:       10,
+			FillTime:       base,
+			FillTS:         base.UnixMilli(),
+			FillCount:      1,
+		},
+		{
+			Exchange:       trading.ExchangeBinance,
+			APIID:          "default",
+			InstID:         "TESTUSDT",
+			TradeID:        "strategy-close",
+			OrdID:          "strategy-exit",
+			Side:           "sell",
+			PosSide:        trading.PositionSideLong,
+			PositionEffect: trading.PositionEffectClose,
+			FillPx:         "101",
+			FillSz:         "1",
+			FillPnl:        "1",
+			Fee:            "-0.01",
+			Leverage:       10,
+			FillTime:       base.Add(time.Hour),
+			FillTS:         base.Add(time.Hour).UnixMilli(),
+			FillCount:      1,
+		},
+	}
+
+	positions := buildAnalysisPositionTrades(config.Config{}, trades, base.Add(-time.Minute))
+	if len(positions) != 1 || positions[0].Strategy != "value_area" {
+		t.Fatalf("strategy metadata should follow the entry order: %#v", positions)
 	}
 }
 

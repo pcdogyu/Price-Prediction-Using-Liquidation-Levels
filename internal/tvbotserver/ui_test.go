@@ -186,14 +186,18 @@ func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 	}
 	sideColumn := strings.Index(page, `{ id: "side", title: "方向"`)
 	gammaColumn := strings.Index(page, `{ id: "gamma", title: "Gamma"`)
+	strategyColumn := strings.Index(page, `{ id: "strategy", title: "策略"`)
 	entryPriceColumn := strings.Index(page, `{ id: "entry_px", title: "开仓价"`)
-	if sideColumn < 0 || gammaColumn < 0 || entryPriceColumn < 0 || sideColumn >= gammaColumn || gammaColumn >= entryPriceColumn {
-		t.Fatalf("analysis Gamma column should follow direction: side=%d gamma=%d entry price=%d", sideColumn, gammaColumn, entryPriceColumn)
+	if sideColumn < 0 || gammaColumn < 0 || strategyColumn < 0 || entryPriceColumn < 0 || sideColumn >= gammaColumn || gammaColumn >= strategyColumn || strategyColumn >= entryPriceColumn {
+		t.Fatalf("analysis Gamma/strategy columns should follow direction: side=%d gamma=%d strategy=%d entry price=%d", sideColumn, gammaColumn, strategyColumn, entryPriceColumn)
 	}
 	for _, want := range []string{
 		`function analysisGammaDirectionText(row)`,
 		`if (value === "forward") return "正向开仓"`,
 		`if (value === "reverse") return "反向开仓"`,
+		`function analysisStrategyText(row)`,
+		`if (value === "trend") return "趋势策略"`,
+		`if (value === "value_area") return "价值区策略"`,
 		`sideIndex >= 0 ? sideIndex + 1 : 0`,
 	} {
 		if !strings.Contains(page, want) {

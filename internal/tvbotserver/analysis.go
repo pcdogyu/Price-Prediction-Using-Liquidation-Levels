@@ -196,6 +196,7 @@ type analysisTrade struct {
 	NetPnL          string    `json:"net_pnl"`
 	Operation       string    `json:"operation,omitempty"`
 	OperationSource string    `json:"operation_source,omitempty"`
+	Strategy        string    `json:"strategy,omitempty"`
 	SourceAction    string    `json:"-"`
 	FillTime        time.Time `json:"fill_time"`
 	FillTS          int64     `json:"fill_ts"`
@@ -222,6 +223,7 @@ type analysisPositionTrade struct {
 	NetPnL            string    `json:"net_pnl,omitempty"`
 	Turnover          string    `json:"turnover,omitempty"`
 	GammaDirection    string    `json:"gamma_direction,omitempty"`
+	Strategy          string    `json:"strategy,omitempty"`
 	EntryOrdID        string    `json:"entry_ord_id,omitempty"`
 	ExitOrdID         string    `json:"exit_ord_id,omitempty"`
 	FillCount         int       `json:"fill_count"`
@@ -1641,6 +1643,7 @@ func mergeAnalysisTradeText(dst *analysisTrade, src analysisTrade) {
 	if dst.OperationSource == "" {
 		dst.OperationSource = src.OperationSource
 	}
+	mergeAnalysisStrategy(&dst.Strategy, src.Strategy)
 	if dst.SourceAction == "" {
 		dst.SourceAction = src.SourceAction
 	}
@@ -1669,6 +1672,7 @@ type analysisOrderMeta struct {
 	PositionSide    string
 	Operation       string
 	OperationSource string
+	Strategy        string
 	SourceAction    string
 }
 
@@ -1707,6 +1711,9 @@ func enrichAnalysisTradesWithEvents(cfg config.Config, trades []analysisTrade, r
 			}
 			if meta.OperationSource != "" {
 				trade.OperationSource = meta.OperationSource
+			}
+			if meta.Strategy != "" {
+				trade.Strategy = meta.Strategy
 			}
 			if meta.SourceAction != "" {
 				trade.SourceAction = meta.SourceAction
@@ -1783,6 +1790,7 @@ func analysisOrderMetaIndex(records []storage.OrderRecord) map[string]analysisOr
 						PositionSide:    positionSide,
 						Operation:       operation,
 						OperationSource: operationSource,
+						Strategy:        analysisOrderStrategy(rec),
 						SourceAction:    string(rec.SourceAction),
 					}
 				}
@@ -1790,6 +1798,31 @@ func analysisOrderMetaIndex(records []storage.OrderRecord) map[string]analysisOr
 		}
 	}
 	return out
+}
+
+func analysisOrderStrategy(rec storage.OrderRecord) string {
+	if strategy := strings.ToLower(strings.TrimSpace(rec.MarketStrategy)); strategy != "" {
+		return strategy
+	}
+	return orderRecordSignalKind(rec)
+}
+
+func mergeAnalysisStrategy(dst *string, src string) {
+	if dst == nil {
+		return
+	}
+	src = strings.ToLower(strings.TrimSpace(src))
+	if src == "" {
+		return
+	}
+	current := strings.ToLower(strings.TrimSpace(*dst))
+	if current == "" {
+		*dst = src
+		return
+	}
+	if current != src {
+		*dst = "mixed"
+	}
 }
 
 func analysisOrderOperation(rec storage.OrderRecord, positionEffect string) (string, string) {
@@ -2212,6 +2245,7 @@ type analysisOpenLot struct {
 	instID            string
 	side              string
 	gammaDirection    string
+	strategy          string
 	entryGroupKey     string
 	entryTime         time.Time
 	entryTS           int64
@@ -2231,6 +2265,7 @@ type analysisPositionTradeAccumulator struct {
 	InstID         string
 	Side           string
 	GammaDirection string
+	Strategy       string
 	EntryTime      time.Time
 	EntryTS        int64
 	ExitTime       time.Time
@@ -2315,6 +2350,7 @@ type analysisOpenPositionAccumulator struct {
 	instID         string
 	side           string
 	gammaDirection string
+	strategy       string
 	entryTime      time.Time
 	entryTS        int64
 	entryPxQty     float64
@@ -2342,6 +2378,7 @@ func buildOpenAnalysisPositionTrades(books map[string][]*analysisOpenLot) []anal
 					instID:         lot.instID,
 					side:           lot.side,
 					gammaDirection: lot.gammaDirection,
+					strategy:       lot.strategy,
 					entryTime:      lot.entryTime,
 					entryTS:        lot.entryTS,
 					entryOrdID:     lot.ordID,
@@ -2359,6 +2396,7 @@ func buildOpenAnalysisPositionTrades(books map[string][]*analysisOpenLot) []anal
 			if acc.gammaDirection == "" {
 				acc.gammaDirection = lot.gammaDirection
 			}
+			mergeAnalysisStrategy(&acc.strategy, lot.strategy)
 			acc.entryPxQty += lot.entryPx * lot.remaining
 			acc.qty += lot.remaining
 			acc.margin += analysisPositionMarginValue(lot.turnoverRemaining, lot.leverage)
@@ -2403,6 +2441,7 @@ func buildOpenAnalysisPositionTrades(books map[string][]*analysisOpenLot) []anal
 			FeeCcy:         "USDT",
 			Turnover:       turnover,
 			GammaDirection: acc.gammaDirection,
+			Strategy:       acc.strategy,
 			EntryOrdID:     acc.entryOrdID,
 			FillCount:      maxInt(1, acc.fillCount),
 		})
@@ -2486,6 +2525,7 @@ func addAnalysisOpenLot(cfg config.Config, books map[string][]*analysisOpenLot, 
 		leverage:          trade.Leverage,
 		fillCount:         maxInt(1, trade.FillCount),
 		gammaDirection:    analysisGammaDirection(trade.SourceAction, positionSide),
+		strategy:          strings.ToLower(strings.TrimSpace(trade.Strategy)),
 	})
 }
 
@@ -2546,6 +2586,7 @@ func ensureAnalysisPositionAccumulator(pending map[string]*analysisPositionTrade
 			InstID:         strings.ToUpper(strings.TrimSpace(trade.InstID)),
 			Side:           normalizeAnalysisPositionSide(positionSide),
 			GammaDirection: analysisGammaDirection(trade.SourceAction, positionSide),
+			Strategy:       strings.ToLower(strings.TrimSpace(trade.Strategy)),
 			EntryTime:      trade.FillTime,
 			EntryTS:        trade.FillTS,
 			Leverage:       trade.Leverage,
@@ -2565,6 +2606,7 @@ func ensureAnalysisPositionAccumulator(pending map[string]*analysisPositionTrade
 	if acc.GammaDirection == "" {
 		acc.GammaDirection = analysisGammaDirection(trade.SourceAction, positionSide)
 	}
+	mergeAnalysisStrategy(&acc.Strategy, trade.Strategy)
 	acc.Remaining += qty
 	acc.EntryFillCount += maxInt(1, trade.FillCount)
 	return acc
@@ -2582,6 +2624,7 @@ func applyAnalysisPositionCloseMatch(pending map[string]*analysisPositionTradeAc
 			InstID:         lot.instID,
 			Side:           lot.side,
 			GammaDirection: lot.gammaDirection,
+			Strategy:       lot.strategy,
 			EntryTime:      lot.entryTime,
 			EntryTS:        lot.entryTS,
 			Leverage:       lot.leverage,
@@ -2654,6 +2697,7 @@ func finalizeAnalysisPositionAccumulator(pending map[string]*analysisPositionTra
 		InstID:         acc.InstID,
 		Side:           acc.Side,
 		GammaDirection: acc.GammaDirection,
+		Strategy:       acc.Strategy,
 		EntryTime:      acc.EntryTime,
 		EntryTS:        acc.EntryTS,
 		ExitTime:       acc.ExitTime,
