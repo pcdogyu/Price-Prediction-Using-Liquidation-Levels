@@ -1008,7 +1008,7 @@ const tvbotHTML = `<!doctype html>
     }
     .position-monitor-timeout {
       display: grid;
-      grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px);
+      grid-template-columns: minmax(220px, 240px);
       gap: 10px;
       align-items: end;
       margin-top: 10px;
