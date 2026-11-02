@@ -143,12 +143,6 @@ func (s *Service) applyBackgroundCandidateSnapshot(snapshot domain.BackgroundSym
 	// collector changes subscriptions without rebuilding existing connections.
 	s.registerVolumeSymbols(current)
 	s.updateMarketCollectorAggregateSymbols()
-	s.volumeMu.Lock()
-	volumeContext := s.volumeContext
-	s.volumeMu.Unlock()
-	if volumeContext != nil {
-		go s.syncVolumeSymbols(volumeContext, current)
-	}
 	if s.alerts != nil {
 		rows := append([]domain.WatchSymbol(nil), copySnapshot.Symbols...)
 		s.alerts.applyWatch(rowsToEntries(rows), rows, copySnapshot.RefreshedAt, "")

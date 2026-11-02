@@ -16,7 +16,7 @@ import (
 var fetchAggregateTrades = exchange.BinanceAggregateTrades
 
 func (s *Service) startVolumeProfiles(ctx context.Context) {
-	profileSymbols := s.volumeProfileSymbols()
+	bootstrapSymbols := s.volumeBootstrapSymbols()
 	s.volumeMu.Lock()
 	s.volumeContext = ctx
 	if s.volumeRequested == nil {
@@ -25,7 +25,7 @@ func (s *Service) startVolumeProfiles(ctx context.Context) {
 	if s.volumeStreamSymbols == nil {
 		s.volumeStreamSymbols = make(map[string]struct{})
 	}
-	for _, symbol := range profileSymbols {
+	for _, symbol := range bootstrapSymbols {
 		s.volumeRequested[symbol] = struct{}{}
 		s.volumeStreamSymbols[symbol] = struct{}{}
 	}
@@ -55,10 +55,12 @@ func (s *Service) registerVolumeSymbols(symbols []string) {
 }
 
 func (s *Service) volumeProfileLoop(ctx context.Context) {
-	// The resident alert watch list and the configured bootstrap symbols all
-	// receive aggregate trades. The same bounded gate and batch writer protect
-	// SQLite while each symbol keeps its own cursor and gap repair path.
-	profileSymbols := s.volumeProfileSymbols()
+	// The resident alert watch list receives live aggregate trades, but only the
+	// deliberately small bootstrap set is replayed at startup. Replaying exact
+	// aggregate trades for all 50 alert candidates creates a large SQLite/API
+	// burst and can starve the dashboard. Other candidates remain available for
+	// live collection and on-demand backfill.
+	bootstrapSymbols := s.volumeBootstrapSymbols()
 	s.volumeMu.Lock()
 	input := s.volumeLiveInput
 	if input == nil {
@@ -71,7 +73,7 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 	// The shared gate still serializes this bootstrap work with on-demand
 	// sessions and other historical jobs, while the stream and queue are ready
 	// immediately after service startup.
-	go s.syncVolumeSymbols(ctx, profileSymbols)
+	go s.syncVolumeSymbols(ctx, bootstrapSymbols)
 
 	flush := time.NewTicker(500 * time.Millisecond)
 	defer flush.Stop()
@@ -282,26 +284,6 @@ func (s *Service) volumeBootstrapSymbols() []string {
 	if len(result) == 0 {
 		return []string{"BTCUSDT", "ETHUSDT"}
 	}
-	return result
-}
-
-func (s *Service) volumeProfileSymbols() []string {
-	configured := append([]string(nil), s.volumeBootstrapSymbols()...)
-	configured = append(configured, s.backgroundSymbols()...)
-	seen := make(map[string]struct{}, len(configured))
-	result := make([]string, 0, len(configured))
-	for _, raw := range configured {
-		symbol := normalizeVolumeSymbol(raw)
-		if symbol == "" {
-			continue
-		}
-		if _, ok := seen[symbol]; ok {
-			continue
-		}
-		seen[symbol] = struct{}{}
-		result = append(result, symbol)
-	}
-	sort.Strings(result)
 	return result
 }
 
@@ -539,7 +521,7 @@ func (s *Service) volumeRequestedSymbol(symbol string) bool {
 }
 
 func (s *Service) saveCurrentVolumeSnapshots(ctx context.Context, at time.Time) {
-	for _, symbol := range s.volumeProfileSymbols() {
+	for _, symbol := range s.volumeBootstrapSymbols() {
 		profile, err := s.VolumeProfile(ctx, symbol)
 		if err != nil || profile.State != "ok" || profile.VAL == nil || profile.VAH == nil {
 			continue
