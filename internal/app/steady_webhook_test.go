@@ -583,3 +583,53 @@ func TestManualSignalTriggerAddsCurrentTenantToLegacyHistory(t *testing.T) {
 		t.Fatal("manual legacy signal trigger was not delivered to webhook")
 	}
 }
+
+func TestValueAreaAutomaticNotificationsStayWithinBeijingWindow(t *testing.T) {
+	requests := make(chan struct{}, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- struct{}{}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	svc, cfg, _ := alertTestService(t, "value-area-notification-window.db")
+	cfg.SteadyWebhookURL = server.URL
+	cfg.SteadyWebhookTokenNonce = "nonce-value"
+	cfg.SteadyWebhookToken = "token-value"
+	svc.alerts.webhookURL = cfg.SteadyWebhookURL
+	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
+	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	svc.alerts.webhookConfig = cfg
+	svc.alerts.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), svc.alerts.webhookSettings, 4, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.alerts.webhook.Start(ctx)
+
+	outside := domain.TradeSignal{
+		ID: "value-area-outside", Symbol: "BTCUSDT", Kind: domain.SignalValueArea, Side: "long",
+		PositionEffect: "open", CreatedAt: time.Date(2026, 11, 2, 11, 59, 59, 0, time.UTC),
+		ReferencePrice: 100, Boundary: "val", BoundaryPrice: 100, VAL: 100, VAH: 110,
+	}
+	if status, message := svc.alerts.submitSignal(outside, true); status != "muted" || message != "交易所刷单仅在北京时间 20:00–24:00 自动通知" {
+		t.Fatalf("outside-window Telegram decision = (%q, %q)", status, message)
+	}
+	svc.alerts.submitSignalWebhook(outside, true)
+	select {
+	case <-requests:
+		t.Fatal("outside-window value-area signal sent an automatic webhook")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	inside := outside
+	inside.ID = "value-area-inside"
+	inside.CreatedAt = time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	svc.alerts.submitSignalWebhook(inside, true)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-requests:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("inside-window value-area webhook %d was not delivered", i+1)
+		}
+	}
+}

@@ -521,6 +521,9 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if !allowNotify || (signal.Kind != domain.SignalAggressive && signal.Kind != domain.SignalSteady && signal.Kind != domain.SignalValueArea) {
 		return
 	}
+	if signal.Kind == domain.SignalValueArea && !valuearea.WithinTradingWindow(signal.CreatedAt) {
+		return
+	}
 	if signal.Kind == domain.SignalValueArea && signal.PositionEffect == "close" {
 		if !rtm.orderCloseEnabled(signal.Kind) {
 			return
@@ -874,6 +877,9 @@ func (rtm *alertRuntime) orderCloseEnabled(category string) bool {
 func (rtm *alertRuntime) submitSignal(signal domain.TradeSignal, allowNotify bool) (string, string) {
 	if !allowNotify {
 		return "restored", "重启回放，不重复通知"
+	}
+	if signal.Kind == domain.SignalValueArea && !valuearea.WithinTradingWindow(signal.CreatedAt) {
+		return "muted", "交易所刷单仅在北京时间 20:00–24:00 自动通知"
 	}
 	if !rtm.categoryEnabled(signal.Kind) {
 		return "muted", "Telegram 通知未启用或该类别已关闭"
