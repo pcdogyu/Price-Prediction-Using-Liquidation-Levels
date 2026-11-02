@@ -110,6 +110,14 @@ func MaskToken(token string) string {
 // values; webhook senders use token as the endpoint and leave chatID empty.
 type Settings func() (token, chatID string, ok bool)
 
+const (
+	// PriorityNormal is used for opening requests.
+	PriorityNormal = iota
+	// PriorityClose is used for closing requests so a direction switch closes
+	// the existing position before an opening request is sent.
+	PriorityClose
+)
+
 // Task is one queued message. Key groups duplicates, for example all aggressive
 // signals of one symbol, so a burst cannot flood the chat.
 type Task struct {
@@ -118,36 +126,57 @@ type Task struct {
 	Photo        PhotoFunc
 	PhotoName    string
 	PhotoCaption string
+	Priority     int
+	SerialKey    string
+	// Prepare builds the message immediately before delivery. It is useful for
+	// order webhooks because sent_at should describe dispatch time, not the time
+	// at which a signal happened to enter a busy queue.
+	Prepare func(time.Time) (string, error)
+
+	enqueuedAt time.Time
+	sequence   uint64
 }
 
 // Status summarizes the worker for the alert page.
 type Status struct {
-	Sent          int64
-	Suppressed    int64
-	Failed        int64
-	LastAttemptAt time.Time
-	LastSuccessAt time.Time
-	LastError     string
+	Sent            int64
+	Suppressed      int64
+	Failed          int64
+	Expired         int64
+	QueueDepth      int
+	OldestTaskAge   time.Duration
+	LastQueueWait   time.Duration
+	LastSendLatency time.Duration
+	LastAttemptAt   time.Time
+	LastSuccessAt   time.Time
+	LastError       string
 }
 
-// Dispatcher is a single worker goroutine with a bounded queue, per key cooldown,
-// retries with backoff, and a status snapshot for the UI.
+// Dispatcher is a bounded priority worker pool with per-key cooldown, retries,
+// optional per-symbol serialization, and a status snapshot for the UI.
 type Dispatcher struct {
 	sender   Sender
 	settings Settings
 	log      *slog.Logger
 
-	cooldown   time.Duration
-	minSpacing time.Duration
-	attempts   int
-	retryWait  time.Duration
+	cooldown    time.Duration
+	minSpacing  time.Duration
+	attempts    int
+	retryWait   time.Duration
+	workers     int
+	maxQueueAge time.Duration
 
-	queue chan Task
+	queue         chan Task
+	priorityQueue chan Task
 
-	mu       sync.Mutex
-	status   Status
-	lastSend map[string]time.Time
-	depth    int
+	mu          sync.Mutex
+	nextMu      sync.Mutex
+	status      Status
+	lastSend    map[string]time.Time
+	depth       int
+	sequence    uint64
+	pending     map[uint64]time.Time
+	serialLocks map[string]*sync.Mutex
 
 	// Telegram requires both credentials, while a webhook only needs its
 	// endpoint. Keep the legacy constructor strict and expose a separate
@@ -158,16 +187,16 @@ type Dispatcher struct {
 // NewDispatcher builds a worker. A capacity of zero uses 64, and zero cooldown or
 // spacing falls back to five minutes and 1.5 seconds.
 func NewDispatcher(sender Sender, settings Settings, capacity int, cooldown time.Duration, log *slog.Logger) *Dispatcher {
-	return newDispatcher(sender, settings, capacity, cooldown, log, true)
+	return newDispatcher(sender, settings, capacity, cooldown, log, true, 1, 0, 1500*time.Millisecond)
 }
 
 // NewWebhookDispatcher builds a worker for a webhook sender. The endpoint is
 // supplied as the first credential and no chat ID is required.
 func NewWebhookDispatcher(sender Sender, settings Settings, capacity int, cooldown time.Duration, log *slog.Logger) *Dispatcher {
-	return newDispatcher(sender, settings, capacity, cooldown, log, false)
+	return newDispatcher(sender, settings, capacity, cooldown, log, false, 8, 30*time.Second, 0)
 }
 
-func newDispatcher(sender Sender, settings Settings, capacity int, cooldown time.Duration, log *slog.Logger, requireChatID bool) *Dispatcher {
+func newDispatcher(sender Sender, settings Settings, capacity int, cooldown time.Duration, log *slog.Logger, requireChatID bool, workers int, maxQueueAge, minSpacing time.Duration) *Dispatcher {
 	if capacity <= 0 {
 		capacity = 64
 	}
@@ -177,20 +206,82 @@ func newDispatcher(sender Sender, settings Settings, capacity int, cooldown time
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Dispatcher{sender: sender, settings: settings, log: log, cooldown: cooldown, minSpacing: 1500 * time.Millisecond, attempts: 3, retryWait: time.Second, queue: make(chan Task, capacity), lastSend: map[string]time.Time{}, requireChatID: requireChatID}
+	if workers <= 0 {
+		workers = 1
+	}
+	return &Dispatcher{
+		sender: sender, settings: settings, log: log, cooldown: cooldown,
+		minSpacing: minSpacing, attempts: 3, retryWait: time.Second,
+		workers: workers, maxQueueAge: maxQueueAge,
+		queue: make(chan Task, capacity), priorityQueue: make(chan Task, capacity),
+		lastSend: map[string]time.Time{}, pending: map[uint64]time.Time{},
+		serialLocks: map[string]*sync.Mutex{}, requireChatID: requireChatID,
+	}
 }
 
 // Start runs the worker until ctx is cancelled.
 func (d *Dispatcher) Start(ctx context.Context) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	var workers sync.WaitGroup
+	workers.Add(d.workers)
+	for i := 0; i < d.workers; i++ {
+		go func() {
+			defer workers.Done()
+			d.worker(ctx)
+		}()
+	}
+	workers.Wait()
+}
+
+func (d *Dispatcher) worker(ctx context.Context) {
 	for {
-		select {
-		case <-ctx.Done():
+		task, ok := d.nextTask(ctx)
+		if !ok {
 			return
-		case task := <-d.queue:
-			d.deliver(ctx, task)
 		}
+		d.dequeue(task)
+		var serialLock *sync.Mutex
+		if task.SerialKey != "" {
+			serialLock = d.getSerialLock(task.SerialKey)
+			serialLock.Lock()
+		}
+		if d.expired(task) {
+			if serialLock != nil {
+				serialLock.Unlock()
+			}
+			continue
+		}
+		d.deliver(ctx, task)
+		if serialLock != nil {
+			serialLock.Unlock()
+		}
+	}
+}
+
+func (d *Dispatcher) nextTask(ctx context.Context) (Task, bool) {
+	d.nextMu.Lock()
+	defer d.nextMu.Unlock()
+	// Prefer a close task whenever one is already waiting. The second select
+	// keeps the worker responsive to cancellation while still allowing normal
+	// tasks to make progress when there are no close requests.
+	select {
+	case task := <-d.priorityQueue:
+		return task, true
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return Task{}, false
+	case task := <-d.priorityQueue:
+		return task, true
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return Task{}, false
+	case task := <-d.priorityQueue:
+		return task, true
+	case task := <-d.queue:
+		return task, true
 	}
 }
 
@@ -206,6 +297,9 @@ func (d *Dispatcher) Submit(task Task) bool {
 		return false
 	}
 	now := time.Now().UTC()
+	if task.enqueuedAt.IsZero() {
+		task.enqueuedAt = now
+	}
 	if task.Key != "" {
 		d.mu.Lock()
 		last, seen := d.lastSend[task.Key]
@@ -216,40 +310,83 @@ func (d *Dispatcher) Submit(task Task) bool {
 		}
 		d.mu.Unlock()
 	}
-	select {
-	case d.queue <- task:
-		d.mu.Lock()
-		d.depth++
-		d.mu.Unlock()
-		return true
-	default:
-		d.mu.Lock()
+	d.mu.Lock()
+	if d.depth >= cap(d.queue) {
 		d.status.Suppressed++
 		d.status.LastError = "notification queue is full"
 		d.mu.Unlock()
 		d.log.Warn("notification queue full, message dropped", "key", task.Key)
 		return false
 	}
+	d.sequence++
+	task.sequence = d.sequence
+	var queued bool
+	if task.Priority >= PriorityClose {
+		select {
+		case d.priorityQueue <- task:
+			queued = true
+		default:
+		}
+	} else {
+		select {
+		case d.queue <- task:
+			queued = true
+		default:
+		}
+	}
+	if queued {
+		d.depth++
+		d.pending[task.sequence] = task.enqueuedAt
+		d.status.QueueDepth = d.depth
+		d.mu.Unlock()
+		return true
+	}
+	d.status.Suppressed++
+	d.status.LastError = "notification queue is full"
+	d.mu.Unlock()
+	d.log.Warn("notification queue full, message dropped", "key", task.Key)
+	return false
 }
 
 // deliver performs the retries and updates the status. A failure after all
 // attempts is recorded and the message is dropped, because a stale alert is worse
 // than a missing one and the page still shows the row.
 func (d *Dispatcher) deliver(ctx context.Context, task Task) {
+	started := time.Now()
 	defer func() {
 		d.mu.Lock()
-		if d.depth > 0 {
-			d.depth--
+		d.status.LastSendLatency = time.Since(started)
+		latency := d.status.LastSendLatency
+		queueDepth := d.depth
+		var oldest time.Time
+		for _, at := range d.pending {
+			if oldest.IsZero() || at.Before(oldest) {
+				oldest = at
+			}
 		}
+		queueAge := time.Duration(0)
+		if !oldest.IsZero() {
+			queueAge = time.Since(oldest)
+		}
+		queueWait := d.status.LastQueueWait
 		d.mu.Unlock()
+		if d.maxQueueAge > 0 {
+			d.log.Info("webhook delivery metrics", "key", task.Key, "queue_depth", queueDepth, "oldest_task_age_ms", queueAge.Milliseconds(), "queue_wait_ms", queueWait.Milliseconds(), "send_latency_ms", latency.Milliseconds())
+		}
 	}()
+	// Direct calls are useful to tests and keep the old helper semantics. Normal
+	// workers account for queue depth when they dequeue the task.
+	if task.sequence == 0 {
+		d.accountDirectDelivery()
+	}
 	token, chatID, ok := d.settings()
 	if !ok {
 		return
 	}
 	// Telegram rate limits a bot to roughly one message per second per chat, so
-	// consecutive messages are spaced out instead of being rejected. The same
-	// bounded spacing also keeps webhook bursts from overwhelming the receiver.
+	// consecutive messages are spaced out instead of being rejected. Webhooks
+	// deliberately use zero global spacing because their worker pool is bounded
+	// separately and same-symbol serialization still applies.
 	d.mu.Lock()
 	last := d.status.LastAttemptAt
 	d.mu.Unlock()
@@ -262,10 +399,17 @@ func (d *Dispatcher) deliver(ctx context.Context, task Task) {
 			}
 		}
 	}
-	attempt := time.Now().UTC()
-	d.mu.Lock()
-	d.status.LastAttemptAt = attempt
-	d.mu.Unlock()
+	if task.Prepare != nil {
+		text, prepareErr := task.Prepare(time.Now().UTC())
+		if prepareErr != nil {
+			d.mu.Lock()
+			d.status.Failed++
+			d.status.LastError = prepareErr.Error()
+			d.mu.Unlock()
+			return
+		}
+		task.Text = text
+	}
 	var err error
 	var photo []byte
 	var photoSender PhotoSender
@@ -285,6 +429,9 @@ func (d *Dispatcher) deliver(ctx context.Context, task Task) {
 			if ctx.Err() != nil {
 				return
 			}
+			d.mu.Lock()
+			d.status.LastAttemptAt = time.Now().UTC()
+			d.mu.Unlock()
 			if task.Photo != nil {
 				err = photoSender.SendPhoto(ctx, token, chatID, photo, task.PhotoName, task.PhotoCaption)
 			} else {
@@ -319,10 +466,91 @@ func (d *Dispatcher) deliver(ctx context.Context, task Task) {
 	}
 }
 
+func (d *Dispatcher) dequeue(task Task) {
+	d.mu.Lock()
+	if task.sequence != 0 {
+		delete(d.pending, task.sequence)
+	} else {
+		d.removeOldestPendingLocked()
+	}
+	if d.depth > 0 {
+		d.depth--
+	}
+	d.status.QueueDepth = d.depth
+	if !task.enqueuedAt.IsZero() {
+		d.status.LastQueueWait = time.Since(task.enqueuedAt)
+	}
+	d.mu.Unlock()
+}
+
+func (d *Dispatcher) accountDirectDelivery() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.removeOldestPendingLocked()
+	if d.depth > 0 {
+		d.depth--
+	}
+	d.status.QueueDepth = d.depth
+}
+
+func (d *Dispatcher) removeOldestPendingLocked() {
+	var oldest uint64
+	var oldestAt time.Time
+	for sequence, at := range d.pending {
+		if oldestAt.IsZero() || at.Before(oldestAt) {
+			oldest, oldestAt = sequence, at
+		}
+	}
+	if oldest != 0 {
+		delete(d.pending, oldest)
+	}
+}
+
+func (d *Dispatcher) getSerialLock(key string) *sync.Mutex {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if lock := d.serialLocks[key]; lock != nil {
+		return lock
+	}
+	lock := &sync.Mutex{}
+	d.serialLocks[key] = lock
+	return lock
+}
+
+func (d *Dispatcher) expired(task Task) bool {
+	if d.maxQueueAge <= 0 || task.enqueuedAt.IsZero() {
+		return false
+	}
+	age := time.Since(task.enqueuedAt)
+	if age <= d.maxQueueAge {
+		return false
+	}
+	d.mu.Lock()
+	d.status.Expired++
+	d.status.Suppressed++
+	d.status.LastError = "notification task expired in queue"
+	d.status.LastQueueWait = age
+	d.mu.Unlock()
+	d.log.Warn("notification task expired in queue", "key", task.Key, "age_ms", age.Milliseconds())
+	return true
+}
+
 // Snapshot reports the worker counters and queue depth.
 func (d *Dispatcher) Snapshot() (Status, int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.status.QueueDepth = d.depth
+	var oldest time.Time
+	for _, at := range d.pending {
+		if oldest.IsZero() || at.Before(oldest) {
+			oldest = at
+		}
+	}
+	if oldest.IsZero() {
+		d.status.OldestTaskAge = 0
+	} else {
+		d.status.OldestTaskAge = time.Since(oldest)
+	}
 	return d.status, d.depth
 }
 

@@ -299,7 +299,7 @@ func Default() Config {
 			PositionMode:              PositionNet,
 			MarketTurnoverScope:       DefaultMarketTurnoverScope,
 			GammaNegativePolicy:       GammaNegativePolicyIgnore,
-			SignalTTLSeconds:          120,
+			SignalTTLSeconds:          300,
 			OrderAmountUSDT:           100,
 			Leverage:                  5,
 			OrderType:                 string(trading.OrderTypeMarket),
@@ -457,7 +457,7 @@ func (c *Config) Normalize() {
 		c.Trading.GammaNegativePolicy = GammaNegativePolicyIgnore
 	}
 	if c.Trading.SignalTTLSeconds <= 0 {
-		c.Trading.SignalTTLSeconds = 120
+		c.Trading.SignalTTLSeconds = 300
 	}
 	c.Trading.IgnoredCoinpairs = normalizeIgnoredCoinpairs(c.Trading.IgnoredCoinpairs, c.Trading.IgnoredCoinpair)
 	if len(c.Trading.IgnoredCoinpairs) > 0 {

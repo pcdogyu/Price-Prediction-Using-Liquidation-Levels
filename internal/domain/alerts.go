@@ -470,6 +470,23 @@ type NotificationStatus struct {
 	LastError     string     `json:"last_error,omitempty"`
 }
 
+// WebhookStatus reports the automatic order webhook queue separately from the
+// Telegram notification queue.
+type WebhookStatus struct {
+	Configured           bool       `json:"configured"`
+	QueueDepth           int        `json:"queue_depth"`
+	OldestTaskAgeSeconds float64    `json:"oldest_task_age_seconds"`
+	LastQueueWaitMS      int64      `json:"last_queue_wait_ms"`
+	LastSendLatencyMS    int64      `json:"last_send_latency_ms"`
+	Sent                 int64      `json:"sent"`
+	Suppressed           int64      `json:"suppressed"`
+	Failed               int64      `json:"failed"`
+	Expired              int64      `json:"expired"`
+	LastAttemptAt        *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt        *time.Time `json:"last_success_at,omitempty"`
+	LastError            string     `json:"last_error,omitempty"`
+}
+
 // AlertsView backs the alert page. Settings and exchange health are attached by
 // the HTTP handler so they stay out of the strategy owned view.
 type AlertsView struct {
@@ -490,5 +507,6 @@ type AlertsView struct {
 	SteadyTotal     int64              `json:"steady_total"`
 	ValueAreaTotal  int64              `json:"value_area_total"`
 	Notifications   NotificationStatus `json:"notifications"`
+	Webhook         WebhookStatus      `json:"webhook"`
 	GeneratedAt     time.Time          `json:"generated_at"`
 }

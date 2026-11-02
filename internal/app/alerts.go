@@ -528,12 +528,7 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 		if !rtm.orderCloseEnabled(signal.Kind) {
 			return
 		}
-		payload, err := buildValueAreaCloseWebhookPayload(signal, rtm.serviceConfig())
-		if err != nil {
-			rtm.log.Warn("value-area close webhook payload rejected", "symbol", signal.Symbol, "error", err)
-			return
-		}
-		if !rtm.webhook.Submit(notify.Task{Key: "signal-webhook|value_area|close|" + signal.ID, Text: string(payload)}) {
+		if !rtm.webhook.Submit(rtm.webhookTask(signal, "signal-webhook|value_area|close|"+signal.ID, notify.PriorityClose, buildValueAreaCloseWebhookPayload)) {
 			rtm.log.Warn("value-area close webhook delivery suppressed", "symbol", signal.Symbol)
 		}
 		return
@@ -550,16 +545,11 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if !rtm.orderSignalEnabled(signal.Kind) {
 		return
 	}
-	payload, err := buildSignalWebhookPayload(signal, rtm.serviceConfig())
-	if err != nil {
-		rtm.log.Warn("signal webhook payload rejected", "kind", signal.Kind, "symbol", signal.Symbol, "error", err)
-		return
-	}
 	key := "signal-webhook|" + signal.Kind + "|" + signal.Symbol
 	if signal.Kind == domain.SignalValueArea {
 		key += "|" + signal.ID
 	}
-	if !rtm.webhook.Submit(notify.Task{Key: key, Text: string(payload)}) {
+	if !rtm.webhook.Submit(rtm.webhookTask(signal, key, notify.PriorityNormal, buildSignalWebhookPayload)) {
 		rtm.log.Warn("signal webhook delivery suppressed", "kind", signal.Kind, "symbol", signal.Symbol)
 	}
 }
@@ -603,12 +593,7 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 	if !rtm.orderSignalEnabled(signal.Kind) {
 		return
 	}
-	payload, err := buildAlertWebhookPayload(signal, rtm.serviceConfig())
-	if err != nil {
-		rtm.log.Warn("alert webhook payload rejected", "kind", signal.Kind, "symbol", signal.Symbol, "error", err)
-		return
-	}
-	if !rtm.webhook.Submit(notify.Task{Key: "signal-webhook|alert|" + signal.Symbol, Text: string(payload)}) {
+	if !rtm.webhook.Submit(rtm.webhookTask(signal, "signal-webhook|alert|"+signal.Symbol, notify.PriorityNormal, buildAlertWebhookPayload)) {
 		rtm.log.Warn("alert webhook delivery suppressed", "kind", signal.Kind, "symbol", signal.Symbol)
 	}
 }
@@ -625,16 +610,32 @@ func (rtm *alertRuntime) submitPrecloseWebhook(signal domain.TradeSignal) bool {
 	if _, _, ok := rtm.webhookSettings(); !ok {
 		return false
 	}
-	payload, err := buildPrecloseWebhookPayload(signal, rtm.serviceConfig())
-	if err != nil {
-		rtm.log.Warn("preclose webhook payload rejected", "kind", signal.Kind, "symbol", signal.Symbol, "error", err)
-		return false
-	}
-	if !rtm.webhook.Submit(notify.Task{Key: "position-preclose|" + signal.Kind + "|" + signal.Symbol, Text: string(payload)}) {
+	if !rtm.webhook.Submit(rtm.webhookTask(signal, "position-preclose|"+signal.Kind+"|"+signal.Symbol, notify.PriorityClose, buildPrecloseWebhookPayload)) {
 		rtm.log.Warn("preclose webhook delivery suppressed", "kind", signal.Kind, "symbol", signal.Symbol)
 		return false
 	}
 	return true
+}
+
+// webhookTask defers payload construction until the worker is ready to send it.
+// That keeps sent_at aligned with actual dispatch time even when a burst waits
+// behind other symbols, while the serial key keeps a symbol's close/open pair
+// ordered by the webhook dispatcher.
+func (rtm *alertRuntime) webhookTask(signal domain.TradeSignal, key string, priority int, build func(domain.TradeSignal, config.Config) ([]byte, error)) notify.Task {
+	return notify.Task{
+		Key:       key,
+		Priority:  priority,
+		SerialKey: "webhook|" + strings.ToUpper(strings.TrimSpace(rtm.tenantID)) + "|" + strings.ToUpper(strings.TrimSpace(signal.Symbol)),
+		Prepare: func(sentAt time.Time) (string, error) {
+			queued := signal
+			queued.CreatedAt = sentAt
+			payload, err := build(queued, rtm.serviceConfig())
+			if err != nil {
+				return "", err
+			}
+			return string(payload), nil
+		},
+	}
 }
 
 func (rtm *alertRuntime) serviceConfig() config.Config {
@@ -1027,6 +1028,34 @@ func (rtm *alertRuntime) notificationStatus() domain.NotificationStatus {
 	settings := rtm.snapshotSettings()
 	status, depth := rtm.notifier.Snapshot()
 	out := domain.NotificationStatus{Enabled: settings.TelegramEnabled, Configured: settings.HasToken && settings.TelegramChatID != "", QueueDepth: depth, Sent: status.Sent, Suppressed: status.Suppressed, Failed: status.Failed, LastError: status.LastError}
+	if !status.LastAttemptAt.IsZero() {
+		at := status.LastAttemptAt.UTC()
+		out.LastAttemptAt = &at
+	}
+	if !status.LastSuccessAt.IsZero() {
+		at := status.LastSuccessAt.UTC()
+		out.LastSuccessAt = &at
+	}
+	return out
+}
+
+// webhookStatus exposes queue health without exposing the endpoint, nonce, or
+// token. Durations are converted to the JSON units used by the alert page.
+func (rtm *alertRuntime) webhookStatus() domain.WebhookStatus {
+	status, depth := rtm.webhook.Snapshot()
+	_, _, configured := rtm.webhookSettings()
+	out := domain.WebhookStatus{
+		Configured:           configured,
+		QueueDepth:           depth,
+		OldestTaskAgeSeconds: status.OldestTaskAge.Seconds(),
+		LastQueueWaitMS:      status.LastQueueWait.Milliseconds(),
+		LastSendLatencyMS:    status.LastSendLatency.Milliseconds(),
+		Sent:                 status.Sent,
+		Suppressed:           status.Suppressed,
+		Failed:               status.Failed,
+		Expired:              status.Expired,
+		LastError:            status.LastError,
+	}
 	if !status.LastAttemptAt.IsZero() {
 		at := status.LastAttemptAt.UTC()
 		out.LastAttemptAt = &at

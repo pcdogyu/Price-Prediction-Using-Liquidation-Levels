@@ -462,6 +462,17 @@
     $('alerts-notify-status').textContent = parts.join(' · ');
   }
 
+  function renderWebhookStatus(webhook) {
+    if (!webhook) return;
+    const age = Number(webhook.oldest_task_age_seconds || 0);
+    const queueWait = Number(webhook.last_queue_wait_ms || 0);
+    const sendLatency = Number(webhook.last_send_latency_ms || 0);
+    const parts = [webhook.configured ? '已配置' : '未配置', '队列 ' + (webhook.queue_depth || 0), '最老任务 ' + age.toFixed(1) + ' 秒', '最近排队 ' + queueWait + ' ms', '最近发送 ' + sendLatency + ' ms', '已发送 ' + (webhook.sent || 0), '已过期 ' + (webhook.expired || 0)];
+    if (webhook.failed) parts.push('失败 ' + webhook.failed);
+    if (webhook.last_error) parts.push('最近错误：' + webhook.last_error);
+    $('alerts-webhook-status').textContent = parts.join(' · ');
+  }
+
   function renderStrategySettings(settings) {
     if (!settings) return;
     const fields = [['alerts-threshold-btc', settings.btc_usd], ['alerts-threshold-eth', settings.eth_usd], ['alerts-threshold-other', settings.other_usd], ['alerts-window-minutes', settings.window_minutes], ['alerts-vwap-range-hours', settings.vwap_range_hours], ['alerts-vwap-min-drawdown', settings.vwap_min_drawdown_pct], ['alerts-vwap-donchian', settings.vwap_donchian_pct]];
@@ -499,6 +510,7 @@
       $('alerts-monitor-note').textContent = '排名更新 ' + when(data.watch_updated_at) + (data.watch_error ? ' · 最近刷新失败：' + data.watch_error : '') + ' · 预警与信号自 ' + when(data.available_from) + ' 起可查询';
       renderSettings(packet.settings);
       renderNotifyStatus(data.notifications);
+      renderWebhookStatus(data.webhook);
     } catch (caught) {
       if (current !== overviewSequence) return;
       error('报警更新失败：' + caught.message);

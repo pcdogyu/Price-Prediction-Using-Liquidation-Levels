@@ -29,6 +29,18 @@ func TestNormalizeDefaultTab(t *testing.T) {
 	}
 }
 
+func TestSignalTTLDefaultsToFiveMinutes(t *testing.T) {
+	cfg := Default()
+	if cfg.Trading.SignalTTLSeconds != 300 {
+		t.Fatalf("default signal TTL = %d, want 300", cfg.Trading.SignalTTLSeconds)
+	}
+	cfg.Trading.SignalTTLSeconds = 0
+	cfg.Normalize()
+	if cfg.Trading.SignalTTLSeconds != 300 {
+		t.Fatalf("normalized signal TTL = %d, want 300", cfg.Trading.SignalTTLSeconds)
+	}
+}
+
 func TestPositionOpenModesPersistNormalizeAndClone(t *testing.T) {
 	cfg := Default()
 	cfg.UI.PositionOpenModes = map[string]string{

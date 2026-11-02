@@ -68,6 +68,7 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 		view.AvailableFrom = &oldest
 	}
 	view.Notifications = rtm.notificationStatus()
+	view.Webhook = rtm.webhookStatus()
 	return view, nil
 }
 
