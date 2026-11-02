@@ -78,6 +78,7 @@ func TestPositionMonitorCancelsOrphanOKXOrders(t *testing.T) {
 	cfg.Trading.PositionMonitor.OKXEnabled = true
 	cfg.Trading.PositionMonitor.BinanceEnabled = false
 	cfg.Trading.PositionMonitor.GateEnabled = false
+	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.OKXHTTPClient = okxServer.Client()
 	if _, err := srv.OKXCredentials.UpdateAccount(okx.CredentialAccountUpdate{
@@ -154,6 +155,7 @@ func TestPositionMonitorCancelsOrphanBinanceOrders(t *testing.T) {
 	cfg.Trading.PositionMonitor.OKXEnabled = false
 	cfg.Trading.PositionMonitor.BinanceEnabled = true
 	cfg.Trading.PositionMonitor.GateEnabled = false
+	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.BinanceHTTPClient = binanceServer.Client()
 	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
@@ -224,6 +226,7 @@ func TestPositionMonitorCancelsOrphanGateOrders(t *testing.T) {
 	cfg.Trading.PositionMonitor.OKXEnabled = false
 	cfg.Trading.PositionMonitor.BinanceEnabled = false
 	cfg.Trading.PositionMonitor.GateEnabled = true
+	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.GateHTTPClient = gateServer.Client()
 	credentials, err := gate.NewCredentialStore(filepath.Join(t.TempDir(), "gate-credentials.json"), gate.Credentials{})

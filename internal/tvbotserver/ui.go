@@ -497,10 +497,10 @@ const tvbotHTML = `<!doctype html>
       background: var(--green);
       border-color: var(--green);
     }
-    #save-order-settings {
+    #save-order-settings, #save-position-monitor {
       transition: background-color .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease;
     }
-    #save-order-settings.is-saving {
+    #save-order-settings.is-saving, #save-position-monitor.is-saving {
       background: var(--warning);
       border-color: var(--warning);
       color: var(--bg);
@@ -508,7 +508,7 @@ const tvbotHTML = `<!doctype html>
       opacity: 1;
       animation: order-settings-save-pulse 1.15s ease-in-out infinite;
     }
-    #save-order-settings.is-saving::before {
+    #save-order-settings.is-saving::before, #save-position-monitor.is-saving::before {
       content: "";
       display: inline-block;
       width: 12px;
@@ -520,14 +520,14 @@ const tvbotHTML = `<!doctype html>
       border-radius: 50%;
       animation: order-settings-save-spin .75s linear infinite;
     }
-    #save-order-settings.is-saved {
+    #save-order-settings.is-saved, #save-position-monitor.is-saved {
       background: var(--blue);
       border-color: var(--blue);
       color: var(--bg);
       opacity: 1;
       animation: order-settings-save-complete .55s ease-out;
     }
-    #save-order-settings.is-error {
+    #save-order-settings.is-error, #save-position-monitor.is-error {
       background: var(--red);
       border-color: var(--red);
       color: var(--bg);
@@ -554,7 +554,10 @@ const tvbotHTML = `<!doctype html>
       }
       #save-order-settings.is-saving,
       #save-order-settings.is-saving::before,
-      #save-order-settings.is-saved {
+      #save-order-settings.is-saved,
+      #save-position-monitor.is-saving,
+      #save-position-monitor.is-saving::before,
+      #save-position-monitor.is-saved {
         animation: none;
       }
     }
@@ -1002,6 +1005,13 @@ const tvbotHTML = `<!doctype html>
     }
     .position-monitor-grid label {
       margin: 0;
+    }
+    .position-monitor-timeout {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px);
+      gap: 10px;
+      align-items: end;
+      margin-top: 10px;
     }
     .position-monitor-status {
       font-size: 12px;
@@ -1855,7 +1865,7 @@ const tvbotHTML = `<!doctype html>
     }
     @media (max-width: 880px) {
       .bar { gap: 6px; }
-      .status, .grid, .grid.two, .split, .api-key-layout, .analysis-metrics, .asset-metrics, .symbol-metrics, .position-metrics, .dashboard-balance-grid, .analysis-balance-grid, .position-monitor-grid { grid-template-columns: 1fr; }
+      .status, .grid, .grid.two, .split, .api-key-layout, .analysis-metrics, .asset-metrics, .symbol-metrics, .position-metrics, .dashboard-balance-grid, .analysis-balance-grid, .position-monitor-grid, .position-monitor-timeout { grid-template-columns: 1fr; }
       .template-title-row { grid-template-columns: 1fr; }
       .analysis-period-row { flex-direction: column; }
       .analysis-time-status { min-width: 0; }
@@ -2088,6 +2098,10 @@ const tvbotHTML = `<!doctype html>
           <label>扫描间隔秒<input id="position-monitor-interval" type="number" min="1" step="1"></label>
           <label>止盈 %<input id="position-monitor-tp" type="number" min="0.01" step="0.01"></label>
           <label>止损 %<input id="position-monitor-sl" type="number" min="0.01" step="0.01"></label>
+        </div>
+        <div class="position-monitor-timeout">
+          <label class="check"><input id="position-monitor-holding-enabled" type="checkbox">持仓超时自动平仓</label>
+          <label>最长持仓时间（小时）<input id="position-monitor-holding-hours" type="number" min="1" step="1"></label>
         </div>
       </div>
       <div class="section-head" style="margin:18px 0 10px">
@@ -4590,7 +4604,9 @@ const tvbotHTML = `<!doctype html>
         gate_enabled: !!monitor.gate_enabled,
         poll_interval_seconds: Number(monitor.poll_interval_seconds || 300),
         take_profit_pct: Number(monitor.take_profit_pct || 5),
-        stop_loss_pct: Number(monitor.stop_loss_pct || 8)
+        stop_loss_pct: Number(monitor.stop_loss_pct || 8),
+        holding_time_close_enabled: monitor.holding_time_close_enabled !== false,
+        holding_time_close_hours: Number(monitor.holding_time_close_hours || 6)
       };
     }
 
@@ -4603,15 +4619,19 @@ const tvbotHTML = `<!doctype html>
       $("position-monitor-interval").value = monitor.poll_interval_seconds || 300;
       $("position-monitor-tp").value = monitor.take_profit_pct || 5;
       $("position-monitor-sl").value = monitor.stop_loss_pct || 8;
+      $("position-monitor-holding-enabled").checked = !!monitor.holding_time_close_enabled;
+      $("position-monitor-holding-hours").value = monitor.holding_time_close_hours || 6;
       const active = [
         monitor.okx_enabled ? "OKX" : "",
         monitor.binance_enabled ? "Binance" : "",
         monitor.gate_enabled ? "Gate" : ""
       ].filter(Boolean).join(" + ");
-      $("position-monitor-status").textContent = (active || "已关闭") +
+      const activeLabel = active || (monitor.holding_time_close_enabled ? "超时平仓" : "已关闭");
+      $("position-monitor-status").textContent = activeLabel +
         " / " + asText(monitor.poll_interval_seconds || 300) + "s" +
         " / +" + asText(monitor.take_profit_pct || 5) + "%" +
-        " / -" + asText(monitor.stop_loss_pct || 8) + "%";
+        " / -" + asText(monitor.stop_loss_pct || 8) + "%" +
+        " / 超时平仓" + (monitor.holding_time_close_enabled ? " " + asText(monitor.holding_time_close_hours || 6) + "h" : "关闭");
     }
 
     function renderDashboard() {
@@ -8038,24 +8058,72 @@ const tvbotHTML = `<!doctype html>
       }
     }
 
+    let positionMonitorSaveResetTimer = 0;
+
+    function resetPositionMonitorSaveButton() {
+      const button = $("save-position-monitor");
+      if (!button) return;
+      button.classList.remove("is-saving", "is-saved", "is-error");
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = "保存自动扫描";
+    }
+
+    function setPositionMonitorSaveButtonState(state) {
+      const button = $("save-position-monitor");
+      if (!button) return;
+      if (positionMonitorSaveResetTimer) {
+        window.clearTimeout(positionMonitorSaveResetTimer);
+        positionMonitorSaveResetTimer = 0;
+      }
+      resetPositionMonitorSaveButton();
+      if (state === "saving") {
+        button.classList.add("is-saving");
+        button.disabled = true;
+        button.setAttribute("aria-busy", "true");
+        button.textContent = "保存中…";
+        return;
+      }
+      if (state === "saved") {
+        button.classList.add("is-saved");
+        button.textContent = "保存完成 ✓";
+        positionMonitorSaveResetTimer = window.setTimeout(resetPositionMonitorSaveButton, 1600);
+        return;
+      }
+      if (state === "error") {
+        button.classList.add("is-error");
+        button.textContent = "保存失败，重试";
+        positionMonitorSaveResetTimer = window.setTimeout(resetPositionMonitorSaveButton, 2400);
+      }
+    }
+
     async function savePositionMonitor() {
-      const patch = {
-        trading: {
-          position_monitor: {
-            okx_enabled: $("position-monitor-okx-enabled").checked,
-            binance_enabled: $("position-monitor-binance-enabled").checked,
-            gate_enabled: $("position-monitor-gate-enabled").checked,
-            poll_interval_seconds: Number($("position-monitor-interval").value),
-            take_profit_pct: Number($("position-monitor-tp").value),
-            stop_loss_pct: Number($("position-monitor-sl").value)
+      setPositionMonitorSaveButtonState("saving");
+      try {
+        const patch = {
+          trading: {
+            position_monitor: {
+              okx_enabled: $("position-monitor-okx-enabled").checked,
+              binance_enabled: $("position-monitor-binance-enabled").checked,
+              gate_enabled: $("position-monitor-gate-enabled").checked,
+              poll_interval_seconds: Number($("position-monitor-interval").value),
+              take_profit_pct: Number($("position-monitor-tp").value),
+              stop_loss_pct: Number($("position-monitor-sl").value),
+              holding_time_close_enabled: $("position-monitor-holding-enabled").checked,
+              holding_time_close_hours: Number($("position-monitor-holding-hours").value)
+            }
           }
-        }
-      };
-      state.config = await api("/tvbot/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-      renderPositionMonitor();
-      renderDashboard();
-      updateMetrics();
-      toast("自动扫描持仓已保存");
+        };
+        state.config = await api("/tvbot/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+        renderPositionMonitor();
+        renderDashboard();
+        updateMetrics();
+        toast("自动扫描持仓已保存");
+        setPositionMonitorSaveButtonState("saved");
+      } catch (err) {
+        setPositionMonitorSaveButtonState("error");
+        throw err;
+      }
     }
 
     async function saveMenuSettings() {

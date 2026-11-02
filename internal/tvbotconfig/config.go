@@ -159,12 +159,14 @@ type AutoReentryConfig struct {
 }
 
 type PositionMonitorConfig struct {
-	OKXEnabled          bool    `json:"okx_enabled"`
-	BinanceEnabled      bool    `json:"binance_enabled"`
-	GateEnabled         bool    `json:"gate_enabled"`
-	PollIntervalSeconds int     `json:"poll_interval_seconds"`
-	TakeProfitPct       float64 `json:"take_profit_pct"`
-	StopLossPct         float64 `json:"stop_loss_pct"`
+	OKXEnabled              bool    `json:"okx_enabled"`
+	BinanceEnabled          bool    `json:"binance_enabled"`
+	GateEnabled             bool    `json:"gate_enabled"`
+	PollIntervalSeconds     int     `json:"poll_interval_seconds"`
+	TakeProfitPct           float64 `json:"take_profit_pct"`
+	StopLossPct             float64 `json:"stop_loss_pct"`
+	HoldingTimeCloseEnabled bool    `json:"holding_time_close_enabled"`
+	HoldingTimeCloseHours   int     `json:"holding_time_close_hours"`
 }
 
 type SymbolConfig struct {
@@ -328,12 +330,14 @@ func Default() Config {
 				OnlyBotOrders:          true,
 			},
 			PositionMonitor: PositionMonitorConfig{
-				OKXEnabled:          false,
-				BinanceEnabled:      false,
-				GateEnabled:         false,
-				PollIntervalSeconds: 300,
-				TakeProfitPct:       5,
-				StopLossPct:         8,
+				OKXEnabled:              false,
+				BinanceEnabled:          false,
+				GateEnabled:             false,
+				PollIntervalSeconds:     300,
+				TakeProfitPct:           5,
+				StopLossPct:             8,
+				HoldingTimeCloseEnabled: true,
+				HoldingTimeCloseHours:   6,
 			},
 		},
 		Symbols: map[string]SymbolConfig{
@@ -537,6 +541,9 @@ func (c *Config) Normalize() {
 	if c.Trading.PositionMonitor.StopLossPct <= 0 {
 		c.Trading.PositionMonitor.StopLossPct = 8
 	}
+	if c.Trading.PositionMonitor.HoldingTimeCloseHours <= 0 {
+		c.Trading.PositionMonitor.HoldingTimeCloseHours = 6
+	}
 	if c.Symbols == nil {
 		c.Symbols = map[string]SymbolConfig{}
 	}
@@ -677,6 +684,9 @@ func (c Config) validate(validateSymbols bool) error {
 	}
 	if c.Trading.PositionMonitor.StopLossPct <= 0 {
 		return errors.New("position_monitor.stop_loss_pct must be positive")
+	}
+	if c.Trading.PositionMonitor.HoldingTimeCloseHours <= 0 {
+		return errors.New("position_monitor.holding_time_close_hours must be positive")
 	}
 	if validateSymbols {
 		for key, sym := range c.Symbols {

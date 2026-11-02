@@ -1282,6 +1282,9 @@ func validateConfigPatch(patch configPatch) error {
 	if monitor.StopLossPct <= 0 {
 		return errors.New("position_monitor.stop_loss_pct must be positive")
 	}
+	if monitor.HoldingTimeCloseHours <= 0 {
+		return errors.New("position_monitor.holding_time_close_hours must be positive")
+	}
 	return nil
 }
 
