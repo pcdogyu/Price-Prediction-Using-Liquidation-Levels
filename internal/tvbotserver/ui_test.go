@@ -191,12 +191,13 @@ func TestRenderTVBotLoginHTMLUsesUnifiedButtonMotion(t *testing.T) {
 	}
 }
 
-func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
+func TestRenderTVBotAnalysisAddsTradeTimeColumns(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	entryColumn := strings.Index(page, `{ id: "entry_time", title: "开仓时间"`)
 	exitColumn := strings.Index(page, `{ id: "exit_time", title: "平仓时间"`)
-	if entryColumn < 0 || exitColumn < 0 || entryColumn >= exitColumn {
-		t.Fatalf("analysis columns should put entry time before exit time: entry=%d exit=%d", entryColumn, exitColumn)
+	holdingColumn := strings.Index(page, `{ id: "holding_time", title: "持仓时间"`)
+	if entryColumn < 0 || exitColumn < 0 || holdingColumn < 0 || entryColumn >= exitColumn || exitColumn >= holdingColumn {
+		t.Fatalf("analysis columns should put holding time after exit time: entry=%d exit=%d holding=%d", entryColumn, exitColumn, holdingColumn)
 	}
 	sideColumn := strings.Index(page, `{ id: "side", title: "方向"`)
 	gammaColumn := strings.Index(page, `{ id: "gamma", title: "Gamma"`)
@@ -233,6 +234,10 @@ func TestRenderTVBotAnalysisAddsGateTradeChartEntryColumn(t *testing.T) {
 		`initialURL.searchParams.set("standalone", "1")`,
 		`window.open(initialURL.toString(), "_blank")`,
 		`function analysisTimeText(v)`,
+		`function analysisTradeHoldingTimeText(row)`,
+		`function analysisTradeHoldingSeconds(row, nowMs)`,
+		`return open ? "持仓中 · " + text : text;`,
+		`const previous = defaultColumnIDs.slice(0, defaultIndex).reverse().find`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("Gate trade chart integration marker missing %q", want)

@@ -1576,6 +1576,7 @@ const tvbotHTML = `<!doctype html>
     }
     .analysis-trade-table .analysis-entry-time-col { width: 11.4%; }
     .analysis-trade-table .analysis-exit-time-col { width: 11.4%; }
+    .analysis-trade-table .analysis-holding-time-col { width: 7%; }
     .analysis-trade-table .analysis-inst-id-col { width: 6.4%; }
     .analysis-trade-table .analysis-side-col { width: 5.4%; }
     .analysis-trade-table .analysis-gamma-col { width: 7.2%; }
@@ -2724,6 +2725,7 @@ const tvbotHTML = `<!doctype html>
     const analysisTradeColumnDefs = [
       { id: "entry_time", title: "开仓时间", colClass: "analysis-entry-time-col", tdClass: "time", render: (row) => analysisTradeTimeRangeText(row, "entry_time") },
       { id: "exit_time", title: "平仓时间", colClass: "analysis-exit-time-col", tdClass: "time", render: (row) => analysisTradeTimeRangeText(row, "exit_time") },
+      { id: "holding_time", title: "持仓时间", colClass: "analysis-holding-time-col", tdClass: "time", render: (row) => analysisTradeHoldingTimeText(row) },
       { id: "inst_id", title: "币对", colClass: "analysis-inst-id-col", renderHTML: (row) => analysisTradeSymbolHTML(row) },
       { id: "side", title: "方向", colClass: "analysis-side-col", toneClass: (row) => analysisPositionSideToneClass(row.side), render: (row) => analysisPositionSideText(row.side) },
       { id: "gamma", title: "Gamma", colClass: "analysis-gamma-col", render: (row) => analysisGammaDirectionText(row) },
@@ -6473,8 +6475,12 @@ const tvbotHTML = `<!doctype html>
         if (!id || id === "order_id" || !valid.has(id) || next.includes(id)) return;
         next.push(id);
       });
-      analysisTradeColumnIDs().forEach((id) => {
-        if (!next.includes(id)) next.push(id);
+      const defaultColumnIDs = analysisTradeColumnIDs();
+      defaultColumnIDs.forEach((id, defaultIndex) => {
+        if (next.includes(id)) return;
+        const previous = defaultColumnIDs.slice(0, defaultIndex).reverse().find((candidate) => next.includes(candidate));
+        const insertIndex = previous ? next.indexOf(previous) + 1 : next.length;
+        next.splice(insertIndex, 0, id);
       });
       if (!source.some((id) => String(id || "").trim() === "gamma")) {
         const gammaIndex = next.indexOf("gamma");
@@ -6550,6 +6556,27 @@ const tvbotHTML = `<!doctype html>
       if (!row || !row.aggregate_count || !row[field + "_end"]) return start;
       const end = analysisTimeText(row[field + "_end"]);
       return start === "-" || end === "-" || start === end ? start : start + " ~ " + end;
+    }
+
+    function analysisTradeHoldingSeconds(row, nowMs) {
+      const entry = analysisTradeTimestamp(row, "entry_time");
+      if (entry === null) return null;
+      const exit = analysisTradeTimestamp(row, "exit_time");
+      const end = exit === null ? (Number.isFinite(nowMs) ? nowMs : Date.now()) : exit;
+      return Math.max(0, (end - entry) / 1000);
+    }
+
+    function analysisTradeHoldingTimeText(row) {
+      if (!row) return "-";
+      const members = row.aggregate_count && Array.isArray(row.aggregate_members) ? row.aggregate_members : [row];
+      const nowMs = Date.now();
+      const values = members.map((member) => analysisTradeHoldingSeconds(member, nowMs)).filter((value) => value !== null);
+      if (!values.length) return "-";
+      const min = Math.min.apply(null, values);
+      const max = Math.max.apply(null, values);
+      const text = min === max ? formatHoldingSeconds(min) : formatHoldingSeconds(min) + " ~ " + formatHoldingSeconds(max);
+      const open = members.some((member) => analysisTradeTimestamp(member, "exit_time") === null);
+      return open ? "持仓中 · " + text : text;
     }
 
     function analysisTradeLeverageText(row) {
