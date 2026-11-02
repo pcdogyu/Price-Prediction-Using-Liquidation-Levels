@@ -210,30 +210,6 @@ func VWAPZoneBounds(cfg Config, vwap, sigma, high, low float64) (greenUpper, red
 	return greenUpper, redLower, greenUpper >= redLower, true
 }
 
-// candleAbsorbed confirms that the current candle is absorbing the side of the
-// cascade that was liquidated. Long liquidations use a lower wick; short
-// liquidations use the mirrored upper wick.
-func candleAbsorbed(side string, candle domain.Candle, price, wickRatio float64) bool {
-	if price <= 0 {
-		price = candle.Close
-	}
-	if candle.Low <= 0 || candle.High < candle.Low {
-		return false
-	}
-	rangeSize := candle.High - candle.Low
-	if rangeSize <= 0 {
-		return true
-	}
-	close := candle.Close
-	if close <= 0 {
-		close = price
-	}
-	if strings.EqualFold(strings.TrimSpace(side), "short") {
-		return (candle.High-close)/rangeSize >= wickRatio
-	}
-	return (close-candle.Low)/rangeSize >= wickRatio
-}
-
 func scaledThreshold(base float64, layers int, slope float64) float64 {
 	if base <= 0 || layers <= 0 {
 		return base

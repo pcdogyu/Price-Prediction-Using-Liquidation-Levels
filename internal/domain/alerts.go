@@ -15,9 +15,9 @@ const (
 )
 
 // Alert cycle states. A radar cycle starts as watching/ARMED, becomes
-// aggressive/FIRED only after peak-decay and price absorption, and ends as
-// steady once an opposite liquidation confirms the move, or expires when it
-// never arrives.
+// aggressive/FIRED after the remaining market and position filters pass, and
+// ends as steady once an opposite liquidation confirms the move, or expires
+// when it never arrives.
 const (
 	AlertStateWatching   = "watching"
 	AlertStateAggressive = "aggressive"
@@ -53,7 +53,7 @@ func AlertMonitorMethod(windowMinutes, refreshMinutes, topSymbols int) string {
 	if topSymbols <= 0 {
 		topSymbols = AlertTopSymbolsDefault
 	}
-	return fmt.Sprintf("监控名单来自 APP_SYMBOLS 配置范围内按 Binance 24H 成交额排序的前 %d 个 USDⓈ-M USDT 永续，持仓或挂单币对例外保留（服务启动时刷新，之后每天北京时间 07:50 刷新）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。超过阈值先进入 ARMED，等待 15~30 秒爆仓速率回落至峰值 40%% 以下且价格出现吸收后才 FIRED；VWAP Z-Score 加大周期 Donchian 双边边界决定开仓区/仅平仓区，深度配额、指数网格和最小获利间距继续拦截不合格信号。", topSymbols, windowMinutes)
+	return fmt.Sprintf("监控名单来自 APP_SYMBOLS 配置范围内按 Binance 24H 成交额排序的前 %d 个 USDⓈ-M USDT 永续，持仓或挂单币对例外保留（服务启动时刷新，之后每天北京时间 07:50 刷新）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。超过阈值后立即进入 FIRED 评估；爆仓速率衰减和价格吸收不再作为门槛，VWAP Z-Score 加大周期 Donchian 双边边界决定开仓区/仅平仓区，深度配额、指数网格和最小获利间距继续拦截不合格信号。", topSymbols, windowMinutes)
 }
 
 // LiquidationAlert is one alert cycle for a symbol and the liquidated position

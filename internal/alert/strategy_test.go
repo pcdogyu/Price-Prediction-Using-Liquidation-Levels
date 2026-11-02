@@ -413,51 +413,22 @@ func radarShortContext(price float64, candles []domain.Candle) MarketContext {
 	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: ready}
 }
 
-func TestRadarArmedPeakDecayAndHighZoneShortEntry(t *testing.T) {
+func TestRadarThresholdFiresWithoutPeakDecayOrAbsorption(t *testing.T) {
 	cfg := Defaults()
 	cfg.Window = 3 * time.Minute
 	cfg.OtherUSD = 100
 	cfg.VWAPPeriodMinutes = 3
-	cfg.PeakDecayWindow = 30 * time.Second
 	engine := testEngine(t, cfg, "SOLUSDT")
 	candles := radarCandles(100, 101, 102)
 	ctx := radarShortContext(103, candles)
 	first := testEvent("SOLUSDT", "short", testStart, 150)
 	first.Price = 103
-	armed := engine.ObserveWithContext(first, ctx)
-	if len(armed.Signals) != 0 || len(armed.Alerts) != 1 || !armed.Alerts[0].FilterApplied {
-		t.Fatalf("threshold breach must only arm the radar: %+v", armed)
+	fired := engine.ObserveWithContext(first, ctx)
+	if len(fired.Signals) != 1 || fired.Signals[0].Side != "short" || !fired.Signals[0].OpenAllowed {
+		t.Fatalf("threshold should fire the high-zone short signal immediately: %+v", fired)
 	}
-	if got := engine.Tick(testStart.Add(20 * time.Second)); len(got.Signals) != 0 {
-		t.Fatalf("radar fired before the decay window: %+v", got.Signals)
-	}
-	fired := engine.Tick(testStart.Add(31 * time.Second))
-	if len(fired.Signals) != 1 || fired.Signals[0].Side != "short" || !fired.Signals[0].OpenAllowed || fired.Signals[0].PeakDecayRatio >= .4 {
-		t.Fatalf("decayed high-zone short signal=%+v", fired.Signals)
-	}
-}
-
-func TestHistoricalRecalculationSkipsPeakDecay(t *testing.T) {
-	cfg := Defaults()
-	cfg.OtherUSD = 100
-	cfg.VWAPPeriodMinutes = 3
-	cfg.PeakDecayWindow = 30 * time.Second
-	cfg.SkipPeakDecay = true
-	engine := testEngine(t, cfg, "SOLUSDT")
-	candles := radarCandles(100, 101, 102)
-	ctx := radarShortContext(103, candles)
-	first := testEvent("SOLUSDT", "short", testStart, 150)
-	first.Price = 103
-	result := engine.ObserveWithContext(first, ctx)
-	if len(result.Signals) != 1 || result.Signals[0].Kind != domain.SignalAggressive {
-		t.Fatalf("historical recalculation should fire without peak-decay: %+v", result)
-	}
-	signal := result.Signals[0]
-	if signal.CreatedAt != testStart || signal.QuietElapsedSeconds != 0 || signal.PeakDecayRatio != 0 || !signal.AbsorptionConfirmed {
-		t.Fatalf("historical signal should record skipped peak-decay gates: %+v", signal)
-	}
-	if strings.Contains(signal.FilterReason, "peak_decay") || strings.Contains(signal.FilterReason, "absorption") {
-		t.Fatalf("historical signal should not carry peak-decay blockers: %+v", signal)
+	if fired.Signals[0].PeakDecayRatio != 0 || !fired.Signals[0].AbsorptionConfirmed {
+		t.Fatalf("removed gates must be neutral in the persisted signal: %+v", fired.Signals[0])
 	}
 }
 
@@ -476,18 +447,9 @@ func TestRadarContextUnavailableNeverFallsBackToStaticSignal(t *testing.T) {
 		t.Fatalf("missing market context must not create a static signal: %+v", got.Signals)
 	}
 	engine.UpdateMarketContext("SOLUSDT", radarContext(103, radarCandles(100, 101, 102)))
-	fired := engine.Tick(testStart.Add(62 * time.Second))
-	if len(fired.Signals) != 1 || fired.Signals[0].Phase != domain.AlertPhaseFired || fired.Signals[0].PeakDecayRatio >= .4 || !fired.Signals[0].AbsorptionConfirmed {
-		t.Fatalf("fresh context should allow the decayed signal: %+v", fired.Signals)
-	}
-}
-
-func TestRadarShortUsesUpperWickAbsorption(t *testing.T) {
-	if !candleAbsorbed("short", domain.Candle{High: 110, Low: 100, Close: 106}, 106, .35) {
-		t.Fatal("short cascade should accept a clear upper wick")
-	}
-	if candleAbsorbed("short", domain.Candle{High: 110, Low: 100, Close: 109}, 109, .35) {
-		t.Fatal("short cascade should reject a candle without upper absorption")
+	fired := engine.Tick(testStart.Add(32 * time.Second))
+	if len(fired.Signals) != 1 || fired.Signals[0].Phase != domain.AlertPhaseFired || fired.Signals[0].PeakDecayRatio != 0 || !fired.Signals[0].AbsorptionConfirmed {
+		t.Fatalf("fresh context should allow the signal without the removed gates: %+v", fired.Signals)
 	}
 }
 
@@ -496,7 +458,6 @@ func TestRadarDeepQuotaBlocksEarlyLongThenUnlocks(t *testing.T) {
 	cfg.Window = 3 * time.Minute
 	cfg.OtherUSD = 100
 	cfg.VWAPPeriodMinutes = 3
-	cfg.PeakDecayWindow = 30 * time.Second
 	cfg.DeepQuotaMultiplier = 2
 	engine := testEngine(t, cfg, "SOLUSDT")
 	candles := radarCandles(100, 100.5, 101)

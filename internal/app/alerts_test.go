@@ -80,12 +80,12 @@ func TestRecordLiquidationDrivesAlertAndSignals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if alerts.AlertCount != 1 || alerts.Rows[0].Status != domain.AlertStateWatching {
+	if alerts.AlertCount != 1 || alerts.Rows[0].Status != domain.AlertStateAggressive {
 		t.Fatalf("alert after breach = %+v", alerts.Rows)
 	}
 
-	// The quiet period ends without further liquidations, so the aggressive signal
-	// is emitted in the direction of the liquidated positions.
+	// The context-aware threshold breach emits the aggressive signal immediately;
+	// a later tick must not duplicate the already persisted signal.
 	svc.alerts.persist(ctx, svc.alerts.engine.Tick(base.Add(2*time.Minute)), true)
 	// An opposite liquidation inside the confirmation window raises the steady one.
 	if err = svc.RecordLiquidation(ctx, alertTestEvent("short-1", "BTCUSDT", "short", base.Add(3*time.Minute), 5000)); err != nil {
@@ -100,8 +100,8 @@ func TestRecordLiquidationDrivesAlertAndSignals(t *testing.T) {
 		t.Fatalf("signal counters = %+v rows=%+v", signals, signals.Rows)
 	}
 	for _, row := range signals.Rows {
-		if !row.FilterApplied || row.Phase != domain.AlertPhaseFired || row.PeakDecayRatio >= .4 || !row.AbsorptionConfirmed {
-			t.Fatalf("signal was not produced by the radar: %+v", row)
+		if !row.FilterApplied || row.Phase != domain.AlertPhaseFired || row.PeakDecayRatio != 0 || !row.AbsorptionConfirmed {
+			t.Fatalf("signal was not produced by the radar without the removed gates: %+v", row)
 		}
 		if row.Side != row.LiquidationSide {
 			t.Fatalf("signal direction must follow the liquidated side: %+v", row)
@@ -266,8 +266,8 @@ func TestAlertChartSignalsReplayCurrentStrategySettings(t *testing.T) {
 	if len(view.Alerts) != 1 || len(view.Signals) != 1 || view.Thresholds.BTCUSD != 100000 {
 		t.Fatalf("default chart replay = %+v", view)
 	}
-	if view.Signals[0].Phase != domain.AlertPhaseFired || !view.Signals[0].FilterApplied || view.Signals[0].PeakDecayRatio >= .4 || !view.Signals[0].AbsorptionConfirmed {
-		t.Fatalf("chart replay did not use peak-decay radar: %+v", view.Signals[0])
+	if view.Signals[0].Phase != domain.AlertPhaseFired || !view.Signals[0].FilterApplied || view.Signals[0].PeakDecayRatio != 0 || !view.Signals[0].AbsorptionConfirmed {
+		t.Fatalf("chart replay did not use the remaining radar filters: %+v", view.Signals[0])
 	}
 
 	if _, err = svc.SaveAlertStrategySettings(ctx, domain.AlertStrategySettings{WindowMinutes: 3, BTCUSD: 200000, ETHUSD: 200000, OtherUSD: 100000}); err != nil {

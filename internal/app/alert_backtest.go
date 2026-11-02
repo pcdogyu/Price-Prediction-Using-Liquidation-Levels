@@ -273,9 +273,8 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 	cfg.VWAPRangeMinutes = params.VWAPRangeHours * 60
 	cfg.VWAPMinDrawdown = params.VWAPMinDrawdownPct / 100
 	cfg.VWAPDonchianFraction = params.VWAPDonchianPct / 100
-	// Match the explicit historical signal recalculation path. Peak-Decay is a
-	// live timing gate and cannot be inferred reliably from sparse sampled
-	// liquidations; the market/VWAP/Donchian gates remain active in the replay.
+	// Retain the historical replay flag for compatibility; the market/VWAP/
+	// Donchian gates remain active in the replay.
 	cfg.SkipPeakDecay = true
 	symbols := s.alertReplaySymbols(rtm)
 	buckets := make(map[string]*alertBacktestBucket, len(alertBacktestSignals)*len(alertBacktestFilters))
