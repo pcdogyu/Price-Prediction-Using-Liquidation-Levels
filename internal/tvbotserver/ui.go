@@ -1096,18 +1096,31 @@ const tvbotHTML = `<!doctype html>
     }
     #orders .section-head {
       align-items: flex-start;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+    }
+    #orders .section-head > div:first-child {
+      flex: 0 0 auto;
     }
     .order-history-actions {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(116px, .9fr) minmax(145px, 1.2fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(220px, 1.7fr) repeat(3, max-content);
       justify-content: flex-end;
       align-items: center;
       gap: 8px;
-      flex-wrap: wrap;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .order-history-actions select,
+    .order-history-actions .order-search-input {
+      width: 100%;
+      min-width: 0;
+    }
+    .order-history-actions .btn {
+      width: auto;
+      white-space: nowrap;
     }
     .order-search-input {
-      width: min(270px, 55vw);
-      min-width: 190px;
+      min-width: 0;
     }
     .order-status-filter {
       min-width: 130px;
@@ -1116,6 +1129,24 @@ const tvbotHTML = `<!doctype html>
     .order-source-filter,
     .order-coinpair-filter {
       min-width: 150px;
+    }
+    @media (max-width: 1280px) {
+      #orders .section-head {
+        flex-wrap: wrap;
+      }
+      .order-history-actions {
+        display: flex;
+        flex: 1 1 100%;
+        flex-wrap: wrap;
+      }
+      .order-history-actions select {
+        width: auto;
+        flex: 1 1 150px;
+      }
+      .order-history-actions .order-search-input {
+        width: auto;
+        flex: 1 1 260px;
+      }
     }
     .coinpair-filter-card {
       display: flex;
