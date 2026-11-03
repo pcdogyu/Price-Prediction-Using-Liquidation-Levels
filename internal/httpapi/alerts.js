@@ -640,7 +640,10 @@
       return;
     }
     strategySaveBusy = true;
-    $('alerts-strategy-save').disabled = true;
+    const strategySaveButton = $('alerts-strategy-save');
+    strategySaveButton.disabled = true;
+    strategySaveButton.classList.add('is-saving');
+    strategySaveButton.setAttribute('aria-busy', 'true');
     $('alerts-strategy-status').textContent = automatic ? '正在自动保存报警参数…' : '正在保存报警参数…';
     try {
       const response = await fetch(base + 'api/v1/alerts/strategy-settings', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(strategySettingsBody()) });
@@ -655,7 +658,9 @@
       $('alerts-strategy-status').textContent = '保存失败';
     } finally {
       strategySaveBusy = false;
-      $('alerts-strategy-save').disabled = false;
+      strategySaveButton.disabled = false;
+      strategySaveButton.classList.remove('is-saving');
+      strategySaveButton.removeAttribute('aria-busy');
       if (strategySavePending) {
         const pendingAutomatic = strategySavePendingAuto;
         strategySavePending = false;
