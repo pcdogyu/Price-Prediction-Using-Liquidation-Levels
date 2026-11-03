@@ -35,6 +35,7 @@ type alertRuntime struct {
 	webhookSender                               *notify.Webhook
 	webhookURL, webhookTokenNonce, webhookToken string
 	webhookConfig                               config.Config
+	valueAreaWindow                             valuearea.TradingWindow
 
 	mu       sync.RWMutex
 	settings domain.NotificationSettings
@@ -94,8 +95,9 @@ func (s *Service) newAlertRuntime() *alertRuntime {
 	rtm := &alertRuntime{
 		service: s,
 		engine:  alert.New(cfg), valueArea: valuearea.New(), store: s.store, log: s.log, cfg: cfg,
-		sender:   notify.NewTelegram(s.cfg.TelegramAPIBase),
-		envToken: s.cfg.TelegramBotToken, envChat: s.cfg.TelegramChatID,
+		valueAreaWindow: valuearea.DefaultTradingWindow(),
+		sender:          notify.NewTelegram(s.cfg.TelegramAPIBase),
+		envToken:        s.cfg.TelegramBotToken, envChat: s.cfg.TelegramChatID,
 		webhookURL: s.cfg.SteadyWebhookURL, webhookTokenNonce: s.cfg.SteadyWebhookTokenNonce,
 		webhookToken:  s.cfg.SteadyWebhookToken,
 		webhookConfig: s.cfg,
@@ -183,6 +185,9 @@ func validateAlertStrategySettings(in domain.AlertStrategySettings) error {
 	if math.IsNaN(in.VWAPDonchianPct) || math.IsInf(in.VWAPDonchianPct, 0) || in.VWAPDonchianPct < minVWAPDonchianPct || in.VWAPDonchianPct > maxVWAPDonchianPct {
 		return fmt.Errorf("VWAP Donchian 分位需在 %d%% 到 %d%% 之间", minVWAPDonchianPct, maxVWAPDonchianPct)
 	}
+	if !(valuearea.TradingWindow{StartMinute: in.ValueAreaStartMinute, EndMinute: in.ValueAreaEndMinute}).Valid() {
+		return errors.New("交易所刷单时间需为有效的北京时间区间，开始不能等于结束，结束可用 24:00")
+	}
 	return nil
 }
 
@@ -195,6 +200,10 @@ func fillStrategyVWAPDefaults(in, current domain.AlertStrategySettings) domain.A
 	}
 	if in.VWAPDonchianPct == 0 {
 		in.VWAPDonchianPct = current.VWAPDonchianPct
+	}
+	if in.ValueAreaStartMinute == 0 && in.ValueAreaEndMinute == 0 {
+		in.ValueAreaStartMinute = current.ValueAreaStartMinute
+		in.ValueAreaEndMinute = current.ValueAreaEndMinute
 	}
 	return in
 }
@@ -231,20 +240,52 @@ func (rtm *alertRuntime) restoreStrategySettings(ctx context.Context) {
 			return
 		}
 	}
-	cfg := rtm.engine.Config()
-	cfg.Window = time.Duration(stored.WindowMinutes) * time.Minute
-	cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = stored.BTCUSD, stored.ETHUSD, stored.OtherUSD
-	cfg.VWAPRangeMinutes = stored.VWAPRangeHours * 60
-	cfg.VWAPMinDrawdown = stored.VWAPMinDrawdownPct / 100
-	cfg.VWAPDonchianFraction = stored.VWAPDonchianPct / 100
-	cfg.VWAPFilterEnabled = stored.VWAPFilterEnabled
-	cfg.DonchianFilterEnabled = stored.DonchianFilterEnabled
-	cfg.FilterSettingsSet = true
-	rtm.engine.UpdateConfig(cfg)
+	rtm.applyStrategySettings(stored)
 }
 
 func (rtm *alertRuntime) snapshotStrategySettings() domain.AlertStrategySettings {
-	return strategySettingsFromConfig(rtm.engine.Config())
+	settings := strategySettingsFromConfig(rtm.engine.Config())
+	window := rtm.valueAreaWindowSnapshot()
+	settings.ValueAreaStartMinute = window.StartMinute
+	settings.ValueAreaEndMinute = window.EndMinute
+	return settings
+}
+
+func (rtm *alertRuntime) valueAreaWindowSnapshot() valuearea.TradingWindow {
+	rtm.mu.RLock()
+	defer rtm.mu.RUnlock()
+	return rtm.valueAreaWindow
+}
+
+func valueAreaWindowClock(minute int) string {
+	if minute == 24*60 {
+		return "24:00"
+	}
+	return fmt.Sprintf("%02d:%02d", minute/60, minute%60)
+}
+
+func valueAreaWindowNotificationMessage(window valuearea.TradingWindow) string {
+	return fmt.Sprintf("交易所刷单仅在北京时间 %s–%s 自动通知", valueAreaWindowClock(window.StartMinute), valueAreaWindowClock(window.EndMinute))
+}
+
+func (rtm *alertRuntime) setValueAreaWindow(window valuearea.TradingWindow) {
+	rtm.mu.Lock()
+	rtm.valueAreaWindow = window
+	rtm.mu.Unlock()
+}
+
+func (rtm *alertRuntime) applyStrategySettings(in domain.AlertStrategySettings) {
+	cfg := rtm.engine.Config()
+	cfg.Window = time.Duration(in.WindowMinutes) * time.Minute
+	cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = in.BTCUSD, in.ETHUSD, in.OtherUSD
+	cfg.VWAPRangeMinutes = in.VWAPRangeHours * 60
+	cfg.VWAPMinDrawdown = in.VWAPMinDrawdownPct / 100
+	cfg.VWAPDonchianFraction = in.VWAPDonchianPct / 100
+	cfg.VWAPFilterEnabled = in.VWAPFilterEnabled
+	cfg.DonchianFilterEnabled = in.DonchianFilterEnabled
+	cfg.FilterSettingsSet = true
+	rtm.engine.UpdateConfig(cfg)
+	rtm.setValueAreaWindow(valuearea.TradingWindow{StartMinute: in.ValueAreaStartMinute, EndMinute: in.ValueAreaEndMinute})
 }
 
 // updateStrategySettings persists validated values and applies them to the live
@@ -258,16 +299,7 @@ func (rtm *alertRuntime) updateStrategySettings(ctx context.Context, in domain.A
 	if err := rtm.store.SaveAlertStrategySettings(ctx, in); err != nil {
 		return domain.AlertStrategySettings{}, err
 	}
-	cfg := rtm.engine.Config()
-	cfg.Window = time.Duration(in.WindowMinutes) * time.Minute
-	cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = in.BTCUSD, in.ETHUSD, in.OtherUSD
-	cfg.VWAPRangeMinutes = in.VWAPRangeHours * 60
-	cfg.VWAPMinDrawdown = in.VWAPMinDrawdownPct / 100
-	cfg.VWAPDonchianFraction = in.VWAPDonchianPct / 100
-	cfg.VWAPFilterEnabled = in.VWAPFilterEnabled
-	cfg.DonchianFilterEnabled = in.DonchianFilterEnabled
-	cfg.FilterSettingsSet = true
-	rtm.engine.UpdateConfig(cfg)
+	rtm.applyStrategySettings(in)
 	return rtm.snapshotStrategySettings(), nil
 }
 
@@ -521,7 +553,7 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if !allowNotify || (signal.Kind != domain.SignalAggressive && signal.Kind != domain.SignalSteady && signal.Kind != domain.SignalValueArea) {
 		return
 	}
-	if signal.Kind == domain.SignalValueArea && !valuearea.WithinTradingWindow(signal.CreatedAt) {
+	if signal.Kind == domain.SignalValueArea && !rtm.valueAreaWindowSnapshot().Contains(signal.CreatedAt) {
 		return
 	}
 	if signal.Kind == domain.SignalValueArea && signal.PositionEffect == "close" {
@@ -879,8 +911,8 @@ func (rtm *alertRuntime) submitSignal(signal domain.TradeSignal, allowNotify boo
 	if !allowNotify {
 		return "restored", "重启回放，不重复通知"
 	}
-	if signal.Kind == domain.SignalValueArea && !valuearea.WithinTradingWindow(signal.CreatedAt) {
-		return "muted", "交易所刷单仅在北京时间 20:00–24:00 自动通知"
+	if signal.Kind == domain.SignalValueArea && !rtm.valueAreaWindowSnapshot().Contains(signal.CreatedAt) {
+		return "muted", valueAreaWindowNotificationMessage(rtm.valueAreaWindowSnapshot())
 	}
 	if !rtm.categoryEnabled(signal.Kind) {
 		return "muted", "Telegram 通知未启用或该类别已关闭"

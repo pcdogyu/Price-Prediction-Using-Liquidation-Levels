@@ -4,6 +4,19 @@
   const base = document.querySelector('meta[name="app-base"]').content;
   const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const when = value => value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '—';
+  const minuteText = value => {
+    const minute = Number(value);
+    if (!Number.isInteger(minute) || minute < 0 || minute > 1440) return '—';
+    if (minute === 1440) return '24:00';
+    return String(Math.floor(minute / 60)).padStart(2, '0') + ':' + String(minute % 60).padStart(2, '0');
+  };
+  const parseMinuteText = (value, allowEndOfDay = false) => {
+    const text = String(value || '').trim();
+    if (allowEndOfDay && text === '24:00') return 1440;
+    const match = /^(?:([01]\d|2[0-3]):([0-5]\d))$/.exec(text);
+    return match ? Number(match[1]) * 60 + Number(match[2]) : NaN;
+  };
+  const valueAreaWindowText = settings => '北京时间 ' + minuteText(settings.value_area_start_minute) + '–' + minuteText(settings.value_area_end_minute);
   const money = value => Number.isFinite(value) ? (value >= 1e6 ? '$' + (value / 1e6).toFixed(2) + 'M' : value >= 1e3 ? '$' + (value / 1e3).toFixed(0) + 'K' : '$' + value.toFixed(0)) : '—';
   const price = value => Number.isFinite(value) && value > 0 ? (value >= 1000 ? '$' + value.toFixed(2) : value >= 1 ? '$' + value.toFixed(4) : '$' + value.toFixed(6)) : '—';
   const span = seconds => {
@@ -489,6 +502,12 @@
     const donchianFilter = $('alerts-donchian-filter');
     if (document.activeElement !== vwapFilter) vwapFilter.checked = settings.vwap_filter_enabled !== false;
     if (document.activeElement !== donchianFilter) donchianFilter.checked = settings.donchian_filter_enabled !== false;
+    const valueAreaStart = $('alerts-value-area-start');
+    const valueAreaEnd = $('alerts-value-area-end');
+    if (document.activeElement !== valueAreaStart) valueAreaStart.value = minuteText(settings.value_area_start_minute);
+    if (document.activeElement !== valueAreaEnd) valueAreaEnd.value = minuteText(settings.value_area_end_minute);
+    const valueAreaWindow = $('alerts-value-area-window');
+    if (valueAreaWindow) valueAreaWindow.textContent = valueAreaWindowText(settings);
     $('alerts-monitor-window').textContent = settings.window_minutes || 3;
     $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 50) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健 / 交易所刷单下单信号';
     if (!strategyLoaded) strategyLoaded = true;
@@ -593,7 +612,9 @@
       vwap_min_drawdown_pct: Number($('alerts-vwap-min-drawdown').value),
       vwap_donchian_pct: Number($('alerts-vwap-donchian').value),
       vwap_filter_enabled: $('alerts-vwap-filter').checked,
-      donchian_filter_enabled: $('alerts-donchian-filter').checked
+      donchian_filter_enabled: $('alerts-donchian-filter').checked,
+      value_area_start_minute: parseMinuteText($('alerts-value-area-start').value),
+      value_area_end_minute: parseMinuteText($('alerts-value-area-end').value, true)
     };
   }
 
@@ -799,7 +820,7 @@
   $('alerts-next').addEventListener('click', () => { if (!historyNextCursor) return; historyCursors[historyPage + 1] = historyNextCursor; loadHistory(historyNextCursor, historyPage + 1, historyReplayed); });
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
-  ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes', 'alerts-vwap-range-hours', 'alerts-vwap-min-drawdown', 'alerts-vwap-donchian'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
+  ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes', 'alerts-vwap-range-hours', 'alerts-vwap-min-drawdown', 'alerts-vwap-donchian', 'alerts-value-area-start', 'alerts-value-area-end'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
   ['alerts-vwap-filter', 'alerts-donchian-filter'].forEach(id => $(id).addEventListener('change', () => { void saveStrategySettings(null, true); }));
   $('alerts-signal-recalculate').addEventListener('click', recalculateSignals);
   $('alerts-backtest-run').addEventListener('click', runBacktest);

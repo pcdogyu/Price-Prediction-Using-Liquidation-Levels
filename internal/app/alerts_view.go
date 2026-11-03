@@ -26,6 +26,9 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 		Signals:     []domain.TradeSignal{},
 		GeneratedAt: now,
 	}
+	strategy := rtm.snapshotStrategySettings()
+	view.Thresholds.ValueAreaStartMinute = strategy.ValueAreaStartMinute
+	view.Thresholds.ValueAreaEndMinute = strategy.ValueAreaEndMinute
 	view.Method = domain.AlertMonitorMethod(view.Thresholds.WindowMinutes, view.Thresholds.RefreshMinutes, view.Thresholds.TopSymbols)
 	rtm.mu.RLock()
 	view.Watch = append(view.Watch, rtm.watch...)

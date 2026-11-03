@@ -405,7 +405,7 @@ func (rtm *alertRuntime) valueAreaBacktestEntries(ctx context.Context, symbol st
 	if err != nil {
 		return nil, err
 	}
-	signals := valueAreaBacktestSignals(symbol, candles, profiles, gammaPoints, from, to)
+	signals := valueAreaBacktestSignalsInWindow(symbol, candles, profiles, gammaPoints, from, to, rtm.valueAreaWindowSnapshot())
 	entries := make([]alertBacktestEntry, 0, len(signals))
 	for _, signal := range signals {
 		if signal.PositionEffect != "open" || signal.CreatedAt.Before(from) || signal.CreatedAt.After(to) {
@@ -417,6 +417,14 @@ func (rtm *alertRuntime) valueAreaBacktestEntries(ctx context.Context, symbol st
 }
 
 func valueAreaBacktestSignals(symbol string, candles []domain.Candle, snapshots []domain.VolumeProfileSnapshot, gammaPoints []domain.OptionGammaPoint, from, to time.Time) []domain.TradeSignal {
+	return valueAreaBacktestSignalsWithWindow(symbol, candles, snapshots, gammaPoints, from, to, nil)
+}
+
+func valueAreaBacktestSignalsInWindow(symbol string, candles []domain.Candle, snapshots []domain.VolumeProfileSnapshot, gammaPoints []domain.OptionGammaPoint, from, to time.Time, window valuearea.TradingWindow) []domain.TradeSignal {
+	return valueAreaBacktestSignalsWithWindow(symbol, candles, snapshots, gammaPoints, from, to, &window)
+}
+
+func valueAreaBacktestSignalsWithWindow(symbol string, candles []domain.Candle, snapshots []domain.VolumeProfileSnapshot, gammaPoints []domain.OptionGammaPoint, from, to time.Time, window *valuearea.TradingWindow) []domain.TradeSignal {
 	engine := valuearea.New()
 	profileIndex, gammaIndex := 0, 0
 	var profile domain.VolumeProfile
@@ -453,7 +461,7 @@ func valueAreaBacktestSignals(symbol string, candles []domain.Candle, snapshots 
 		}
 		tick := domain.PriceTick{TradeID: candle.Time.UnixMilli(), Symbol: symbol, Time: candle.Time, Price: candle.Close}
 		signal, ok := engine.Process(tick, profile, gamma)
-		if ok && !signal.CreatedAt.Before(from) && !signal.CreatedAt.After(to) {
+		if ok && !signal.CreatedAt.Before(from) && !signal.CreatedAt.After(to) && (window == nil || window.Contains(signal.CreatedAt)) {
 			signals = append(signals, signal)
 		}
 	}

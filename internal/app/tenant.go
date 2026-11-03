@@ -109,17 +109,11 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 		_ = tenantStore.Close()
 		s.alertTenantsMu.Unlock()
 		return nil, strategyErr
-	} else if found && validateAlertStrategySettings(strategy) == nil {
-		cfg := rtm.engine.Config()
-		cfg.Window = time.Duration(strategy.WindowMinutes) * time.Minute
-		cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = strategy.BTCUSD, strategy.ETHUSD, strategy.OtherUSD
-		cfg.VWAPRangeMinutes = strategy.VWAPRangeHours * 60
-		cfg.VWAPMinDrawdown = strategy.VWAPMinDrawdownPct / 100
-		cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
-		cfg.VWAPFilterEnabled = strategy.VWAPFilterEnabled
-		cfg.DonchianFilterEnabled = strategy.DonchianFilterEnabled
-		cfg.FilterSettingsSet = true
-		rtm.engine.UpdateConfig(cfg)
+	} else if found {
+		strategy = fillStrategyVWAPDefaults(strategy, rtm.snapshotStrategySettings())
+		if validateAlertStrategySettings(strategy) == nil {
+			rtm.applyStrategySettings(strategy)
+		}
 	} else if s.isLegacyAlertTenant(tenantID) {
 		legacy, legacyFound, legacyErr := s.store.AlertStrategySettings(ctx)
 		if legacyErr != nil {
@@ -127,17 +121,11 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 			s.alertTenantsMu.Unlock()
 			return nil, legacyErr
 		}
+		if legacyFound {
+			legacy = fillStrategyVWAPDefaults(legacy, rtm.snapshotStrategySettings())
+		}
 		if legacyFound && validateAlertStrategySettings(legacy) == nil {
-			cfg := rtm.engine.Config()
-			cfg.Window = time.Duration(legacy.WindowMinutes) * time.Minute
-			cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = legacy.BTCUSD, legacy.ETHUSD, legacy.OtherUSD
-			cfg.VWAPRangeMinutes = legacy.VWAPRangeHours * 60
-			cfg.VWAPMinDrawdown = legacy.VWAPMinDrawdownPct / 100
-			cfg.VWAPDonchianFraction = legacy.VWAPDonchianPct / 100
-			cfg.VWAPFilterEnabled = legacy.VWAPFilterEnabled
-			cfg.DonchianFilterEnabled = legacy.DonchianFilterEnabled
-			cfg.FilterSettingsSet = true
-			rtm.engine.UpdateConfig(cfg)
+			rtm.applyStrategySettings(legacy)
 			if err := s.store.SaveAlertStrategySettingsForTenant(ctx, tenantID, legacy); err != nil {
 				_ = tenantStore.Close()
 				s.alertTenantsMu.Unlock()
@@ -306,6 +294,7 @@ func (s *Service) alertStrategySettingsForContext(ctx context.Context) (domain.A
 	if !found {
 		return rtm.snapshotStrategySettings(), nil
 	}
+	stored = fillStrategyVWAPDefaults(stored, rtm.snapshotStrategySettings())
 	return stored, nil
 }
 
@@ -476,15 +465,6 @@ func (rtm *alertRuntime) updateStrategySettingsForTenant(ctx context.Context, te
 	if err := rtm.tenantConfigStore().SaveAlertStrategySettingsForTenant(ctx, tenantID, in); err != nil {
 		return domain.AlertStrategySettings{}, err
 	}
-	cfg := rtm.engine.Config()
-	cfg.Window = time.Duration(in.WindowMinutes) * time.Minute
-	cfg.BTCUSD, cfg.ETHUSD, cfg.OtherUSD = in.BTCUSD, in.ETHUSD, in.OtherUSD
-	cfg.VWAPRangeMinutes = in.VWAPRangeHours * 60
-	cfg.VWAPMinDrawdown = in.VWAPMinDrawdownPct / 100
-	cfg.VWAPDonchianFraction = in.VWAPDonchianPct / 100
-	cfg.VWAPFilterEnabled = in.VWAPFilterEnabled
-	cfg.DonchianFilterEnabled = in.DonchianFilterEnabled
-	cfg.FilterSettingsSet = true
-	rtm.engine.UpdateConfig(cfg)
+	rtm.applyStrategySettings(in)
 	return in, nil
 }

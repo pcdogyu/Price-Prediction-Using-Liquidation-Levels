@@ -35,3 +35,26 @@ func TestWithinTradingWindowConvertsFromUTC(t *testing.T) {
 		t.Fatal("16:00 UTC should be the Beijing midnight boundary")
 	}
 }
+
+func TestTradingWindowSupportsCustomAndCrossMidnightIntervals(t *testing.T) {
+	beijing := tradingWindowLocation
+	cases := []struct {
+		name   string
+		window TradingWindow
+		at     time.Time
+		want   bool
+	}{
+		{name: "custom start", window: TradingWindow{StartMinute: 18 * 60, EndMinute: 22 * 60}, at: time.Date(2026, time.November, 2, 18, 0, 0, 0, beijing), want: true},
+		{name: "custom end", window: TradingWindow{StartMinute: 18 * 60, EndMinute: 22 * 60}, at: time.Date(2026, time.November, 2, 22, 0, 0, 0, beijing), want: false},
+		{name: "cross midnight late", window: TradingWindow{StartMinute: 22 * 60, EndMinute: 2 * 60}, at: time.Date(2026, time.November, 2, 23, 0, 0, 0, beijing), want: true},
+		{name: "cross midnight early", window: TradingWindow{StartMinute: 22 * 60, EndMinute: 2 * 60}, at: time.Date(2026, time.November, 3, 1, 59, 0, 0, beijing), want: true},
+		{name: "cross midnight outside", window: TradingWindow{StartMinute: 22 * 60, EndMinute: 2 * 60}, at: time.Date(2026, time.November, 3, 2, 0, 0, 0, beijing), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.window.Contains(tc.at); got != tc.want {
+				t.Fatalf("TradingWindow.Contains(%s) = %v, want %v", tc.at, got, tc.want)
+			}
+		})
+	}
+}

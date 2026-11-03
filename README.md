@@ -74,6 +74,8 @@ GET /api/v1/alerts/klines?symbol=DOGEUSDT&interval=15m&limit=300&before=<RFC3339
 GET|POST /api/v1/alerts/settings
 GET|POST /api/v1/alerts/order-settings
 GET|POST /api/v1/alerts/strategy-settings
+
+报警参数中的 `value_area_start_minute` / `value_area_end_minute` 控制交易所刷单 VAL/VAH 策略的自动通知、下单和回测时间，按北京时间的每日分钟数保存；默认 `1200`–`1440`（20:00–24:00），结束时间 `1440` 即 `24:00`，开始晚于结束时支持跨午夜区间。参数按登录租户隔离。
 POST /api/v1/alerts/settings/test
 ```
 

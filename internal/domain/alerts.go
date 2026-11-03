@@ -215,6 +215,8 @@ type AlertStrategySettings struct {
 	VWAPDonchianPct       float64   `json:"vwap_donchian_pct"`
 	VWAPFilterEnabled     bool      `json:"vwap_filter_enabled"`
 	DonchianFilterEnabled bool      `json:"donchian_filter_enabled"`
+	ValueAreaStartMinute  int       `json:"value_area_start_minute"`
+	ValueAreaEndMinute    int       `json:"value_area_end_minute"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }
 
@@ -237,6 +239,8 @@ type AlertThresholds struct {
 	VWAPDonchianPct       float64 `json:"vwap_donchian_pct"`
 	VWAPFilterEnabled     bool    `json:"vwap_filter_enabled"`
 	DonchianFilterEnabled bool    `json:"donchian_filter_enabled"`
+	ValueAreaStartMinute  int     `json:"value_area_start_minute"`
+	ValueAreaEndMinute    int     `json:"value_area_end_minute"`
 	PeakDecaySeconds      int     `json:"peak_decay_seconds"`
 	PeakDecayRatio        float64 `json:"peak_decay_ratio"`
 	AbsorptionWickRatio   float64 `json:"absorption_wick_ratio"`

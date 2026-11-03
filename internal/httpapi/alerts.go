@@ -797,6 +797,12 @@ func (s *Server) alertStrategySettings(w http.ResponseWriter, r *http.Request) {
 	if _, ok := fields["donchian_filter_enabled"]; !ok {
 		in.DonchianFilterEnabled = current.DonchianFilterEnabled
 	}
+	if _, ok := fields["value_area_start_minute"]; !ok {
+		in.ValueAreaStartMinute = current.ValueAreaStartMinute
+	}
+	if _, ok := fields["value_area_end_minute"]; !ok {
+		in.ValueAreaEndMinute = current.ValueAreaEndMinute
+	}
 	stored, err := s.svc.SaveAlertStrategySettingsForContext(ctx, in)
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
