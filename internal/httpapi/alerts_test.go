@@ -103,6 +103,9 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "alerts-close-only-prefix") || !strings.Contains(script, "closeOnlyIgnored") {
 		t.Fatal("the alerts script must mark close-only history records")
 	}
+	if !strings.Contains(script, "const status = $('alerts-webhook-status');") || !strings.Contains(script, "if (!status) return;") || !strings.Contains(script, "status.textContent = parts.join(' · ');") {
+		t.Fatal("webhook status rendering must tolerate an older page without the optional status element")
+	}
 	if !strings.Contains(script, "filter_tags") || !strings.Contains(script, "VWAP过滤") || !strings.Contains(script, "Donchian过滤") || !strings.Contains(script, "legacyFilterTags") {
 		t.Fatal("the alerts script must render VWAP/Donchian history tags")
 	}

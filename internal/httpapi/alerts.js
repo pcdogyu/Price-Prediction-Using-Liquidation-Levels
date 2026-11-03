@@ -464,13 +464,18 @@
 
   function renderWebhookStatus(webhook) {
     if (!webhook) return;
+    // Keep the overview refresh usable while a reverse proxy or a rolling
+    // upgrade briefly serves an older alerts.html without the optional
+    // webhook status element.
+    const status = $('alerts-webhook-status');
+    if (!status) return;
     const age = Number(webhook.oldest_task_age_seconds || 0);
     const queueWait = Number(webhook.last_queue_wait_ms || 0);
     const sendLatency = Number(webhook.last_send_latency_ms || 0);
     const parts = [webhook.configured ? '已配置' : '未配置', '队列 ' + (webhook.queue_depth || 0), '最老任务 ' + age.toFixed(1) + ' 秒', '最近排队 ' + queueWait + ' ms', '最近发送 ' + sendLatency + ' ms', '已发送 ' + (webhook.sent || 0), '已过期 ' + (webhook.expired || 0)];
     if (webhook.failed) parts.push('失败 ' + webhook.failed);
     if (webhook.last_error) parts.push('最近错误：' + webhook.last_error);
-    $('alerts-webhook-status').textContent = parts.join(' · ');
+    status.textContent = parts.join(' · ');
   }
 
   function renderStrategySettings(settings) {
