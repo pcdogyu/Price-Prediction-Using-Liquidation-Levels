@@ -456,7 +456,7 @@ func TestOrderStoreFuzzySymbolSearchMemoryAndSQLite(t *testing.T) {
 		}
 		noise := signal
 		noise.Coinpair = "HYPEUSDT"
-		noise.Ticker = "GATE:HYPE_USDT"
+		noise.Ticker = "ETHUSDT"
 		if _, _, err := store.RecordAccepted(noise, "fuzzy-hype", time.Date(2026, 7, 24, 3, 0, 1, 0, time.UTC)); err != nil {
 			t.Fatal(err)
 		}

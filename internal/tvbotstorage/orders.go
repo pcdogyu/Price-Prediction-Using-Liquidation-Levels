@@ -1637,8 +1637,8 @@ func orderSQLiteFilterWhere(exchange string, status OrderStatus, query string) (
 	}
 	for _, term := range orderSearchTerms(query) {
 		pattern := sqliteLikeContainsPattern(term)
-		clauses = append(clauses, "("+orderSQLiteSearchText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactCoinpairText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactTickerText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactCoinpairText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactTickerText+` LIKE ? ESCAPE '\')`)
-		args = append(args, pattern, pattern, pattern, sqliteLikeSubsequencePattern(term), sqliteLikeSubsequencePattern(term))
+		clauses = append(clauses, "("+orderSQLiteSearchText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactCoinpairText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactTickerText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactCoinpairText+` LIKE ? ESCAPE '\')`)
+		args = append(args, pattern, pattern, pattern, sqliteLikeSubsequencePattern(term))
 	}
 	return strings.Join(clauses, " AND "), args
 }
@@ -1680,9 +1680,9 @@ func orderRecordMatchesSearch(rec OrderRecord, terms []string) bool {
 		return true
 	}
 	text := orderRecordSearchText(rec)
-	compactSymbols := orderRecordCompactSymbolTexts(rec)
+	compactCoinpair := compactOrderSymbolText(rec.Coinpair)
 	for _, term := range terms {
-		if !strings.Contains(text, term) && !isOrderSymbolSubsequenceAny(compactSymbols, term) {
+		if !strings.Contains(text, term) && !isOrderSymbolSubsequence(compactCoinpair, term) {
 			return false
 		}
 	}
@@ -1730,15 +1730,6 @@ func orderRecordCompactSymbolTexts(rec OrderRecord) []string {
 
 func compactOrderSymbolText(value string) string {
 	return strings.NewReplacer("-", "", "_", "", "/", "", ":", "", ".", "", " ", "", "\t", "").Replace(strings.ToLower(value))
-}
-
-func isOrderSymbolSubsequenceAny(texts []string, term string) bool {
-	for _, text := range texts {
-		if isOrderSymbolSubsequence(text, term) {
-			return true
-		}
-	}
-	return false
 }
 
 func isOrderSymbolSubsequence(text, term string) bool {
