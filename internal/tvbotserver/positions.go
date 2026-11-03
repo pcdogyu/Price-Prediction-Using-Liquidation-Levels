@@ -1424,7 +1424,7 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 			gateContractOperationJobs.done(operationKey)
 			continue
 		}
-		ack, err := placeGateMarketPositionClose(ctx, cfg, client, contract)
+		ack, err := placeGateMarketPositionClose(ctx, cfg, client, position)
 		if err != nil {
 			positionCloseJobs.done(key)
 			gateContractOperationJobs.done(operationKey)
@@ -2201,7 +2201,7 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusBadGateway, "position_close_cancel_orders_failed", err.Error())
 		return
 	}
-	ack, err := placeGateMarketPositionClose(ctx, cfg, client, found.Contract)
+	ack, err := placeGateMarketPositionClose(ctx, cfg, client, converted)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "position_close_failed", err.Error())
 		return
@@ -2213,11 +2213,28 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 	})
 }
 
-func placeGateMarketPositionClose(ctx context.Context, cfg config.Config, client gate.Client, contract string) (gate.Order, error) {
-	return client.PlaceOrder(ctx, gate.PlaceOrderRequest{
-		Contract: contract, Size: "0", Price: "0", TIF: "ioc", Close: true, ReduceOnly: true,
-		PosMarginMode: cfg.MarginMode(), Text: nextGatePositionCloseText(),
-	})
+func placeGateMarketPositionClose(ctx context.Context, cfg config.Config, client gate.Client, position okx.Position) (gate.Order, error) {
+	order, err := placeGatePositionCloseAtPrice(ctx, cfg, client, position, "0", "")
+	if err == nil || !isGateMarketPriceTooDeviated(err) {
+		return order, err
+	}
+
+	price, priceErr := gateMarketableClosePrice(ctx, client, position)
+	if priceErr != nil {
+		return gate.Order{}, fmt.Errorf("Gate market close rejected by price protection: %w; IOC limit close price unavailable: %v", err, priceErr)
+	}
+	order, fallbackErr := placeGatePositionCloseAtPrice(ctx, cfg, client, position, price, "")
+	if fallbackErr != nil {
+		return gate.Order{}, fmt.Errorf("Gate market close rejected by price protection: %w; IOC limit close fallback failed: %v", err, fallbackErr)
+	}
+	return order, nil
+}
+
+func isGateMarketPriceTooDeviated(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToUpper(err.Error()), "MARKET_PRICE_TOO_DEVIATED")
 }
 
 // cancelAllGateContractOrders removes every currently open Gate normal and
@@ -2361,6 +2378,41 @@ func gateLimitClosePrice(ctx context.Context, client gate.Client, position okx.P
 		return "", err
 	}
 	return priceOneTickFromMidValue((bid+ask)/2, contract.OrderPriceRound, side)
+}
+
+func gateMarketableClosePrice(ctx context.Context, client gate.Client, position okx.Position) (string, error) {
+	contract, err := client.Contract(ctx, position.InstID)
+	if err != nil {
+		return "", err
+	}
+	ticker, err := client.Ticker(ctx, position.InstID)
+	if err != nil {
+		return "", err
+	}
+	bid, bidErr := strconv.ParseFloat(strings.TrimSpace(ticker.HighestBid), 64)
+	ask, askErr := strconv.ParseFloat(strings.TrimSpace(ticker.LowestAsk), 64)
+	if bidErr != nil || askErr != nil || bid <= 0 || ask <= 0 {
+		last, lastErr := strconv.ParseFloat(strings.TrimSpace(ticker.Last), 64)
+		if lastErr != nil || last <= 0 {
+			last, lastErr = strconv.ParseFloat(strings.TrimSpace(contract.MarkPrice), 64)
+			if lastErr != nil || last <= 0 {
+				return "", fmt.Errorf("invalid Gate ticker bid/ask for %s", position.InstID)
+			}
+		}
+		bid, ask = last, last
+	}
+	side, err := closeOrderSide(position)
+	if err != nil {
+		return "", err
+	}
+	tick, err := strconv.ParseFloat(strings.TrimSpace(contract.OrderPriceRound), 64)
+	if err != nil || tick <= 0 {
+		return "", fmt.Errorf("invalid tick size %q", contract.OrderPriceRound)
+	}
+	if side == "buy" {
+		return formatPriceToTick(ask, tick, contract.OrderPriceRound, true)
+	}
+	return formatPriceToTick(bid, tick, contract.OrderPriceRound, false)
 }
 
 func placeGateLimitPositionClose(ctx context.Context, cfg config.Config, client gate.Client, position okx.Position, closeSz string) (gatePositionCloseOrder, error) {
@@ -2670,6 +2722,10 @@ func fallbackGateMarketPositionClose(cfg config.Config, client gate.Client, acti
 }
 
 func placeGatePositionClose(ctx context.Context, cfg config.Config, client gate.Client, position okx.Position, closeSz string) (gate.Order, error) {
+	return placeGatePositionCloseAtPrice(ctx, cfg, client, position, "0", closeSz)
+}
+
+func placeGatePositionCloseAtPrice(ctx context.Context, cfg config.Config, client gate.Client, position okx.Position, price, closeSz string) (gate.Order, error) {
 	marginMode := strings.ToLower(strings.TrimSpace(position.MgnMode))
 	if marginMode != "cross" && marginMode != "isolated" {
 		marginMode = cfg.MarginMode()
@@ -2677,7 +2733,7 @@ func placeGatePositionClose(ctx context.Context, cfg config.Config, client gate.
 	req := gate.PlaceOrderRequest{
 		Contract:      strings.ToUpper(strings.TrimSpace(position.InstID)),
 		Size:          "0",
-		Price:         "0",
+		Price:         price,
 		TIF:           "ioc",
 		Close:         true,
 		ReduceOnly:    true,

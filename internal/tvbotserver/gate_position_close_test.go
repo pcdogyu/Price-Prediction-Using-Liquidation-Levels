@@ -147,6 +147,70 @@ func TestTVBotGateMarketPositionCloseUsesRequiredTextPrefix(t *testing.T) {
 	}
 }
 
+func TestTVBotGateMarketPositionCloseFallsBackToMarketableIOCOnPriceProtection(t *testing.T) {
+	var orderBodies []map[string]any
+	gateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v4/futures/usdt/positions":
+			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"84.755","pos_margin_mode":"isolated","mode":"single"}]`))
+		case "/api/v4/futures/usdt/contracts/BTC_USDT":
+			_, _ = w.Write([]byte(`{"name":"BTC_USDT","order_size_min":"1","order_price_round":"0.1","mark_price":"84.755","enable_decimal":false}`))
+		case "/api/v4/futures/usdt/tickers":
+			if r.URL.Query().Get("contract") != "BTC_USDT" {
+				t.Fatalf("unexpected ticker query: %s", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","last":"87.2","highest_bid":"87.1","lowest_ask":"87.279"}]`))
+		case "/api/v4/futures/usdt/orders":
+			switch r.Method {
+			case http.MethodGet:
+				_, _ = w.Write([]byte(`[]`))
+			case http.MethodPost:
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				orderBodies = append(orderBodies, body)
+				if len(orderBodies) == 1 {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"label":"MARKET_PRICE_TOO_DEVIATED","message":"buy market order stop match price 86.4501 less than ask1 price 87.279 while mark_price 84.755 and slip ratio 0.05"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"id":790,"contract":"BTC_USDT","size":0,"left":0,"price":"87.3","status":"finished","text":"t-close","is_reduce_only":true,"is_close":true}`))
+			default:
+				t.Fatalf("unexpected order method: %s", r.Method)
+			}
+		case "/api/v4/futures/usdt/price_orders":
+			if r.Method != http.MethodGet {
+				t.Fatalf("unexpected Gate price order method: %s", r.Method)
+			}
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Fatalf("unexpected Gate path %s", r.URL.Path)
+		}
+	}))
+	defer gateServer.Close()
+
+	srv := newTestServer(t)
+	configureGatePositionCloseTest(t, srv, gateServer.URL)
+	req := httptest.NewRequest(http.MethodPost, "/tvbot/positions/close", bytes.NewReader([]byte(`{"exchange":"gate","api_id":"gate-main","inst_id":"BTC_USDT","pos_side":"short","mode":"market"}`)))
+	req.SetBasicAuth("admin", "Admin123")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Gate market close fallback status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if len(orderBodies) != 2 {
+		t.Fatalf("expected market close and one fallback order, got %d: %#v", len(orderBodies), orderBodies)
+	}
+	if orderBodies[0]["price"] != "0" || orderBodies[0]["tif"] != "ioc" || orderBodies[0]["close"] != true || orderBodies[0]["reduce_only"] != true {
+		t.Fatalf("bad initial Gate market close order: %#v", orderBodies[0])
+	}
+	if orderBodies[1]["size"] != "0" || orderBodies[1]["price"] != "87.3" || orderBodies[1]["tif"] != "ioc" || orderBodies[1]["close"] != true || orderBodies[1]["reduce_only"] != true {
+		t.Fatalf("bad Gate marketable IOC fallback order: %#v", orderBodies[1])
+	}
+}
+
 func TestTVBotGatePartialLimitPositionCloseUsesReduceOnlySize(t *testing.T) {
 	restore := isolatePositionCloseJobsForTest()
 	defer restore()
