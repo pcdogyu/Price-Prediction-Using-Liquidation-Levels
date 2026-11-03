@@ -931,19 +931,19 @@ func TestAlertChartPeriods(t *testing.T) {
 	}
 }
 
-// TestAlertPageLinksSymbolsToTheChart documents that every pair name on the alert
-// page opens its own K-line tab.
-func TestAlertPageLinksSymbolsToTheChart(t *testing.T) {
+// TestAlertPageLinksSymbolsToBubbleChart documents that every pair name on the
+// alert page opens its own bubble-chart tab.
+func TestAlertPageLinksSymbolsToBubbleChart(t *testing.T) {
 	srv, _ := alertTestServer(t)
 	script := serveAlert(srv, http.MethodGet, "/assets/alerts.js", nil).Body.String()
-	for _, want := range []string{"alerts/chart?symbol=", `target="_blank"`, `rel="noopener"`, "encodeURIComponent(symbol)"} {
+	for _, want := range []string{"bubbles?symbol=", `target="_blank"`, `rel="noopener"`, "encodeURIComponent(symbol)", "气泡图"} {
 		if !strings.Contains(script, want) {
-			t.Fatalf("the alert page must link pairs to the chart with %q", want)
+			t.Fatalf("the alert page must link pairs to the bubble chart with %q", want)
 		}
 	}
 	// the monitor table, the signal history and the alert history all link out
-	if got := strings.Count(script, "chartLink("); got != 3 {
-		t.Fatalf("the monitor, signal and alert tables must all link to the chart, found %d uses", got)
+	if got := strings.Count(script, "bubbleLink("); got != 3 {
+		t.Fatalf("the monitor, signal and alert tables must all link to the bubble chart, found %d uses", got)
 	}
 }
 

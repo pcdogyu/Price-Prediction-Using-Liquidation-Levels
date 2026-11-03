@@ -94,9 +94,9 @@
     const prefix = tags.concat(closeOnly ? [closeOnly] : []).join(' · ');
     return (prefix ? prefix + ' · ' : '') + escape(label);
   };
-  // Every pair name links to its own K-line page in a new tab, so the alert page
-  // keeps its scroll position and filters while the chart opens beside it.
-  const chartLink = symbol => '<a class="alerts-symbol-link" target="_blank" rel="noopener" href="' + base + 'alerts/chart?symbol=' + encodeURIComponent(symbol) + '" title="在新标签页打开 ' + escape(symbol) + ' K线">' + escape(symbol) + '</a>';
+  // Every pair name links to its own bubble chart in a new tab, so the alert
+  // page keeps its scroll position and filters while the chart opens beside it.
+  const bubbleLink = symbol => '<a class="alerts-symbol-link" target="_blank" rel="noopener" href="' + base + 'bubbles?symbol=' + encodeURIComponent(symbol) + '" title="在新标签页打开 ' + escape(symbol) + ' 气泡图">' + escape(symbol) + '</a>';
 
   const triggerLink = (recordType, recordID, symbol, side, referencePrice) => {
     if (!recordID || !Number.isFinite(referencePrice) || referencePrice <= 0) return '<span class="muted">不可触发</span>';
@@ -362,7 +362,7 @@
   function monitorRows(rows) {
     if (!rows.length) { $('alerts-monitor-rows').innerHTML = '<tr><td colspan="9">等待监控数据</td></tr>'; return; }
     $('alerts-monitor-rows').innerHTML = rows.map(row => '<tr' + (row.state === 'idle' ? '' : ' class="alerts-row-active"') + '>' +
-      '<td>' + escape(row.rank) + '</td><td>' + chartLink(row.symbol) + '</td>' +
+      '<td>' + escape(row.rank) + '</td><td>' + bubbleLink(row.symbol) + '</td>' +
       '<td>' + money(row.quote_volume_usd) + '</td><td>' + money(row.threshold_usd) + '</td>' +
       '<td>' + escape(row.window_minutes || '—') + ' 分钟</td>' +
       '<td' + (row.long_usd >= row.threshold_usd ? ' class="buy"' : '') + '>' + money(row.long_usd) + (row.long_count ? '<span class="muted"> · ' + row.long_count + ' 笔</span>' : '') + '</td>' +
@@ -380,7 +380,7 @@
         : '安静 ' + span(signal.quiet_elapsed_seconds) + ' · 顺延 ' + (signal.follow_ups || 0) + ' 次';
     const label = valueArea ? '交易所刷单' : signal.kind === 'steady' ? '稳健' : '激进';
     const valueDirection = signal.side === 'long' ? 'VAL 买入' + (signal.position_effect === 'close' ? ' / 平空' : '') : 'VAH 卖出' + (signal.position_effect === 'close' ? ' / 平多' : '');
-    return '<td>' + when(signal.created_at) + '</td><td>' + chartLink(signal.symbol) + '</td>' +
+    return '<td>' + when(signal.created_at) + '</td><td>' + bubbleLink(signal.symbol) + '</td>' +
       '<td class="' + (valueArea ? (signal.side === 'short' ? 'sell' : 'buy') : signal.kind === 'steady' ? 'buy' : 'warning') + '">' + recordTypeLabel(signal, label) + '</td>' +
       '<td' + directionClass(signal.side, historicalGammaIgnored(signal)) + '>' + escape(valueArea ? valueDirection : directionLabel(signal.side, historicalGammaIgnored(signal))) + (valueArea ? '' : '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span>') + '</td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
@@ -392,7 +392,7 @@
     const detail = escape(row.event_count || 0) + ' 笔 · 顺延 ' + escape(row.follow_ups || 0) + ' 次 · ' +
       '<span class="' + stateClass(row.status) + '">' + escape(cycleStates[row.status] || row.status) + '</span>' +
       (row.quiet_until ? '<span class="muted">安静至 ' + when(row.quiet_until) + '</span>' : '');
-    return '<td>' + when(row.triggered_at) + '</td><td>' + chartLink(row.symbol) + '</td>' +
+    return '<td>' + when(row.triggered_at) + '</td><td>' + bubbleLink(row.symbol) + '</td>' +
       '<td class="warning">' + recordTypeLabel(row, '预警') + '</td>' +
       '<td' + directionClass(row.trade_side, historicalGammaIgnored(row)) + '>' + escape(directionLabel(row.trade_side, historicalGammaIgnored(row))) + '<span class="muted"> · ' + escape(liqLabel(row.side)) + '</span></td>' +
       '<td>' + money(row.notional_usd) + '<span class="muted"> / ' + money(row.threshold_usd) + '</span></td>' +
