@@ -31,10 +31,10 @@ func TestTVOrderGammaPolicyFailsOpenForPositiveUnavailableAndStaleGamma(t *testi
 	}
 }
 
-func TestTVOrderGammaPolicyFlipPreservesOriginalActionAndEntryMetadata(t *testing.T) {
+func TestTVOrderGammaPolicyAdaptivePassesThroughOrdinaryNegativeGamma(t *testing.T) {
 	negative := -0.25
 	cfg := tvbotconfig.Default()
-	cfg.Trading.GammaNegativePolicy = tvbotconfig.GammaNegativePolicyFlip
+	cfg.Trading.GammaNegativePolicy = tvbotconfig.GammaNegativePolicyAdaptive
 	signal := tvbottrading.Signal{
 		Action:         tvbottrading.ActionLong,
 		SourceAction:   tvbottrading.ActionLong,
@@ -45,20 +45,20 @@ func TestTVOrderGammaPolicyFlipPreservesOriginalActionAndEntryMetadata(t *testin
 	}
 	srv := &Server{GammaProvider: func(context.Context) GammaSnapshot { return GammaSnapshot{State: "ok", Value: &negative} }}
 	if srv.applyTVOrderGammaPolicy(context.Background(), &signal, cfg) {
-		t.Fatal("flip policy should not ignore the signal")
+		t.Fatal("adaptive policy should not ignore the signal")
 	}
-	if signal.Action != tvbottrading.ActionShort || signal.PositionSide != tvbottrading.PositionSideShort || signal.SourceAction != tvbottrading.ActionLong {
-		t.Fatalf("flip did not preserve original action while changing execution side: %#v", signal)
+	if signal.Action != tvbottrading.ActionLong || signal.PositionSide != tvbottrading.PositionSideLong || signal.SourceAction != tvbottrading.ActionLong {
+		t.Fatalf("adaptive changed the ordinary signal direction: %#v", signal)
 	}
-	if signal.OrderIntent != "entry_short|script=4.1.1|adx=31" || signal.Intent != "entry_short" {
-		t.Fatalf("flip did not update entry intent: %#v", signal)
+	if signal.OrderIntent != "entry_long|script=4.1.1|adx=31" || signal.Intent != "entry_long" {
+		t.Fatalf("adaptive changed the ordinary entry intent: %#v", signal)
 	}
 }
 
 func TestTVOrderGammaPolicyNeverChangesCloseSignals(t *testing.T) {
 	negative := -0.25
 	cfg := tvbotconfig.Default()
-	cfg.Trading.GammaNegativePolicy = tvbotconfig.GammaNegativePolicyFlip
+	cfg.Trading.GammaNegativePolicy = tvbotconfig.GammaNegativePolicyAdaptive
 	signal := tvbottrading.Signal{
 		Action:         tvbottrading.ActionShort,
 		SourceAction:   tvbottrading.ActionShort,

@@ -39,10 +39,7 @@ func signalMessage(signal domain.TradeSignal) string {
 			fmt.Fprintf(&b, "确认时价格：%s", formatPrice(signal.ReferencePrice))
 		}
 	case domain.SignalValueArea:
-		action := "VAL 买入"
-		if signal.Side == "short" {
-			action = "VAH 卖出"
-		}
+		action := strings.ToUpper(signal.Boundary) + " " + orderLabel(signal.Side)
 		if signal.PositionEffect == "close" {
 			if signal.Side == "long" {
 				action += " / 平空（只平反向仓）"

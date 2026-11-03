@@ -35,7 +35,10 @@ const (
 
 	GammaNegativePolicyIgnore      = "ignore"
 	GammaNegativePolicyPassthrough = "passthrough"
-	GammaNegativePolicyFlip        = "flip"
+	GammaNegativePolicyAdaptive    = "adaptive"
+	// GammaNegativePolicyFlip is retained as a read-compatibility alias for
+	// configurations written before option 3 became adaptive.
+	GammaNegativePolicyFlip = "flip"
 )
 
 type Config struct {
@@ -453,6 +456,9 @@ func (c *Config) Normalize() {
 		c.Trading.MarketTurnoverScope = DefaultMarketTurnoverScope
 	}
 	c.Trading.GammaNegativePolicy = strings.ToLower(strings.TrimSpace(c.Trading.GammaNegativePolicy))
+	if c.Trading.GammaNegativePolicy == GammaNegativePolicyFlip {
+		c.Trading.GammaNegativePolicy = GammaNegativePolicyAdaptive
+	}
 	if c.Trading.GammaNegativePolicy == "" {
 		c.Trading.GammaNegativePolicy = GammaNegativePolicyIgnore
 	}
@@ -618,7 +624,7 @@ func (c Config) validate(validateSymbols bool) error {
 		return fmt.Errorf("unsupported market turnover scope %q", c.Trading.MarketTurnoverScope)
 	}
 	switch c.Trading.GammaNegativePolicy {
-	case GammaNegativePolicyIgnore, GammaNegativePolicyPassthrough, GammaNegativePolicyFlip:
+	case GammaNegativePolicyIgnore, GammaNegativePolicyPassthrough, GammaNegativePolicyAdaptive:
 	default:
 		return fmt.Errorf("unsupported gamma negative policy %q", c.Trading.GammaNegativePolicy)
 	}

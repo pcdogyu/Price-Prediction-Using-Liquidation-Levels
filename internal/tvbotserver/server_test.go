@@ -186,7 +186,8 @@ func TestRoutes(t *testing.T) {
 	if bytes.Count(ui.Body.Bytes(), []byte(`name="gamma-negative-policy"`)) < 3 ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`value="ignore"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`value="passthrough"`)) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte(`value="flip"`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`value="adaptive"`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("自适应 Gamma")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("gamma_negative_policy")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("gammaNegativePolicy")) {
 		t.Fatalf("tvbot ui should expose three gamma policy choices and persist the selected value")
@@ -1072,7 +1073,7 @@ func TestTVBotConfigSavesMarketTurnoverScopeAndRejectsInvalidValue(t *testing.T)
 
 func TestTVBotConfigSavesGammaNegativePolicyAndRejectsInvalidValue(t *testing.T) {
 	srv := newTestServer(t)
-	for _, policy := range []string{config.GammaNegativePolicyIgnore, config.GammaNegativePolicyPassthrough, config.GammaNegativePolicyFlip} {
+	for _, policy := range []string{config.GammaNegativePolicyIgnore, config.GammaNegativePolicyPassthrough, config.GammaNegativePolicyAdaptive} {
 		req := httptest.NewRequest(http.MethodPatch, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"gamma_negative_policy":"`+policy+`"}}`)))
 		req.SetBasicAuth("admin", "Admin123")
 		rr := httptest.NewRecorder()
@@ -1602,7 +1603,7 @@ func TestTVOrderAppliesNegativeETHGammaPoliciesToOpeningSignals(t *testing.T) {
 	}{
 		{name: "ignore", policy: config.GammaNegativePolicyIgnore, wantStatus: "ignored"},
 		{name: "passthrough", policy: config.GammaNegativePolicyPassthrough, wantStatus: "accepted", wantAction: trading.ActionLong, wantSide: trading.PositionSideLong},
-		{name: "flip", policy: config.GammaNegativePolicyFlip, wantStatus: "accepted", wantAction: trading.ActionShort, wantSide: trading.PositionSideShort, wantIntent: "entry_short"},
+		{name: "adaptive", policy: config.GammaNegativePolicyAdaptive, wantStatus: "accepted", wantAction: trading.ActionLong, wantSide: trading.PositionSideLong},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newTestServer(t)
@@ -1683,9 +1684,9 @@ func TestTVOrderManualAlertTriggerBypassesNegativeETHGammaPolicies(t *testing.T)
 		policy    string
 	}{
 		{name: "liquidation_ignore", condition: "manual_liquidation_trigger", policy: config.GammaNegativePolicyIgnore},
-		{name: "liquidation_flip", condition: "manual_liquidation_trigger", policy: config.GammaNegativePolicyFlip},
+		{name: "liquidation_adaptive", condition: "manual_liquidation_trigger", policy: config.GammaNegativePolicyAdaptive},
 		{name: "value_area_ignore", condition: "value_area_manual", policy: config.GammaNegativePolicyIgnore},
-		{name: "value_area_flip", condition: "value_area_manual", policy: config.GammaNegativePolicyFlip},
+		{name: "value_area_adaptive", condition: "value_area_manual", policy: config.GammaNegativePolicyAdaptive},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newTestServer(t)

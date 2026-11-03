@@ -405,7 +405,8 @@ func (rtm *alertRuntime) valueAreaBacktestEntries(ctx context.Context, symbol st
 	if err != nil {
 		return nil, err
 	}
-	signals := valueAreaBacktestSignalsInWindow(symbol, candles, profiles, gammaPoints, from, to, rtm.valueAreaWindowSnapshot())
+	window := rtm.valueAreaWindowSnapshot()
+	signals := valueAreaBacktestSignalsWithMode(symbol, candles, profiles, gammaPoints, from, to, &window, rtm.valueAreaStrategyMode())
 	entries := make([]alertBacktestEntry, 0, len(signals))
 	for _, signal := range signals {
 		signal = rtm.valueAreaBacktestSignal(signal)
@@ -422,10 +423,14 @@ func valueAreaBacktestSignals(symbol string, candles []domain.Candle, snapshots 
 }
 
 func valueAreaBacktestSignalsInWindow(symbol string, candles []domain.Candle, snapshots []domain.VolumeProfileSnapshot, gammaPoints []domain.OptionGammaPoint, from, to time.Time, window valuearea.TradingWindow) []domain.TradeSignal {
-	return valueAreaBacktestSignalsWithWindow(symbol, candles, snapshots, gammaPoints, from, to, &window)
+	return valueAreaBacktestSignalsWithMode(symbol, candles, snapshots, gammaPoints, from, to, &window, valuearea.StrategyModeLegacy)
 }
 
 func valueAreaBacktestSignalsWithWindow(symbol string, candles []domain.Candle, snapshots []domain.VolumeProfileSnapshot, gammaPoints []domain.OptionGammaPoint, from, to time.Time, window *valuearea.TradingWindow) []domain.TradeSignal {
+	return valueAreaBacktestSignalsWithMode(symbol, candles, snapshots, gammaPoints, from, to, window, valuearea.StrategyModeLegacy)
+}
+
+func valueAreaBacktestSignalsWithMode(symbol string, candles []domain.Candle, snapshots []domain.VolumeProfileSnapshot, gammaPoints []domain.OptionGammaPoint, from, to time.Time, window *valuearea.TradingWindow, mode valuearea.StrategyMode) []domain.TradeSignal {
 	engine := valuearea.New()
 	profileIndex, gammaIndex := 0, 0
 	var profile domain.VolumeProfile
@@ -461,7 +466,7 @@ func valueAreaBacktestSignalsWithWindow(symbol string, candles []domain.Candle, 
 			profile = domain.VolumeProfile{Symbol: symbol, State: "unavailable"}
 		}
 		tick := domain.PriceTick{TradeID: candle.Time.UnixMilli(), Symbol: symbol, Time: candle.Time, Price: candle.Close}
-		signal, ok := engine.Process(tick, profile, gamma)
+		signal, ok := engine.ProcessWithMode(tick, profile, gamma, mode)
 		if ok && !signal.CreatedAt.Before(from) && !signal.CreatedAt.After(to) && (window == nil || window.Contains(signal.CreatedAt)) {
 			signals = append(signals, signal)
 		}

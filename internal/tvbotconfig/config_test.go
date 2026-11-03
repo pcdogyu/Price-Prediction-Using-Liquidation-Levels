@@ -229,9 +229,20 @@ func TestGammaNegativePolicyDefaultsPersistsAndValidates(t *testing.T) {
 	if legacy.Trading.GammaNegativePolicy != GammaNegativePolicyIgnore {
 		t.Fatalf("legacy gamma negative policy=%q", legacy.Trading.GammaNegativePolicy)
 	}
+	legacyFlipPath := filepath.Join(t.TempDir(), "legacy-flip-gamma.json")
+	if err := os.WriteFile(legacyFlipPath, []byte(`{"trading":{"gamma_negative_policy":"flip","order_amount_usdt":100}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacyFlip, err := Load(legacyFlipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyFlip.Trading.GammaNegativePolicy != GammaNegativePolicyAdaptive {
+		t.Fatalf("legacy flip config policy=%q, want %q", legacyFlip.Trading.GammaNegativePolicy, GammaNegativePolicyAdaptive)
+	}
 
 	path := filepath.Join(t.TempDir(), "gamma-config.json")
-	for _, policy := range []string{GammaNegativePolicyIgnore, GammaNegativePolicyPassthrough, GammaNegativePolicyFlip} {
+	for _, policy := range []string{GammaNegativePolicyIgnore, GammaNegativePolicyPassthrough, GammaNegativePolicyAdaptive} {
 		cfg.Trading.GammaNegativePolicy = policy
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("policy %q should validate: %v", policy, err)
@@ -246,6 +257,13 @@ func TestGammaNegativePolicyDefaultsPersistsAndValidates(t *testing.T) {
 		if loaded.Trading.GammaNegativePolicy != policy {
 			t.Fatalf("persisted policy=%q, want %q", loaded.Trading.GammaNegativePolicy, policy)
 		}
+	}
+
+	legacyCfg := cfg
+	legacyCfg.Trading.GammaNegativePolicy = GammaNegativePolicyFlip
+	legacyCfg.Normalize()
+	if legacyCfg.Trading.GammaNegativePolicy != GammaNegativePolicyAdaptive {
+		t.Fatalf("legacy flip policy=%q, want %q", legacyCfg.Trading.GammaNegativePolicy, GammaNegativePolicyAdaptive)
 	}
 
 	cfg.Trading.GammaNegativePolicy = "invalid"

@@ -95,7 +95,7 @@ func (b *Bridge) GammaNegativePolicyForUser(username string) string {
 	}
 	policy := strings.ToLower(strings.TrimSpace(scope.ConfigStore.Get().Trading.GammaNegativePolicy))
 	switch policy {
-	case tvbotconfig.GammaNegativePolicyIgnore, tvbotconfig.GammaNegativePolicyPassthrough, tvbotconfig.GammaNegativePolicyFlip:
+	case tvbotconfig.GammaNegativePolicyIgnore, tvbotconfig.GammaNegativePolicyPassthrough, tvbotconfig.GammaNegativePolicyAdaptive:
 		return policy
 	default:
 		return tvbotconfig.GammaNegativePolicyIgnore

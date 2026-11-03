@@ -15,13 +15,25 @@ import (
 )
 
 type state struct {
-	sessionStart time.Time
-	val, vah     float64
-	previous     float64
-	havePrice    bool
-	longArmed    bool
-	shortArmed   bool
+	sessionStart  time.Time
+	val, vah      float64
+	previous      float64
+	havePrice     bool
+	mode          StrategyMode
+	negativeGamma bool
+	longArmed     bool
+	shortArmed    bool
 }
+
+// StrategyMode controls how a value-area boundary is interpreted. Legacy
+// mode preserves the original fade-on-breakout behavior; adaptive mode uses
+// Gamma to choose between mean reversion and trend continuation.
+type StrategyMode string
+
+const (
+	StrategyModeLegacy   StrategyMode = "legacy"
+	StrategyModeAdaptive StrategyMode = "adaptive"
+)
 
 // Engine is one independent state machine. The application creates one per
 // alert runtime, so tenant history and restart de-duplication stay isolated.
@@ -35,7 +47,22 @@ func New() *Engine { return &Engine{states: make(map[string]state)} }
 // returns at most one signal. A profile/session/boundary change establishes a
 // new baseline and cannot itself create a crossing.
 func (e *Engine) Process(tick domain.PriceTick, profile domain.VolumeProfile, gamma domain.AlertGamma) (domain.TradeSignal, bool) {
-	if e == nil || !validTick(tick) || !validProfile(profile) || normalizeSymbol(profile.Symbol) != normalizeSymbol(tick.Symbol) || !validGamma(tick.Time, gamma) {
+	return e.process(tick, profile, gamma, StrategyModeLegacy)
+}
+
+// ProcessWithMode consumes one price using the requested boundary strategy.
+// Adaptive mode intentionally treats missing, stale, unhealthy, or zero Gamma
+// as the positive-Gamma mean-reversion mode, while legacy mode keeps its
+// original strict Gamma validation.
+func (e *Engine) ProcessWithMode(tick domain.PriceTick, profile domain.VolumeProfile, gamma domain.AlertGamma, mode StrategyMode) (domain.TradeSignal, bool) {
+	if mode != StrategyModeAdaptive {
+		mode = StrategyModeLegacy
+	}
+	return e.process(tick, profile, gamma, mode)
+}
+
+func (e *Engine) process(tick domain.PriceTick, profile domain.VolumeProfile, gamma domain.AlertGamma, mode StrategyMode) (domain.TradeSignal, bool) {
+	if e == nil || !validTick(tick) || !validProfile(profile) || normalizeSymbol(profile.Symbol) != normalizeSymbol(tick.Symbol) || (mode == StrategyModeLegacy && !validGamma(tick.Time, gamma)) {
 		if e != nil && tick.Symbol != "" {
 			delete(e.states, normalizeSymbol(tick.Symbol))
 		}
@@ -44,12 +71,24 @@ func (e *Engine) Process(tick domain.PriceTick, profile domain.VolumeProfile, ga
 
 	symbol := normalizeSymbol(tick.Symbol)
 	current := e.states[symbol]
-	if !current.havePrice || !sameProfile(current, profile) {
+	negativeGamma := mode == StrategyModeAdaptive && adaptiveNegativeGamma(tick.Time, gamma)
+	if !current.havePrice || !sameProfile(current, profile) || current.mode != mode || (mode == StrategyModeAdaptive && current.negativeGamma != negativeGamma) {
 		current = state{
 			sessionStart: profile.SessionStart.UTC(), val: *profile.VAL, vah: *profile.VAH,
 			previous: tick.Price, havePrice: true,
-			longArmed:  tick.Price >= *profile.VAL,
-			shortArmed: tick.Price <= *profile.VAH,
+			mode: mode, negativeGamma: negativeGamma,
+		}
+		if mode == StrategyModeAdaptive {
+			if negativeGamma {
+				current.longArmed = tick.Price <= *profile.VAH
+				current.shortArmed = tick.Price >= *profile.VAL
+			} else {
+				current.longArmed = tick.Price < *profile.VAL
+				current.shortArmed = tick.Price > *profile.VAH
+			}
+		} else {
+			current.longArmed = tick.Price >= *profile.VAL
+			current.shortArmed = tick.Price <= *profile.VAH
 		}
 		e.states[symbol] = current
 		return domain.TradeSignal{}, false
@@ -57,14 +96,47 @@ func (e *Engine) Process(tick domain.PriceTick, profile domain.VolumeProfile, ga
 
 	previous := current.previous
 	wasInside := previous >= current.val && previous <= current.vah
-	longCross := current.longArmed && wasInside && tick.Price < current.val
-	shortCross := current.shortArmed && wasInside && tick.Price > current.vah
-	current.previous = tick.Price
-	if tick.Price >= current.val {
-		current.longArmed = true
+	longCross, shortCross := false, false
+	if mode == StrategyModeAdaptive {
+		negativeGamma := adaptiveNegativeGamma(tick.Time, gamma)
+		if negativeGamma {
+			// Negative Gamma follows the move out of the value area.
+			longCross = current.longArmed && wasInside && tick.Price > current.vah
+			shortCross = current.shortArmed && wasInside && tick.Price < current.val
+		} else {
+			// Positive or unusable Gamma fades a completed excursion only after
+			// price re-enters the value area.
+			longCross = current.longArmed && previous < current.val && tick.Price >= current.val && tick.Price <= current.vah
+			shortCross = current.shortArmed && previous > current.vah && tick.Price <= current.vah && tick.Price >= current.val
+		}
+	} else {
+		longCross = current.longArmed && wasInside && tick.Price < current.val
+		shortCross = current.shortArmed && wasInside && tick.Price > current.vah
 	}
-	if tick.Price <= current.vah {
-		current.shortArmed = true
+	current.previous = tick.Price
+	if mode == StrategyModeAdaptive {
+		if adaptiveNegativeGamma(tick.Time, gamma) {
+			if tick.Price <= current.vah {
+				current.longArmed = true
+			}
+			if tick.Price >= current.val {
+				current.shortArmed = true
+			}
+		} else {
+			if tick.Price < current.val {
+				current.longArmed = true
+			}
+			if tick.Price > current.vah {
+				current.shortArmed = true
+			}
+		}
+	} else {
+		if tick.Price >= current.val {
+			current.longArmed = true
+		}
+		if tick.Price <= current.vah {
+			current.shortArmed = true
+		}
 	}
 	if longCross {
 		current.longArmed = false
@@ -78,22 +150,34 @@ func (e *Engine) Process(tick domain.PriceTick, profile domain.VolumeProfile, ga
 	}
 
 	boundary, boundaryPrice, side := "val", current.val, "long"
-	if shortCross {
+	if mode == StrategyModeAdaptive && negativeGamma && longCross {
+		boundary, boundaryPrice = "vah", current.vah
+	} else if mode == StrategyModeAdaptive && negativeGamma && shortCross {
+		boundary, boundaryPrice, side = "val", current.val, "short"
+	} else if shortCross {
 		boundary, boundaryPrice, side = "vah", current.vah, "short"
 	}
 	effect := "close"
-	if *gamma.Gamma > 0 {
+	if mode == StrategyModeAdaptive || (gamma.Gamma != nil && *gamma.Gamma > 0) {
 		effect = "open"
 	}
-	gammaValue := *gamma.Gamma
+	var gammaValue *float64
+	if validGamma(tick.Time, gamma) {
+		value := *gamma.Gamma
+		gammaValue = &value
+	}
 	id := signalID(symbol, profile.SessionStart, boundary, tick)
 	return domain.TradeSignal{
 		ID: id, AlertID: "value-area:" + id, Symbol: symbol, Kind: domain.SignalValueArea,
 		Side: side, LiquidationSide: side, CreatedAt: tick.Time.UTC(), ReferencePrice: tick.Price,
 		GammaIgnored: effect == "close", OpenAllowed: effect == "open", CloseAllowed: true,
 		PositionEffect: effect, Boundary: boundary, BoundaryPrice: boundaryPrice,
-		VAL: current.val, VAH: current.vah, GammaValue: &gammaValue, GammaState: gamma.State,
+		VAL: current.val, VAH: current.vah, GammaValue: gammaValue, GammaState: gamma.State,
 	}, true
+}
+
+func adaptiveNegativeGamma(at time.Time, gamma domain.AlertGamma) bool {
+	return validGamma(at, gamma) && gamma.Gamma != nil && *gamma.Gamma < 0
 }
 
 func validTick(tick domain.PriceTick) bool {

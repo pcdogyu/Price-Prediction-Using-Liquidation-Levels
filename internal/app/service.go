@@ -146,7 +146,7 @@ func (s *Service) gammaPolicyForTenant(tenantID string) string {
 		return "ignore"
 	}
 	switch policy := strings.ToLower(strings.TrimSpace(resolver(strings.TrimSpace(tenantID)))); policy {
-	case "ignore", "passthrough", "flip":
+	case "ignore", "passthrough", "adaptive":
 		return policy
 	default:
 		return "ignore"

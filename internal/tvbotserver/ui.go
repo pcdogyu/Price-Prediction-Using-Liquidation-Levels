@@ -2395,9 +2395,9 @@ const tvbotHTML = `<!doctype html>
           <div class="gamma-policy-options" role="radiogroup" aria-label="ETH Gamma 负值开仓策略">
             <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="ignore"><span><strong>选项 1：忽略</strong>负 Gamma 时忽略开仓，平仓照常。</span></label>
             <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="passthrough"><span><strong>选项 2：不动</strong>负 Gamma 时保持现有下单逻辑。</span></label>
-            <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="flip"><span><strong>选项 3：翻转</strong>负 Gamma 时翻转开仓多空，平仓和预平仓不变。</span></label>
+            <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="adaptive"><span><strong>选项 3：自适应 Gamma</strong>仅 VAL/VAH 刷单按 Gamma 选择均值回归或突破顺势，普通信号保持原方向。</span></label>
           </div>
-          <div class="muted">使用共享的最新 ETHUSDT Deribit Gamma；Gamma 不可用或过期时放行。</div>
+          <div class="muted">使用共享的最新 ETHUSDT Deribit Gamma；Gamma 不可用或过期时普通信号放行，VAL/VAH 自适应按正 Gamma 回归规则执行。</div>
         </div>
       </div>
       <div id="layered-order-fields" style="display:none;margin-top:14px">
@@ -5252,11 +5252,11 @@ const tvbotHTML = `<!doctype html>
 
     function gammaNegativePolicy(trading) {
       const value = String(trading && trading.gamma_negative_policy || "ignore").toLowerCase();
-      return ["ignore", "passthrough", "flip"].includes(value) ? value : "ignore";
+      return ["ignore", "passthrough", "adaptive"].includes(value) ? value : "ignore";
     }
 
     function gammaNegativePolicyLabel(policy) {
-      return { ignore: "忽略开仓（默认）", passthrough: "不动", flip: "翻转开仓多空" }[policy] || "忽略开仓（默认）";
+      return { ignore: "忽略开仓（默认）", passthrough: "不动", adaptive: "自适应 Gamma" }[policy] || "忽略开仓（默认）";
     }
 
     function selectedGammaNegativePolicy() {

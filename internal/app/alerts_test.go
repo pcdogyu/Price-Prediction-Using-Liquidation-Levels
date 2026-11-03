@@ -206,11 +206,11 @@ func TestValueAreaGammaPolicyFollowsTVBotOpeningSetting(t *testing.T) {
 		t.Fatalf("passthrough policy must restore the opening signal: %+v", passed)
 	}
 
-	svc.SetGammaPolicyResolver(func(string) string { return "flip" })
-	flipped := svc.alerts.applyValueAreaGammaPolicy(signal)
-	preclose := svc.alerts.valueAreaPrecloseSignal(flipped)
-	if flipped.PositionEffect != "open" || preclose.Side != "short" {
-		t.Fatalf("flip policy must open through TVBot on the opposite side and preclose that side: signal=%+v preclose=%+v", flipped, preclose)
+	svc.SetGammaPolicyResolver(func(string) string { return "adaptive" })
+	adaptive := svc.alerts.applyValueAreaGammaPolicy(signal)
+	preclose := svc.alerts.valueAreaPrecloseSignal(adaptive)
+	if adaptive.PositionEffect != "close" || preclose.Side != "long" {
+		t.Fatalf("adaptive policy must not apply the legacy flip to a close-only signal: signal=%+v preclose=%+v", adaptive, preclose)
 	}
 }
 

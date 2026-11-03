@@ -38,13 +38,6 @@ func (s *Server) applyTVOrderGammaPolicy(ctx context.Context, signal *tvbottradi
 	switch cfg.Trading.GammaNegativePolicy {
 	case tvbotconfig.GammaNegativePolicyIgnore:
 		return true
-	case tvbotconfig.GammaNegativePolicyFlip:
-		signal.Action = oppositeTradingSide(signal.Action)
-		signal.PositionSide = oppositePositionSide(signal.PositionSide)
-		signal.OrderIntent = flipTVOrderEntryIntent(signal.OrderIntent, signal.Action)
-		if strings.TrimSpace(signal.Intent) != "" {
-			signal.Intent = flipTVOrderEntryIntent(signal.Intent, signal.Action)
-		}
 	}
 	return false
 }
@@ -64,22 +57,6 @@ func manualAlertOrderBypassesGamma(signal tvbottrading.Signal) bool {
 	default:
 		return false
 	}
-}
-
-func flipTVOrderEntryIntent(raw string, action tvbottrading.Side) string {
-	parts := strings.Split(strings.TrimSpace(raw), "|")
-	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
-		return tvOrderEntryIntent(action)
-	}
-	switch strings.ToLower(strings.TrimSpace(parts[0])) {
-	case "entry_long":
-		parts[0] = "entry_short"
-	case "entry_short":
-		parts[0] = "entry_long"
-	default:
-		parts[0] = tvOrderEntryIntent(action)
-	}
-	return strings.Join(parts, "|")
 }
 
 func tvOrderEntryIntent(action tvbottrading.Side) string {

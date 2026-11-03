@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/valuearea"
 )
 
 func TestScoreAlertBacktestUsesNextCloseAndCapsAddOns(t *testing.T) {
@@ -153,5 +154,38 @@ func TestValueAreaBacktestUsesGammaAndRearmsAfterCloseOnlyCrossing(t *testing.T)
 	signals := valueAreaBacktestSignals("BTCUSDT", candles, snapshots, gamma, base, base.Add(3*time.Minute))
 	if len(signals) != 2 || signals[0].PositionEffect != "close" || signals[1].PositionEffect != "open" || signals[1].Side != "short" {
 		t.Fatalf("unexpected value-area backtest signals: %+v", signals)
+	}
+}
+
+func TestValueAreaBacktestAdaptiveModeMatchesGammaDirection(t *testing.T) {
+	base := time.Date(2026, 10, 26, 4, 0, 0, 0, time.UTC)
+	val, vah := 100.0, 110.0
+	snapshots := []domain.VolumeProfileSnapshot{{
+		Symbol: "BTCUSDT", Time: base.Add(-time.Minute), SessionStart: base.Add(-time.Hour),
+		VAL: val, VAH: vah, Complete: true,
+	}}
+
+	positive := 0.5
+	positiveSignals := valueAreaBacktestSignalsWithMode(
+		"BTCUSDT",
+		[]domain.Candle{{Time: base, Close: 111}, {Time: base.Add(time.Minute), Close: 110}},
+		snapshots,
+		[]domain.OptionGammaPoint{{Symbol: "BTCUSDT", Time: base.Add(-time.Minute), Gamma: &positive, State: "ok"}},
+		base, base.Add(time.Minute), nil, valuearea.StrategyModeAdaptive,
+	)
+	if len(positiveSignals) != 1 || positiveSignals[0].Side != "short" || positiveSignals[0].Boundary != "vah" || positiveSignals[0].PositionEffect != "open" {
+		t.Fatalf("positive adaptive backtest signals = %+v", positiveSignals)
+	}
+
+	negative := -0.5
+	negativeSignals := valueAreaBacktestSignalsWithMode(
+		"BTCUSDT",
+		[]domain.Candle{{Time: base, Close: 105}, {Time: base.Add(time.Minute), Close: 111}},
+		snapshots,
+		[]domain.OptionGammaPoint{{Symbol: "BTCUSDT", Time: base.Add(-time.Minute), Gamma: &negative, State: "ok"}},
+		base, base.Add(time.Minute), nil, valuearea.StrategyModeAdaptive,
+	)
+	if len(negativeSignals) != 1 || negativeSignals[0].Side != "long" || negativeSignals[0].Boundary != "vah" || negativeSignals[0].PositionEffect != "open" {
+		t.Fatalf("negative adaptive backtest signals = %+v", negativeSignals)
 	}
 }
