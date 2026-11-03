@@ -393,7 +393,6 @@ func TestOrderStoreSearchPageAndCountMemoryAndSQLite(t *testing.T) {
 		if err := store.MarkFailedCode(sol.SignalID, "51001", errors.New("Instrument ID does not exist"), now.Add(5*time.Second)); err != nil {
 			t.Fatal(err)
 		}
-
 		if page := store.ListSearchPage("eth", 10, 0); len(page) != 1 || page[0].Coinpair != "ETHUSDT.P" {
 			t.Fatalf("search by symbol failed: %#v", page)
 		}
@@ -424,6 +423,42 @@ func TestOrderStoreSearchPageAndCountMemoryAndSQLite(t *testing.T) {
 		empty := store.ListSearchPage("   ", 2, 1)
 		if len(empty) != 2 || empty[0].Coinpair != "ETHUSDT.P" || empty[1].Coinpair != "BTCUSDT.P" {
 			t.Fatalf("empty search should preserve pagination: %#v", empty)
+		}
+	}
+	t.Run("memory", func(t *testing.T) {
+		store, err := NewOrderStore("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		run(t, store)
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		store, err := NewSQLiteOrderStore(filepath.Join(t.TempDir(), "tvbot.db"), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		run(t, store)
+	})
+}
+
+func TestOrderStoreFuzzySymbolSearchMemoryAndSQLite(t *testing.T) {
+	run := func(t *testing.T, store *OrderStore) {
+		t.Helper()
+		signal := trading.Signal{
+			Action:         trading.ActionLong,
+			TargetExchange: trading.ExchangeOKX,
+			Coinpair:       "LTC-USDT-SWAP",
+			Ticker:         "OKX:LTC-USDT-SWAP",
+		}
+		if _, _, err := store.RecordAccepted(signal, "fuzzy-ltc", time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatal(err)
+		}
+		for _, query := range []string{"ltc", "ltcust"} {
+			page := store.ListFilteredPage(trading.ExchangeOKX, "", query, 10, 0)
+			if len(page) != 1 || page[0].Coinpair != "LTC-USDT-SWAP" || store.CountFiltered(trading.ExchangeOKX, "", query) != 1 {
+				t.Fatalf("fuzzy symbol search %q failed: page=%#v count=%d", query, page, store.CountFiltered(trading.ExchangeOKX, "", query))
+			}
 		}
 	}
 	t.Run("memory", func(t *testing.T) {

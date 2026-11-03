@@ -632,7 +632,7 @@ func TestTVBotUIOrderHistorySearchControls(t *testing.T) {
 		[]byte(`<option value="duplicate">重复信号</option>`),
 		[]byte(`<option value="accepted">处理中</option>`),
 		[]byte(`id="order-search"`),
-		[]byte(`placeholder="币对 / 金额 / 订单号"`),
+		[]byte(`placeholder="币对模糊搜索（如 LTC、LTCUST）/ 金额 / 订单号"`),
 		[]byte(`id="search-orders"`),
 		[]byte(`id="clear-order-search"`),
 		[]byte(`class="order-target">下单去向`),

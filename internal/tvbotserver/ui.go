@@ -2466,7 +2466,7 @@ const tvbotHTML = `<!doctype html>
             <option value="duplicate">重复信号</option>
             <option value="accepted">处理中</option>
           </select>
-          <input class="order-search-input" id="order-search" autocomplete="off" spellcheck="false" placeholder="币对 / 金额 / 订单号" aria-label="搜索订单历史">
+          <input class="order-search-input" id="order-search" autocomplete="off" spellcheck="false" placeholder="币对模糊搜索（如 LTC、LTCUST）/ 金额 / 订单号" aria-label="搜索订单历史">
           <button class="btn" type="button" id="search-orders">搜索</button>
           <button class="btn" type="button" id="clear-order-search" disabled>清除</button>
           <button class="btn" type="button" id="refresh-orders">刷新历史</button>

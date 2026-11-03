@@ -1613,6 +1613,12 @@ func (s *OrderStore) countFilteredMemoryLocked(exchange string, status OrderStat
 
 const orderSQLiteSearchText = `LOWER(COALESCE(coinpair, '') || ' ' || COALESCE(ticker, '') || ' ' || COALESCE(amount, '') || ' ' || COALESCE(price, '') || ' ' || COALESCE(signal_id, '') || ' ' || COALESCE(dedupe_key, '') || ' ' || COALESCE(api_id, '') || ' ' || COALESCE(source_exchange, '') || ' ' || COALESCE(target_exchange, '') || ' ' || COALESCE(status, '') || ' ' || COALESCE(action, '') || ' ' || COALESCE(result_json, '') || ' ' || COALESCE(error_code, '') || ' ' || COALESCE(error, ''))`
 
+// Exchanges use different separators for the same instrument (for example,
+// LTCUSDT, LTC-USDT-SWAP, and OKX:LTC-USDT-SWAP). Keep a compact symbol text
+// alongside the normal full-text search so an abbreviated query such as LTC
+// or LTCUST matches all of those representations.
+const orderSQLiteCompactSymbolText = `LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(coinpair, '') || ' ' || COALESCE(ticker, ''), '-', ''), '_', ''), '/', ''), ':', ''), '.', ''), ' ', ''), CHAR(9), ''))`
+
 func orderSQLiteSearchWhere(exchange, query string) (string, []any) {
 	return orderSQLiteFilterWhere(exchange, "", query)
 }
@@ -1629,8 +1635,9 @@ func orderSQLiteFilterWhere(exchange string, status OrderStatus, query string) (
 		args = append(args, status)
 	}
 	for _, term := range orderSearchTerms(query) {
-		clauses = append(clauses, orderSQLiteSearchText+` LIKE ? ESCAPE '\'`)
-		args = append(args, sqliteLikeContainsPattern(term))
+		pattern := sqliteLikeContainsPattern(term)
+		clauses = append(clauses, "("+orderSQLiteSearchText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactSymbolText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactSymbolText+` LIKE ? ESCAPE '\')`)
+		args = append(args, pattern, pattern, sqliteLikeSubsequencePattern(term))
 	}
 	return strings.Join(clauses, " AND "), args
 }
@@ -1649,6 +1656,20 @@ func sqliteLikeContainsPattern(term string) string {
 	return b.String()
 }
 
+func sqliteLikeSubsequencePattern(term string) string {
+	var b strings.Builder
+	b.WriteByte('%')
+	for _, r := range term {
+		switch r {
+		case '\\', '%', '_':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+		b.WriteByte('%')
+	}
+	return b.String()
+}
+
 func orderSearchTerms(query string) []string {
 	return strings.Fields(strings.ToLower(strings.TrimSpace(query)))
 }
@@ -1658,8 +1679,9 @@ func orderRecordMatchesSearch(rec OrderRecord, terms []string) bool {
 		return true
 	}
 	text := orderRecordSearchText(rec)
+	compactSymbols := orderRecordCompactSymbolText(rec)
 	for _, term := range terms {
-		if !strings.Contains(text, term) {
+		if !strings.Contains(text, term) && !isOrderSymbolSubsequence(compactSymbols, term) {
 			return false
 		}
 	}
@@ -1689,7 +1711,38 @@ func orderRecordSearchText(rec OrderRecord) string {
 			parts = append(parts, string(b))
 		}
 	}
-	return strings.ToLower(strings.Join(parts, " "))
+	return strings.ToLower(strings.Join(append(parts, orderRecordCompactSymbolText(rec)), " "))
+}
+
+func orderRecordCompactSymbolText(rec OrderRecord) string {
+	symbols := []string{rec.Coinpair, rec.Ticker}
+	compactParts := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		compactParts = append(compactParts, compactOrderSymbolText(symbol))
+	}
+	return strings.Join(compactParts, " ")
+}
+
+func compactOrderSymbolText(value string) string {
+	return strings.NewReplacer("-", "", "_", "", "/", "", ":", "", ".", "", " ", "", "\t", "").Replace(strings.ToLower(value))
+}
+
+func isOrderSymbolSubsequence(text, term string) bool {
+	if term == "" {
+		return true
+	}
+	textRunes := []rune(text)
+	termRunes := []rune(term)
+	termIndex := 0
+	for _, r := range textRunes {
+		if r == termRunes[termIndex] {
+			termIndex++
+			if termIndex == len(termRunes) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *OrderStore) findSQLiteLocked(signalID string) (OrderRecord, error) {
