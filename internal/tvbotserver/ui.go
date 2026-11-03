@@ -7681,9 +7681,26 @@ const tvbotHTML = `<!doctype html>
       return legacy ? "top" + legacy[1] : "";
     }
 
+    function orderHistoryBinanceReturn(order) {
+      if (!order) return "";
+      const result = order.result || {};
+      const targetExchange = normalizeExchange(order.target_exchange || result.target_exchange);
+      if (targetExchange !== "binance") return "";
+      const code = result.binance_code;
+      const message = String(result.binance_msg || "").trim();
+      if (code !== undefined && code !== null && String(code).trim() !== "") {
+        return "Binance 返回：" + String(code).trim() + (message ? " " + message : "");
+      }
+      const error = String(order.error || "").trim();
+      const returned = error.match(/^binance code\s+(-?\d+):\s*(.+)$/i);
+      return returned ? "Binance 返回：" + returned[1] + " " + returned[2].trim() : "";
+    }
+
     function orderHistoryErrorText(order) {
       if (!order) return "";
       const result = order.result || {};
+      const exchangeReturn = orderHistoryBinanceReturn(order);
+      if (exchangeReturn) return exchangeReturn;
       const code = String(order.error_code || "").trim();
       const error = String(order.error || "").trim();
       const details = (code + " " + error).toLowerCase();
