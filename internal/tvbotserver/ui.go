@@ -3045,6 +3045,13 @@ const tvbotHTML = `<!doctype html>
 
     async function api(path, options) {
       const res = await fetch(path, Object.assign({ credentials: "same-origin" }, options || {}));
+      if (res.status === 401) {
+        const appBase = (document.querySelector('meta[name="app-base"]') || {}).content || "/";
+        const loginURL = new URL(appBase, window.location.origin);
+        loginURL.searchParams.set("next", window.location.pathname + window.location.search);
+        window.location.assign(loginURL.href);
+        throw new Error("登录已过期");
+      }
       const text = await res.text();
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }

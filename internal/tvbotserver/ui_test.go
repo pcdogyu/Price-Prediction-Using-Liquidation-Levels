@@ -137,6 +137,20 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotHTMLRedirectsUnauthorizedAPICallsToLogin(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=positions", nil))
+	for _, want := range []string{
+		`if (res.status === 401)`,
+		`meta[name="app-base"]`,
+		`loginURL.searchParams.set("next", window.location.pathname + window.location.search)`,
+		`window.location.assign(loginURL.href)`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("TVBot API auth expiry redirect is missing %q", want)
+		}
+	}
+}
+
 func TestRenderTVBotOrderSettingsSaveButtonHasAnimatedStates(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=orderSettings", nil))
 	for _, want := range []string{
