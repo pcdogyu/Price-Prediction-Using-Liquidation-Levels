@@ -636,6 +636,21 @@ func TestRenderTVBotSharesLivePositionSnapshotAcrossTabs(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotLimitsExchangeViewsToConfiguredAPIKeys(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
+	for _, want := range []string{
+		`await Promise.all(positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, target.env)));`,
+		`function configuredExchangesForCurrentEnvironment()`,
+		`const exchanges = configuredExchangesForCurrentEnvironment();`,
+		`option.disabled = !allowed;`,
+		`if (!exchangeSelectionAllowed(exchangeFilter)) return [];`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("tvbot exchange API-key availability marker missing %q", want)
+		}
+	}
+}
+
 func TestTVBotSystemInfoSeparatesDashboardBalance(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/system", nil))
 	dashboardStart := strings.Index(page, `<section id="dashboard"`)

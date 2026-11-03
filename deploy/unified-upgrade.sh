@@ -34,13 +34,13 @@ esac
 test -d "$source_root/.git"
 test -f "$data_root/liquidation.db"
 git config --global --add safe.directory "$source_root" || true
-git -C "$source_root" fetch origin binance
-if git -C "$source_root" show-ref --verify --quiet refs/heads/binance; then
-  git -C "$source_root" switch binance
+git -C "$source_root" fetch origin "$build_branch"
+if git -C "$source_root" show-ref --verify --quiet "refs/heads/$build_branch"; then
+  git -C "$source_root" switch "$build_branch"
 else
-  git -C "$source_root" switch -c binance --track origin/binance
+  git -C "$source_root" switch -c "$build_branch" --track "origin/$build_branch"
 fi
-git -C "$source_root" merge --ff-only origin/binance
+git -C "$source_root" merge --ff-only "origin/$build_branch"
 test "$(git -C "$source_root" rev-parse HEAD)" = "$revision"
 test -z "$(git -C "$source_root" status --porcelain)"
 git -C "$source_root" diff --check

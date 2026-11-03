@@ -3200,6 +3200,10 @@ const tvbotHTML = `<!doctype html>
         }
         button.setAttribute("aria-selected", exchange === selected ? "true" : "false");
       });
+      const symbolExchange = $("symbol-exchange");
+      const symbolExchangeBefore = symbolExchange ? normalizeExchange(symbolExchange.value) : "";
+      syncSymbolExchangeSelector(selected);
+      if (symbolExchange && symbolExchangeBefore !== normalizeExchange(symbolExchange.value)) renderSymbols();
       document.querySelectorAll("[data-exchange-view]").forEach((panel) => {
         panel.hidden = normalizeExchange(panel.dataset.exchangeView) !== selected;
       });
@@ -3220,8 +3224,29 @@ const tvbotHTML = `<!doctype html>
       return loaded.length > 0 && !loaded.some((exchange) => exchangeConfiguredForCurrentEnvironment(exchange));
     }
 
+    function configuredExchangesForCurrentEnvironment() {
+      const env = positionEnvironment();
+      return positionExchanges.filter((exchange) => apiKeyStatusLoaded(exchange, env) && exchangeConfiguredForCurrentEnvironment(exchange));
+    }
+
     function exchangeSelectionAllowed(exchange) {
       return !state.exchangeAvailabilityReady || exchangeConfiguredForCurrentEnvironment(exchange) || allExchangesUnconfiguredForCurrentEnvironment();
+    }
+
+    function syncSymbolExchangeSelector(selected) {
+      const select = $("symbol-exchange");
+      if (!select) return;
+      Array.from(select.options).forEach((option) => {
+        const exchange = normalizeExchange(option.value);
+        const allowed = exchangeSelectionAllowed(exchange);
+        option.disabled = !allowed;
+        if (!allowed) {
+          option.title = exchangeLabel(exchange) + " 未配置当前交易环境 API";
+        } else {
+          option.removeAttribute("title");
+        }
+      });
+      if (!exchangeSelectionAllowed(normalizeExchange(select.value))) select.value = selected;
     }
 
     function ensureSelectedExchangeAvailable() {
@@ -4135,8 +4160,8 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadAll() {
-      // Start the visible order history before the API-key request. The active
-      // exchange and environment are loaded after config; other keys are lazy.
+      // Start the visible order history before the API-key request. All exchange
+      // statuses for the configured environment are loaded after config.
       const ordersPromise = loadOrders();
       const configPromise = loadConfig();
       const apiKeysPromise = configPromise.then(() => loadInitialAPIKeys(), () => loadAPIKeys(activeExchange(), "demo"));
@@ -4218,6 +4243,7 @@ const tvbotHTML = `<!doctype html>
       const target = configuredAPIKeyTarget();
       state.apiKeyExchange = target.exchange;
       state.apiKeyEnv = target.env;
+      await Promise.all(positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, target.env)));
       return loadAPIKeys(target.exchange, target.env);
     }
 
@@ -4371,7 +4397,8 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadAnalysisPositions(forceRefresh) {
-      const results = await Promise.all(positionExchanges.map((exchange) => loadPositionExchange(exchange, !!forceRefresh)));
+      const exchanges = configuredExchangesForCurrentEnvironment();
+      const results = await Promise.all(exchanges.map((exchange) => loadPositionExchange(exchange, !!forceRefresh)));
       const snapshot = positionSnapshot(results);
       state.analysisPositions = snapshot;
       syncActivePositionSnapshot(snapshot);
@@ -4851,6 +4878,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function renderSymbols() {
+      syncSymbolExchangeSelector(ensureSelectedExchangeAvailable());
       const data = state.symbols || {};
       const okxCatalog = data.okx || {};
       const binanceCatalog = data.binance || {};
@@ -4937,6 +4965,7 @@ const tvbotHTML = `<!doctype html>
       const gateCatalog = data.gate || {};
       const exchangeFilter = $("symbol-exchange") ? normalizeExchange($("symbol-exchange").value) : activeExchange();
       const envFilter = $("symbol-env") && $("symbol-env").value === "live" ? "live" : "demo";
+      if (!exchangeSelectionAllowed(exchangeFilter)) return [];
       const terms = symbolSearchTerms(currentSymbolSearchKeyword());
       const configuredLookup = configuredSymbolMap();
       const groups = [
