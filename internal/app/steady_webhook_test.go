@@ -13,6 +13,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/notify"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/valuearea"
 )
 
 func TestBuildSteadyWebhookPayloadMatchesTVOrderContract(t *testing.T) {
@@ -112,6 +113,26 @@ func TestBuildValueAreaWebhookPayloadsCarryEffectAndSource(t *testing.T) {
 	}
 	if err = json.Unmarshal(raw, &got); err != nil || got["condition"] != "value_area_close" || got["source"] != "value_area_close" || got["position_effect"] != "close" || got["position_side"] != "long" || got["order_intent"] != "close_long" {
 		t.Fatalf("unexpected value-area close payload: %s", raw)
+	}
+}
+
+func TestValueAreaWebhookTaskCarriesConfiguredWindow(t *testing.T) {
+	svc, _, _ := alertTestService(t, "value-area-window-webhook.db")
+	svc.alerts.setValueAreaWindow(valuearea.TradingWindow{StartMinute: 0, EndMinute: 24 * 60})
+	task := svc.alerts.webhookTask(domain.TradeSignal{
+		Symbol: "BTCUSDT", Kind: domain.SignalValueArea, Side: "long", PositionEffect: "open",
+		CreatedAt: time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC), ReferencePrice: 100,
+	}, "value-area-window", notify.PriorityNormal, buildSignalWebhookPayload)
+	raw, err := task.Prepare(time.Date(2026, 11, 3, 16, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("prepare value-area webhook: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	if got["value_area_start_minute"] != float64(0) || got["value_area_end_minute"] != float64(24*60) {
+		t.Fatalf("configured value-area window missing from webhook: %s", raw)
 	}
 }
 

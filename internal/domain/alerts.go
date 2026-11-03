@@ -174,6 +174,10 @@ type TradeSignal struct {
 	VAH                          float64   `json:"vah,omitempty"`
 	GammaValue                   *float64  `json:"gamma_value,omitempty"`
 	GammaState                   string    `json:"gamma_state,omitempty"`
+	// WebhookValueArea* are transient dispatch metadata. They are populated on
+	// the queued copy only, so persisted alert history keeps its existing shape.
+	WebhookValueAreaStartMinute *int `json:"-"`
+	WebhookValueAreaEndMinute   *int `json:"-"`
 }
 
 // WatchSymbol is one entry of the dynamic top volume watch list.

@@ -21,35 +21,47 @@ func TestValueAreaOpenTimeRejectionUsesChinaOpeningTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fullDayStart, fullDayEnd := 0, 24*60
+	customStart, customEnd := 9*60, 17*60
 	cases := []struct {
-		name   string
-		minute int
-		want   string
+		name       string
+		minute     int
+		start, end *int
+		want       string
 	}{
-		{name: "before window", minute: 19*60 + 59, want: "value_area_time_window"},
-		{name: "hour boundary", minute: 20 * 60, want: "value_area_minute_block"},
-		{name: "hour boundary end", minute: 20*60 + 5, want: "value_area_minute_block"},
-		{name: "first allowed minute", minute: 20*60 + 6},
-		{name: "half hour start", minute: 20*60 + 25, want: "value_area_minute_block"},
-		{name: "half hour end", minute: 20*60 + 35, want: "value_area_minute_block"},
-		{name: "after half hour", minute: 20*60 + 36},
-		{name: "last allowed minute", minute: 23*60 + 54},
-		{name: "next hour boundary", minute: 23*60 + 55, want: "value_area_minute_block"},
-		{name: "midnight", minute: 24 * 60, want: "value_area_time_window"},
+		{name: "legacy before window", minute: 19*60 + 59, want: "value_area_time_window"},
+		{name: "legacy opening boundary", minute: 20 * 60},
+		{name: "configured opening boundary", minute: 20 * 60, start: ptr(20 * 60), end: ptr(24 * 60)},
+		{name: "configured five minutes after boundary", minute: 20*60 + 5, start: ptr(20 * 60), end: ptr(24 * 60)},
+		{name: "configured half hour", minute: 20*60 + 30, start: ptr(20 * 60), end: ptr(24 * 60)},
+		{name: "configured last hour boundary", minute: 23*60 + 55, start: ptr(20 * 60), end: ptr(24 * 60)},
+		{name: "full day midnight", minute: 0, start: &fullDayStart, end: &fullDayEnd},
+		{name: "full day midday", minute: 12 * 60, start: &fullDayStart, end: &fullDayEnd},
+		{name: "full day last minute", minute: 23*60 + 59, start: &fullDayStart, end: &fullDayEnd},
+		{name: "custom window before start", minute: 8*60 + 59, start: &customStart, end: &customEnd, want: "value_area_time_window"},
+		{name: "custom window end exclusive", minute: 17 * 60, start: &customStart, end: &customEnd, want: "value_area_time_window"},
+		{name: "partial window", minute: 12 * 60, start: &fullDayStart, want: "value_area_time_window"},
+		{name: "invalid window", minute: 12 * 60, start: ptr(24 * 60), end: &fullDayEnd, want: "value_area_time_window"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			at := time.Date(2026, time.October, 31, 0, 0, 0, 0, location).Add(time.Duration(tc.minute) * time.Minute)
 			signal := tvbottrading.Signal{
-				SentAt:         at.UTC().Format(time.RFC3339Nano),
-				PositionEffect: tvbottrading.PositionEffectOpen,
-				Condition:      "value_area_signal",
+				SentAt:               at.UTC().Format(time.RFC3339Nano),
+				PositionEffect:       tvbottrading.PositionEffectOpen,
+				Condition:            "value_area_signal",
+				ValueAreaStartMinute: tc.start,
+				ValueAreaEndMinute:   tc.end,
 			}
 			if got := valueAreaOpenTimeRejection(signal); got != tc.want {
 				t.Fatalf("rejection=%q want=%q local=%s", got, tc.want, at.Format("15:04"))
 			}
 		})
 	}
+}
+
+func ptr(value int) *int {
+	return &value
 }
 
 func TestValueAreaOpenGuardOnlyTargetsAutomaticSignal(t *testing.T) {
@@ -83,19 +95,19 @@ func TestTVOrderValueAreaGateUsesSentAtAndSkipsExecutorWhenBlocked(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sentAt := time.Date(2026, time.October, 31, 20, 5, 0, 0, local)
+	sentAt := time.Date(2026, time.October, 31, 19, 59, 0, 0, local)
 	srv.Now = func() time.Time { return sentAt.Add(time.Minute).UTC() }
 	srv.valueAreaOpenConflictChecker = func(context.Context, tvbottrading.Signal, tvbotconfig.Config) (bool, error) {
 		return false, nil
 	}
 	signal := valueAreaWebhookSignal(t, srv, sentAt, "value_area_signal")
 	rr := postValueAreaTVOrder(t, srv, signal)
-	if rr.Code != http.StatusAccepted || !strings.Contains(rr.Body.String(), `"reason":"value_area_minute_block"`) {
+	if rr.Code != http.StatusAccepted || !strings.Contains(rr.Body.String(), `"reason":"value_area_time_window"`) {
 		t.Fatalf("blocked response status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	resp := decodeTVOrderSignalResponse(t, rr.Body.Bytes())
 	record, ok := srv.Orders.Get(resp.SignalID)
-	if !ok || record.Status != tvbotstorage.StatusIgnored || record.ErrorCode != "value_area_minute_block" {
+	if !ok || record.Status != tvbotstorage.StatusIgnored || record.ErrorCode != "value_area_time_window" {
 		t.Fatalf("blocked record=%#v found=%v", record, ok)
 	}
 	select {
@@ -110,7 +122,7 @@ func TestTVOrderValueAreaGateAllowsOpeningAndLeavesManualOpeningUnrestricted(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowedAt := time.Date(2026, time.October, 31, 20, 6, 0, 0, local)
+	allowedAt := time.Date(2026, time.October, 31, 20, 5, 0, 0, local)
 	srv := newTestServer(t)
 	srv.Now = func() time.Time { return allowedAt.Add(time.Second).UTC() }
 	srv.valueAreaOpenConflictChecker = func(context.Context, tvbottrading.Signal, tvbotconfig.Config) (bool, error) {
@@ -130,7 +142,7 @@ func TestTVOrderValueAreaGateAllowsOpeningAndLeavesManualOpeningUnrestricted(t *
 		t.Fatal("allowed automatic signal did not reach executor")
 	}
 
-	manualAt := time.Date(2026, time.October, 31, 20, 5, 0, 0, local)
+	manualAt := time.Date(2026, time.October, 31, 20, 6, 0, 0, local)
 	srv.Now = func() time.Time { return manualAt.Add(time.Second).UTC() }
 	manual := valueAreaWebhookSignal(t, srv, manualAt, "value_area_manual")
 	manualResponse := postValueAreaTVOrder(t, srv, manual)
@@ -144,6 +156,27 @@ func TestTVOrderValueAreaGateAllowsOpeningAndLeavesManualOpeningUnrestricted(t *
 		}
 	case <-time.After(time.Second):
 		t.Fatal("manual signal did not reach executor")
+	}
+}
+
+func TestTVOrderValueAreaGateUsesConfiguredFullDayWindow(t *testing.T) {
+	local, err := time.LoadLocation(valueAreaOrderTimezone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, time.October, 31, 0, 0, 0, 0, local)
+	srv := newTestServer(t)
+	srv.Now = func() time.Time { return at.Add(time.Second).UTC() }
+	srv.valueAreaOpenConflictChecker = func(context.Context, tvbottrading.Signal, tvbotconfig.Config) (bool, error) {
+		return false, nil
+	}
+	signal := valueAreaWebhookSignal(t, srv, at, "value_area_signal")
+	start, end := 0, 24*60
+	signal.ValueAreaStartMinute = &start
+	signal.ValueAreaEndMinute = &end
+	rr := postValueAreaTVOrder(t, srv, signal)
+	if rr.Code != http.StatusAccepted || !strings.Contains(rr.Body.String(), `"status":"accepted"`) {
+		t.Fatalf("full-day configured response status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

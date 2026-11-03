@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	tvbotbinance "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
@@ -17,6 +16,7 @@ import (
 	tvbotokx "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	tvbotstorage "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotstorage"
 	tvbottrading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
+	valuearea "github.com/pcdogyu/price-prediction-liquidation-levels/internal/valuearea"
 )
 
 const valueAreaOrderTimezone = "Asia/Shanghai"
@@ -56,20 +56,25 @@ func valueAreaOpenTimeRejection(signal tvbottrading.Signal) string {
 		// fallback closed if a future caller reaches the helper directly.
 		return "value_area_time_window"
 	}
-	location, err := time.LoadLocation(valueAreaOrderTimezone)
-	if err != nil {
+	window, ok := valueAreaWindowFromSignal(signal)
+	if !ok || !window.Contains(sentAt) {
 		return "value_area_time_window"
-	}
-	local := sentAt.In(location)
-	minutes := local.Hour()*60 + local.Minute()
-	if minutes < 20*60 || minutes >= 24*60 {
-		return "value_area_time_window"
-	}
-	minute := local.Minute()
-	if minute >= 55 || minute <= 5 || minute >= 25 && minute <= 35 {
-		return "value_area_minute_block"
 	}
 	return ""
+}
+
+func valueAreaWindowFromSignal(signal tvbottrading.Signal) (valuearea.TradingWindow, bool) {
+	if signal.ValueAreaStartMinute == nil && signal.ValueAreaEndMinute == nil {
+		return valuearea.DefaultTradingWindow(), true
+	}
+	if signal.ValueAreaStartMinute == nil || signal.ValueAreaEndMinute == nil {
+		return valuearea.TradingWindow{}, false
+	}
+	window := valuearea.TradingWindow{
+		StartMinute: *signal.ValueAreaStartMinute,
+		EndMinute:   *signal.ValueAreaEndMinute,
+	}
+	return window, window.Valid()
 }
 
 func valueAreaOrderLockKey(signal tvbottrading.Signal) string {

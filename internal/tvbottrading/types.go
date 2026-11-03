@@ -138,15 +138,17 @@ type Signal struct {
 	PositionSide   string        `json:"position_side,omitempty"`
 	// MinProfitSpread is enforced only for close signals. It is carried from
 	// the liquidation radar and checked against the live position average price.
-	MinProfitSpread float64       `json:"min_profit_spread,omitempty"`
-	Leverage        int           `json:"leverage"`
-	Amount          FlexibleFloat `json:"amount"`
-	Risk            Risk          `json:"risk,omitempty"`
-	TokenNonce      string        `json:"token_nonce,omitempty"`
-	Token           string        `json:"token"`
-	ADX             *float64      `json:"-"`
-	MarketStrategy  string        `json:"-"`
-	RawJSON         string        `json:"-"`
+	MinProfitSpread      float64       `json:"min_profit_spread,omitempty"`
+	ValueAreaStartMinute *int          `json:"value_area_start_minute,omitempty"`
+	ValueAreaEndMinute   *int          `json:"value_area_end_minute,omitempty"`
+	Leverage             int           `json:"leverage"`
+	Amount               FlexibleFloat `json:"amount"`
+	Risk                 Risk          `json:"risk,omitempty"`
+	TokenNonce           string        `json:"token_nonce,omitempty"`
+	Token                string        `json:"token"`
+	ADX                  *float64      `json:"-"`
+	MarketStrategy       string        `json:"-"`
+	RawJSON              string        `json:"-"`
 }
 
 type OrderSettings struct {

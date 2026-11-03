@@ -34,6 +34,8 @@ type steadyWebhookPayload struct {
 	VAH             float64  `json:"vah,omitempty"`
 	GammaValue      *float64 `json:"gamma_value,omitempty"`
 	GammaState      string   `json:"gamma_state,omitempty"`
+	ValueAreaStart  *int     `json:"value_area_start_minute,omitempty"`
+	ValueAreaEnd    *int     `json:"value_area_end_minute,omitempty"`
 	Source          string   `json:"source"`
 	TokenNonce      string   `json:"token_nonce"`
 	Token           string   `json:"token"`
@@ -151,6 +153,7 @@ func buildPositionWebhookPayload(signal domain.TradeSignal, cfg config.Config, c
 		MinProfitSpread: signal.MinProfitSpread,
 		Boundary:        signal.Boundary, BoundaryPrice: signal.BoundaryPrice,
 		VAL: signal.VAL, VAH: signal.VAH, GammaValue: signal.GammaValue, GammaState: signal.GammaState,
+		ValueAreaStart: signal.WebhookValueAreaStartMinute, ValueAreaEnd: signal.WebhookValueAreaEndMinute,
 		TokenNonce: cfg.SteadyWebhookTokenNonce, Token: cfg.SteadyWebhookToken,
 	}
 	return json.Marshal(payload)

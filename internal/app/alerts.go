@@ -714,6 +714,12 @@ func (rtm *alertRuntime) webhookTask(signal domain.TradeSignal, key string, prio
 		Prepare: func(sentAt time.Time) (string, error) {
 			queued := signal
 			queued.CreatedAt = sentAt
+			if queued.Kind == domain.SignalValueArea {
+				window := rtm.valueAreaWindowSnapshot()
+				start, end := window.StartMinute, window.EndMinute
+				queued.WebhookValueAreaStartMinute = &start
+				queued.WebhookValueAreaEndMinute = &end
+			}
 			payload, err := build(queued, rtm.serviceConfig())
 			if err != nil {
 				return "", err
