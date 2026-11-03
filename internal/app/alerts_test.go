@@ -186,6 +186,34 @@ func TestAlertPagesUseBTCGammaOnlyForBTC(t *testing.T) {
 	}
 }
 
+func TestValueAreaGammaPolicyFollowsTVBotOpeningSetting(t *testing.T) {
+	svc, _, _ := alertTestService(t, "value-area-gamma-policy.db")
+	negative := -0.25
+	signal := domain.TradeSignal{
+		Kind: domain.SignalValueArea, Side: "long", PositionEffect: "close",
+		GammaValue: &negative, OpenAllowed: false, CloseAllowed: true,
+	}
+
+	svc.SetGammaPolicyResolver(func(string) string { return "ignore" })
+	ignored := svc.alerts.applyValueAreaGammaPolicy(signal)
+	if ignored.PositionEffect != "close" || ignored.OpenAllowed {
+		t.Fatalf("ignore policy must keep a negative-Gamma value-area signal close-only: %+v", ignored)
+	}
+
+	svc.SetGammaPolicyResolver(func(string) string { return "passthrough" })
+	passed := svc.alerts.applyValueAreaGammaPolicy(signal)
+	if passed.PositionEffect != "open" || !passed.OpenAllowed || passed.GammaIgnored {
+		t.Fatalf("passthrough policy must restore the opening signal: %+v", passed)
+	}
+
+	svc.SetGammaPolicyResolver(func(string) string { return "flip" })
+	flipped := svc.alerts.applyValueAreaGammaPolicy(signal)
+	preclose := svc.alerts.valueAreaPrecloseSignal(flipped)
+	if flipped.PositionEffect != "open" || preclose.Side != "short" {
+		t.Fatalf("flip policy must open through TVBot on the opposite side and preclose that side: signal=%+v preclose=%+v", flipped, preclose)
+	}
+}
+
 func TestAlertHistoryKeepsGammaDecisionFromSignalTime(t *testing.T) {
 	ctx := context.Background()
 	svc, _, st := alertTestService(t, "alert-gamma-history.db")

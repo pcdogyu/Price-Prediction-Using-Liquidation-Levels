@@ -16,7 +16,6 @@
     const match = /^(?:([01]\d|2[0-3]):([0-5]\d))$/.exec(text);
     return match ? Number(match[1]) * 60 + Number(match[2]) : NaN;
   };
-  const valueAreaWindowText = settings => '北京时间 ' + minuteText(settings.value_area_start_minute) + '–' + minuteText(settings.value_area_end_minute);
   const money = value => Number.isFinite(value) ? (value >= 1e6 ? '$' + (value / 1e6).toFixed(2) + 'M' : value >= 1e3 ? '$' + (value / 1e3).toFixed(0) + 'K' : '$' + value.toFixed(0)) : '—';
   const price = value => Number.isFinite(value) && value > 0 ? (value >= 1000 ? '$' + value.toFixed(2) : value >= 1 ? '$' + value.toFixed(4) : '$' + value.toFixed(6)) : '—';
   const span = seconds => {
@@ -506,8 +505,6 @@
     const valueAreaEnd = $('alerts-value-area-end');
     if (document.activeElement !== valueAreaStart) valueAreaStart.value = minuteText(settings.value_area_start_minute);
     if (document.activeElement !== valueAreaEnd) valueAreaEnd.value = minuteText(settings.value_area_end_minute);
-    const valueAreaWindow = $('alerts-value-area-window');
-    if (valueAreaWindow) valueAreaWindow.textContent = valueAreaWindowText(settings);
     $('alerts-monitor-window').textContent = settings.window_minutes || 3;
     $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 50) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健 / 交易所刷单下单信号';
     if (!strategyLoaded) strategyLoaded = true;

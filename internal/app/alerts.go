@@ -390,9 +390,61 @@ func (rtm *alertRuntime) valueAreaLoop(ctx context.Context) {
 			if !ok {
 				continue
 			}
+			signal = rtm.applyValueAreaGammaPolicy(signal)
 			rtm.persistValueAreaSignal(context.WithoutCancel(ctx), signal, true)
 		}
 	}
+}
+
+// applyValueAreaGammaPolicy makes the VAL/VAH opening decision follow the same
+// tenant-scoped Gamma policy as /tvorder. The value-area engine emits a
+// close-only signal for negative Gamma so the ignore policy can close the
+// position that the crossing would otherwise have replaced. Passthrough and
+// flip turn that decision back into an opening signal; /tvorder then applies
+// the configured policy to the opening request itself.
+func (rtm *alertRuntime) applyValueAreaGammaPolicy(signal domain.TradeSignal) domain.TradeSignal {
+	if signal.Kind != domain.SignalValueArea || signal.PositionEffect != "close" || signal.GammaValue == nil || *signal.GammaValue >= 0 {
+		return signal
+	}
+	policy := "ignore"
+	if rtm != nil && rtm.service != nil {
+		policy = rtm.service.gammaPolicyForTenant(rtm.tenantID)
+	}
+	if policy == "passthrough" || policy == "flip" {
+		signal.PositionEffect = "open"
+		signal.GammaIgnored = false
+		signal.OpenAllowed = true
+	}
+	return signal
+}
+
+func oppositeValueAreaSide(side string) string {
+	switch strings.ToLower(strings.TrimSpace(side)) {
+	case "long":
+		return "short"
+	case "short":
+		return "long"
+	default:
+		return side
+	}
+}
+
+func (rtm *alertRuntime) valueAreaPrecloseSignal(signal domain.TradeSignal) domain.TradeSignal {
+	if signal.Kind != domain.SignalValueArea || signal.PositionEffect != "open" || signal.GammaValue == nil || *signal.GammaValue >= 0 || rtm == nil || rtm.service == nil || rtm.service.gammaPolicyForTenant(rtm.tenantID) != "flip" {
+		return signal
+	}
+	// A flipped entry is executed on the opposite side by TVBot. Close that
+	// same side's existing position before the flipped entry is submitted.
+	signal.Side = oppositeValueAreaSide(signal.Side)
+	return signal
+}
+
+func (rtm *alertRuntime) valueAreaBacktestSignal(signal domain.TradeSignal) domain.TradeSignal {
+	signal = rtm.applyValueAreaGammaPolicy(signal)
+	if signal.PositionEffect == "open" && signal.GammaValue != nil && *signal.GammaValue < 0 && rtm != nil && rtm.service != nil && rtm.service.gammaPolicyForTenant(rtm.tenantID) == "flip" {
+		signal.Side = oppositeValueAreaSide(signal.Side)
+	}
+	return signal
 }
 
 func (rtm *alertRuntime) persistValueAreaSignal(ctx context.Context, signal domain.TradeSignal, allowNotify bool) {
@@ -571,7 +623,8 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 	if signal.FilterApplied && !signal.OpenAllowed {
 		return
 	}
-	if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(signal) {
+	precloseSignal := rtm.valueAreaPrecloseSignal(signal)
+	if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(precloseSignal) {
 		return
 	}
 	if !rtm.orderSignalEnabled(signal.Kind) {

@@ -408,6 +408,7 @@ func (rtm *alertRuntime) valueAreaBacktestEntries(ctx context.Context, symbol st
 	signals := valueAreaBacktestSignalsInWindow(symbol, candles, profiles, gammaPoints, from, to, rtm.valueAreaWindowSnapshot())
 	entries := make([]alertBacktestEntry, 0, len(signals))
 	for _, signal := range signals {
+		signal = rtm.valueAreaBacktestSignal(signal)
 		if signal.PositionEffect != "open" || signal.CreatedAt.Before(from) || signal.CreatedAt.After(to) {
 			continue
 		}
