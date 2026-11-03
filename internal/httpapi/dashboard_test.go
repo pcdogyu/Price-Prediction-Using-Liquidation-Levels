@@ -183,9 +183,11 @@ func TestLoginHTMLUsesUnifiedButtonMotion(t *testing.T) {
 	page := string(loginHTML)
 	for _, marker := range []string{
 		`transition:transform .18s ease`,
-		`button:hover`,
-		`button:active`,
+		`button:not(:disabled):hover`,
+		`button:not(:disabled):active`,
+		`button:disabled`,
 		`button:focus-visible`,
+		`button[aria-busy="true"]::before`,
 		`@media(prefers-reduced-motion:reduce)`,
 	} {
 		if !strings.Contains(page, marker) {

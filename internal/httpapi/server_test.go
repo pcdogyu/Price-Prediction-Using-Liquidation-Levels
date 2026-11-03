@@ -313,7 +313,7 @@ func TestAuthenticationAndProtectedLogs(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "登录后查看行情") || !strings.Contains(w.Body.String(), "会话有效期 7 天") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "登录后查看行情") || !strings.Contains(w.Body.String(), "会话有效期 7 天") || !strings.Contains(w.Body.String(), `id="login-form"`) || !strings.Contains(w.Body.String(), `id="login-submit"`) || !strings.Contains(w.Body.String(), `aria-busy="true"`) || !strings.Contains(w.Body.String(), "正在验证登录信息") {
 		t.Fatalf("login page status=%d body=%s", w.Code, w.Body.String())
 	}
 	if w.Header().Get("Cache-Control") != "no-store, max-age=0" || w.Header().Get("Pragma") != "no-cache" || w.Header().Get("Expires") != "0" {
