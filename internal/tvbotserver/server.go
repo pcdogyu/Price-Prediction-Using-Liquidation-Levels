@@ -712,6 +712,8 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 		s.handleTemplates(w, r)
 	case path == "/orders":
 		s.handleOrders(w, r)
+	case path == "/order-filters":
+		s.handleOrderFilters(w, r)
 	case path == "/coinpair-blocks":
 		s.handleCoinpairBlocks(w, r)
 	case strings.HasPrefix(path, "/coinpair-blocks/"):
@@ -2153,6 +2155,9 @@ func (s *Server) handleOrders(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	exchange := strings.TrimSpace(r.URL.Query().Get("exchange"))
+	sourceExchange := strings.TrimSpace(r.URL.Query().Get("source_exchange"))
+	signalFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("signal")))
+	coinpair := strings.TrimSpace(r.URL.Query().Get("coinpair"))
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	status := storage.OrderStatus(strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status"))))
 	if exchange != "" {
@@ -2161,12 +2166,23 @@ func (s *Server) handleOrders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if sourceExchange != "" {
+		if !trading.ValidTargetExchange(sourceExchange) {
+			writeError(w, http.StatusBadRequest, "invalid_source_exchange", "source_exchange must be okx, binance, or gate")
+			return
+		}
+		sourceExchange = trading.NormalizeExchange(sourceExchange)
+	}
 	if status != "" && !storage.ValidOrderStatus(status) {
 		writeError(w, http.StatusBadRequest, "invalid_status", "status must be accepted, duplicate, submitted, failed, rejected, or ignored")
 		return
 	}
-	orders := s.Orders.ListFilteredPage(exchange, status, query, limit, offset)
-	total := s.Orders.CountFiltered(exchange, status, query)
+	if signalFilter != "" && !storage.ValidOrderSignalFilter(signalFilter) {
+		writeError(w, http.StatusBadRequest, "invalid_signal_filter", "signal must be aggressive, steady, alert, manual, value_area, tradingview, position_monitor, stop_loss, take_profit, or analysis_manual")
+		return
+	}
+	orders := s.Orders.ListFilteredPageWithSignalFilters(exchange, status, sourceExchange, signalFilter, coinpair, query, limit, offset)
+	total := s.Orders.CountFilteredWithSignalFilters(exchange, status, sourceExchange, signalFilter, coinpair, query)
 	totalPages := 0
 	if limit > 0 && total > 0 {
 		totalPages = (total + limit - 1) / limit
@@ -2179,6 +2195,24 @@ func (s *Server) handleOrders(w http.ResponseWriter, r *http.Request) {
 		"page":        offset/limit + 1,
 		"page_size":   limit,
 		"total_pages": totalPages,
+	})
+}
+
+func (s *Server) handleOrderFilters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	exchange := strings.TrimSpace(r.URL.Query().Get("exchange"))
+	if exchange != "" {
+		if !trading.ValidTargetExchange(exchange) {
+			writeError(w, http.StatusBadRequest, "invalid_exchange", "exchange must be okx, binance, or gate")
+			return
+		}
+		exchange = trading.NormalizeExchange(exchange)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"coinpairs": s.Orders.ListCoinpairs(exchange),
 	})
 }
 

@@ -1112,6 +1112,11 @@ const tvbotHTML = `<!doctype html>
     .order-status-filter {
       min-width: 130px;
     }
+    .order-signal-filter,
+    .order-source-filter,
+    .order-coinpair-filter {
+      min-width: 150px;
+    }
     .coinpair-filter-card {
       display: flex;
       justify-content: space-between;
@@ -2466,6 +2471,28 @@ const tvbotHTML = `<!doctype html>
             <option value="duplicate">重复信号</option>
             <option value="accepted">处理中</option>
           </select>
+          <select class="order-signal-filter" id="order-signal-filter" aria-label="筛选信号策略">
+            <option value="">全部信号</option>
+            <option value="aggressive">爆仓策略（激进）</option>
+            <option value="steady">爆仓策略（稳健）</option>
+            <option value="alert">爆仓策略（预警）</option>
+            <option value="manual">爆仓策略（手动）</option>
+            <option value="value_area">价值区策略</option>
+            <option value="tradingview">TradingView策略</option>
+            <option value="position_monitor">持仓监控策略</option>
+            <option value="stop_loss">止损策略</option>
+            <option value="take_profit">止盈策略</option>
+            <option value="analysis_manual">分析手动策略</option>
+          </select>
+          <select class="order-source-filter" id="order-source-filter" aria-label="筛选信号来源">
+            <option value="">全部信号来源</option>
+            <option value="okx">OKX</option>
+            <option value="binance">Binance</option>
+            <option value="gate">Gate</option>
+          </select>
+          <select class="order-coinpair-filter" id="order-coinpair-filter" aria-label="筛选币对">
+            <option value="">全部币对</option>
+          </select>
           <input class="order-search-input" id="order-search" autocomplete="off" spellcheck="false" placeholder="币对模糊搜索（如 LTC、LTCUST）/ 金额 / 订单号" aria-label="搜索订单历史">
           <button class="btn" type="button" id="search-orders">搜索</button>
           <button class="btn" type="button" id="clear-order-search" disabled>清除</button>
@@ -2654,6 +2681,9 @@ const tvbotHTML = `<!doctype html>
       ordersPage: 1,
       ordersSearch: "",
       ordersStatus: "",
+      ordersSignal: "",
+      ordersSource: "",
+      ordersCoinpair: "",
       coinpairBlocks: null,
       coinpairCooldownRemoving: {},
       retrying: {},
@@ -3226,6 +3256,8 @@ const tvbotHTML = `<!doctype html>
       state.orders = [];
       state.ordersTotal = 0;
       state.ordersPage = 1;
+      state.ordersCoinpair = "";
+      if ($("order-coinpair-filter")) $("order-coinpair-filter").value = "";
       state.analysisPositions = null;
       state.analysisPositionsError = "";
       state.positions = null;
@@ -3243,6 +3275,7 @@ const tvbotHTML = `<!doctype html>
       renderAnalysis();
       renderOrders();
       updateMetrics();
+      loadOrderCoinpairOptions().catch((err) => toast(err.message));
       loadOrders(true).catch((err) => toast(err.message));
       loadAPIKeys(selected, positionEnvironment()).catch((err) => toast(err.message));
       if (sectionActive("dashboard")) {
@@ -4107,7 +4140,7 @@ const tvbotHTML = `<!doctype html>
       const ordersPromise = loadOrders();
       const configPromise = loadConfig();
       const apiKeysPromise = configPromise.then(() => loadInitialAPIKeys(), () => loadAPIKeys(activeExchange(), "demo"));
-      const bootstrapPromise = Promise.allSettled([configPromise, apiKeysPromise, loadCoinpairBlocks(), loadUpgrade()]);
+      const bootstrapPromise = Promise.allSettled([configPromise, apiKeysPromise, loadCoinpairBlocks(), loadOrderCoinpairOptions(), loadUpgrade()]);
       await Promise.allSettled([ordersPromise, bootstrapPromise]);
       const target = activeTabID();
       const tabLoads = [];
@@ -4231,6 +4264,9 @@ const tvbotHTML = `<!doctype html>
       state.ordersStatus = String(state.ordersStatus || "").trim().toLowerCase();
       if (state.ordersSearch) qs.set("q", state.ordersSearch);
       if (state.ordersStatus) qs.set("status", state.ordersStatus);
+      if (state.ordersSignal) qs.set("signal", state.ordersSignal);
+      if (state.ordersSource) qs.set("source_exchange", state.ordersSource);
+      if (state.ordersCoinpair) qs.set("coinpair", state.ordersCoinpair);
       const data = await api("/tvbot/orders?" + qs.toString());
       state.orders = data.orders || [];
       state.ordersTotal = Number(data.total || 0);
@@ -4241,6 +4277,18 @@ const tvbotHTML = `<!doctype html>
       }
       renderOrders();
       updateMetrics();
+    }
+
+    async function loadOrderCoinpairOptions() {
+      const select = $("order-coinpair-filter");
+      if (!select) return;
+      const qs = new URLSearchParams({ exchange: activeExchange() });
+      const data = await api("/tvbot/order-filters?" + qs.toString());
+      const coinpairs = Array.isArray(data.coinpairs) ? data.coinpairs.map((value) => String(value || "").trim()).filter(Boolean) : [];
+      const selected = coinpairs.includes(state.ordersCoinpair) ? state.ordersCoinpair : "";
+      state.ordersCoinpair = selected;
+      select.innerHTML = '<option value="">全部币对</option>' + coinpairs.map((coinpair) => '<option value="' + escapeHTML(coinpair) + '">' + escapeHTML(coinpair) + '</option>').join("");
+      select.value = selected;
     }
 
     async function loadCoinpairBlocks() {
@@ -7341,8 +7389,35 @@ const tvbotHTML = `<!doctype html>
       return $("order-status-filter") ? String($("order-status-filter").value || "").trim().toLowerCase() : "";
     }
 
+    function currentOrderSignalFilter() {
+      return $("order-signal-filter") ? String($("order-signal-filter").value || "").trim().toLowerCase() : "";
+    }
+
+    function currentOrderSourceFilter() {
+      return $("order-source-filter") ? String($("order-source-filter").value || "").trim().toLowerCase() : "";
+    }
+
+    function currentOrderCoinpairFilter() {
+      return $("order-coinpair-filter") ? String($("order-coinpair-filter").value || "").trim() : "";
+    }
+
     async function applyOrderStatusFilter() {
       state.ordersStatus = currentOrderStatusFilter();
+      await loadOrders(true);
+    }
+
+    async function applyOrderSignalFilter() {
+      state.ordersSignal = currentOrderSignalFilter();
+      await loadOrders(true);
+    }
+
+    async function applyOrderSourceFilter() {
+      state.ordersSource = currentOrderSourceFilter();
+      await loadOrders(true);
+    }
+
+    async function applyOrderCoinpairFilter() {
+      state.ordersCoinpair = currentOrderCoinpairFilter();
       await loadOrders(true);
     }
 
@@ -7674,6 +7749,22 @@ const tvbotHTML = `<!doctype html>
       return labels[status] || status;
     }
 
+    function orderHistorySignalFilterText(filter) {
+      const labels = {
+        aggressive: "爆仓策略（激进）",
+        steady: "爆仓策略（稳健）",
+        alert: "爆仓策略（预警）",
+        manual: "爆仓策略（手动）",
+        value_area: "价值区策略",
+        tradingview: "TradingView策略",
+        position_monitor: "持仓监控策略",
+        stop_loss: "止损策略",
+        take_profit: "止盈策略",
+        analysis_manual: "分析手动策略"
+      };
+      return labels[filter] || filter;
+    }
+
     function orderHistoryMarketScope(errorDetails) {
       const configured = String(errorDetails || "").match(/outside_market_(top5|top10|top20|top50|top100|top200|top500|all)/i);
       if (configured) return configured[1].toLowerCase();
@@ -7776,8 +7867,14 @@ const tvbotHTML = `<!doctype html>
       state.ordersPage = Math.min(Math.max(1, Number(state.ordersPage || 1)), totalPages);
       const search = String(state.ordersSearch || "").trim();
       const statusFilter = String(state.ordersStatus || "").trim();
+      const signalFilter = String(state.ordersSignal || "").trim();
+      const sourceFilter = String(state.ordersSource || "").trim();
+      const coinpairFilter = String(state.ordersCoinpair || "").trim();
       const filters = [];
       if (statusFilter) filters.push("状态: " + orderHistoryStatusText(statusFilter));
+      if (signalFilter) filters.push("信号: " + orderHistorySignalFilterText(signalFilter));
+      if (sourceFilter) filters.push("信号来源: " + exchangeLabel(sourceFilter));
+      if (coinpairFilter) filters.push("币对: " + coinpairFilter);
       if (search) filters.push("搜索: " + search);
       const rows = (state.orders || []).map((order, index) => {
         const targetExchange = normalizeExchange(order.target_exchange || (order.result && order.result.target_exchange));
@@ -8940,6 +9037,9 @@ const tvbotHTML = `<!doctype html>
     $("order-prev").addEventListener("click", () => changeOrdersPage(-1));
     $("order-next").addEventListener("click", () => changeOrdersPage(1));
     $("order-status-filter").addEventListener("change", () => applyOrderStatusFilter().catch((err) => toast(err.message)));
+    $("order-signal-filter").addEventListener("change", () => applyOrderSignalFilter().catch((err) => toast(err.message)));
+    $("order-source-filter").addEventListener("change", () => applyOrderSourceFilter().catch((err) => toast(err.message)));
+    $("order-coinpair-filter").addEventListener("change", () => applyOrderCoinpairFilter().catch((err) => toast(err.message)));
     $("order-search").addEventListener("input", () => syncOrderSearchControls());
     $("order-search").addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
@@ -9017,7 +9117,7 @@ const tvbotHTML = `<!doctype html>
       if (!cancelButton) return;
       cancelPendingOrder(cancelButton).catch((err) => toast(err.message));
     });
-    $("refresh-orders").addEventListener("click", () => Promise.all([loadOrders(), loadCoinpairBlocks()]).then(() => toast("订单已刷新")).catch((err) => toast(err.message)));
+    $("refresh-orders").addEventListener("click", () => Promise.all([loadOrders(), loadOrderCoinpairOptions(), loadCoinpairBlocks()]).then(() => toast("订单已刷新")).catch((err) => toast(err.message)));
     $("refresh-upgrade").addEventListener("click", () => loadUpgrade().then(() => toast("升级状态已刷新")).catch((err) => toast(err.message)));
     $("start-upgrade").addEventListener("click", () => startUpgrade().catch((err) => toast(err.message)));
     document.addEventListener("visibilitychange", () => {

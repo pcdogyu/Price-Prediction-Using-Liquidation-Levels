@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -510,20 +511,28 @@ func (s *OrderStore) ListSearchByTargetExchangePage(exchange, query string, limi
 }
 
 func (s *OrderStore) ListFilteredPage(exchange string, status OrderStatus, query string, limit, offset int) []OrderRecord {
+	return s.ListFilteredPageWithSignalFilters(exchange, status, "", "", "", query, limit, offset)
+}
+
+// ListFilteredPageWithSignalFilters filters order history by target exchange,
+// status, signal source exchange, signal strategy, coinpair, and free-text query.
+func (s *OrderStore) ListFilteredPageWithSignalFilters(exchange string, status OrderStatus, sourceExchange, signalFilter, coinpair, query string, limit, offset int) []OrderRecord {
 	exchange = strings.TrimSpace(exchange)
 	if exchange != "" {
 		exchange = trading.NormalizeExchange(exchange)
 	}
+	sourceExchange = normalizeOptionalOrderExchange(sourceExchange)
+	coinpair = compactOrderSymbolText(coinpair)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db != nil {
-		records, err := s.listSQLiteFilteredPageLocked(exchange, status, query, limit, offset)
+		records, err := s.listSQLiteFilteredPageWithSignalFiltersLocked(exchange, status, sourceExchange, signalFilter, coinpair, query, limit, offset)
 		if err == nil {
 			return records
 		}
 		return nil
 	}
-	return s.listFilteredPageMemoryLocked(limit, offset, exchange, status, query)
+	return s.listFilteredPageMemoryWithSignalFiltersLocked(limit, offset, exchange, status, sourceExchange, signalFilter, coinpair, query)
 }
 
 func (s *OrderStore) Count() int {
@@ -587,6 +596,32 @@ func (s *OrderStore) CountSearchByTargetExchange(exchange, query string) int {
 }
 
 func (s *OrderStore) CountFiltered(exchange string, status OrderStatus, query string) int {
+	return s.CountFilteredWithSignalFilters(exchange, status, "", "", "", query)
+}
+
+// CountFilteredWithSignalFilters returns the count for the same filter set as
+// ListFilteredPageWithSignalFilters.
+func (s *OrderStore) CountFilteredWithSignalFilters(exchange string, status OrderStatus, sourceExchange, signalFilter, coinpair, query string) int {
+	exchange = strings.TrimSpace(exchange)
+	if exchange != "" {
+		exchange = trading.NormalizeExchange(exchange)
+	}
+	sourceExchange = normalizeOptionalOrderExchange(sourceExchange)
+	coinpair = compactOrderSymbolText(coinpair)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		n, err := s.countSQLiteFilteredWithSignalFiltersLocked(exchange, status, sourceExchange, signalFilter, coinpair, query)
+		if err == nil {
+			return n
+		}
+		return 0
+	}
+	return s.countFilteredMemoryWithSignalFiltersLocked(exchange, status, sourceExchange, signalFilter, coinpair, query)
+}
+
+// ListCoinpairs returns the distinct displayed coinpairs for a target exchange.
+func (s *OrderStore) ListCoinpairs(exchange string) []string {
 	exchange = strings.TrimSpace(exchange)
 	if exchange != "" {
 		exchange = trading.NormalizeExchange(exchange)
@@ -594,13 +629,73 @@ func (s *OrderStore) CountFiltered(exchange string, status OrderStatus, query st
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db != nil {
-		n, err := s.countSQLiteFilteredLocked(exchange, status, query)
-		if err == nil {
-			return n
+		rows, err := s.db.Query(`SELECT DISTINCT coinpair FROM orders WHERE (? = '' OR target_exchange = ?) AND TRIM(COALESCE(coinpair, '')) <> '' ORDER BY LOWER(coinpair)`, exchange, exchange)
+		if err != nil {
+			return nil
 		}
-		return 0
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var coinpair string
+			if err := rows.Scan(&coinpair); err != nil {
+				return nil
+			}
+			out = append(out, strings.TrimSpace(coinpair))
+		}
+		if rows.Err() != nil {
+			return nil
+		}
+		return out
 	}
-	return s.countFilteredMemoryLocked(exchange, status, query)
+	seen := make(map[string]string)
+	for _, rec := range s.state.Orders {
+		if exchange != "" && trading.NormalizeExchange(rec.TargetExchange) != exchange {
+			continue
+		}
+		coinpair := strings.TrimSpace(rec.Coinpair)
+		key := compactOrderSymbolText(coinpair)
+		if key != "" && coinpair != "" {
+			seen[key] = coinpair
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for _, coinpair := range seen {
+		out = append(out, coinpair)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
+	return out
+}
+
+func normalizeOptionalOrderExchange(exchange string) string {
+	if strings.TrimSpace(exchange) == "" {
+		return ""
+	}
+	return trading.NormalizeExchange(exchange)
+}
+
+const (
+	OrderSignalFilterAggressive     = "aggressive"
+	OrderSignalFilterSteady         = "steady"
+	OrderSignalFilterAlert          = "alert"
+	OrderSignalFilterManual         = "manual"
+	OrderSignalFilterValueArea      = "value_area"
+	OrderSignalFilterTradingView    = "tradingview"
+	OrderSignalFilterPosition       = "position_monitor"
+	OrderSignalFilterStopLoss       = "stop_loss"
+	OrderSignalFilterTakeProfit     = "take_profit"
+	OrderSignalFilterAnalysisManual = "analysis_manual"
+)
+
+func ValidOrderSignalFilter(filter string) bool {
+	switch strings.ToLower(strings.TrimSpace(filter)) {
+	case OrderSignalFilterAggressive, OrderSignalFilterSteady, OrderSignalFilterAlert,
+		OrderSignalFilterManual, OrderSignalFilterValueArea, OrderSignalFilterTradingView,
+		OrderSignalFilterPosition, OrderSignalFilterStopLoss, OrderSignalFilterTakeProfit,
+		OrderSignalFilterAnalysisManual:
+		return true
+	default:
+		return false
+	}
 }
 
 func ValidOrderStatus(status OrderStatus) bool {
@@ -1501,13 +1596,17 @@ func (s *OrderStore) listSQLiteSearchPageLocked(exchange, query string, limit, o
 }
 
 func (s *OrderStore) listSQLiteFilteredPageLocked(exchange string, status OrderStatus, query string, limit, offset int) ([]OrderRecord, error) {
+	return s.listSQLiteFilteredPageWithSignalFiltersLocked(exchange, status, "", "", "", query, limit, offset)
+}
+
+func (s *OrderStore) listSQLiteFilteredPageWithSignalFiltersLocked(exchange string, status OrderStatus, sourceExchange, signalFilter, coinpair, query string, limit, offset int) ([]OrderRecord, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	where, args := orderSQLiteFilterWhere(exchange, status, query)
+	where, args := orderSQLiteFilterWhereWithSignalFilters(exchange, status, sourceExchange, signalFilter, coinpair, query)
 	sql := `SELECT signal_id, dedupe_key, status, action, source_action, api_id, source_exchange, target_exchange, trade_env, coinpair, ticker, price,
 		leverage, amount, adx, market_strategy, risk_json, order_intent, position_effect, position_side, token_hash, accepted_at, updated_at, result_json, error_code, error, raw_json
 		FROM orders`
@@ -1541,7 +1640,11 @@ func (s *OrderStore) countSQLiteSearchLocked(exchange, query string) (int, error
 }
 
 func (s *OrderStore) countSQLiteFilteredLocked(exchange string, status OrderStatus, query string) (int, error) {
-	where, args := orderSQLiteFilterWhere(exchange, status, query)
+	return s.countSQLiteFilteredWithSignalFiltersLocked(exchange, status, "", "", "", query)
+}
+
+func (s *OrderStore) countSQLiteFilteredWithSignalFiltersLocked(exchange string, status OrderStatus, sourceExchange, signalFilter, coinpair, query string) (int, error) {
+	where, args := orderSQLiteFilterWhereWithSignalFilters(exchange, status, sourceExchange, signalFilter, coinpair, query)
 	var n int
 	sql := `SELECT COUNT(*) FROM orders`
 	if where != "" {
@@ -1560,6 +1663,10 @@ func (s *OrderStore) listSearchPageMemoryLocked(limit, offset int, exchange, que
 }
 
 func (s *OrderStore) listFilteredPageMemoryLocked(limit, offset int, exchange string, status OrderStatus, query string) []OrderRecord {
+	return s.listFilteredPageMemoryWithSignalFiltersLocked(limit, offset, exchange, status, "", "", "", query)
+}
+
+func (s *OrderStore) listFilteredPageMemoryWithSignalFiltersLocked(limit, offset int, exchange string, status OrderStatus, sourceExchange, signalFilter, coinpair, query string) []OrderRecord {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -1574,7 +1681,16 @@ func (s *OrderStore) listFilteredPageMemoryLocked(limit, offset int, exchange st
 		if exchange != "" && trading.NormalizeExchange(rec.TargetExchange) != exchange {
 			continue
 		}
+		if sourceExchange != "" && normalizeOptionalOrderExchange(rec.SourceExchange) != sourceExchange {
+			continue
+		}
 		if status != "" && rec.Status != status {
+			continue
+		}
+		if !orderRecordMatchesSignalFilter(rec, signalFilter) {
+			continue
+		}
+		if coinpair != "" && compactOrderSymbolText(rec.Coinpair) != coinpair {
 			continue
 		}
 		if !orderRecordMatchesSearch(rec, terms) {
@@ -1594,6 +1710,10 @@ func (s *OrderStore) countSearchMemoryLocked(exchange, query string) int {
 }
 
 func (s *OrderStore) countFilteredMemoryLocked(exchange string, status OrderStatus, query string) int {
+	return s.countFilteredMemoryWithSignalFiltersLocked(exchange, status, "", "", "", query)
+}
+
+func (s *OrderStore) countFilteredMemoryWithSignalFiltersLocked(exchange string, status OrderStatus, sourceExchange, signalFilter, coinpair, query string) int {
 	terms := orderSearchTerms(query)
 	n := 0
 	for i := range s.state.Orders {
@@ -1601,7 +1721,16 @@ func (s *OrderStore) countFilteredMemoryLocked(exchange string, status OrderStat
 		if exchange != "" && trading.NormalizeExchange(rec.TargetExchange) != exchange {
 			continue
 		}
+		if sourceExchange != "" && normalizeOptionalOrderExchange(rec.SourceExchange) != sourceExchange {
+			continue
+		}
 		if status != "" && rec.Status != status {
+			continue
+		}
+		if !orderRecordMatchesSignalFilter(rec, signalFilter) {
+			continue
+		}
+		if coinpair != "" && compactOrderSymbolText(rec.Coinpair) != coinpair {
 			continue
 		}
 		if orderRecordMatchesSearch(rec, terms) {
@@ -1625,15 +1754,31 @@ func orderSQLiteSearchWhere(exchange, query string) (string, []any) {
 }
 
 func orderSQLiteFilterWhere(exchange string, status OrderStatus, query string) (string, []any) {
+	return orderSQLiteFilterWhereWithSignalFilters(exchange, status, "", "", "", query)
+}
+
+func orderSQLiteFilterWhereWithSignalFilters(exchange string, status OrderStatus, sourceExchange, signalFilter, coinpair, query string) (string, []any) {
 	var clauses []string
 	var args []any
 	if strings.TrimSpace(exchange) != "" {
 		clauses = append(clauses, "target_exchange = ?")
 		args = append(args, trading.NormalizeExchange(exchange))
 	}
+	if strings.TrimSpace(sourceExchange) != "" {
+		clauses = append(clauses, "LOWER(COALESCE(source_exchange, '')) = ?")
+		args = append(args, normalizeOptionalOrderExchange(sourceExchange))
+	}
 	if status != "" {
 		clauses = append(clauses, "status = ?")
 		args = append(args, status)
+	}
+	if strings.TrimSpace(coinpair) != "" {
+		clauses = append(clauses, orderSQLiteCompactCoinpairText+" = ?")
+		args = append(args, compactOrderSymbolText(coinpair))
+	}
+	if signalClause, signalArgs := orderSQLiteSignalFilterWhere(signalFilter); signalClause != "" {
+		clauses = append(clauses, signalClause)
+		args = append(args, signalArgs...)
 	}
 	for _, term := range orderSearchTerms(query) {
 		pattern := sqliteLikeContainsPattern(term)
@@ -1641,6 +1786,37 @@ func orderSQLiteFilterWhere(exchange string, status OrderStatus, query string) (
 		args = append(args, pattern, pattern, pattern, sqliteLikeSubsequencePattern(term))
 	}
 	return strings.Join(clauses, " AND "), args
+}
+
+func orderSQLiteSignalFilterWhere(filter string) (string, []any) {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	const rawJSON = `LOWER(COALESCE(raw_json, ''))`
+	patterns := map[string][]string{
+		OrderSignalFilterAggressive:     {"%aggressive_liquidation_signal%", "%aggressive_liquidation_preclose%"},
+		OrderSignalFilterSteady:         {"%steady_liquidation_confirmation%", "%steady_liquidation_preclose%"},
+		OrderSignalFilterAlert:          {`%"condition":"liquidation_alert"%`, `%"condition":"liquidation_alert_preclose"%`},
+		OrderSignalFilterManual:         {"%manual_liquidation_trigger%", "%liquidation_alert_manual%"},
+		OrderSignalFilterValueArea:      {"%value_area%"},
+		OrderSignalFilterTradingView:    {"%tradingview%"},
+		OrderSignalFilterPosition:       {"%position_monitor%"},
+		OrderSignalFilterStopLoss:       {"%stop_loss_webhook%"},
+		OrderSignalFilterTakeProfit:     {"%take_profit_webhook%"},
+		OrderSignalFilterAnalysisManual: {"%analysis_manual%"},
+	}
+	values, ok := patterns[filter]
+	if !ok {
+		if filter == "" {
+			return "", nil
+		}
+		return "0", nil
+	}
+	clauses := make([]string, 0, len(values))
+	args := make([]any, 0, len(values))
+	for _, pattern := range values {
+		clauses = append(clauses, rawJSON+" LIKE ? ESCAPE '\\'")
+		args = append(args, pattern)
+	}
+	return "(" + strings.Join(clauses, " OR ") + ")", args
 }
 
 func sqliteLikeContainsPattern(term string) string {
@@ -1687,6 +1863,35 @@ func orderRecordMatchesSearch(rec OrderRecord, terms []string) bool {
 		}
 	}
 	return true
+}
+
+func orderRecordMatchesSignalFilter(rec OrderRecord, filter string) bool {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return true
+	}
+	if !ValidOrderSignalFilter(filter) {
+		return false
+	}
+	raw := strings.ToLower(rec.RawJSON)
+	patterns := map[string][]string{
+		OrderSignalFilterAggressive:     {"aggressive_liquidation_signal", "aggressive_liquidation_preclose"},
+		OrderSignalFilterSteady:         {"steady_liquidation_confirmation", "steady_liquidation_preclose"},
+		OrderSignalFilterAlert:          {"liquidation_alert"},
+		OrderSignalFilterManual:         {"manual_liquidation_trigger", "liquidation_alert_manual"},
+		OrderSignalFilterValueArea:      {"value_area"},
+		OrderSignalFilterTradingView:    {"tradingview"},
+		OrderSignalFilterPosition:       {"position_monitor"},
+		OrderSignalFilterStopLoss:       {"stop_loss_webhook"},
+		OrderSignalFilterTakeProfit:     {"take_profit_webhook"},
+		OrderSignalFilterAnalysisManual: {"analysis_manual"},
+	}
+	for _, pattern := range patterns[filter] {
+		if strings.Contains(raw, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 func orderRecordSearchText(rec OrderRecord) string {

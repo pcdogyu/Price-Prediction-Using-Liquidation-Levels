@@ -631,6 +631,13 @@ func TestTVBotUIOrderHistorySearchControls(t *testing.T) {
 		[]byte(`<option value="rejected">已拒绝</option>`),
 		[]byte(`<option value="duplicate">重复信号</option>`),
 		[]byte(`<option value="accepted">处理中</option>`),
+		[]byte(`id="order-signal-filter"`),
+		[]byte(`<option value="aggressive">爆仓策略（激进）</option>`),
+		[]byte(`<option value="value_area">价值区策略</option>`),
+		[]byte(`id="order-source-filter"`),
+		[]byte(`<option value="binance">Binance</option>`),
+		[]byte(`id="order-coinpair-filter"`),
+		[]byte(`<option value="">全部币对</option>`),
 		[]byte(`id="order-search"`),
 		[]byte(`placeholder="币对模糊搜索（如 LTC、LTCUST）/ 金额 / 订单号"`),
 		[]byte(`id="search-orders"`),
@@ -659,10 +666,20 @@ func TestTVBotUIOrderHistorySearchControls(t *testing.T) {
 		[]byte(`if (adx >= 25) return "单边市场"`),
 		[]byte(`ordersSearch: ""`),
 		[]byte(`ordersStatus: ""`),
+		[]byte(`ordersSignal: ""`),
+		[]byte(`ordersSource: ""`),
+		[]byte(`ordersCoinpair: ""`),
 		[]byte(`qs.set("q", state.ordersSearch)`),
 		[]byte(`qs.set("status", state.ordersStatus)`),
+		[]byte(`qs.set("signal", state.ordersSignal)`),
+		[]byte(`qs.set("source_exchange", state.ordersSource)`),
+		[]byte(`qs.set("coinpair", state.ordersCoinpair)`),
 		[]byte(`function applyOrderSearch()`),
 		[]byte(`function applyOrderStatusFilter()`),
+		[]byte(`function applyOrderSignalFilter()`),
+		[]byte(`function applyOrderSourceFilter()`),
+		[]byte(`function applyOrderCoinpairFilter()`),
+		[]byte(`function loadOrderCoinpairOptions()`),
 		[]byte(`id="ignored-coinpair"`),
 		[]byte(`id="add-ignored-coinpair"`),
 		[]byte(`id="ignored-coinpair-list"`),
@@ -2209,6 +2226,7 @@ func TestHandleOrdersSearchesHistoryWithPagination(t *testing.T) {
 	btcSignal.Exchange = "OKX"
 	btcSignal.Coinpair = "BTCUSDT.P"
 	btcSignal.Ticker = "OKX:BTCUSDT.P"
+	btcSignal.RawJSON = `{"condition":"aggressive_liquidation_signal","source":"liquidation_alert"}`
 	btcSignal.Price = trading.NewFlexibleFloat(61000)
 	btcSignal.Amount = trading.NewFlexibleFloat(500)
 	btc, _, err := srv.Orders.RecordAccepted(btcSignal, "search-http-btc", now)
@@ -2224,6 +2242,7 @@ func TestHandleOrdersSearchesHistoryWithPagination(t *testing.T) {
 	ethSignal.Exchange = "BINANCE"
 	ethSignal.Coinpair = "ETHUSDT.P"
 	ethSignal.Ticker = "BINANCE:ETHUSDT.P"
+	ethSignal.RawJSON = `{"condition":"value_area_signal","source":"value_area_signal"}`
 	ethSignal.Price = trading.NewFlexibleFloat(3400)
 	ethSignal.Amount = trading.NewFlexibleFloat(750)
 	eth, _, err := srv.Orders.RecordAccepted(ethSignal, "search-http-eth", now.Add(2*time.Second))
@@ -2238,6 +2257,7 @@ func TestHandleOrdersSearchesHistoryWithPagination(t *testing.T) {
 	solSignal.Exchange = "OKX"
 	solSignal.Coinpair = "SOLUSDT.P"
 	solSignal.Ticker = "OKX:SOLUSDT.P"
+	solSignal.RawJSON = `{"condition":"steady_liquidation_confirmation","source":"liquidation_alert"}`
 	solSignal.Price = trading.NewFlexibleFloat(120)
 	solSignal.Amount = trading.NewFlexibleFloat(250)
 	sol, _, err := srv.Orders.RecordAccepted(solSignal, "search-http-sol", now.Add(4*time.Second))
@@ -2293,6 +2313,38 @@ func TestHandleOrdersSearchesHistoryWithPagination(t *testing.T) {
 	}
 	if resp := fetch("/tvbot/orders?limit=1&offset=1&q=usdt.p"); resp.Total != 3 || resp.Limit != 1 || resp.Offset != 1 || resp.Page != 2 || resp.TotalPages != 3 || len(resp.Orders) != 1 {
 		t.Fatalf("bad search pagination response: %#v", resp)
+	}
+	if resp := fetch("/tvbot/orders?limit=10&signal=aggressive"); resp.Total != 1 || len(resp.Orders) != 1 || resp.Orders[0].Coinpair != "BTCUSDT.P" {
+		t.Fatalf("bad signal filter response: %#v", resp)
+	}
+	if resp := fetch("/tvbot/orders?limit=10&source_exchange=binance&coinpair=ETHUSDT.P"); resp.Total != 1 || len(resp.Orders) != 1 || resp.Orders[0].Coinpair != "ETHUSDT.P" {
+		t.Fatalf("bad source and coinpair filter response: %#v", resp)
+	}
+	if resp := fetch("/tvbot/orders?limit=10&signal=value_area&source_exchange=binance&coinpair=ETHUSDT.P"); resp.Total != 1 || len(resp.Orders) != 1 || resp.Orders[0].Coinpair != "ETHUSDT.P" {
+		t.Fatalf("bad combined signal filter response: %#v", resp)
+	}
+	badSignalReq := httptest.NewRequest(http.MethodGet, "/tvbot/orders?signal=unknown", nil)
+	badSignalReq.SetBasicAuth("admin", "Admin123")
+	badSignalResp := httptest.NewRecorder()
+	srv.ServeHTTP(badSignalResp, badSignalReq)
+	if badSignalResp.Code != http.StatusBadRequest || !strings.Contains(badSignalResp.Body.String(), "invalid_signal_filter") {
+		t.Fatalf("invalid signal filter code=%d body=%s", badSignalResp.Code, badSignalResp.Body.String())
+	}
+	filtersReq := httptest.NewRequest(http.MethodGet, "/tvbot/order-filters?exchange=binance", nil)
+	filtersReq.SetBasicAuth("admin", "Admin123")
+	filtersResp := httptest.NewRecorder()
+	srv.ServeHTTP(filtersResp, filtersReq)
+	if filtersResp.Code != http.StatusOK {
+		t.Fatalf("order filters code=%d body=%s", filtersResp.Code, filtersResp.Body.String())
+	}
+	var filters struct {
+		Coinpairs []string `json:"coinpairs"`
+	}
+	if err := json.Unmarshal(filtersResp.Body.Bytes(), &filters); err != nil {
+		t.Fatal(err)
+	}
+	if len(filters.Coinpairs) != 1 || filters.Coinpairs[0] != "ETHUSDT.P" {
+		t.Fatalf("order filter coinpairs=%#v", filters.Coinpairs)
 	}
 }
 

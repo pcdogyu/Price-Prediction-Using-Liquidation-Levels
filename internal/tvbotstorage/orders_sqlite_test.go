@@ -826,3 +826,56 @@ func TestSQLiteAnalysisTables(t *testing.T) {
 		t.Fatalf("exchange-specific USDT snapshots not isolated okx=%#v binance=%#v", okxSnapshots, binanceSnapshots)
 	}
 }
+
+func TestOrderStoreSignalAndCoinpairFiltersMemoryAndSQLite(t *testing.T) {
+	run := func(t *testing.T, store *OrderStore) {
+		t.Helper()
+		now := time.Date(2026, 11, 3, 1, 0, 0, 0, time.UTC)
+		seed := func(coinpair, target, source, raw string) {
+			signal := trading.Signal{
+				Action:         trading.ActionLong,
+				TargetExchange: target,
+				Exchange:       source,
+				Coinpair:       coinpair,
+				Ticker:         source + ":" + coinpair,
+				RawJSON:        raw,
+			}
+			if _, _, err := store.RecordAccepted(signal, "filter-"+coinpair, now); err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(time.Second)
+		}
+		seed("ETHUSDT.P", trading.ExchangeBinance, trading.ExchangeBinance, `{"condition":"value_area_signal","source":"value_area_signal"}`)
+		seed("BTCUSDT.P", trading.ExchangeBinance, trading.ExchangeOKX, `{"condition":"aggressive_liquidation_signal","source":"liquidation_alert"}`)
+		seed("SOLUSDT.P", trading.ExchangeOKX, trading.ExchangeBinance, `{"condition":"steady_liquidation_confirmation","source":"liquidation_alert"}`)
+
+		page := store.ListFilteredPageWithSignalFilters("", "", trading.ExchangeBinance, OrderSignalFilterValueArea, "ETHUSDT.P", "", 20, 0)
+		if len(page) != 1 || page[0].Coinpair != "ETHUSDT.P" || store.CountFilteredWithSignalFilters("", "", trading.ExchangeBinance, OrderSignalFilterValueArea, "ETHUSDT.P", "") != 1 {
+			t.Fatalf("combined signal/source/coinpair filter mismatch: page=%#v count=%d", page, store.CountFilteredWithSignalFilters("", "", trading.ExchangeBinance, OrderSignalFilterValueArea, "ETHUSDT.P", ""))
+		}
+		page = store.ListFilteredPageWithSignalFilters("", "", "", OrderSignalFilterAggressive, "", "", 20, 0)
+		if len(page) != 1 || page[0].Coinpair != "BTCUSDT.P" {
+			t.Fatalf("aggressive signal filter mismatch: %#v", page)
+		}
+		coinpairs := store.ListCoinpairs(trading.ExchangeBinance)
+		if len(coinpairs) != 2 || coinpairs[0] != "BTCUSDT.P" || coinpairs[1] != "ETHUSDT.P" {
+			t.Fatalf("coinpair options mismatch: %#v", coinpairs)
+		}
+	}
+
+	t.Run("memory", func(t *testing.T) {
+		store, err := NewOrderStore("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		run(t, store)
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		store, err := NewSQLiteOrderStore(filepath.Join(t.TempDir(), "orders.db"), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		run(t, store)
+	})
+}
