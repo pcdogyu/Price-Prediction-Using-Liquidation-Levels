@@ -1617,7 +1617,8 @@ const orderSQLiteSearchText = `LOWER(COALESCE(coinpair, '') || ' ' || COALESCE(t
 // LTCUSDT, LTC-USDT-SWAP, and OKX:LTC-USDT-SWAP). Keep a compact symbol text
 // alongside the normal full-text search so an abbreviated query such as LTC
 // or LTCUST matches all of those representations.
-const orderSQLiteCompactSymbolText = `LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(coinpair, '') || ' ' || COALESCE(ticker, ''), '-', ''), '_', ''), '/', ''), ':', ''), '.', ''), ' ', ''), CHAR(9), ''))`
+const orderSQLiteCompactCoinpairText = `LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(coinpair, ''), '-', ''), '_', ''), '/', ''), ':', ''), '.', ''), ' ', ''))`
+const orderSQLiteCompactTickerText = `LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(ticker, ''), '-', ''), '_', ''), '/', ''), ':', ''), '.', ''), ' ', ''))`
 
 func orderSQLiteSearchWhere(exchange, query string) (string, []any) {
 	return orderSQLiteFilterWhere(exchange, "", query)
@@ -1636,8 +1637,8 @@ func orderSQLiteFilterWhere(exchange string, status OrderStatus, query string) (
 	}
 	for _, term := range orderSearchTerms(query) {
 		pattern := sqliteLikeContainsPattern(term)
-		clauses = append(clauses, "("+orderSQLiteSearchText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactSymbolText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactSymbolText+` LIKE ? ESCAPE '\')`)
-		args = append(args, pattern, pattern, sqliteLikeSubsequencePattern(term))
+		clauses = append(clauses, "("+orderSQLiteSearchText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactCoinpairText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactTickerText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactCoinpairText+` LIKE ? ESCAPE '\' OR `+orderSQLiteCompactTickerText+` LIKE ? ESCAPE '\')`)
+		args = append(args, pattern, pattern, pattern, sqliteLikeSubsequencePattern(term), sqliteLikeSubsequencePattern(term))
 	}
 	return strings.Join(clauses, " AND "), args
 }
@@ -1679,9 +1680,9 @@ func orderRecordMatchesSearch(rec OrderRecord, terms []string) bool {
 		return true
 	}
 	text := orderRecordSearchText(rec)
-	compactSymbols := orderRecordCompactSymbolText(rec)
+	compactSymbols := orderRecordCompactSymbolTexts(rec)
 	for _, term := range terms {
-		if !strings.Contains(text, term) && !isOrderSymbolSubsequence(compactSymbols, term) {
+		if !strings.Contains(text, term) && !isOrderSymbolSubsequenceAny(compactSymbols, term) {
 			return false
 		}
 	}
@@ -1715,16 +1716,29 @@ func orderRecordSearchText(rec OrderRecord) string {
 }
 
 func orderRecordCompactSymbolText(rec OrderRecord) string {
+	return strings.Join(orderRecordCompactSymbolTexts(rec), " ")
+}
+
+func orderRecordCompactSymbolTexts(rec OrderRecord) []string {
 	symbols := []string{rec.Coinpair, rec.Ticker}
 	compactParts := make([]string, 0, len(symbols))
 	for _, symbol := range symbols {
 		compactParts = append(compactParts, compactOrderSymbolText(symbol))
 	}
-	return strings.Join(compactParts, " ")
+	return compactParts
 }
 
 func compactOrderSymbolText(value string) string {
 	return strings.NewReplacer("-", "", "_", "", "/", "", ":", "", ".", "", " ", "", "\t", "").Replace(strings.ToLower(value))
+}
+
+func isOrderSymbolSubsequenceAny(texts []string, term string) bool {
+	for _, text := range texts {
+		if isOrderSymbolSubsequence(text, term) {
+			return true
+		}
+	}
+	return false
 }
 
 func isOrderSymbolSubsequence(text, term string) bool {

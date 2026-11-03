@@ -454,11 +454,20 @@ func TestOrderStoreFuzzySymbolSearchMemoryAndSQLite(t *testing.T) {
 		if _, _, err := store.RecordAccepted(signal, "fuzzy-ltc", time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)); err != nil {
 			t.Fatal(err)
 		}
+		noise := signal
+		noise.Coinpair = "HYPEUSDT"
+		noise.Ticker = "GATE:HYPE_USDT"
+		if _, _, err := store.RecordAccepted(noise, "fuzzy-hype", time.Date(2026, 7, 24, 3, 0, 1, 0, time.UTC)); err != nil {
+			t.Fatal(err)
+		}
 		for _, query := range []string{"ltc", "ltcust"} {
 			page := store.ListFilteredPage(trading.ExchangeOKX, "", query, 10, 0)
 			if len(page) != 1 || page[0].Coinpair != "LTC-USDT-SWAP" || store.CountFiltered(trading.ExchangeOKX, "", query) != 1 {
 				t.Fatalf("fuzzy symbol search %q failed: page=%#v count=%d", query, page, store.CountFiltered(trading.ExchangeOKX, "", query))
 			}
+		}
+		if page := store.ListFilteredPage(trading.ExchangeOKX, "", "ethust", 10, 0); len(page) != 0 {
+			t.Fatalf("fuzzy symbol search crossed coinpair fields: %#v", page)
 		}
 	}
 	t.Run("memory", func(t *testing.T) {
