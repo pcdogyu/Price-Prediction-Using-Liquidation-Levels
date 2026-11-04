@@ -271,6 +271,15 @@ func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
 	if loadStart < 0 || syncStart < 0 || syncStart < loadStart {
 		t.Fatalf("local exchange order load and asynchronous sync flow are missing: load=%d sync=%d", loadStart, syncStart)
 	}
+	for _, want := range []string{
+		`function exchangeOrderSyncIsDue(sync)`,
+		`status === "failed"`,
+		`sync.last_attempted_at || sync.last_success_at`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("history order auto-sync freshness guard is missing %q", want)
+		}
+	}
 }
 
 func TestRenderTVBotHTMLRedirectsUnauthorizedAPICallsToLogin(t *testing.T) {

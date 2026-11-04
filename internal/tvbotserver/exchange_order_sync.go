@@ -82,7 +82,7 @@ func (s *Server) StartExchangeOrderSyncer(ctx context.Context) {
 	coordinator.ctx = ctx
 	coordinator.mu.Unlock()
 	go func() {
-		coordinator.trigger(s)
+		coordinator.trigger(s, false)
 		ticker := time.NewTicker(exchangeOrderSyncInterval)
 		defer ticker.Stop()
 		for {
@@ -90,14 +90,17 @@ func (s *Server) StartExchangeOrderSyncer(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				coordinator.trigger(s)
+				coordinator.trigger(s, false)
 			}
 		}
 	}()
 }
 
-func (c *exchangeOrderSyncCoordinator) trigger(s *Server) bool {
+func (c *exchangeOrderSyncCoordinator) trigger(s *Server, force bool) bool {
 	if c == nil || s == nil {
+		return false
+	}
+	if !force && !s.exchangeOrderSyncDue() {
 		return false
 	}
 	c.mu.Lock()
@@ -122,6 +125,42 @@ func (c *exchangeOrderSyncCoordinator) trigger(s *Server) bool {
 		}
 	}()
 	return true
+}
+
+func exchangeOrderSyncStateDue(state tvbotstorage.ExchangeOrderSyncState, ok bool, now time.Time) bool {
+	if !ok {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(state.Status), "syncing") {
+		// A new process must be able to resume a sync that was interrupted by a
+		// restart. The in-memory coordinator still prevents duplicate work while
+		// the current process is running it.
+		return true
+	}
+	status := strings.ToLower(strings.TrimSpace(state.Status))
+	last := state.LastSuccessAt
+	if status == "failed" || last.IsZero() {
+		last = state.LastAttemptedAt
+	}
+	if last.IsZero() {
+		return true
+	}
+	return !now.UTC().Before(last.UTC().Add(exchangeOrderSyncInterval))
+}
+
+func (s *Server) exchangeOrderSyncDue() bool {
+	if s == nil || s.Orders == nil {
+		return false
+	}
+	target, err := s.exchangeOrderTarget()
+	if err != nil {
+		return true
+	}
+	state, ok, err := s.Orders.GetExchangeOrderSyncState(target.Exchange, target.APIID, target.TradeEnv)
+	if err != nil {
+		return true
+	}
+	return exchangeOrderSyncStateDue(state, ok, s.now())
 }
 
 func (s *Server) handleExchangeOrders(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +246,7 @@ func (s *Server) handleExchangeOrderSync(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	coordinator := s.exchangeOrderSyncCoordinator()
-	started := coordinator != nil && coordinator.trigger(s)
+	started := coordinator != nil && coordinator.trigger(s, true)
 	status := tvbotstorage.ExchangeOrderSyncState{Status: "idle"}
 	target, _ := s.exchangeOrderTarget()
 	if stored, ok, err := s.Orders.GetExchangeOrderSyncState(target.Exchange, target.APIID, target.TradeEnv); err == nil && ok {

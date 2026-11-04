@@ -4758,9 +4758,21 @@ const tvbotHTML = `<!doctype html>
 
     let exchangeOrderAutoSyncAt = 0;
     let exchangeOrderAutoSyncBusy = false;
+    function exchangeOrderSyncIsDue(sync) {
+      if (!sync) return true;
+      const status = String(sync.status || "").toLowerCase();
+      if (status === "syncing") return false;
+      const lastActivity = status === "failed"
+        ? (sync.last_attempted_at || sync.last_success_at)
+        : (sync.last_success_at || sync.last_attempted_at);
+      if (!lastActivity) return true;
+      const timestamp = Date.parse(lastActivity);
+      return !Number.isFinite(timestamp) || Date.now() - timestamp >= 5 * 60 * 1000;
+    }
+
     function queueExchangeOrderSync() {
       const now = Date.now();
-      if (exchangeOrderAutoSyncBusy || now - exchangeOrderAutoSyncAt < 5 * 60 * 1000) return;
+      if (!exchangeOrderSyncIsDue(state.exchangeOrderSync) || exchangeOrderAutoSyncBusy || now - exchangeOrderAutoSyncAt < 5 * 60 * 1000) return;
       exchangeOrderAutoSyncAt = now;
       exchangeOrderAutoSyncBusy = true;
       triggerExchangeOrderSync(null, true).catch((err) => {

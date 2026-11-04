@@ -138,3 +138,28 @@ func TestFetchBinanceExchangeOrdersSplitsWindowsAtBinanceLimit(t *testing.T) {
 		t.Fatalf("unexpected Binance sync result: orders=%d cursor=%#v", len(orders), cursor)
 	}
 }
+
+func TestExchangeOrderSyncStateDueHonorsFreshAndInFlightStates(t *testing.T) {
+	now := time.Date(2026, 11, 4, 15, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name  string
+		state storage.ExchangeOrderSyncState
+		ok    bool
+		want  bool
+	}{
+		{name: "missing state", want: true},
+		{name: "in flight", ok: true, state: storage.ExchangeOrderSyncState{Status: "syncing"}, want: true},
+		{name: "fresh success", ok: true, state: storage.ExchangeOrderSyncState{Status: "synced", LastSuccessAt: now.Add(-time.Minute)}, want: false},
+		{name: "stale success", ok: true, state: storage.ExchangeOrderSyncState{Status: "synced", LastSuccessAt: now.Add(-exchangeOrderSyncInterval)}, want: true},
+		{name: "recent failure", ok: true, state: storage.ExchangeOrderSyncState{Status: "failed", LastAttemptedAt: now.Add(-time.Minute)}, want: false},
+		{name: "recent failure after fresh success", ok: true, state: storage.ExchangeOrderSyncState{Status: "failed", LastSuccessAt: now.Add(-exchangeOrderSyncInterval), LastAttemptedAt: now.Add(-time.Minute)}, want: false},
+		{name: "stale failure", ok: true, state: storage.ExchangeOrderSyncState{Status: "failed", LastAttemptedAt: now.Add(-exchangeOrderSyncInterval)}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := exchangeOrderSyncStateDue(tt.state, tt.ok, now); got != tt.want {
+				t.Fatalf("exchangeOrderSyncStateDue()=%v, want %v", got, tt.want)
+			}
+		})
+	}
+}
