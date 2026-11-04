@@ -4514,7 +4514,8 @@ const tvbotHTML = `<!doctype html>
       setPositionSyncStatus("syncing");
       try {
         const results = await Promise.all([loadPositionExchange(activeExchange(), !!forceRefresh)]);
-        setPositionSyncStatus(positionSyncStatusForResult(results[0]));
+        const status = positionSyncStatusForResult(results[0]);
+        setPositionSyncStatus(status.status, status.message);
         const snapshot = positionSnapshot(results);
         state.positions = snapshot;
         syncAnalysisPositionSnapshot(snapshot);
