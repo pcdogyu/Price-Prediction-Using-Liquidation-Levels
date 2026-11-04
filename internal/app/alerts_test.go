@@ -58,7 +58,10 @@ func TestAlertOpenBlockNameUsesBeijingBoundariesAndIndependentSwitches(t *testin
 		{name: "first start inclusive", at: time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC), want: "08:00–09:00"},
 		{name: "first end exclusive", at: time.Date(2026, 11, 4, 1, 0, 0, 0, time.UTC)},
 		{name: "second start inclusive", at: time.Date(2026, 11, 4, 16, 0, 0, 0, beijing), want: "16:00–17:00"},
-		{name: "third end exclusive", at: time.Date(2026, 11, 4, 22, 30, 0, 0, beijing)},
+		{name: "summer third start inclusive", at: time.Date(2026, 7, 1, 21, 30, 0, 0, beijing), want: "21:30–22:30"},
+		{name: "summer third end exclusive", at: time.Date(2026, 7, 1, 22, 30, 0, 0, beijing)},
+		{name: "winter third start inclusive", at: time.Date(2026, 1, 7, 22, 30, 0, 0, beijing), want: "22:30–23:30"},
+		{name: "winter third end exclusive", at: time.Date(2026, 1, 7, 23, 30, 0, 0, beijing)},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -72,8 +75,8 @@ func TestAlertOpenBlockNameUsesBeijingBoundariesAndIndependentSwitches(t *testin
 	if got := alertOpenBlockName(time.Date(2026, 11, 4, 16, 30, 0, 0, beijing), settings); got != "" {
 		t.Fatalf("disabled 16:00–17:00 block still matched: %q", got)
 	}
-	if got := alertOpenBlockName(time.Date(2026, 11, 4, 21, 45, 0, 0, beijing), settings); got != "21:30–22:30" {
-		t.Fatalf("independent 21:30–22:30 block = %q", got)
+	if got := alertOpenBlockName(time.Date(2026, 7, 1, 21, 45, 0, 0, beijing), settings); got != "21:30–22:30" {
+		t.Fatalf("independent summer market-open block = %q", got)
 	}
 }
 

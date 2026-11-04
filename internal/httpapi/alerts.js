@@ -490,8 +490,24 @@
     status.textContent = parts.join(' · ');
   }
 
+  function renderUSMarketOpenBlockLabel(now = new Date()) {
+    const label = $('alerts-block-open-2130-2230-label');
+    if (!label) return;
+    let daylight = false;
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }).formatToParts(now);
+      const zone = parts.find(part => part.type === 'timeZoneName');
+      daylight = !!zone && zone.value.includes('DT');
+    } catch (_) {
+      // Keep the summer-time markup fallback if the browser lacks IANA zones.
+      return;
+    }
+    label.textContent = daylight ? '21:30–22:30' : '22:30–23:30';
+  }
+
   function renderStrategySettings(settings) {
     if (!settings) return;
+    renderUSMarketOpenBlockLabel();
     const fields = [['alerts-threshold-btc', settings.btc_usd], ['alerts-threshold-eth', settings.eth_usd], ['alerts-threshold-other', settings.other_usd], ['alerts-window-minutes', settings.window_minutes], ['alerts-vwap-range-hours', settings.vwap_range_hours], ['alerts-vwap-min-drawdown', settings.vwap_min_drawdown_pct], ['alerts-vwap-donchian', settings.vwap_donchian_pct]];
     for (const [id, value] of fields) {
       const input = $(id);

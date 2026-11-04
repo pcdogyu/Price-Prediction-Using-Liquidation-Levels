@@ -75,17 +75,18 @@
           </tbody>
           </table>
         </div>
-        <aside class="alerts-open-block-card" aria-label="北京时间禁止自动开仓">
-          <div class="alerts-open-block-card-head"><h4>禁止自动开仓</h4><span class="muted">北京时间</span></div>
-          <p class="muted">只限制实时自动开仓，平仓不受影响。</p>
+      </div>
+      <div class="alerts-order-signal-footer">
+        <div class="alerts-open-block-inline" aria-label="北京时间禁止自动开仓">
+          <div class="alerts-open-block-inline-head"><strong>禁止自动开仓</strong><span class="muted">北京时间</span></div>
           <div class="alerts-open-block-list">
             <label class="alerts-signal-toggle alerts-open-block-toggle"><input id="alerts-block-open-0800-0900" type="checkbox"><span>08:00–09:00</span></label>
             <label class="alerts-signal-toggle alerts-open-block-toggle"><input id="alerts-block-open-1600-1700" type="checkbox"><span>16:00–17:00</span></label>
-            <label class="alerts-signal-toggle alerts-open-block-toggle"><input id="alerts-block-open-2130-2230" type="checkbox"><span>21:30–22:30</span></label>
+            <label class="alerts-signal-toggle alerts-open-block-toggle"><input id="alerts-block-open-2130-2230" type="checkbox"><span id="alerts-block-open-2130-2230-label">21:30–22:30</span></label>
           </div>
-        </aside>
+        </div>
+        <div class="alerts-order-signal-actions"><span id="alerts-order-signal-summary" class="muted">—</span><button id="alerts-order-signal-save" type="submit">保存策略开关</button></div>
       </div>
-      <div class="alerts-order-signal-footer"><span id="alerts-order-signal-summary" class="muted">—</span><button id="alerts-order-signal-save" type="submit">保存策略开关</button></div>
       <p class="muted alerts-note">每类实时信号按本页开关独立发送平仓和开仓指令。交易所刷单策略的自动 Telegram 报警、交易指令和 TVBot 自动开仓均按本行配置的北京时间区间执行，开始时间包含、结束时间不包含；Gamma 小于 0 时按“下单设置”的 Gamma 开仓策略执行：选择“忽略”会跳过本次刷单开仓，并发送对应策略持仓的 close-only，是否发送平仓仍由交易所刷单平仓开关决定；历史记录中的“触发下单”会按信号保存的 open/close 效果执行，手动仅平仓且检测不到对应仓位时自动转为同方向开仓。</p>
     </form>
     </div>
