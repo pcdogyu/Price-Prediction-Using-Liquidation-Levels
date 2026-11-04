@@ -212,7 +212,7 @@ func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
 		`/tvbot/exchange-orders/sync`,
 		`setAttribute("aria-busy", "true")`,
 		`classList.add("is-saving")`,
-		`原始 JSON`,
+		`td.order-id`,
 		`grid-template-columns: minmax(140px, .28fr) minmax(240px, 1fr) auto minmax(240px, 1fr);`,
 		`grid-template-columns: 1fr;`,
 	} {
@@ -220,11 +220,24 @@ func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
 			t.Fatalf("exchange order history is missing %q", want)
 		}
 	}
+	historyStart := strings.Index(page, `<section id="historyOrders"`)
+	if historyStart < 0 {
+		t.Fatal("history orders section is missing")
+	}
+	historyEnd := strings.Index(page[historyStart:], `<section id="apiKeys"`)
+	if historyEnd < 0 {
+		t.Fatal("history orders section boundary is missing")
+	}
+	historySection := page[historyStart : historyStart+historyEnd]
+	for _, unwanted := range []string{`<th>API</th>`, `<th>详情</th>`, `data-exchange-order-json-index`, `colspan="16"`} {
+		if strings.Contains(historySection, unwanted) {
+			t.Fatalf("history orders should not render %q", unwanted)
+		}
+	}
 	if strings.Contains(page, `data-exchange-order-retry`) || strings.Contains(page, `/exchange-orders/" +`) {
 		t.Fatal("exchange order history should not expose remote retry actions")
 	}
 	analysisStart := strings.Index(page, `<section id="analysis"`)
-	historyStart := strings.Index(page, `<section id="historyOrders"`)
 	if analysisStart < 0 || historyStart < 0 || historyStart <= analysisStart {
 		t.Fatalf("history orders should be rendered in a separate page section: analysis=%d history=%d", analysisStart, historyStart)
 	}

@@ -1702,6 +1702,11 @@ const tvbotHTML = `<!doctype html>
       overflow: hidden;
       text-overflow: clip;
     }
+    .exchange-order-history-table td.order-id {
+      max-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .exchange-order-history-table .status-filled,
     .exchange-order-history-table .status-closed { color: var(--positive); }
     .exchange-order-history-table .status-canceled,
@@ -2456,9 +2461,9 @@ const tvbotHTML = `<!doctype html>
           <table class="symbol-table exchange-order-history-table">
             <thead>
               <tr>
-                <th>创建时间</th><th>交易所</th><th>环境</th><th>API</th><th>币对</th><th>远端订单 ID</th>
+                <th>创建时间</th><th>交易所</th><th>环境</th><th>币对</th><th>远端订单 ID</th>
                 <th>客户订单 ID</th><th>方向</th><th>状态</th><th>类型</th><th>委托价</th><th>均价</th>
-                <th>原始量</th><th>成交量</th><th>剩余量</th><th>详情</th>
+                <th>原始量</th><th>成交量</th><th>剩余量</th>
               </tr>
             </thead>
             <tbody id="exchange-order-rows"></tbody>
@@ -4688,21 +4693,17 @@ const tvbotHTML = `<!doctype html>
       if (statusEl) statusEl.textContent = exchangeOrderSyncStatusText(state.exchangeOrderSync);
       if (errorEl) errorEl.textContent = state.exchangeOrdersError || "";
       const rows = Array.isArray(state.exchangeOrders) ? state.exchangeOrders : [];
-      rowsEl.innerHTML = rows.map((row, index) => {
+      rowsEl.innerHTML = rows.map((row) => {
         const status = String(row && row.status || "").trim();
         const statusClass = exchangeOrderStatusClass(status);
-        const detail = row && row.raw_json
-          ? '<button class="btn small" type="button" data-exchange-order-json-index="' + index + '">原始 JSON</button>'
-          : "-";
         const cell = (value, className) => '<td' + (className ? ' class="' + escapeHTML(className) + '"' : "") + '>' + escapeHTML(asText(value)) + '</td>';
         return "<tr>" +
           cell(row.created_at ? shanghaiTime(row.created_at) : "-", "time") +
           cell(exchangeLabel(row.exchange)) +
           cell(row.trade_env) +
-          cell(row.api_id) +
           cell(row.inst_id) +
-          cell(row.remote_order_id) +
-          cell(row.client_order_id) +
+          cell(row.remote_order_id, "order-id") +
+          cell(row.client_order_id, "order-id") +
           cell(row.side) +
           cell(exchangeOrderStatusText(status), statusClass) +
           cell(row.order_type) +
@@ -4711,9 +4712,8 @@ const tvbotHTML = `<!doctype html>
           cell(row.original_qty) +
           cell(row.executed_qty) +
           cell(row.remaining_qty) +
-          '<td>' + detail + '</td>' +
           "</tr>";
-      }).join("") || '<tr><td colspan="16" class="muted">' + escapeHTML(state.exchangeOrdersError || "暂无交易所历史订单") + "</td></tr>";
+      }).join("") || '<tr><td colspan="14" class="muted">' + escapeHTML(state.exchangeOrdersError || "暂无交易所历史订单") + "</td></tr>";
       const totalPages = state.exchangeOrdersTotal ? Math.ceil(state.exchangeOrdersTotal / exchangeOrderPageSize) : 0;
       if (pageInfo) pageInfo.textContent = totalPages ? "第 " + state.exchangeOrdersPage + " / " + totalPages + " 页，共 " + state.exchangeOrdersTotal + " 条" : "暂无数据";
       if (prev) prev.disabled = state.exchangeOrdersPage <= 1;
@@ -9476,12 +9476,6 @@ const tvbotHTML = `<!doctype html>
       event.preventDefault();
       state.exchangeOrderSearch = $("exchange-order-search").value.trim();
       loadExchangeOrders(true).catch((err) => { state.exchangeOrdersError = err.message; renderExchangeOrders(); });
-    });
-    $("exchange-order-rows").addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-exchange-order-json-index]");
-      if (!button) return;
-      const order = state.exchangeOrders[Number(button.dataset.exchangeOrderJsonIndex)];
-      showOrderRawJSON(order);
     });
     $("refresh-positions").addEventListener("click", () => loadPositionView(true).then(() => toast("持仓和挂单已刷新")).catch((err) => toast(err.message)));
     document.querySelectorAll("[data-pending-order-group]").forEach((button) => {
