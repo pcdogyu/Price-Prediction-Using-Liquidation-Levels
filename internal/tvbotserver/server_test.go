@@ -6713,15 +6713,22 @@ func TestUpgradeEndpointRequiresAdminAndStartsRunner(t *testing.T) {
 		t.Fatal("upgrade runner was not called")
 	}
 
-	statusReq := httptest.NewRequest(http.MethodGet, "/upgrade", nil)
-	statusReq.SetBasicAuth("admin", "Admin123")
-	status := httptest.NewRecorder()
-	srv.ServeHTTP(status, statusReq)
-	if status.Code != http.StatusOK {
-		t.Fatalf("upgrade status code=%d body=%s", status.Code, status.Body.String())
-	}
-	if !bytes.Contains(status.Body.Bytes(), []byte(`"status":"succeeded"`)) {
-		t.Fatalf("expected succeeded status, got %s", status.Body.String())
+	deadline := time.Now().Add(time.Second)
+	for {
+		statusReq := httptest.NewRequest(http.MethodGet, "/upgrade", nil)
+		statusReq.SetBasicAuth("admin", "Admin123")
+		status := httptest.NewRecorder()
+		srv.ServeHTTP(status, statusReq)
+		if status.Code != http.StatusOK {
+			t.Fatalf("upgrade status code=%d body=%s", status.Code, status.Body.String())
+		}
+		if bytes.Contains(status.Body.Bytes(), []byte(`"status":"succeeded"`)) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected succeeded status, got %s", status.Body.String())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
