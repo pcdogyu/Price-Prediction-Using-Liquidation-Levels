@@ -408,6 +408,21 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 	if len(symbols) == 0 {
 		return result, cursor, errors.New("Binance exchangeInfo returned no active USDT symbols")
 	}
+	if known, err := s.Orders.ListExchangeOrderInstIDs(target.Exchange, apiID, target.TradeEnv); err == nil && len(known) > 0 {
+		knownSet := make(map[string]struct{}, len(known))
+		for _, symbol := range known {
+			knownSet[strings.ToUpper(strings.TrimSpace(symbol))] = struct{}{}
+		}
+		filtered := symbols[:0]
+		for _, symbol := range symbols {
+			if _, ok := knownSet[strings.ToUpper(symbol)]; ok {
+				filtered = append(filtered, symbol)
+			}
+		}
+		if len(filtered) > 0 {
+			symbols = filtered
+		}
+	}
 	for _, symbol := range symbols {
 		for windowStart := from; ; {
 			windowEnd := windowStart.Add(exchangeOrderBinanceWindow)

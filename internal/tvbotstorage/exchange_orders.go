@@ -220,6 +220,39 @@ func (s *OrderStore) ListExchangeOrders(filter ExchangeOrderFilter) (ExchangeOrd
 	return ExchangeOrderPage{Orders: orders, Total: total}, nil
 }
 
+// ListExchangeOrderInstIDs returns the distinct exchange instruments already
+// present for one account scope. Syncers use this to keep incremental history
+// refreshes bounded to symbols that have actually appeared in the account.
+func (s *OrderStore) ListExchangeOrderInstIDs(exchange, apiID, tradeEnv string) ([]string, error) {
+	if s.db == nil {
+		return nil, errors.New("sqlite database is not configured")
+	}
+	exchange = strings.ToLower(strings.TrimSpace(exchange))
+	apiID = strings.TrimSpace(apiID)
+	tradeEnv = strings.ToLower(strings.TrimSpace(tradeEnv))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(`SELECT DISTINCT inst_id FROM exchange_orders
+		WHERE exchange = ? AND api_id = ? AND trade_env = ? AND TRIM(COALESCE(inst_id, '')) <> ''
+		ORDER BY LOWER(inst_id)`, exchange, apiID, tradeEnv)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var instID string
+		if err := rows.Scan(&instID); err != nil {
+			return nil, err
+		}
+		out = append(out, strings.TrimSpace(instID))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *OrderStore) GetExchangeOrderSyncState(exchange, apiID, tradeEnv string) (ExchangeOrderSyncState, bool, error) {
 	if s.db == nil {
 		return ExchangeOrderSyncState{}, false, errors.New("sqlite database is not configured")

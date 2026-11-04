@@ -62,6 +62,13 @@ func TestExchangeOrdersUpsertDeduplicatesAndKeepsTenantDimensions(t *testing.T) 
 	if page.Total != 1 || page.Orders[0].RemoteOrderID != "1001" {
 		t.Fatalf("query result=%#v", page)
 	}
+	instIDs, err := store.ListExchangeOrderInstIDs("BINANCE", "account-a", "LIVE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(instIDs) != 1 || instIDs[0] != "BTCUSDT" {
+		t.Fatalf("account instrument result=%#v", instIDs)
+	}
 }
 
 func TestExchangeOrdersListPaginationAndSyncState(t *testing.T) {
