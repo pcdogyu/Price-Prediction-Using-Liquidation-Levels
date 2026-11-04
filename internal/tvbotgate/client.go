@@ -355,19 +355,24 @@ func (p *PositionClose) UnmarshalJSON(data []byte) error {
 }
 
 type Order struct {
-	ID           json.RawMessage `json:"id"`
-	Contract     string          `json:"contract"`
-	Size         string          `json:"size"`
-	Left         string          `json:"left"`
-	Price        string          `json:"price"`
-	FillPrice    string          `json:"fill_price"`
-	Status       string          `json:"status"`
-	FinishAs     string          `json:"finish_as"`
-	Text         string          `json:"text"`
-	IsReduceOnly bool            `json:"is_reduce_only"`
-	IsClose      bool            `json:"is_close"`
-	CreateTime   string          `json:"create_time"`
-	UpdateTime   string          `json:"update_time"`
+	ID            json.RawMessage `json:"id"`
+	Contract      string          `json:"contract"`
+	Size          string          `json:"size"`
+	Left          string          `json:"left"`
+	Price         string          `json:"price"`
+	FillPrice     string          `json:"fill_price"`
+	Status        string          `json:"status"`
+	FinishAs      string          `json:"finish_as"`
+	FinishTime    string          `json:"finish_time"`
+	Text          string          `json:"text"`
+	TIF           string          `json:"tif"`
+	OrderValue    string          `json:"order_value"`
+	TradeValue    string          `json:"trade_value"`
+	IsLiquidation bool            `json:"is_liq"`
+	IsReduceOnly  bool            `json:"is_reduce_only"`
+	IsClose       bool            `json:"is_close"`
+	CreateTime    string          `json:"create_time"`
+	UpdateTime    string          `json:"update_time"`
 }
 
 // UnmarshalJSON accepts both the string and number representations returned by
@@ -376,19 +381,24 @@ type Order struct {
 // time fields may be strings or numbers depending on the response.
 func (o *Order) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		ID           json.RawMessage `json:"id"`
-		Contract     json.RawMessage `json:"contract"`
-		Size         json.RawMessage `json:"size"`
-		Left         json.RawMessage `json:"left"`
-		Price        json.RawMessage `json:"price"`
-		FillPrice    json.RawMessage `json:"fill_price"`
-		Status       json.RawMessage `json:"status"`
-		FinishAs     json.RawMessage `json:"finish_as"`
-		Text         json.RawMessage `json:"text"`
-		IsReduceOnly bool            `json:"is_reduce_only"`
-		IsClose      bool            `json:"is_close"`
-		CreateTime   json.RawMessage `json:"create_time"`
-		UpdateTime   json.RawMessage `json:"update_time"`
+		ID            json.RawMessage `json:"id"`
+		Contract      json.RawMessage `json:"contract"`
+		Size          json.RawMessage `json:"size"`
+		Left          json.RawMessage `json:"left"`
+		Price         json.RawMessage `json:"price"`
+		FillPrice     json.RawMessage `json:"fill_price"`
+		Status        json.RawMessage `json:"status"`
+		FinishAs      json.RawMessage `json:"finish_as"`
+		FinishTime    json.RawMessage `json:"finish_time"`
+		Text          json.RawMessage `json:"text"`
+		TIF           json.RawMessage `json:"tif"`
+		OrderValue    json.RawMessage `json:"order_value"`
+		TradeValue    json.RawMessage `json:"trade_value"`
+		IsLiquidation bool            `json:"is_liq"`
+		IsReduceOnly  bool            `json:"is_reduce_only"`
+		IsClose       bool            `json:"is_close"`
+		CreateTime    json.RawMessage `json:"create_time"`
+		UpdateTime    json.RawMessage `json:"update_time"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -399,7 +409,9 @@ func (o *Order) UnmarshalJSON(data []byte) error {
 	}{
 		{&raw.Contract, &o.Contract}, {&raw.Size, &o.Size}, {&raw.Left, &o.Left},
 		{&raw.Price, &o.Price}, {&raw.FillPrice, &o.FillPrice}, {&raw.Status, &o.Status},
-		{&raw.FinishAs, &o.FinishAs}, {&raw.Text, &o.Text}, {&raw.CreateTime, &o.CreateTime},
+		{&raw.FinishAs, &o.FinishAs}, {&raw.FinishTime, &o.FinishTime}, {&raw.Text, &o.Text},
+		{&raw.TIF, &o.TIF}, {&raw.OrderValue, &o.OrderValue}, {&raw.TradeValue, &o.TradeValue},
+		{&raw.CreateTime, &o.CreateTime},
 		{&raw.UpdateTime, &o.UpdateTime},
 	}
 	for _, field := range fields {
@@ -410,6 +422,7 @@ func (o *Order) UnmarshalJSON(data []byte) error {
 		*field.out = value
 	}
 	o.ID = raw.ID
+	o.IsLiquidation = raw.IsLiquidation
 	o.IsReduceOnly = raw.IsReduceOnly
 	o.IsClose = raw.IsClose
 	return nil
@@ -841,6 +854,32 @@ func (c Client) MyTradesTimerange(ctx context.Context, contract string, from, to
 	}
 	var out []MyTrade
 	err := c.Do(ctx, http.MethodGet, "/futures/usdt/my_trades_timerange", q, nil, true, &out)
+	return out, err
+}
+
+// OrdersTimerange returns Gate futures orders in the requested time range.
+func (c Client) OrdersTimerange(ctx context.Context, contract string, from, to time.Time, limit, offset int) ([]Order, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := url.Values{
+		"limit":  []string{strconv.Itoa(limit)},
+		"offset": []string{strconv.Itoa(offset)},
+	}
+	if value := gateTimeQuery(from); value != "" {
+		q.Set("from", value)
+	}
+	if value := gateTimeQuery(to); value != "" {
+		q.Set("to", value)
+	}
+	if strings.TrimSpace(contract) != "" {
+		q.Set("contract", contract)
+	}
+	var out []Order
+	err := c.Do(ctx, http.MethodGet, "/futures/usdt/orders_timerange", q, nil, true, &out)
 	return out, err
 }
 

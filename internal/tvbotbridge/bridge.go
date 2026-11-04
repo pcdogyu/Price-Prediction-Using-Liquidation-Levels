@@ -383,6 +383,7 @@ func (b *Bridge) startMonitors(ctx context.Context, handler *tvbotserver.Server)
 	handler.StartGatePositionRiskMonitor(ctx)
 	handler.StartCoinpairBlockCleaner(ctx)
 	handler.StartSymbolCatalogSyncer(ctx)
+	handler.StartExchangeOrderSyncer(ctx)
 }
 
 func (b *Bridge) Close() error {

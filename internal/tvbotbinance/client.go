@@ -673,6 +673,38 @@ func (c Client) UserTrades(ctx context.Context, symbol string, startTime, endTim
 	return out, nil
 }
 
+// AllOrders returns Binance USDⓈ-M order history. Binance accepts either a
+// time window or an order id lower bound; callers should use the order id as
+// the incremental cursor and a time window for the initial backfill.
+func (c Client) AllOrders(ctx context.Context, symbol string, orderID int64, startTime, endTime time.Time, limit int) ([]OpenOrder, error) {
+	q := url.Values{}
+	if strings.TrimSpace(symbol) != "" {
+		q.Set("symbol", strings.ToUpper(strings.TrimSpace(symbol)))
+	}
+	if orderID > 0 {
+		q.Set("orderId", strconv.FormatInt(orderID, 10))
+	}
+	if !startTime.IsZero() {
+		q.Set("startTime", strconv.FormatInt(startTime.UTC().UnixMilli(), 10))
+	}
+	if !endTime.IsZero() {
+		q.Set("endTime", strconv.FormatInt(endTime.UTC().UnixMilli(), 10))
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	q.Set("limit", strconv.Itoa(limit))
+	b, err := c.Do(ctx, http.MethodGet, "/fapi/v1/allOrders", q, true)
+	if err != nil {
+		return nil, err
+	}
+	var out []OpenOrder
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c Client) IncomeHistory(ctx context.Context, symbol, incomeType string, startTime, endTime time.Time, limit int) ([]Income, error) {
 	q := url.Values{}
 	if strings.TrimSpace(symbol) != "" {

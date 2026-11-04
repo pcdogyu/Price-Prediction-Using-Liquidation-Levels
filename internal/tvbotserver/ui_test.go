@@ -197,6 +197,37 @@ func TestRenderTVBotPositionSyncIndicator(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=analysis", nil))
+	for _, want := range []string{
+		`交易所历史订单`,
+		`id="exchange-order-sync"`,
+		`type="button" id="exchange-order-sync"`,
+		`id="exchange-order-status-filter"`,
+		`id="exchange-order-search"`,
+		`id="exchange-order-rows"`,
+		`id="exchange-order-prev"`,
+		`id="exchange-order-next"`,
+		`/tvbot/exchange-orders?`,
+		`/tvbot/exchange-orders/sync`,
+		`setAttribute("aria-busy", "true")`,
+		`classList.add("is-saving")`,
+		`原始 JSON`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("exchange order history is missing %q", want)
+		}
+	}
+	if strings.Contains(page, `data-exchange-order-retry`) || strings.Contains(page, `/exchange-orders/" +`) {
+		t.Fatal("exchange order history should not expose remote retry actions")
+	}
+	loadStart := strings.Index(page, "async function loadExchangeOrders")
+	syncStart := strings.Index(page, "function queueExchangeOrderSync")
+	if loadStart < 0 || syncStart < 0 || syncStart < loadStart {
+		t.Fatalf("local exchange order load and asynchronous sync flow are missing: load=%d sync=%d", loadStart, syncStart)
+	}
+}
+
 func TestRenderTVBotHTMLRedirectsUnauthorizedAPICallsToLogin(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=positions", nil))
 	for _, want := range []string{

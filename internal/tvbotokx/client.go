@@ -1101,6 +1101,41 @@ func (c Client) PendingOrders(ctx context.Context, instType string) ([]PendingOr
 	return out, env, nil
 }
 
+// OrdersHistoryArchive returns completed OKX orders from the archive endpoint.
+func (c Client) OrdersHistoryArchive(ctx context.Context, instType, after, before string, limit int) ([]PendingOrder, Envelope, error) {
+	q := url.Values{}
+	if strings.TrimSpace(instType) != "" {
+		q.Set("instType", strings.ToUpper(strings.TrimSpace(instType)))
+	}
+	if strings.TrimSpace(after) != "" {
+		q.Set("after", strings.TrimSpace(after))
+	}
+	if strings.TrimSpace(before) != "" {
+		q.Set("before", strings.TrimSpace(before))
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	env, err := c.Do(ctx, http.MethodGet, "/api/v5/trade/orders-history-archive", q, nil, true)
+	if err != nil {
+		return nil, env, err
+	}
+	var raw []json.RawMessage
+	if err := json.Unmarshal(env.Data, &raw); err != nil {
+		return nil, env, err
+	}
+	out := make([]PendingOrder, 0, len(raw))
+	for _, item := range raw {
+		var order PendingOrder
+		if err := json.Unmarshal(item, &order); err != nil {
+			return nil, env, err
+		}
+		order.RawJSON = string(item)
+		out = append(out, order)
+	}
+	return out, env, nil
+}
+
 func (c Client) SwapInstrument(ctx context.Context, instID string) (Instrument, error) {
 	q := url.Values{}
 	q.Set("instType", "SWAP")

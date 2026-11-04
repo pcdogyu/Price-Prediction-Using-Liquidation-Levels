@@ -718,6 +718,10 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 		s.handleTemplates(w, r)
 	case path == "/orders":
 		s.handleOrders(w, r)
+	case path == "/exchange-orders":
+		s.handleExchangeOrders(w, r)
+	case path == "/exchange-orders/sync":
+		s.handleExchangeOrderSync(w, r)
 	case path == "/order-filters":
 		s.handleOrderFilters(w, r)
 	case path == "/coinpair-blocks":
@@ -770,6 +774,9 @@ func requiresAdminEndpoint(path string, r *http.Request) bool {
 		return false
 	}
 	if path == "/api-keys" || path == "/api-keys/test" {
+		return false
+	}
+	if path == "/exchange-orders" || path == "/exchange-orders/sync" {
 		return false
 	}
 	if path == "/" || path == "" || path == "/positions" || path == "/analysis" || path == "/orders" || path == "/trade-monitor" || path == "/balances/overview" || path == "/pending-orders" || path == "/symbols" || path == "/config" {

@@ -1673,6 +1673,50 @@ const tvbotHTML = `<!doctype html>
       flex-wrap: wrap;
       justify-content: flex-end;
     }
+    .exchange-order-history-card {
+      margin-top: 16px;
+    }
+    .exchange-order-history-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 0 0 10px;
+    }
+    .exchange-order-history-toolbar select,
+    .exchange-order-history-toolbar input {
+      min-width: 150px;
+    }
+    .exchange-order-history-table {
+      min-width: 1480px;
+    }
+    .exchange-order-history-table th,
+    .exchange-order-history-table td {
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: nowrap;
+    }
+    .exchange-order-history-table td.time {
+      overflow: hidden;
+      text-overflow: clip;
+    }
+    .exchange-order-history-table .status-filled,
+    .exchange-order-history-table .status-closed { color: var(--positive); }
+    .exchange-order-history-table .status-canceled,
+    .exchange-order-history-table .status-rejected,
+    .exchange-order-history-table .status-expired { color: var(--negative); }
+    .exchange-order-history-error {
+      color: var(--negative);
+      flex: 1 1 280px;
+      min-width: 240px;
+    }
+    @media (max-width: 760px) {
+      .exchange-order-history-toolbar select,
+      .exchange-order-history-toolbar input {
+        min-width: min(100%, 220px);
+        flex: 1 1 180px;
+      }
+    }
     .analysis-trade-table {
       min-width: 1560px;
     }
@@ -2381,6 +2425,45 @@ const tvbotHTML = `<!doctype html>
           <button class="btn small" type="button" id="analysis-trade-next">下一页</button>
         </div>
       </div>
+      <div class="analysis-trade-history-card exchange-order-history-card">
+        <div class="section-head" style="margin-bottom:10px">
+          <h3>交易所历史订单</h3>
+          <div class="analysis-trade-history-actions">
+            <button class="btn small" type="button" id="exchange-order-sync">同步交易所订单</button>
+            <span class="muted" id="exchange-order-sync-status">本地优先加载</span>
+          </div>
+        </div>
+        <div class="exchange-order-history-toolbar" role="group" aria-label="交易所历史订单筛选">
+          <select id="exchange-order-status-filter" aria-label="订单状态">
+            <option value="">全部状态</option>
+            <option value="filled">已成交</option>
+            <option value="live">未完成</option>
+            <option value="canceled">已取消</option>
+            <option value="rejected">已拒绝</option>
+            <option value="expired">已过期</option>
+          </select>
+          <input id="exchange-order-search" type="search" placeholder="搜索订单号、客户订单号或币对" aria-label="搜索交易所历史订单">
+          <span class="muted" id="exchange-order-target">-</span>
+          <span class="exchange-order-history-error" id="exchange-order-error" role="status"></span>
+        </div>
+        <div class="symbol-table-wrap">
+          <table class="symbol-table exchange-order-history-table">
+            <thead>
+              <tr>
+                <th>创建时间</th><th>交易所</th><th>环境</th><th>API</th><th>币对</th><th>远端订单 ID</th>
+                <th>客户订单 ID</th><th>方向</th><th>状态</th><th>类型</th><th>委托价</th><th>均价</th>
+                <th>原始量</th><th>成交量</th><th>剩余量</th><th>详情</th>
+              </tr>
+            </thead>
+            <tbody id="exchange-order-rows"></tbody>
+          </table>
+        </div>
+        <div class="analysis-pagination" style="margin-top:10px">
+          <button class="btn small" type="button" id="exchange-order-prev">上一页</button>
+          <span class="muted" id="exchange-order-page-info">-</span>
+          <button class="btn small" type="button" id="exchange-order-next">下一页</button>
+        </div>
+      </div>
     </section>
 
     <section id="apiKeys">
@@ -2796,6 +2879,14 @@ const tvbotHTML = `<!doctype html>
       selectedExchange: "okx",
       analysisTradePage: 1,
       analysisTradeAggregate: false,
+      exchangeOrders: [],
+      exchangeOrdersTotal: 0,
+      exchangeOrdersPage: 1,
+      exchangeOrderStatus: "",
+      exchangeOrderSearch: "",
+      exchangeOrderSync: null,
+      exchangeOrdersError: "",
+      exchangeOrderTarget: null,
       symbolPrecisions: {},
       balanceOverview: null,
       balanceOverviewError: "",
@@ -2866,6 +2957,7 @@ const tvbotHTML = `<!doctype html>
     const globalExchangeStorageKey = "tvbot.selectedExchange";
     const ordersPageSize = 20;
     const analysisTradePageSize = 20;
+    const exchangeOrderPageSize = 20;
     const analysisTradeAggregateWindowMs = 1000;
     const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3";
     const analysisTradeColumnDefs = [
@@ -4488,6 +4580,13 @@ const tvbotHTML = `<!doctype html>
     async function loadAnalysis(refresh) {
       const qs = new URLSearchParams({ price_days: "3", pnl_minutes: String(analysisPNLWindowMinutes()) });
       if (refresh) qs.set("refresh", "true");
+      loadExchangeOrders(!!refresh).catch((err) => {
+        state.exchangeOrders = [];
+        state.exchangeOrdersTotal = 0;
+        state.exchangeOrdersError = err.message;
+        renderExchangeOrders();
+      });
+      queueExchangeOrderSync();
       await Promise.all([loadBalanceOverview(!!refresh, state.balanceWindowMinutes), loadAnalysisPositions(!!refresh)]);
       try {
         state.analysis = await api("/tvbot/analysis?" + qs.toString());
@@ -4499,6 +4598,161 @@ const tvbotHTML = `<!doctype html>
         state.analysisTradePage = 1;
       }
       renderAnalysis();
+    }
+
+    async function loadExchangeOrders(resetPage) {
+      if (resetPage) state.exchangeOrdersPage = 1;
+      const qs = new URLSearchParams({
+        limit: String(exchangeOrderPageSize),
+        offset: String(Math.max(0, state.exchangeOrdersPage - 1) * exchangeOrderPageSize)
+      });
+      if (state.exchangeOrderStatus) qs.set("status", state.exchangeOrderStatus);
+      if (state.exchangeOrderSearch) qs.set("q", state.exchangeOrderSearch);
+      const result = await api("/tvbot/exchange-orders?" + qs.toString());
+      state.exchangeOrders = Array.isArray(result.orders) ? result.orders : [];
+      state.exchangeOrdersTotal = Number(result.total || 0);
+      state.exchangeOrderTarget = result.target || null;
+      state.exchangeOrderSync = result.sync || null;
+      state.exchangeOrdersError = result.target_error || "";
+      renderExchangeOrders();
+      return result;
+    }
+
+    function exchangeOrderStatusText(status) {
+      const value = String(status || "").trim().toLowerCase();
+      const labels = {
+        filled: "已成交",
+        live: "未完成",
+        open: "未完成",
+        new: "新建",
+        canceled: "已取消",
+        cancelled: "已取消",
+        rejected: "已拒绝",
+        expired: "已过期",
+        partially_filled: "部分成交",
+        partially_filled_canceled: "部分成交后取消"
+      };
+      return labels[value] || asText(status);
+    }
+
+    function exchangeOrderStatusClass(status) {
+      const value = String(status || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+      return value ? "status-" + value : "";
+    }
+
+    function exchangeOrderSyncStatusText(sync) {
+      if (!sync) return "尚未同步";
+      const status = String(sync.status || "").toLowerCase();
+      if (status === "syncing") return "同步中…";
+      if (status === "failed") return sync.last_error ? "同步失败：" + sync.last_error : "同步失败，可重试";
+      if (sync.last_success_at) return "最近同步 " + shanghaiTime(sync.last_success_at);
+      return status === "synced" ? "已同步" : "尚未同步";
+    }
+
+    function renderExchangeOrders() {
+      const rowsEl = $("exchange-order-rows");
+      const statusEl = $("exchange-order-sync-status");
+      const targetEl = $("exchange-order-target");
+      const errorEl = $("exchange-order-error");
+      const pageInfo = $("exchange-order-page-info");
+      const prev = $("exchange-order-prev");
+      const next = $("exchange-order-next");
+      if (!rowsEl) return;
+      const target = state.exchangeOrderTarget || {};
+      if (targetEl) {
+        targetEl.textContent = target.exchange
+          ? exchangeLabel(target.exchange) + " / " + asText(target.api_id) + " / " + asText(target.trade_env)
+          : "未配置目标交易账户";
+      }
+      if (statusEl) statusEl.textContent = exchangeOrderSyncStatusText(state.exchangeOrderSync);
+      if (errorEl) errorEl.textContent = state.exchangeOrdersError || "";
+      const rows = Array.isArray(state.exchangeOrders) ? state.exchangeOrders : [];
+      rowsEl.innerHTML = rows.map((row, index) => {
+        const status = String(row && row.status || "").trim();
+        const statusClass = exchangeOrderStatusClass(status);
+        const detail = row && row.raw_json
+          ? '<button class="btn small" type="button" data-exchange-order-json-index="' + index + '">原始 JSON</button>'
+          : "-";
+        const cell = (value, className) => '<td' + (className ? ' class="' + escapeHTML(className) + '"' : "") + '>' + escapeHTML(asText(value)) + '</td>';
+        return "<tr>" +
+          cell(row.created_at ? shanghaiTime(row.created_at) : "-", "time") +
+          cell(exchangeLabel(row.exchange)) +
+          cell(row.trade_env) +
+          cell(row.api_id) +
+          cell(row.inst_id) +
+          cell(row.remote_order_id) +
+          cell(row.client_order_id) +
+          cell(row.side) +
+          cell(exchangeOrderStatusText(status), statusClass) +
+          cell(row.order_type) +
+          cell(row.price) +
+          cell(row.average_price) +
+          cell(row.original_qty) +
+          cell(row.executed_qty) +
+          cell(row.remaining_qty) +
+          '<td>' + detail + '</td>' +
+          "</tr>";
+      }).join("") || '<tr><td colspan="16" class="muted">' + escapeHTML(state.exchangeOrdersError || "暂无交易所历史订单") + "</td></tr>";
+      const totalPages = state.exchangeOrdersTotal ? Math.ceil(state.exchangeOrdersTotal / exchangeOrderPageSize) : 0;
+      if (pageInfo) pageInfo.textContent = totalPages ? "第 " + state.exchangeOrdersPage + " / " + totalPages + " 页，共 " + state.exchangeOrdersTotal + " 条" : "暂无数据";
+      if (prev) prev.disabled = state.exchangeOrdersPage <= 1;
+      if (next) next.disabled = !totalPages || state.exchangeOrdersPage >= totalPages;
+    }
+
+    function setExchangeOrderSyncButtonState(button, saving) {
+      if (!button) return;
+      if (saving) {
+        button.disabled = true;
+        button.classList.add("is-saving");
+        button.setAttribute("aria-busy", "true");
+        button.textContent = "同步中…";
+        return;
+      }
+      button.disabled = false;
+      button.classList.remove("is-saving");
+      button.removeAttribute("aria-busy");
+      button.textContent = "同步交易所订单";
+    }
+
+    async function triggerExchangeOrderSync(button, quiet) {
+      setExchangeOrderSyncButtonState(button, true);
+      try {
+        const result = await api("/tvbot/exchange-orders/sync", { method: "POST" });
+        state.exchangeOrderSync = result && result.status ? result.status : state.exchangeOrderSync;
+        renderExchangeOrders();
+        for (let i = 0; i < 4; i++) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1200));
+          const current = await loadExchangeOrders(false);
+          if (!current.sync || current.sync.status !== "syncing") break;
+        }
+        if (!quiet) toast("交易所历史订单同步已触发");
+      } finally {
+        setExchangeOrderSyncButtonState(button, false);
+      }
+    }
+
+    let exchangeOrderAutoSyncAt = 0;
+    let exchangeOrderAutoSyncBusy = false;
+    function queueExchangeOrderSync() {
+      const now = Date.now();
+      if (exchangeOrderAutoSyncBusy || now - exchangeOrderAutoSyncAt < 5 * 60 * 1000) return;
+      exchangeOrderAutoSyncAt = now;
+      exchangeOrderAutoSyncBusy = true;
+      triggerExchangeOrderSync(null, true).catch((err) => {
+        state.exchangeOrdersError = err.message;
+        renderExchangeOrders();
+      }).finally(() => {
+        exchangeOrderAutoSyncBusy = false;
+      });
+    }
+
+    function changeExchangeOrderPage(delta) {
+      const totalPages = state.exchangeOrdersTotal ? Math.ceil(state.exchangeOrdersTotal / exchangeOrderPageSize) : 1;
+      state.exchangeOrdersPage = Math.min(Math.max(1, state.exchangeOrdersPage + delta), totalPages);
+      loadExchangeOrders(false).catch((err) => {
+        state.exchangeOrdersError = err.message;
+        renderExchangeOrders();
+      });
     }
 
     async function loadAnalysisPositions(forceRefresh) {
@@ -9186,6 +9440,32 @@ const tvbotHTML = `<!doctype html>
       const rowKey = button.dataset.analysisChartKey || "";
       const row = analysisTradesForDisplay().find((item) => analysisTradeRowKey(item) === rowKey);
       if (row) openAnalysisTradeChart(row);
+    });
+    $("exchange-order-sync").addEventListener("click", () => triggerExchangeOrderSync($("exchange-order-sync"), false).catch((err) => {
+      state.exchangeOrdersError = err.message;
+      renderExchangeOrders();
+      toast(err.message);
+    }));
+    $("exchange-order-prev").addEventListener("click", () => changeExchangeOrderPage(-1));
+    $("exchange-order-next").addEventListener("click", () => changeExchangeOrderPage(1));
+    $("exchange-order-status-filter").addEventListener("change", () => {
+      state.exchangeOrderStatus = $("exchange-order-status-filter").value;
+      loadExchangeOrders(true).catch((err) => { state.exchangeOrdersError = err.message; renderExchangeOrders(); });
+    });
+    $("exchange-order-search").addEventListener("input", () => {
+      state.exchangeOrderSearch = $("exchange-order-search").value.trim();
+    });
+    $("exchange-order-search").addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      state.exchangeOrderSearch = $("exchange-order-search").value.trim();
+      loadExchangeOrders(true).catch((err) => { state.exchangeOrdersError = err.message; renderExchangeOrders(); });
+    });
+    $("exchange-order-rows").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-exchange-order-json-index]");
+      if (!button) return;
+      const order = state.exchangeOrders[Number(button.dataset.exchangeOrderJsonIndex)];
+      showOrderRawJSON(order);
     });
     $("refresh-positions").addEventListener("click", () => loadPositionView(true).then(() => toast("持仓和挂单已刷新")).catch((err) => toast(err.message)));
     document.querySelectorAll("[data-pending-order-group]").forEach((button) => {
