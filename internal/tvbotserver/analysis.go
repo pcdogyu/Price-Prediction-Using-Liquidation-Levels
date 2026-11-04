@@ -1804,6 +1804,30 @@ func analysisOrderStrategy(rec storage.OrderRecord) string {
 	if strategy := strings.ToLower(strings.TrimSpace(rec.MarketStrategy)); strategy != "" {
 		return strategy
 	}
+	var payload struct {
+		Condition string `json:"condition"`
+		Source    string `json:"source"`
+	}
+	if strings.TrimSpace(rec.RawJSON) != "" && json.Unmarshal([]byte(rec.RawJSON), &payload) == nil {
+		condition := strings.ToLower(strings.TrimSpace(payload.Condition))
+		source := strings.ToLower(strings.TrimSpace(payload.Source))
+		switch {
+		case strings.HasPrefix(condition, "value_area_") || strings.Contains(source, "value_area"):
+			// Keep the analysis label aligned with the order-history label while
+			// preserving the position-gate meaning of value_area_manual.
+			return "value_area"
+		case source == "tradingview":
+			return "tradingview"
+		case source == "position_monitor":
+			return "position_monitor"
+		case source == "stop_loss_webhook":
+			return "stop_loss_webhook"
+		case source == "take_profit_webhook":
+			return "take_profit_webhook"
+		case source == "analysis_manual":
+			return "analysis_manual"
+		}
+	}
 	return orderRecordSignalKind(rec)
 }
 

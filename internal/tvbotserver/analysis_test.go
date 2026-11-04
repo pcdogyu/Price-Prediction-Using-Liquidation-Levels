@@ -57,6 +57,25 @@ func TestAnalysisTradeOperationMetadataClassifiesOrderAndMonitorActions(t *testi
 	if !ok || meta.Strategy != "value_area" {
 		t.Fatalf("signal source should provide a fallback strategy: %#v found=%v", meta, ok)
 	}
+	for _, test := range []struct {
+		name, raw, want string
+	}{
+		{name: "tradingview", raw: `{"source":"tradingview","condition":"绿1开多成交"}`, want: "tradingview"},
+		{name: "value area manual", raw: `{"source":"value_area_manual","condition":"value_area_manual"}`, want: "value_area"},
+		{name: "position monitor", raw: `{"source":"position_monitor"}`, want: "position_monitor"},
+		{name: "stop loss webhook", raw: `{"source":"stop_loss_webhook"}`, want: "stop_loss_webhook"},
+		{name: "take profit webhook", raw: `{"source":"take_profit_webhook"}`, want: "take_profit_webhook"},
+		{name: "analysis manual", raw: `{"source":"analysis_manual"}`, want: "analysis_manual"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			record.MarketStrategy = ""
+			record.RawJSON = test.raw
+			meta, ok := analysisOrderMetaIndex([]storage.OrderRecord{record})[analysisOrderKey(trading.ExchangeBinance, record.APIID, "ETHUSDT", "entry-1")]
+			if !ok || meta.Strategy != test.want {
+				t.Fatalf("source fallback strategy=%q want=%q metadata=%#v found=%v", meta.Strategy, test.want, meta, ok)
+			}
+		})
+	}
 
 	f := storage.BinanceFill{Symbol: "ETHUSDT", OrderID: "exit-1", FillTime: time.Now().UnixMilli()}
 	raw, err := json.Marshal(f)

@@ -193,6 +193,12 @@ func TestPositionSignalKindFromTextDistinguishesStrategies(t *testing.T) {
 	}{
 		{name: "manual liquidation", values: []string{"manual_liquidation_trigger", "liquidation_alert_manual"}, want: "manual"},
 		{name: "value area", values: []string{"value_area_signal", "value_area_signal"}, want: "value_area"},
+		{name: "value area manual remains manual for position gating", values: []string{"value_area_manual", "value_area_manual"}, want: "manual"},
+		{name: "tradingview", values: []string{"绿1开多成交", "tradingview"}, want: "tradingview"},
+		{name: "position monitor", values: []string{"position_monitor", "position_monitor"}, want: "position_monitor"},
+		{name: "stop loss webhook", values: []string{"stop_loss_webhook", "stop_loss_webhook"}, want: "stop_loss_webhook"},
+		{name: "take profit webhook", values: []string{"take_profit_webhook", "take_profit_webhook"}, want: "take_profit_webhook"},
+		{name: "analysis manual", values: []string{"analysis_manual", "analysis_manual"}, want: "analysis_manual"},
 		{name: "aggressive liquidation", values: []string{"aggressive_liquidation_signal", "liquidation_alert"}, want: "aggressive"},
 		{name: "steady liquidation", values: []string{"steady_liquidation_confirmation", "liquidation_alert"}, want: "steady"},
 		{name: "alert", values: []string{"liquidation_alert", "liquidation_alert"}, want: "alert"},
