@@ -2,8 +2,10 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -62,5 +64,77 @@ func TestExchangeOrderSyncEndpointsAreUserAccessibleOnlyForDeclaredMethods(t *te
 	}
 	if requiresAdminEndpoint("/orders", request(http.MethodPost, "/orders")) == false {
 		t.Fatal("existing order mutations should remain admin-scoped")
+	}
+}
+
+func TestFetchBinanceExchangeOrdersSplitsWindowsAtBinanceLimit(t *testing.T) {
+	srv := newTestServer(t)
+	if _, err := srv.BinanceCredentials.SaveSingleAccount(binance.CredentialAccountUpdate{
+		ID: "binance-main", Name: "test", Active: true,
+		Credentials: binance.Credentials{APIKey: "fake-key", SecretKey: "fake-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(30 * 24 * time.Hour)
+	type orderWindow struct {
+		start time.Time
+		end   time.Time
+	}
+	var windows []orderWindow
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v1/exchangeInfo":
+			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"BTCUSDT","status":"TRADING","quoteAsset":"USDT"}]}`))
+		case "/fapi/v1/allOrders":
+			startMS, err := strconv.ParseInt(r.URL.Query().Get("startTime"), 10, 64)
+			if err != nil {
+				t.Fatalf("invalid Binance startTime: %q", r.URL.Query().Get("startTime"))
+			}
+			endMS, err := strconv.ParseInt(r.URL.Query().Get("endTime"), 10, 64)
+			if err != nil {
+				t.Fatalf("invalid Binance endTime: %q", r.URL.Query().Get("endTime"))
+			}
+			windows = append(windows, orderWindow{start: time.UnixMilli(startMS).UTC(), end: time.UnixMilli(endMS).UTC()})
+			if endMS-startMS >= int64((7 * 24 * time.Hour).Milliseconds()) {
+				t.Fatalf("Binance time window is too large: start=%d end=%d", startMS, endMS)
+			}
+			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","orderId":1,"status":"FILLED","time":1790812800000}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = ts.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = ts.Client()
+	target := exchangeOrderTarget{
+		Exchange: trading.ExchangeBinance,
+		APIID:    "binance-main",
+		TradeEnv: trading.TradeEnvDemo,
+		Config:   cfg,
+	}
+	orders, cursor, err := srv.fetchBinanceExchangeOrders(context.Background(), target, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(windows) != 5 {
+		t.Fatalf("Binance 30-day sync should use 5 windows, got %d: %#v", len(windows), windows)
+	}
+	if !windows[0].start.Equal(from) || !windows[len(windows)-1].end.Equal(to) {
+		t.Fatalf("Binance windows do not cover the requested range: %#v", windows)
+	}
+	for i, window := range windows {
+		if window.end.Sub(window.start) >= 7*24*time.Hour {
+			t.Fatalf("window %d exceeds Binance limit: %#v", i, window)
+		}
+		if i > 0 && window.start.Sub(windows[i-1].end) != time.Millisecond {
+			t.Fatalf("Binance windows are not contiguous at %d: previous=%#v current=%#v", i, windows[i-1], window)
+		}
+	}
+	if len(orders) != len(windows) || cursor.BinanceMaxID != 1 {
+		t.Fatalf("unexpected Binance sync result: orders=%d cursor=%#v", len(orders), cursor)
 	}
 }

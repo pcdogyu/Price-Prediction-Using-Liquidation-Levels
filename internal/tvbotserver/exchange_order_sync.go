@@ -23,6 +23,7 @@ const (
 	exchangeOrderSyncInterval  = 5 * time.Minute
 	exchangeOrderInitialWindow = 30 * 24 * time.Hour
 	exchangeOrderOverlap       = 10 * time.Minute
+	exchangeOrderBinanceWindow = 7*24*time.Hour - time.Millisecond
 	exchangeOrderPageLimit     = 1000
 	exchangeOrderMaxPages      = 100
 )
@@ -369,32 +370,42 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 		return result, cursor, errors.New("Binance exchangeInfo returned no active USDT symbols")
 	}
 	for _, symbol := range symbols {
-		var orderID int64
-		for page := 0; page < exchangeOrderMaxPages; page++ {
-			rows, err := client.AllOrders(ctx, symbol, orderID, from, to, exchangeOrderPageLimit)
-			if err != nil {
-				return result, cursor, err
+		for windowStart := from; ; {
+			windowEnd := windowStart.Add(exchangeOrderBinanceWindow)
+			if windowEnd.After(to) {
+				windowEnd = to
 			}
-			pageMaxID := orderID
-			for _, row := range rows {
-				if row.OrderID <= 0 {
-					continue
+			var orderID int64
+			for page := 0; page < exchangeOrderMaxPages; page++ {
+				rows, err := client.AllOrders(ctx, symbol, orderID, windowStart, windowEnd, exchangeOrderPageLimit)
+				if err != nil {
+					return result, cursor, err
 				}
-				if row.OrderID > cursor.BinanceMaxID {
-					cursor.BinanceMaxID = row.OrderID
+				pageMaxID := orderID
+				for _, row := range rows {
+					if row.OrderID <= 0 {
+						continue
+					}
+					if row.OrderID > cursor.BinanceMaxID {
+						cursor.BinanceMaxID = row.OrderID
+					}
+					if row.OrderID > pageMaxID {
+						pageMaxID = row.OrderID
+					}
+					result = append(result, exchangeOrderFromBinance(apiID, target.TradeEnv, row))
 				}
-				if row.OrderID > pageMaxID {
-					pageMaxID = row.OrderID
+				if len(rows) < exchangeOrderPageLimit {
+					break
 				}
-				result = append(result, exchangeOrderFromBinance(apiID, target.TradeEnv, row))
+				if pageMaxID <= orderID {
+					return result, cursor, fmt.Errorf("Binance allOrders pagination did not advance for %s", symbol)
+				}
+				orderID = pageMaxID + 1
 			}
-			if len(rows) < exchangeOrderPageLimit {
+			if !windowEnd.Before(to) {
 				break
 			}
-			if pageMaxID <= orderID {
-				return result, cursor, fmt.Errorf("Binance allOrders pagination did not advance for %s", symbol)
-			}
-			orderID = pageMaxID + 1
+			windowStart = windowEnd.Add(time.Millisecond)
 		}
 	}
 	return result, cursor, nil
