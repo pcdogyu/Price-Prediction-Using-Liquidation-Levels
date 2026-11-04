@@ -2808,6 +2808,8 @@ const tvbotHTML = `<!doctype html>
       positions: null,
       positionsError: "",
       positionSync: { status: "syncing", message: "持仓同步中" },
+      positionSyncFailureCount: 0,
+      positionSyncStableStatus: "syncing",
       pendingOrders: null,
       pendingOrderGroup: "normal",
       localPendingLimitCloses: [],
@@ -2837,8 +2839,9 @@ const tvbotHTML = `<!doctype html>
     let tableColumnDrag = null;
     let tableColumnDropSuppressClick = false;
     let templateTitleGeneratedAt = new Date();
-    const positionViewPollIntervalMs = 30 * 1000;
+    const positionViewPollIntervalMs = 15 * 1000;
     const positionSyncStaleAfterMs = 60 * 1000;
+    const positionSyncFailureThreshold = 3;
     const pendingLimitCloseOrderCacheMs = 90000;
     const missingPositionEntrySyncIntervalMs = 180000;
     const analysisBalanceRefreshIntervalMs = 5 * 60 * 1000;
@@ -3385,6 +3388,8 @@ const tvbotHTML = `<!doctype html>
       state.analysisPositions = null;
       state.analysisPositionsError = "";
       state.positions = null;
+      state.positionSyncFailureCount = 0;
+      state.positionSyncStableStatus = "syncing";
       setPositionSyncStatus("syncing");
       state.pendingOrders = null;
       state.pendingOrderGroup = "normal";
@@ -4516,7 +4521,8 @@ const tvbotHTML = `<!doctype html>
         state.positionsError = combinedErrors(results);
         renderPositions();
       } catch (err) {
-        setPositionSyncStatus("failed");
+        const status = positionSyncStatusForResult(null);
+        setPositionSyncStatus(status.status, status.message);
         throw err;
       }
     }
@@ -5777,16 +5783,30 @@ const tvbotHTML = `<!doctype html>
     }
 
     function positionSyncStatusForResult(result) {
-      if (!result || result.ok !== true || result.error || result.stale) {
-        return { status: "failed", message: "持仓同步失败" };
+      if (!result || result.ok !== true || result.error) {
+        state.positionSyncFailureCount = Number(state.positionSyncFailureCount || 0) + 1;
+        const failureCount = state.positionSyncFailureCount;
+        if (failureCount > positionSyncFailureThreshold) {
+          return { status: "failed", message: "持仓同步失败（连续" + failureCount + "次）" };
+        }
+        const stableStatus = ["synced", "stale", "syncing"].includes(state.positionSyncStableStatus)
+          ? state.positionSyncStableStatus
+          : "syncing";
+        return {
+          status: stableStatus,
+          message: "持仓同步失败（连续" + failureCount + "次，超过" + positionSyncFailureThreshold + "次后标红）"
+        };
       }
       const refreshedAt = new Date(result.refreshed_at || "").getTime();
       if (!Number.isFinite(refreshedAt) || refreshedAt <= 0) {
-        return { status: "failed", message: "持仓同步失败" };
+        return positionSyncStatusForResult({ ok: false, error: "invalid_refreshed_at" });
       }
-      if (Date.now() - refreshedAt > positionSyncStaleAfterMs) {
+      state.positionSyncFailureCount = 0;
+      if (result.stale || Date.now() - refreshedAt > positionSyncStaleAfterMs) {
+        state.positionSyncStableStatus = "stale";
         return { status: "stale", message: "持仓信息超过 1 分钟" };
       }
+      state.positionSyncStableStatus = "synced";
       return { status: "synced", message: "持仓已同步" };
     }
 
