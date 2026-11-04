@@ -1058,7 +1058,7 @@ const tvbotHTML = `<!doctype html>
     .analysis-controls {
       display: flex;
       gap: 10px;
-      align-items: end;
+      align-items: center;
       flex-wrap: wrap;
     }
     .analysis-controls label { min-width: 260px; }
@@ -1103,9 +1103,10 @@ const tvbotHTML = `<!doctype html>
     }
     .position-sync-indicator {
       display: inline-block;
-      width: 12px;
-      height: 12px;
-      flex: 0 0 12px;
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      align-self: center;
       border: 1px solid var(--muted);
       border-radius: 50%;
       background: var(--muted);
