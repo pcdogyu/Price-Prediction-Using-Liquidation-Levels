@@ -150,6 +150,7 @@ func TestRenderTVBotPositionSyncIndicator(t *testing.T) {
 		`data-status="syncing"`,
 		`role="status"`,
 		`aria-label="持仓同步中"`,
+		`const positionViewPollIntervalMs = 30 * 1000;`,
 		`width: 16px;`,
 		`height: 16px;`,
 		`flex: 0 0 16px;`,
