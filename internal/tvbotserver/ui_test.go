@@ -213,6 +213,8 @@ func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
 		`setAttribute("aria-busy", "true")`,
 		`classList.add("is-saving")`,
 		`原始 JSON`,
+		`grid-template-columns: minmax(140px, .28fr) minmax(240px, 1fr) auto minmax(240px, 1fr);`,
+		`grid-template-columns: 1fr;`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("exchange order history is missing %q", want)
@@ -228,6 +230,12 @@ func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
 	}
 	if strings.Contains(page[analysisStart:historyStart], `id="exchange-order-rows"`) {
 		t.Fatal("analysis page should no longer contain the exchange order history table")
+	}
+	if strings.Contains(page, `return openRows.concat(closedRows)`) || strings.Contains(page, `含未平仓开仓成交`) {
+		t.Fatal("analysis trade history should not expose open position trades")
+	}
+	if !strings.Contains(page, `.filter((row) => !zeroTime(row && row.exit_time))`) {
+		t.Fatal("analysis trade history should only render closed trades")
 	}
 	loadStart := strings.Index(page, "async function loadExchangeOrders")
 	syncStart := strings.Index(page, "function queueExchangeOrderSync")

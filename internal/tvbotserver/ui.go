@@ -1678,15 +1678,16 @@ const tvbotHTML = `<!doctype html>
       margin-top: 16px;
     }
     .exchange-order-history-toolbar {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(140px, .28fr) minmax(240px, 1fr) auto minmax(240px, 1fr);
       align-items: center;
       gap: 10px;
-      flex-wrap: wrap;
       margin: 0 0 10px;
     }
     .exchange-order-history-toolbar select,
     .exchange-order-history-toolbar input {
-      min-width: 150px;
+      width: 100%;
+      min-width: 0;
     }
     .exchange-order-history-table {
       min-width: 1480px;
@@ -1708,14 +1709,15 @@ const tvbotHTML = `<!doctype html>
     .exchange-order-history-table .status-expired { color: var(--negative); }
     .exchange-order-history-error {
       color: var(--negative);
-      flex: 1 1 280px;
-      min-width: 240px;
+      min-width: 0;
     }
     @media (max-width: 760px) {
+      .exchange-order-history-toolbar {
+        grid-template-columns: 1fr;
+      }
       .exchange-order-history-toolbar select,
       .exchange-order-history-toolbar input {
         min-width: min(100%, 220px);
-        flex: 1 1 180px;
       }
     }
     .analysis-trade-table {
@@ -6836,15 +6838,12 @@ const tvbotHTML = `<!doctype html>
     function analysisTradesForActiveExchange() {
       const exchange = activeExchange();
       const closedRows = state.analysis && Array.isArray(state.analysis.position_trades) ? state.analysis.position_trades : [];
-      const openRows = state.analysis && Array.isArray(state.analysis.open_position_trades) ? state.analysis.open_position_trades : [];
-      return openRows.concat(closedRows)
+      return closedRows
         .filter((row) => normalizeExchange(row.exchange) === exchange)
+        .filter((row) => !zeroTime(row && row.exit_time))
         .sort((left, right) => {
-          const leftOpen = zeroTime(left && left.exit_time);
-          const rightOpen = zeroTime(right && right.exit_time);
-          if (leftOpen !== rightOpen) return leftOpen ? -1 : 1;
-          const leftValue = analysisTradeTimestamp(left, leftOpen ? "entry_time" : "exit_time") || 0;
-          const rightValue = analysisTradeTimestamp(right, rightOpen ? "entry_time" : "exit_time") || 0;
+          const leftValue = analysisTradeTimestamp(left, "exit_time") || 0;
+          const rightValue = analysisTradeTimestamp(right, "exit_time") || 0;
           return rightValue - leftValue;
         });
     }
@@ -7537,7 +7536,6 @@ const tvbotHTML = `<!doctype html>
       }
       const rawTrades = analysisTradesForActiveExchange();
       const trades = analysisTradesForDisplay();
-      const openTradeCount = rawTrades.filter((row) => zeroTime(row && row.exit_time)).length;
       const totalPages = Math.max(1, Math.ceil(trades.length / analysisTradePageSize));
       state.analysisTradePage = Math.min(Math.max(1, Number(state.analysisTradePage || 1)), totalPages);
       const start = (state.analysisTradePage - 1) * analysisTradePageSize;
@@ -7546,8 +7544,7 @@ const tvbotHTML = `<!doctype html>
       rowsEl.innerHTML = pageRows.map((row) => {
         return "<tr>" + columns.map((col) => analysisTradeCellHTML(col, row)).join("") + "</tr>";
       }).join("") || '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">暂无 ' + escapeHTML(label) + ' 下单盈亏记录</td></tr>';
-      const openTradeLabel = openTradeCount ? "，含未平仓开仓成交 " + openTradeCount + " 条" : "";
-      if (status) status.textContent = trades.length ? (state.analysisTradeAggregate ? ("共 " + trades.length + " 组（原始 " + rawTrades.length + " 条）" + openTradeLabel) : ("共 " + trades.length + " 条" + openTradeLabel)) : "-";
+      if (status) status.textContent = trades.length ? (state.analysisTradeAggregate ? ("共 " + trades.length + " 组（原始 " + rawTrades.length + " 条）") : ("共 " + trades.length + " 条")) : "-";
       if (pageInfo) pageInfo.textContent = trades.length ? ("第 " + state.analysisTradePage + " / " + totalPages + " 页") : "-";
       if (prev) prev.disabled = state.analysisTradePage <= 1;
       if (next) next.disabled = state.analysisTradePage >= totalPages;
