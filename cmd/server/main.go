@@ -106,7 +106,10 @@ func main() {
 		}
 	}()
 	<-ctx.Done()
-	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// Long-lived SSE clients and in-flight exchange requests need a bounded
+	// graceful-drain window. Fifteen seconds was shorter than the normal
+	// Binance execution timeout and caused avoidable shutdown errors.
+	shutdown, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdown); err != nil {
 		log.Error("shutdown failed", "error", err)

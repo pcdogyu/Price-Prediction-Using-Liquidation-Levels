@@ -196,7 +196,7 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 		if signal.Action == trading.ActionShort {
 			req.Size = "-" + qty
 		}
-		ack, placeErr := client.PlaceOrder(ctx, req)
+		ack, placeErr := t.placeLayerOrder(ctx, client, req, signal.Action, contract)
 		layer.ClOrdID = textID
 		layer.OrdID = ack.IDString()
 		if layer.OrdID != "" {
@@ -231,6 +231,60 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 		return result, fmt.Errorf("Gate layered order partially submitted: %w", firstErr)
 	}
 	return result, nil
+}
+
+// placeLayerOrder retries a protected Gate market leg as an IOC limit at the
+// current executable quote. Gate can reject a market order when its mark-price
+// slippage guard is crossed between the ticker snapshot and submission; the
+// old code then continued with later layers and left a partial, misleading
+// result. The fallback preserves the intended immediate-or-cancel behavior
+// while using the current bid/ask as the protection boundary.
+func (t Trader) placeLayerOrder(ctx context.Context, client Client, req PlaceOrderRequest, action trading.Side, contract Contract) (Order, error) {
+	ack, err := client.PlaceOrder(ctx, req)
+	if err == nil || req.Price != "0" || !isGateMarketPriceTooDeviated(err) {
+		return ack, err
+	}
+	ticker, tickerErr := client.Ticker(ctx, contract.Name)
+	if tickerErr != nil {
+		return ack, fmt.Errorf("Gate market layer rejected by price protection: %w; fresh quote unavailable: %v", err, tickerErr)
+	}
+	price, priceErr := gateMarketableLayerPrice(ticker, contract.OrderPriceRound, action)
+	if priceErr != nil {
+		return ack, fmt.Errorf("Gate market layer rejected by price protection: %w; IOC limit price unavailable: %v", err, priceErr)
+	}
+	fallback := req
+	fallback.Price = price
+	fallback.TIF = "ioc"
+	ack, fallbackErr := client.PlaceOrder(ctx, fallback)
+	if fallbackErr != nil {
+		return ack, fmt.Errorf("Gate market layer rejected by price protection: %w; IOC limit fallback at %s failed: %v", err, price, fallbackErr)
+	}
+	if t.Logger != nil {
+		t.Logger.Warn("Gate market layer switched to protected IOC limit", "contract", contract.Name, "price", price, "error", err)
+	}
+	return ack, nil
+}
+
+func isGateMarketPriceTooDeviated(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToUpper(err.Error()), "MARKET_PRICE_TOO_DEVIATED")
+}
+
+func gateMarketableLayerPrice(ticker Ticker, priceRound string, action trading.Side) (string, error) {
+	price := strings.TrimSpace(ticker.LowestAsk)
+	if action == trading.ActionShort {
+		price = strings.TrimSpace(ticker.HighestBid)
+	}
+	if price == "" {
+		price = strings.TrimSpace(ticker.Last)
+	}
+	value, err := strconv.ParseFloat(price, 64)
+	if err != nil || value <= 0 {
+		return "", fmt.Errorf("invalid Gate executable quote %q", price)
+	}
+	return formatGateLayerPrice(value, priceRound, action), nil
 }
 
 func gateRealtimePrice(ctx context.Context, client Client, contract string) (float64, error) {

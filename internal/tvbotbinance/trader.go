@@ -627,7 +627,7 @@ func (t Trader) placeRiskOrders(ctx context.Context, client Client, signal tradi
 		ReduceOnly:       order.PositionSide == "",
 	}, filters)
 	if err != nil {
-		return out, err
+		return t.cleanupBinanceRiskOrders(ctx, client, tpOrders, err)
 	}
 	out = append(out, tpOrders...)
 	slOrders, err := t.placeSplitAlgoOrder(ctx, client, AlgoOrderRequest{
@@ -642,10 +642,50 @@ func (t Trader) placeRiskOrders(ctx context.Context, client Client, signal tradi
 		ReduceOnly:       order.PositionSide == "",
 	}, filters)
 	if err != nil {
-		return out, err
+		return t.cleanupBinanceRiskOrders(ctx, client, append(out, slOrders...), err)
 	}
 	out = append(out, slOrders...)
 	return out, nil
+}
+
+// cleanupBinanceRiskOrders removes protection orders that were created for an
+// entry whose complete TP/SL pair could not be installed. Without this
+// rollback, a failed SL after a successful TP leaves an orphaned algo order;
+// repeated layered entries eventually hit Binance's -4045 max-stop-order
+// limit and make every later entry partially submitted.
+func (t Trader) cleanupBinanceRiskOrders(ctx context.Context, client Client, orders []trading.RiskOrderResult, originalErr error) ([]trading.RiskOrderResult, error) {
+	if len(orders) == 0 {
+		return nil, originalErr
+	}
+	var cleanupErr error
+	for _, order := range orders {
+		algoID := int64(0)
+		if parsed, err := strconv.ParseInt(strings.TrimSpace(order.AlgoID), 10, 64); err == nil && parsed > 0 {
+			algoID = parsed
+		}
+		clientAlgoID := strings.TrimSpace(order.ClientAlgoID)
+		if algoID == 0 && clientAlgoID == "" {
+			continue
+		}
+		if _, err := client.CancelAlgoOrder(ctx, algoID, clientAlgoID); err != nil && !binanceAlgoOrderCancellationAlreadyDone(err) && cleanupErr == nil {
+			cleanupErr = err
+		}
+	}
+	if cleanupErr != nil {
+		return orders, fmt.Errorf("%w; failed to clean up partially submitted Binance risk orders: %v", originalErr, cleanupErr)
+	}
+	return nil, fmt.Errorf("%w; partially submitted Binance risk orders were canceled", originalErr)
+}
+
+func binanceAlgoOrderCancellationAlreadyDone(err error) bool {
+	if err == nil {
+		return false
+	}
+	if IsAPIErrorCode(err, -2011, -2013) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unknown order") || strings.Contains(message, "order does not exist")
 }
 
 func validateBinanceRisk(risk trading.Risk) error {
@@ -677,7 +717,7 @@ func (t Trader) placeTrailingStop(ctx context.Context, client Client, signal tra
 		closeSide = "BUY"
 	}
 	trailingID := binanceClientIDWithSuffix(order.NewClientOrderID, "TS")
-	return t.placeSplitAlgoOrder(ctx, client, AlgoOrderRequest{
+	orders, err := t.placeSplitAlgoOrder(ctx, client, AlgoOrderRequest{
 		Symbol:           order.Symbol,
 		Side:             closeSide,
 		PositionSide:     order.PositionSide,
@@ -688,6 +728,10 @@ func (t Trader) placeTrailingStop(ctx context.Context, client Client, signal tra
 		NewClientOrderID: trailingID,
 		ReduceOnly:       order.PositionSide == "",
 	}, filters)
+	if err != nil {
+		return t.cleanupBinanceRiskOrders(ctx, client, orders, err)
+	}
+	return orders, nil
 }
 
 func (t Trader) Check(ctx context.Context, cfg trading.RuntimeConfig) (map[string]any, error) {

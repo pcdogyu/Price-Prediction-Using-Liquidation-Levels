@@ -237,7 +237,7 @@ func tvOrderIntentTokens(text string) []string {
 }
 
 func (s *Server) executePositionCloseSignal(signalID string, signal trading.Signal, cfg config.Config) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), positionCloseSignalTimeout(signal.TargetExchange))
 	defer cancel()
 	result, err := s.closePositionFromSignal(ctx, signal, cfg)
 	if errors.Is(err, errPositionNotOpen) && isManualLiquidationTrigger(signal) {
@@ -306,6 +306,13 @@ func (s *Server) executePositionCloseSignal(signalID string, signal trading.Sign
 	); err != nil && s.Logger != nil {
 		s.Logger.Error("failed to record TP/SL webhook coinpair cooldown", "signal_id", signalID, "coinpair", signal.Coinpair, "source", cooldownSource, "error", err)
 	}
+}
+
+func positionCloseSignalTimeout(exchange string) time.Duration {
+	if trading.NormalizeExchange(exchange) == trading.ExchangeBinance {
+		return asyncPositionCloseExecutionLimit
+	}
+	return asyncOrderExecutionTimeout
 }
 
 func isManualLiquidationTrigger(signal trading.Signal) bool {
@@ -512,6 +519,13 @@ func currentBinanceOpenPositionByDirection(ctx context.Context, client binance.C
 	direction = strings.ToLower(strings.TrimSpace(direction))
 	positions, err := client.Positions(ctx, instID)
 	if err != nil {
+		// Binance retains close signals for a short period. A delisted or
+		// otherwise retired symbol returns -1121 instead of an empty position
+		// list; treat that as a non-actionable stale close so it is removed by
+		// the caller instead of being logged as a repeated execution failure.
+		if binance.IsAPIErrorCode(err, -1121) {
+			return okx.Position{}, fmt.Errorf("%w: Binance symbol %s is no longer available", errPositionNotOpen, instID)
+		}
 		return okx.Position{}, err
 	}
 	for _, raw := range positions {

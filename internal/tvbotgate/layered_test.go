@@ -71,6 +71,54 @@ func TestTraderPlacesSixLayeredGateOrdersFromOneTicker(t *testing.T) {
 	}
 }
 
+func TestTraderRetriesGateMarketLayerWithExecutableIOCQuote(t *testing.T) {
+	var orders []PlaceOrderRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/futures/usdt/contracts/BTC_USDT":
+			_, _ = w.Write([]byte(`{"name":"BTC_USDT","quanto_multiplier":"0.001","order_size_min":"1","order_size_max":"100000","order_price_round":"0.1","last_price":"100","status":"trading"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/futures/usdt/tickers":
+			if r.URL.Query().Get("contract") != "" {
+				_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","last":"100","highest_bid":"99.5","lowest_ask":"100.5"}]`))
+			} else {
+				_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","last":"100"}]`))
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/futures/usdt/positions/BTC_USDT/set_leverage":
+			_, _ = w.Write([]byte(`{"contract":"BTC_USDT","lever":"5"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/futures/usdt/orders":
+			var req PlaceOrderRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			orders = append(orders, req)
+			if len(orders) == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"label":"MARKET_PRICE_TOO_DEVIATED","message":"market price protection"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":987654,"contract":"BTC_USDT","status":"open"}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Trading.GateDemoBaseURL = server.URL
+	cfg.Trading.OrderType = string(trading.OrderTypeLayered)
+	cfg.Normalize()
+	result, err := (Trader{Credentials: Credentials{APIKey: "key", SecretKey: "secret"}, HTTPClient: server.Client()}).ExecuteSignal(context.Background(), trading.Signal{
+		Action: trading.ActionLong, TargetExchange: trading.ExchangeGate, Coinpair: "BTC", Price: trading.NewFlexibleFloat(105), Amount: trading.NewFlexibleFloat(10000), Leverage: 5, PositionEffect: trading.PositionEffectOpen,
+	}, cfg)
+	if err != nil || result.Partial {
+		t.Fatalf("protected IOC retry should complete layered order, err=%v result=%#v", err, result)
+	}
+	if len(orders) != 7 || orders[0].Price != "0" || orders[1].Price != "100.5" || orders[1].TIF != "ioc" {
+		t.Fatalf("unexpected market retry requests: %#v", orders)
+	}
+}
+
 func almostEqualGatePrice(raw string, want float64) bool {
 	got, err := strconv.ParseFloat(raw, 64)
 	return err == nil && math.Abs(got-want) < 1e-9

@@ -478,6 +478,26 @@ const tvbotHTML = `<!doctype html>
       transform: none;
       box-shadow: none;
     }
+    .btn[aria-busy="true"], .btn.is-saving {
+      cursor: wait;
+      opacity: .8;
+    }
+    .btn[aria-busy="true"]::before, .btn.is-saving::before {
+      content: "";
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      margin-right: 7px;
+      vertical-align: -2px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: tvbot-button-spin .75s linear infinite;
+    }
+    @keyframes tvbot-button-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .btn[aria-busy="true"]::before, .btn.is-saving::before { animation: none; }
+    }
     nav button {
       min-height: 34px;
       padding: 7px 10px;
@@ -2369,7 +2389,7 @@ const tvbotHTML = `<!doctype html>
           <div class="exchange-tabs" id="api-key-exchange-tabs">
             <button type="button" data-api-key-exchange="okx" aria-selected="true">OKX</button>
             <button type="button" data-api-key-exchange="binance">Binance</button>
-            <button type="button" data-api-key-exchange="gate">Gate</button>
+            <button type="button" data-api-key-exchange="gate">Gate.io</button>
           </div>
         </div>
       </div>
@@ -3204,7 +3224,7 @@ const tvbotHTML = `<!doctype html>
     function exchangeLabel(value) {
       const exchange = normalizeExchange(value);
       if (exchange === "binance") return "Binance";
-      if (exchange === "gate") return "Gate";
+      if (exchange === "gate") return "Gate.io";
       return "OKX";
     }
 
@@ -5537,6 +5557,7 @@ const tvbotHTML = `<!doctype html>
       const testMatches = test && state.apiKeyTestExchange === exchange && state.apiKeyTestEnv === env && state.apiKeyTestFingerprint === apiKeyFormFingerprint(exchange, env) && (!selected || !testID || selected === testID || test.api_id === "input");
       if (testMatches) {
         const balance = test.usdt_balance || {};
+        rows.push(["连接测试", "已通过"]);
         rows.push(["测试 API", test.api_id || testID || "-"]);
         if (test.usdt_balance_found && balance) {
           const suffix = state.apiKeyTestStale ? "（上次结果）" : "";
@@ -8528,18 +8549,30 @@ const tvbotHTML = `<!doctype html>
       const exchange = normalizeExchange(state.apiKeyExchange);
       const env = state.apiKeyEnv === "live" ? "live" : "demo";
       const body = apiKeyTestBody(exchange, env, $("key-id").value.trim(), true);
-      clearAPIKeyTestState(exchange);
-      const result = await requestAPIKeyTest(body);
-      applyAPIKeyTestResult(result, exchange, env, body.id || state.selectedAPIID || result.api_id || "");
-      if (!apiKeyTestHasNormalBalance(result)) {
-        const message = result && result.ok === true && result.usdt_balance_found !== true
-          ? "API 测试成功，但未返回有效的 USDT 余额"
-          : "API 测试未返回有效的 USDT 余额";
-        state.apiKeyTestError = { exchange: exchange, env: env, api_id: body.id || state.selectedAPIID || "", message: message };
-        renderAPIKeyStatus(state.selectedAPIID);
-        throw new Error(message);
+      const button = $("test-api-keys");
+      button.disabled = true;
+      button.classList.add("is-saving");
+      button.setAttribute("aria-busy", "true");
+      button.textContent = "测试中…";
+      try {
+        clearAPIKeyTestState(exchange);
+        const result = await requestAPIKeyTest(body);
+        applyAPIKeyTestResult(result, exchange, env, body.id || state.selectedAPIID || result.api_id || "");
+        if (!apiKeyTestHasNormalBalance(result)) {
+          const message = result && result.ok === true && result.usdt_balance_found !== true
+            ? "API 测试成功，但未返回有效的 USDT 余额"
+            : "API 测试未返回有效的 USDT 余额";
+          state.apiKeyTestError = { exchange: exchange, env: env, api_id: body.id || state.selectedAPIID || "", message: message };
+          renderAPIKeyStatus(state.selectedAPIID);
+          throw new Error(message);
+        }
+        toast(exchangeLabel(exchange) + " 连接测试通过，USDT 余额正常");
+      } finally {
+        button.disabled = false;
+        button.classList.remove("is-saving");
+        button.removeAttribute("aria-busy");
+        button.textContent = "测试 API";
       }
-      toast(exchangeLabel(exchange) + " API 可用，USDT 余额正常");
     }
 
     async function makeTemplate() {

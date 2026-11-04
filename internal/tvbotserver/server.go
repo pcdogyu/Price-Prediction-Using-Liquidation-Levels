@@ -119,6 +119,12 @@ const (
 	adminSessionCookieName    = "tvbot_admin_session"
 	adminSessionTTL           = 12 * time.Hour
 	symbolCatalogSyncInterval = 24 * time.Hour
+	// Exchange execution can be queued behind the process-wide Binance REST
+	// scheduler and a layered order may perform several account, market-data,
+	// entry, and protection requests. Twenty seconds is shorter than that
+	// normal execution budget and turns slow-but-valid requests into failures.
+	asyncOrderExecutionTimeout       = 60 * time.Second
+	asyncPositionCloseExecutionLimit = 75 * time.Second
 )
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -629,7 +635,7 @@ func (s *Server) execute(signalID string, signal trading.Signal, cfg config.Conf
 		_ = s.Orders.MarkFailed(signalID, errors.New("executor is not configured"), s.now())
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), asyncOrderExecutionTimeout)
 	defer cancel()
 	result, err := s.Executor.ExecuteSignal(ctx, signal, cfg)
 	result.SignalID = signalID

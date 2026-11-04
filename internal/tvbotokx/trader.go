@@ -554,6 +554,7 @@ func (t Trader) checkClient(ctx context.Context, cfg trading.RuntimeConfig, clie
 	usdtBalance, usdtBalanceFound := usdtBalanceFromAccount(balanceData)
 	return map[string]any{
 		"ok":                 true,
+		"exchange":           trading.ExchangeOKX,
 		"api_id":             apiID,
 		"demo":               cfg.DemoTradingHeaderEnabled(),
 		"base_url":           cfg.OKXBaseURL(),

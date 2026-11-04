@@ -3159,6 +3159,52 @@ func TestTVBotGateAPIKeysSaveAndTest(t *testing.T) {
 	}
 }
 
+func TestTVBotTenantGateAPIKeyConnectionTest(t *testing.T) {
+	gateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v4/futures/usdt/accounts":
+			if r.Header.Get("KEY") != "tenant-gate-key" {
+				t.Fatalf("tenant Gate API key was not used: %q", r.Header.Get("KEY"))
+			}
+			_, _ = w.Write([]byte(`{"currency":"USDT","total":"1000.25","available":"900.25"}`))
+		case "/api/v4/futures/usdt/contracts":
+			_, _ = w.Write([]byte(`[{"name":"BTC_USDT","status":"trading"}]`))
+		default:
+			t.Fatalf("unexpected Gate path %s", r.URL.Path)
+		}
+	}))
+	defer gateServer.Close()
+
+	srv := newTestServer(t)
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.GateDemoBaseURL = gateServer.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	gateStore, err := gate.NewCredentialStore(filepath.Join(t.TempDir(), "alice-gate.json"), gate.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gateStore.UpdateAccount(gate.CredentialAccountUpdate{
+		ID: "alice-gate", Active: true,
+		Credentials: gate.Credentials{APIKey: "tenant-gate-key", SecretKey: "tenant-gate-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.UserCredentialResolver = testUserCredentialResolver{
+		"alice": {Gate: gateStore},
+	}
+	srv.RequireUnifiedUser = func(http.ResponseWriter, *http.Request) bool { return true }
+	srv.CurrentUser = func(r *http.Request) (string, bool) { return r.Header.Get("X-Test-User"), true }
+
+	req := httptest.NewRequest(http.MethodPost, "/tvbot/api-keys/test", strings.NewReader(`{"exchange":"gate","env":"demo","id":"alice-gate"}`))
+	req.Header.Set("X-Test-User", "alice")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !bytes.Contains(rr.Body.Bytes(), []byte(`"exchange":"gate"`)) || !bytes.Contains(rr.Body.Bytes(), []byte(`"api_id":"alice-gate"`)) {
+		t.Fatalf("tenant Gate connection test failed: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestTVBotAPIKeysSeparateLiveAndDemoCredentials(t *testing.T) {
 	srv := newTestServer(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -6600,7 +6646,7 @@ func TestTVBotAPIKeysTestUsesSelectedStoredAccount(t *testing.T) {
 	if seenAPIKey != "backup-key" {
 		t.Fatalf("used api key %q", seenAPIKey)
 	}
-	if !bytes.Contains(rr.Body.Bytes(), []byte(`"api_id":"backup"`)) {
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"exchange":"okx"`)) || !bytes.Contains(rr.Body.Bytes(), []byte(`"api_id":"backup"`)) {
 		t.Fatalf("response missing api id: %s", rr.Body.String())
 	}
 	var resp struct {
@@ -6618,6 +6664,28 @@ func TestTVBotAPIKeysTestUsesSelectedStoredAccount(t *testing.T) {
 	}
 	if !resp.Found || resp.Balance.Ccy != "USDT" || resp.Balance.AvailableEquity != "888.5" || resp.Balance.Equity != "999.75" || resp.Balance.FrozenBalance != "11.25" || resp.Balance.UpdateTime != "1784886000000" {
 		t.Fatalf("bad usdt balance: %#v", resp)
+	}
+}
+
+func TestCurrentBinanceOpenPositionTreatsInvalidSymbolAsNotOpen(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fapi/v3/positionRisk" {
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":-1121,"msg":"Invalid symbol."}`))
+	}))
+	defer ts.Close()
+
+	client := binance.Client{
+		BaseURL:     ts.URL,
+		Credentials: binance.Credentials{APIKey: "key", SecretKey: "secret"},
+		HTTPClient:  ts.Client(),
+	}
+	_, err := currentBinanceOpenPositionByDirection(context.Background(), client, "BTWUSDT", trading.PositionSideLong)
+	if !errors.Is(err, errPositionNotOpen) {
+		t.Fatalf("invalid symbol should be treated as a stale non-open position, got %v", err)
 	}
 }
 

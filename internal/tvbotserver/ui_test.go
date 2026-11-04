@@ -84,6 +84,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		t.Fatalf("API key page should expose one account form with environment select before account name: env=%d name=%d save=%d test=%d", environmentSelect, accountName, saveButton, testButton)
 	}
 	for _, want := range []string{
+		`data-api-key-exchange="gate">Gate.io</button>`,
 		`function fillAPIForm(id, preserveCredentials)`,
 		`renderAPIKeys(true);`,
 		`function apiKeySaveBody(exchange, env, active)`,
@@ -95,6 +96,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`apiKeyTestEnv`,
 		`apiKeyTestStale`,
 		`apiKeyTestError`,
+		`rows.push(["连接测试", "已通过"]);`,
 		`apiKeyTestFingerprint`,
 		`apiKeyTestHasNormalBalance`,
 		`apiKeyTestMatchesCurrentForm`,
