@@ -192,7 +192,7 @@ func TestRenderTVBotPositionSyncIndicator(t *testing.T) {
 		t.Fatalf("position load function boundary is missing: start=%d end=%d", loadStart, loadEnd)
 	}
 	loadFunction := page[loadStart : loadStart+loadEnd]
-	if strings.Index(loadFunction, `setPositionSyncStatus("syncing")`) >= strings.Index(loadFunction, `setPositionSyncStatus(positionSyncStatusForResult(results[0]))`) {
+	if strings.Index(loadFunction, `setPositionSyncStatus("syncing")`) >= strings.Index(loadFunction, `const status = positionSyncStatusForResult(results[0]);`) {
 		t.Fatal("position loading should enter syncing state before applying the response state")
 	}
 }
