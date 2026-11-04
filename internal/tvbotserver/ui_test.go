@@ -137,6 +137,48 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotPositionSyncIndicator(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=positions", nil))
+	summary := strings.Index(page, `<span class="exchange-summary" id="position-exchange-summary">`)
+	indicator := strings.Index(page, `<span class="position-sync-indicator" id="position-sync-indicator"`)
+	if summary < 0 || indicator < 0 || indicator <= summary {
+		t.Fatalf("position sync indicator should follow the exchange summary: summary=%d indicator=%d", summary, indicator)
+	}
+	for _, want := range []string{
+		`data-status="syncing"`,
+		`role="status"`,
+		`aria-label="持仓同步中"`,
+		`.position-sync-indicator[data-status="synced"]`,
+		`.position-sync-indicator[data-status="syncing"]`,
+		`.position-sync-indicator[data-status="stale"]`,
+		`.position-sync-indicator[data-status="failed"]`,
+		`@keyframes position-sync-indicator-blink`,
+		`const positionSyncStaleAfterMs = 60 * 1000;`,
+		`function setPositionSyncStatus(status, message)`,
+		`function positionSyncStatusForResult(result)`,
+		`setPositionSyncStatus("syncing");`,
+		`setPositionSyncStatus(positionSyncStatusForResult(results[0]));`,
+		`result.stale`,
+		`Date.now() - refreshedAt > positionSyncStaleAfterMs`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("position sync indicator is missing %q", want)
+		}
+	}
+	loadStart := strings.Index(page, "async function loadPositions(forceRefresh)")
+	if loadStart < 0 {
+		t.Fatalf("position load function start is missing: start=%d", loadStart)
+	}
+	loadEnd := strings.Index(page[loadStart:], "\n    function positionSnapshot")
+	if loadEnd < 0 {
+		t.Fatalf("position load function boundary is missing: start=%d end=%d", loadStart, loadEnd)
+	}
+	loadFunction := page[loadStart : loadStart+loadEnd]
+	if strings.Index(loadFunction, `setPositionSyncStatus("syncing")`) >= strings.Index(loadFunction, `setPositionSyncStatus(positionSyncStatusForResult(results[0]))`) {
+		t.Fatal("position loading should enter syncing state before applying the response state")
+	}
+}
+
 func TestRenderTVBotHTMLRedirectsUnauthorizedAPICallsToLogin(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=positions", nil))
 	for _, want := range []string{

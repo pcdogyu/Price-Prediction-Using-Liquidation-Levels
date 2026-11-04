@@ -560,6 +560,10 @@ const tvbotHTML = `<!doctype html>
       #save-position-monitor.is-saved {
         animation: none;
       }
+      .position-sync-indicator[data-status="syncing"] {
+        animation: none;
+        opacity: 1;
+      }
     }
     main {
       width: 100%;
@@ -1076,6 +1080,46 @@ const tvbotHTML = `<!doctype html>
       color: var(--muted);
       background: var(--control-bg);
       font-weight: 650;
+    }
+    .position-sync-indicator {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      flex: 0 0 12px;
+      border: 1px solid var(--muted);
+      border-radius: 50%;
+      background: var(--muted);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--muted) 14%, transparent);
+    }
+    .position-sync-indicator[data-status="synced"] {
+      border-color: var(--green);
+      background: var(--green);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 14%, transparent);
+    }
+    .position-sync-indicator[data-status="syncing"] {
+      border-color: var(--blue);
+      background: var(--blue);
+      animation: position-sync-indicator-blink 1s ease-in-out infinite;
+    }
+    .position-sync-indicator[data-status="stale"] {
+      border-color: var(--amber);
+      background: var(--amber);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--amber) 14%, transparent);
+    }
+    .position-sync-indicator[data-status="failed"] {
+      border-color: var(--red);
+      background: var(--red);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 14%, transparent);
+    }
+    @keyframes position-sync-indicator-blink {
+      0%, 100% {
+        opacity: .45;
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 14%, transparent);
+      }
+      50% {
+        opacity: 1;
+        box-shadow: 0 0 0 5px color-mix(in srgb, var(--blue) 0%, transparent);
+      }
     }
     .symbol-controls {
       display: flex;
@@ -2101,6 +2145,7 @@ const tvbotHTML = `<!doctype html>
         <h2>当前持仓</h2>
         <div class="analysis-controls">
           <span class="exchange-summary" id="position-exchange-summary">OKX / Binance USDⓈ-M</span>
+          <span class="position-sync-indicator" id="position-sync-indicator" data-status="syncing" role="status" aria-label="持仓同步中" title="持仓同步中"></span>
           <button class="btn danger" type="button" id="close-all-positions" disabled>一键平仓</button>
           <button class="btn primary" type="button" id="refresh-positions">刷新持仓</button>
         </div>
@@ -2741,6 +2786,7 @@ const tvbotHTML = `<!doctype html>
       analysisPositionsError: "",
       positions: null,
       positionsError: "",
+      positionSync: { status: "syncing", message: "持仓同步中" },
       pendingOrders: null,
       pendingOrderGroup: "normal",
       localPendingLimitCloses: [],
@@ -2771,6 +2817,7 @@ const tvbotHTML = `<!doctype html>
     let tableColumnDropSuppressClick = false;
     let templateTitleGeneratedAt = new Date();
     const positionViewPollIntervalMs = 10000;
+    const positionSyncStaleAfterMs = 60 * 1000;
     const pendingLimitCloseOrderCacheMs = 90000;
     const missingPositionEntrySyncIntervalMs = 180000;
     const analysisBalanceRefreshIntervalMs = 5 * 60 * 1000;
@@ -3317,6 +3364,7 @@ const tvbotHTML = `<!doctype html>
       state.analysisPositions = null;
       state.analysisPositionsError = "";
       state.positions = null;
+      setPositionSyncStatus("syncing");
       state.pendingOrders = null;
       state.pendingOrderGroup = "normal";
       try {
@@ -4437,12 +4485,19 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadPositions(forceRefresh) {
-      const results = await Promise.all([loadPositionExchange(activeExchange(), !!forceRefresh)]);
-      const snapshot = positionSnapshot(results);
-      state.positions = snapshot;
-      syncAnalysisPositionSnapshot(snapshot);
-      state.positionsError = combinedErrors(results);
-      renderPositions();
+      setPositionSyncStatus("syncing");
+      try {
+        const results = await Promise.all([loadPositionExchange(activeExchange(), !!forceRefresh)]);
+        setPositionSyncStatus(positionSyncStatusForResult(results[0]));
+        const snapshot = positionSnapshot(results);
+        state.positions = snapshot;
+        syncAnalysisPositionSnapshot(snapshot);
+        state.positionsError = combinedErrors(results);
+        renderPositions();
+      } catch (err) {
+        setPositionSyncStatus("failed");
+        throw err;
+      }
     }
 
     function positionSnapshot(results) {
@@ -5677,6 +5732,42 @@ const tvbotHTML = `<!doctype html>
       summary.textContent = exchangeLabel(exchange) + " " + apiDisplayName(apiID, exchange);
     }
 
+    function setPositionSyncStatus(status, message) {
+      const allowed = ["synced", "syncing", "stale", "failed"];
+      const normalized = allowed.includes(status) ? status : "failed";
+      const messages = {
+        synced: "持仓已同步",
+        syncing: "持仓同步中",
+        stale: "持仓信息超过 1 分钟",
+        failed: "持仓同步失败"
+      };
+      state.positionSync = { status: normalized, message: message || messages[normalized] };
+      renderPositionSyncStatus();
+    }
+
+    function renderPositionSyncStatus() {
+      const indicator = $("position-sync-indicator");
+      if (!indicator) return;
+      const status = state.positionSync || { status: "syncing", message: "持仓同步中" };
+      indicator.dataset.status = status.status;
+      indicator.title = status.message;
+      indicator.setAttribute("aria-label", status.message);
+    }
+
+    function positionSyncStatusForResult(result) {
+      if (!result || result.ok !== true || result.error || result.stale) {
+        return { status: "failed", message: "持仓同步失败" };
+      }
+      const refreshedAt = new Date(result.refreshed_at || "").getTime();
+      if (!Number.isFinite(refreshedAt) || refreshedAt <= 0) {
+        return { status: "failed", message: "持仓同步失败" };
+      }
+      if (Date.now() - refreshedAt > positionSyncStaleAfterMs) {
+        return { status: "stale", message: "持仓信息超过 1 分钟" };
+      }
+      return { status: "synced", message: "持仓已同步" };
+    }
+
     function positionSideText(posSide, pos) {
       const kind = positionSideKind(posSide, pos);
       if (kind === "long") return "多单";
@@ -6296,6 +6387,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function renderPositions() {
+      renderPositionSyncStatus();
       renderTableStructure("positions");
       const columnDefs = currentTableColumnDefs("positions");
       const colspan = tableColumnCount("positions");
