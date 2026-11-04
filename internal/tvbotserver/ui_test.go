@@ -53,6 +53,8 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`平仓数量 " + minimum[1] + " 低于最小数量 " + minimum[2]`,
 		`id="position-monitor-enabled"`,
 		`enabled: $("position-monitor-enabled").checked`,
+		`id="position-monitor-sl-minutes"`,
+		`stop_loss_min_holding_minutes: Number($("position-monitor-sl-minutes").value)`,
 		`id="position-monitor-low-margin-enabled"`,
 		`low_margin_threshold_usdt: Number($("position-monitor-low-margin-threshold").value)`,
 		`id="position-monitor-active-exchanges"`,

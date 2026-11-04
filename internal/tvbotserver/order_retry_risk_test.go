@@ -139,14 +139,14 @@ func TestOrderRetryExecutesBinanceTPSLFromStoredRisk(t *testing.T) {
 	if orderForms[0].Get("symbol") != "BTCUSDT" || orderForms[0].Get("side") != "BUY" || orderForms[0].Get("type") != "MARKET" || orderForms[0].Get("quantity") != "0.004" {
 		t.Fatalf("bad retry order form: %#v", orderForms[0])
 	}
-	if len(algoForms) != 2 {
-		t.Fatalf("retry should create TP and SL algo orders, got %#v", algoForms)
+	if len(algoForms) != 1 {
+		t.Fatalf("retry should create only the immediately active TP algo order, got %#v", algoForms)
 	}
 	types := map[string]url.Values{}
 	for _, form := range algoForms {
 		types[form.Get("type")] = form
 	}
-	if types["TAKE_PROFIT_MARKET"].Get("side") != "SELL" || types["STOP_MARKET"].Get("side") != "SELL" {
+	if types["TAKE_PROFIT_MARKET"].Get("side") != "SELL" || types["STOP_MARKET"].Get("side") != "" {
 		t.Fatalf("bad retry algo forms: %#v", algoForms)
 	}
 }

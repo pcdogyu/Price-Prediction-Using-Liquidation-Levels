@@ -110,10 +110,11 @@ func (f FlexibleFloat) MarshalJSON() ([]byte, error) {
 }
 
 type Risk struct {
-	Type        RiskType       `json:"type"`
-	TPPct       *FlexibleFloat `json:"tp_pct,omitempty"`
-	SLPct       *FlexibleFloat `json:"sl_pct,omitempty"`
-	TrailingPct *FlexibleFloat `json:"trailing_pct,omitempty"`
+	Type                      RiskType       `json:"type"`
+	TPPct                     *FlexibleFloat `json:"tp_pct,omitempty"`
+	SLPct                     *FlexibleFloat `json:"sl_pct,omitempty"`
+	TrailingPct               *FlexibleFloat `json:"trailing_pct,omitempty"`
+	StopLossMinHoldingMinutes int            `json:"stop_loss_min_holding_minutes,omitempty"`
 }
 
 type Signal struct {

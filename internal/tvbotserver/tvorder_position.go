@@ -22,6 +22,27 @@ type tvOrderPositionSemantics struct {
 }
 
 var errMinProfitSpreadNotReached = errors.New("minimum profit spread has not been reached")
+var errMinStopLossHoldingNotReached = errors.New("minimum stop-loss holding time has not been reached")
+
+func isStopLossCloseSignal(signal trading.Signal) bool {
+	source, ok := webhookCloseCooldownSource(signal)
+	return ok && source == "stop_loss_webhook"
+}
+
+func enforceStopLossMinimumHolding(signal trading.Signal, cfg config.Config, position okx.Position, fills []positionEntryFill, fillErr error, allowPositionTimeFallback bool, now time.Time) error {
+	if !isStopLossCloseSignal(signal) || cfg.Trading.PositionMonitor.StopLossMinHoldingMinutes <= 0 {
+		return nil
+	}
+	entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, allowPositionTimeFallback)
+	if entryErr != "" {
+		return fmt.Errorf("%w: %s", errMinStopLossHoldingNotReached, entryErr)
+	}
+	heldFor := now.UTC().Sub(entryAt.UTC())
+	if heldFor < 0 || heldFor < time.Duration(cfg.Trading.PositionMonitor.StopLossMinHoldingMinutes)*time.Minute {
+		return fmt.Errorf("%w: held_for=%s required=%dm", errMinStopLossHoldingNotReached, heldFor, cfg.Trading.PositionMonitor.StopLossMinHoldingMinutes)
+	}
+	return nil
+}
 
 // enforceMinProfitSpread is the execution-side backstop for liquidation
 // preclose requests. The alert engine supplies the threshold, while TVBot reads
@@ -270,6 +291,8 @@ func (s *Server) executePositionCloseSignal(signalID string, signal trading.Sign
 		code := "position_close_failed"
 		if errors.Is(err, errMinProfitSpreadNotReached) {
 			code = "position_profit_gate"
+		} else if errors.Is(err, errMinStopLossHoldingNotReached) {
+			code = "stop_loss_min_hold"
 		}
 		_ = s.Orders.MarkFailedCode(signalID, code, err, s.now())
 		if s.Logger != nil {
@@ -383,6 +406,13 @@ func (s *Server) closeGatePositionFromSignal(ctx context.Context, signal trading
 	if strings.TrimSpace(found.Contract) == "" {
 		return trading.OrderResult{}, fmt.Errorf("%w: %s %s", errPositionNotOpen, contract, want)
 	}
+	if isStopLossCloseSignal(signal) {
+		position := gatePositionToOKX(found)
+		trades, fillErr := client.MyTrades(ctx, contract)
+		if err := enforceStopLossMinimumHolding(signal, cfg, position, gatePositionEntryFills(trades), fillErr, true, s.now()); err != nil {
+			return trading.OrderResult{}, err
+		}
+	}
 	if err := enforceMinProfitSpread(signal, found.EntryPrice); err != nil {
 		return trading.OrderResult{}, err
 	}
@@ -417,6 +447,12 @@ func (s *Server) closeOKXPositionFromSignal(ctx context.Context, signal trading.
 	position, err := currentOpenPositionByDirection(ctx, client, instID, signal.PositionSide)
 	if err != nil {
 		return trading.OrderResult{}, err
+	}
+	if isStopLossCloseSignal(signal) {
+		fills, fillErr := fetchOKXPositionEntryFills(ctx, client, "SWAP", []okx.Position{position}, s.now())
+		if err := enforceStopLossMinimumHolding(signal, cfg, position, fills, fillErr, true, s.now()); err != nil {
+			return trading.OrderResult{}, err
+		}
 	}
 	if err := enforceMinProfitSpread(signal, position.AvgPx); err != nil {
 		return trading.OrderResult{}, err
@@ -472,6 +508,12 @@ func (s *Server) closeBinancePositionFromSignal(ctx context.Context, signal trad
 	position, err := currentBinanceOpenPositionByDirection(ctx, client, symbol, signal.PositionSide)
 	if err != nil {
 		return trading.OrderResult{}, err
+	}
+	if isStopLossCloseSignal(signal) {
+		fills, fillErr := fetchBinancePositionEntryFills(ctx, client, symbol, []okx.Position{position}, s.now())
+		if err := enforceStopLossMinimumHolding(signal, cfg, position, fills, fillErr, false, s.now()); err != nil {
+			return trading.OrderResult{}, err
+		}
 	}
 	if err := enforceMinProfitSpread(signal, position.AvgPx); err != nil {
 		return trading.OrderResult{}, err

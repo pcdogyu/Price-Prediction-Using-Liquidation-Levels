@@ -54,9 +54,11 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 		return trading.OrderResult{}, err
 	}
 	orderSettings := cfg.OrderSettings().Normalize()
+	stopLossMinHoldingMinutes := signal.Risk.StopLossMinHoldingMinutes
 	if signal.Risk.Type == "" {
 		orderSettings.ApplyToSignal(&signal)
 	}
+	signal.Risk.StopLossMinHoldingMinutes = stopLossMinHoldingMinutes
 	if orderSettings.OrderType == trading.OrderTypeLayered && signal.PositionEffect != trading.PositionEffectClose {
 		return t.executeLayeredSignal(ctx, signal, cfg, orderSettings)
 	}
@@ -626,15 +628,18 @@ func AttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID string, le
 		if risk.TPPct == nil || risk.SLPct == nil || leverage <= 0 {
 			return nil
 		}
-		return []map[string]string{{
+		algo := map[string]string{
 			"attachAlgoClOrdId": attachAlgoClOrdID(clOrdID, "A"),
 			"tpTriggerRatio":    signedTPRatio(action, risk.TPPct.Value, leverage),
 			"tpOrdPx":           "-1",
 			"tpTriggerPxType":   "last",
-			"slTriggerRatio":    signedSLRatio(action, risk.SLPct.Value, leverage),
-			"slOrdPx":           "-1",
-			"slTriggerPxType":   "last",
-		}}
+		}
+		if risk.StopLossMinHoldingMinutes <= 0 {
+			algo["slTriggerRatio"] = signedSLRatio(action, risk.SLPct.Value, leverage)
+			algo["slOrdPx"] = "-1"
+			algo["slTriggerPxType"] = "last"
+		}
+		return []map[string]string{algo}
 	case trading.RiskTrailing:
 		if risk.TrailingPct == nil {
 			return nil
@@ -1005,15 +1010,18 @@ func fixedTPSLAttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID s
 	if tpTrigger == "" || slTrigger == "" || tpTrigger == "0" || slTrigger == "0" {
 		return nil
 	}
-	return []map[string]string{{
+	algo := map[string]string{
 		"attachAlgoClOrdId": attachAlgoClOrdID(clOrdID, "A"),
 		"tpTriggerPx":       tpTrigger,
 		"tpOrdPx":           "-1",
 		"tpTriggerPxType":   "last",
-		"slTriggerPx":       slTrigger,
-		"slOrdPx":           "-1",
-		"slTriggerPxType":   "last",
-	}}
+	}
+	if risk.StopLossMinHoldingMinutes <= 0 {
+		algo["slTriggerPx"] = slTrigger
+		algo["slOrdPx"] = "-1"
+		algo["slTriggerPxType"] = "last"
+	}
+	return []map[string]string{algo}
 }
 
 func fixedTPSLTriggerPrices(action trading.Side, tpPct, slPct, referencePx, tickSz float64, leverage int) (string, string) {

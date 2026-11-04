@@ -25,7 +25,9 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 		return trading.OrderResult{}, errors.New("live trading requires config env=live, GATE_ENV=live and ALLOW_LIVE_TRADING=true")
 	}
 	settings := cfg.OrderSettings().Normalize()
+	stopLossMinHoldingMinutes := signal.Risk.StopLossMinHoldingMinutes
 	settings.ApplyToSignal(&signal)
+	signal.Risk.StopLossMinHoldingMinutes = stopLossMinHoldingMinutes
 	if err := signal.Risk.Validate(); err != nil {
 		return trading.OrderResult{}, err
 	}

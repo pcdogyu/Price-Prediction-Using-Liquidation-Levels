@@ -47,7 +47,9 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 		return trading.OrderResult{}, fmt.Errorf("live trading requires config env=live, BINANCE_ENV=live and ALLOW_LIVE_TRADING=true")
 	}
 	orderSettings := cfg.OrderSettings().Normalize()
+	stopLossMinHoldingMinutes := signal.Risk.StopLossMinHoldingMinutes
 	orderSettings.ApplyToSignal(&signal)
+	signal.Risk.StopLossMinHoldingMinutes = stopLossMinHoldingMinutes
 	if orderSettings.OrderType == trading.OrderTypeLayered && signal.PositionEffect != trading.PositionEffectClose {
 		return t.executeLayeredSignal(ctx, signal, cfg, orderSettings)
 	}
@@ -585,6 +587,9 @@ func (t Trader) placeRiskOrders(ctx context.Context, client Client, signal tradi
 	case trading.RiskNone:
 		return nil, nil
 	case trading.RiskTrailing:
+		if risk.StopLossMinHoldingMinutes > 0 {
+			return nil, nil
+		}
 		return t.placeTrailingStop(ctx, client, signal, order, filters)
 	case trading.RiskTPSL:
 	default:
@@ -630,6 +635,12 @@ func (t Trader) placeRiskOrders(ctx context.Context, client Client, signal tradi
 		return t.cleanupBinanceRiskOrders(ctx, client, tpOrders, err)
 	}
 	out = append(out, tpOrders...)
+	if risk.StopLossMinHoldingMinutes > 0 {
+		if t.Logger != nil {
+			t.Logger.Info("binance stop-loss risk order deferred until minimum holding time", "symbol", order.Symbol, "minutes", risk.StopLossMinHoldingMinutes)
+		}
+		return out, nil
+	}
 	slOrders, err := t.placeSplitAlgoOrder(ctx, client, AlgoOrderRequest{
 		Symbol:           order.Symbol,
 		Side:             closeSide,

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -88,6 +89,8 @@ func testTVOrderTPSLSignalExecutesBinanceLimitClose(t *testing.T, positionAmount
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`[{"symbol":"ESPORTSUSDT","positionSide":"BOTH","positionAmt":"` + positionAmount + `","entryPrice":"0.02261","markPrice":"0.02264","unRealizedProfit":"8.86","liquidationPrice":"0.03","isolatedMargin":"508.81","notional":"5013.06","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":"ESPORTSUSDT","orderId":901,"price":"0.02261","qty":"221512","side":"SELL","positionSide":"BOTH","time":%d}]`, srv.now().Add(-time.Hour).UnixMilli())))
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"ESPORTSUSDT","status":"TRADING","pricePrecision":6,"quantityPrecision":0,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.000001"},{"filterType":"LOT_SIZE","minQty":"1","stepSize":"1"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":

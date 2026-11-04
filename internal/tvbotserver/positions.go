@@ -1105,6 +1105,17 @@ func positionMonitorHasRule(monitor config.PositionMonitorConfig) bool {
 	return monitor.TakeProfitPct > 0 || monitor.StopLossPct > 0 || monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled
 }
 
+func positionMonitorNeedsEntryTimeForPosition(position okx.Position, monitor config.PositionMonitorConfig) bool {
+	if monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled {
+		return true
+	}
+	if monitor.StopLossMinHoldingMinutes <= 0 || monitor.StopLossPct <= 0 {
+		return false
+	}
+	ratio, ok := positionMonitorUPLRatio(position)
+	return ok && ratio <= -monitor.StopLossPct/100
+}
+
 func (s *Server) scanOKXPositionMonitor(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig) {
 	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		if s.Logger != nil {
@@ -1146,7 +1157,14 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 	now := s.now()
 	var fills []positionEntryFill
 	var fillErr error
-	if monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled {
+	needsEntryTime := false
+	for _, position := range open {
+		if positionMonitorNeedsEntryTimeForPosition(position, monitor) {
+			needsEntryTime = true
+			break
+		}
+	}
+	if needsEntryTime {
 		fills, fillErr = s.cachedPositionEntryFills(
 			trading.ExchangeOKX+"|"+apiID+"|"+strings.TrimRight(client.BaseURL, "/")+"|SWAP",
 			now,
@@ -1162,8 +1180,8 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 	for _, position := range open {
 		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fills, fillErr, true)
 		if !hit {
-			if monitor.HoldingTimeCloseEnabled && entryErr != "" && s.Logger != nil {
-				s.Logger.Warn("OKX holding-time auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
+			if positionMonitorNeedsEntryTimeForPosition(position, monitor) && entryErr != "" && s.Logger != nil {
+				s.Logger.Warn("OKX position auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
 			}
 			continue
 		}
@@ -1260,8 +1278,21 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 	now := s.now()
 	fillsBySymbol := make(map[string][]positionEntryFill)
 	errorsBySymbol := make(map[string]error)
-	if monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled {
-		positionsBySymbol := positionsByInstID(open)
+	positionsBySymbol := positionsByInstID(open)
+	for symbol, symbolPositions := range positionsBySymbol {
+		filtered := symbolPositions[:0]
+		for _, position := range symbolPositions {
+			if positionMonitorNeedsEntryTimeForPosition(position, monitor) {
+				filtered = append(filtered, position)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(positionsBySymbol, symbol)
+			continue
+		}
+		positionsBySymbol[symbol] = filtered
+	}
+	if len(positionsBySymbol) > 0 {
 		for symbol, symbolPositions := range positionsBySymbol {
 			fills, fillErr := s.cachedPositionEntryFills(
 				trading.ExchangeBinance+"|"+apiID+"|"+strings.TrimRight(client.BaseURL, "/")+"|"+symbol,
@@ -1284,8 +1315,8 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 		symbol := strings.ToUpper(strings.TrimSpace(position.InstID))
 		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fillsBySymbol[symbol], errorsBySymbol[symbol], false)
 		if !hit {
-			if monitor.HoldingTimeCloseEnabled && entryErr != "" && s.Logger != nil {
-				s.Logger.Warn("Binance holding-time auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
+			if positionMonitorNeedsEntryTimeForPosition(position, monitor) && entryErr != "" && s.Logger != nil {
+				s.Logger.Warn("Binance position auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
 			}
 			continue
 		}
@@ -1391,7 +1422,14 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 	now := s.now()
 	fillsByContract := make(map[string][]positionEntryFill)
 	errorsByContract := make(map[string]error)
-	if monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled {
+	needsEntryTime := false
+	for _, item := range open {
+		if positionMonitorNeedsEntryTimeForPosition(item.position, monitor) {
+			needsEntryTime = true
+			break
+		}
+	}
+	if needsEntryTime {
 		for _, item := range open {
 			contract := strings.ToUpper(strings.TrimSpace(firstNonEmpty(item.raw.Contract, item.position.InstID)))
 			if contract == "" {
@@ -1417,8 +1455,8 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 		contract := strings.ToUpper(strings.TrimSpace(firstNonEmpty(raw.Contract, position.InstID)))
 		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fillsByContract[contract], errorsByContract[contract], true)
 		if !hit {
-			if monitor.HoldingTimeCloseEnabled && entryErr != "" && s.Logger != nil {
-				s.Logger.Warn("Gate holding-time auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
+			if positionMonitorNeedsEntryTimeForPosition(position, monitor) && entryErr != "" && s.Logger != nil {
+				s.Logger.Warn("Gate position auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
 			}
 			continue
 		}
@@ -1819,6 +1857,20 @@ func positionMonitorTriggerForPosition(position okx.Position, monitor config.Pos
 	if priceTriggersEnabled {
 		if ratio, ok := positionMonitorUPLRatio(position); ok {
 			if trigger, hit := positionMonitorTrigger(ratio, monitor); hit {
+				if trigger == "stop_loss" && monitor.StopLossMinHoldingMinutes > 0 {
+					entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, allowPositionTimeFallback)
+					if entryErr != "" {
+						return "", false, entryAt, 0, entryErr
+					}
+					heldFor := now.UTC().Sub(entryAt.UTC())
+					if heldFor < 0 {
+						return "", false, entryAt, heldFor, "开仓时间晚于当前时间"
+					}
+					if heldFor < time.Duration(monitor.StopLossMinHoldingMinutes)*time.Minute {
+						return "", false, entryAt, heldFor, ""
+					}
+					return trigger, true, entryAt, heldFor, ""
+				}
 				return trigger, true, time.Time{}, 0, ""
 			}
 		}
@@ -5730,7 +5782,7 @@ func shouldRebuildPendingOrderWithProtection(cfg config.Config, order okx.Pendin
 
 func pendingOrderTPSLRiskStale(expected, existing []map[string]string) bool {
 	expectedTP, expectedSL := pendingOrderTPSLRatios(expected)
-	if expectedTP == "" || expectedSL == "" {
+	if expectedTP == "" {
 		return false
 	}
 	for _, attach := range existing {
@@ -5773,6 +5825,7 @@ func pendingOrderAttachAlgoOrders(cfg config.Config, order okx.PendingOrder, clO
 	settings := cfg.OrderSettings()
 	risk := settings.Risk
 	risk.Normalize()
+	risk.StopLossMinHoldingMinutes = cfg.Trading.PositionMonitor.StopLossMinHoldingMinutes
 	if risk.Type == trading.RiskNone {
 		return nil
 	}

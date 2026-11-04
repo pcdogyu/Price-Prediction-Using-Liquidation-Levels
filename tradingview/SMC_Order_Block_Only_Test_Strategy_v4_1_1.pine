@@ -464,8 +464,8 @@ stopBufferBps = input.float(
 
 enableImmediateOrderBlockStop = input.bool(
      true,
-     "启用订单块破位即时止损",
-     tooltip = "开启后，多单在入场绿色订单块下沿外侧放置止损；空单在入场红色订单块上沿外侧放置止损。关闭calc_on_order_fills后，历史回测中该结构止损会在成交后的下一次正常脚本计算时创建；止盈和其他止损仍需等待最短持仓结束。",
+     "启用订单块止损",
+     tooltip = "开启后，最短持仓时间结束后，多单在入场绿色订单块下沿外侧放置止损；空单在入场红色订单块上沿外侧放置止损。最短持仓时间内不创建任何止损，止盈仍然有效。",
      group = "04. 止盈止损")
 
 // =============================================================================
@@ -473,11 +473,11 @@ enableImmediateOrderBlockStop = input.bool(
 // =============================================================================
 
 minHoldHours = input.float(
-     4.0,
+     0.5,
      "最短持仓时间（小时）",
-     minval = 1.0,
+     minval = 0.5,
      step = 0.25,
-     tooltip = "开仓后达到该时间之前，不创建止盈或普通止损订单；订单块破位即时止损不受该时间限制。中频模式自动使用1小时，保守模式使用4小时，手动模式使用此参数。",
+     tooltip = "开仓后至少持仓30分钟；在此期间不创建止损订单，但止盈订单立即有效。中频模式自动使用1小时，保守模式使用4小时，手动模式使用此参数。",
      group = "05. 持仓时间与冷静期")
 
 // v4.0.26：止盈或止损成交后均固定冷静6小时，不随交易频率模式变化。
@@ -486,7 +486,7 @@ const float EXIT_COOLDOWN_HOURS = 6.0
 float effectiveMinHoldHours =
      mediumFrequencyMode ? 1.0 :
      conservativeFrequencyMode ? 4.0 :
-     math.max(minHoldHours, 1.0)
+     math.max(minHoldHours, 0.5)
 
 // =============================================================================
 // 07. 订单区块矩形
@@ -2285,7 +2285,7 @@ else if strategy.position_size < 0
          percentTarget
 
 // =============================================================================
-// 订单块破位止损在成交后的下一次正常脚本计算时生效；止盈和普通止损在达到最短持仓时间后生效。
+// 最短持仓时间内只允许止盈；达到最短持仓时间后，订单块止损和普通止损才生效。
 // 多单：价格跌破入场绿色订单块下沿外侧止损。
 // 空单：价格突破入场红色订单块上沿外侧止损。
 // =============================================================================
@@ -2326,8 +2326,7 @@ if strategy.position_size > 0
 
         effectiveLongExitTarget := activeTarget
     else
-        effectiveLongExitStop := immediateLongOrderBlockStop
-        longOrderBlockStopControlsExit := not na(immediateLongOrderBlockStop)
+        effectiveLongExitTarget := activeTarget
 
 if strategy.position_size < 0
     if minimumHoldCompleted
@@ -2342,8 +2341,7 @@ if strategy.position_size < 0
 
         effectiveShortExitTarget := activeTarget
     else
-        effectiveShortExitStop := immediateShortOrderBlockStop
-        shortOrderBlockStopControlsExit := not na(immediateShortOrderBlockStop)
+        effectiveShortExitTarget := activeTarget
 
 string exitLongAlertMessage = f_tvbot_alert_message(TVBOT_EXIT_LONG_COMMENT, activeEntryAdx)
 string tpLongAlertMessage = f_tvbot_alert_message(TVBOT_TP_LONG_INTENT, activeEntryAdx)
@@ -2674,9 +2672,9 @@ if barstate.islast
              "剩余约 " +
              str.tostring(remainingHoldMinutes, "#") +
              " 分钟\n" +
-             (immediateStructureStopActive ?
-                 "订单块破位止损已启用，止盈尚未启用" :
-                 "当前无止盈止损订单")
+                  (immediateStructureStopActive ?
+                  "订单块止损已启用，止盈已启用" :
+                  "止损锁定中，止盈已启用")
 
         statusLabel := label.new(
              x = bar_index,

@@ -39,6 +39,14 @@ func TestPositionMonitorOKXStartsLimitCloseAtThresholds(t *testing.T) {
 				{"instType":"SWAP","instId":"DOGE-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"100","availPos":"100","avgPx":"0.1","markPx":"0.101","upl":"0.1","uplRatio":"0.01","lever":"5","notionalUsd":"10.1","margin":"2.02"},
 				{"instType":"SWAP","instId":"ALGO-USDT-SWAP","mgnMode":"isolated","posSide":"net","pos":"-1098","availPos":"1098","avgPx":"0.0800","markPx":"0.0794","upl":"6.588","lever":"10","notionalUsd":"870.85","margin":"87.84"}
 			]}`))
+		case "/api/v5/trade/fills-history":
+			fillTime := strconv.FormatInt(srv.now().Add(-time.Hour).UnixMilli(), 10)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[
+				{"instId":"BTC-USDT-SWAP","tradeId":"entry-btc","ordId":"entry-btc","posSide":"long","side":"buy","fillSz":"2","fillTime":%q},
+				{"instId":"ETH-USDT-SWAP","tradeId":"entry-eth","ordId":"entry-eth","posSide":"short","side":"sell","fillSz":"3","fillTime":%q},
+				{"instId":"DOGE-USDT-SWAP","tradeId":"entry-doge","ordId":"entry-doge","posSide":"long","side":"buy","fillSz":"100","fillTime":%q},
+				{"instId":"ALGO-USDT-SWAP","tradeId":"entry-algo","ordId":"entry-algo","posSide":"net","side":"sell","fillSz":"1098","fillTime":%q}
+			]}`, fillTime, fillTime, fillTime, fillTime)))
 		case "/api/v5/public/instruments":
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":%q,"tickSz":"0.1","ctVal":"1","lotSz":"1","minSz":"1"}]}`, r.URL.Query().Get("instId"))))
 		case "/api/v5/market/ticker":
@@ -177,6 +185,12 @@ func TestPositionMonitorBinanceStartsLimitCloseAtThresholds(t *testing.T) {
 				{"symbol":"ETHUSDT","positionSide":"BOTH","positionAmt":"-3","entryPrice":"100","markPrice":"109","unRealizedProfit":"-27","notional":"-327","marginAsset":"USDT","leverage":"5","marginType":"isolated","updateTime":1784880000000},
 				{"symbol":"DOGEUSDT","positionSide":"BOTH","positionAmt":"100","entryPrice":"0.1","markPrice":"0.101","unRealizedProfit":"0.1","notional":"10.1","marginAsset":"USDT","leverage":"5","marginType":"isolated","updateTime":1784880000000}
 			]`))
+		case "/fapi/v1/userTrades":
+			if r.URL.Query().Get("symbol") == "ETHUSDT" {
+				_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":"ETHUSDT","orderId":2001,"price":"100","qty":"3","side":"SELL","positionSide":"BOTH","time":%d}]`, srv.now().Add(-time.Hour).UnixMilli())))
+			} else {
+				_, _ = w.Write([]byte(`[]`))
+			}
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[
 				{"symbol":"BTCUSDT","status":"TRADING","pricePrecision":1,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.1"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]},
@@ -280,6 +294,12 @@ func TestPositionMonitorGateSubmitsFullMarketCloseAtThresholds(t *testing.T) {
 			positions += `{"contract":"DOGE_USDT","size":"1","entry_price":"0.1","mark_price":"0.101","unrealised_pnl":"0.1","margin":"10"},`
 			positions += `{"contract":"SOL_USDT","size":"0","entry_price":"100","mark_price":"100","unrealised_pnl":"0","margin":"10"}]`
 			_, _ = w.Write([]byte(positions))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/futures/usdt/my_trades":
+			if r.URL.Query().Get("contract") == "ETH_USDT" {
+				_, _ = w.Write([]byte(fmt.Sprintf(`[{"id":"entry-eth","contract":"ETH_USDT","order_id":"entry-eth","size":"-3","create_time":%q}]`, strconv.FormatInt(srv.now().Add(-time.Hour).Unix(), 10))))
+			} else {
+				_, _ = w.Write([]byte(`[]`))
+			}
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/futures/usdt/orders":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -492,6 +512,50 @@ func TestPositionMonitorHoldingTimeUsesEntryFillTime(t *testing.T) {
 	}}, nil, false)
 	if !hit || trigger != "holding_time" || !entryAt.Equal(entry) || heldFor != 6*time.Hour || entryErr != "" {
 		t.Fatalf("holding-time trigger = %q, %v, entry=%s held=%s err=%q", trigger, hit, entryAt, heldFor, entryErr)
+	}
+}
+
+func TestPositionMonitorStopLossWaitsThirtyMinutesButTakeProfitRemainsImmediate(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	monitor := config.PositionMonitorConfig{
+		TakeProfitPct:             5,
+		StopLossPct:               8,
+		StopLossMinHoldingMinutes: 30,
+	}
+
+	for _, tc := range []struct {
+		name      string
+		posSide   string
+		entrySide string
+	}{
+		{name: "long", posSide: "long", entrySide: "buy"},
+		{name: "short", posSide: "short", entrySide: "sell"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			position := okx.Position{InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Pos: "1", UplRatio: "-0.09"}
+			entry := now.Add(-10 * time.Minute)
+			trigger, hit, _, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
+				InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Side: tc.entrySide, Size: 1, FillTime: entry,
+			}}, nil, false)
+			if hit || trigger != "" || heldFor != 10*time.Minute || entryErr != "" {
+				t.Fatalf("early stop-loss should be deferred: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
+			}
+
+			position.UplRatio = "0.06"
+			trigger, hit, _, _, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, nil, nil, false)
+			if !hit || trigger != "take_profit" || entryErr != "" {
+				t.Fatalf("take-profit should remain immediate: trigger=%q hit=%v err=%q", trigger, hit, entryErr)
+			}
+
+			position.UplRatio = "-0.09"
+			entry = now.Add(-31 * time.Minute)
+			trigger, hit, _, heldFor, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
+				InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Side: tc.entrySide, Size: 1, FillTime: entry,
+			}}, nil, false)
+			if !hit || trigger != "stop_loss" || heldFor != 31*time.Minute || entryErr != "" {
+				t.Fatalf("stop-loss should trigger after minimum hold: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
+			}
+		})
 	}
 }
 

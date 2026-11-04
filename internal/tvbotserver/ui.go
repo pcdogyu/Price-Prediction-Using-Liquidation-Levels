@@ -2251,6 +2251,7 @@ const tvbotHTML = `<!doctype html>
           <label>扫描间隔秒<input id="position-monitor-interval" type="number" min="1" step="1"></label>
           <label>止盈 %<input id="position-monitor-tp" type="number" min="0.01" step="0.01"></label>
           <label>止损 %<input id="position-monitor-sl" type="number" min="0.01" step="0.01"></label>
+          <label>止损最短持仓（分钟）<input id="position-monitor-sl-minutes" type="number" min="30" step="1"></label>
           <label class="check"><input id="position-monitor-low-margin-enabled" type="checkbox">低保证金自动清理</label>
           <label>保证金阈值（USDT）<input id="position-monitor-low-margin-threshold" type="number" min="0.01" step="0.01"></label>
           <label>低保证金持仓小时数<input id="position-monitor-low-margin-hours" type="number" min="1" step="1"></label>
@@ -5090,6 +5091,7 @@ const tvbotHTML = `<!doctype html>
         poll_interval_seconds: Number(monitor.poll_interval_seconds || 300),
         take_profit_pct: Number(monitor.take_profit_pct || 5),
         stop_loss_pct: Number(monitor.stop_loss_pct || 8),
+        stop_loss_min_holding_minutes: Number(monitor.stop_loss_min_holding_minutes || 30),
         holding_time_close_enabled: monitor.holding_time_close_enabled !== false,
         holding_time_close_hours: Number(monitor.holding_time_close_hours || 6),
         low_margin_close_enabled: !!monitor.low_margin_close_enabled,
@@ -5105,6 +5107,7 @@ const tvbotHTML = `<!doctype html>
       $("position-monitor-interval").value = monitor.poll_interval_seconds || 300;
       $("position-monitor-tp").value = monitor.take_profit_pct || 5;
       $("position-monitor-sl").value = monitor.stop_loss_pct || 8;
+      $("position-monitor-sl-minutes").value = monitor.stop_loss_min_holding_minutes || 30;
       $("position-monitor-holding-enabled").checked = !!monitor.holding_time_close_enabled;
       $("position-monitor-holding-hours").value = monitor.holding_time_close_hours || 6;
       $("position-monitor-low-margin-enabled").checked = !!monitor.low_margin_close_enabled;
@@ -5118,6 +5121,7 @@ const tvbotHTML = `<!doctype html>
         " / " + asText(monitor.poll_interval_seconds || 300) + "s" +
         " / +" + asText(monitor.take_profit_pct || 5) + "%" +
         " / -" + asText(monitor.stop_loss_pct || 8) + "%" +
+        " / SL锁定" + asText(monitor.stop_loss_min_holding_minutes || 30) + "分钟" +
         " / 超时平仓" + (monitor.holding_time_close_enabled ? " " + asText(monitor.holding_time_close_hours || 6) + "h" : "关闭") +
         " / 低保证金" + (monitor.low_margin_close_enabled ? " <" + asText(monitor.low_margin_threshold_usdt || 50) + " USDT / " + asText(monitor.low_margin_holding_hours || 1) + "h" : "关闭");
     }
@@ -8706,6 +8710,7 @@ const tvbotHTML = `<!doctype html>
               poll_interval_seconds: Number($("position-monitor-interval").value),
               take_profit_pct: Number($("position-monitor-tp").value),
               stop_loss_pct: Number($("position-monitor-sl").value),
+              stop_loss_min_holding_minutes: Number($("position-monitor-sl-minutes").value),
               holding_time_close_enabled: $("position-monitor-holding-enabled").checked,
               holding_time_close_hours: Number($("position-monitor-holding-hours").value),
               low_margin_close_enabled: $("position-monitor-low-margin-enabled").checked,

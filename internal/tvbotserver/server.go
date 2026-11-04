@@ -635,6 +635,7 @@ func (s *Server) execute(signalID string, signal trading.Signal, cfg config.Conf
 		_ = s.Orders.MarkFailed(signalID, errors.New("executor is not configured"), s.now())
 		return
 	}
+	applyStopLossMinimumHolding(&signal, cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), asyncOrderExecutionTimeout)
 	defer cancel()
 	result, err := s.Executor.ExecuteSignal(ctx, signal, cfg)
@@ -653,6 +654,16 @@ func (s *Server) execute(signalID string, signal trading.Signal, cfg config.Conf
 	}
 	_ = s.Orders.MarkSubmitted(signalID, result, s.now())
 	s.reconcileGatePositionRiskForSignal(signalID)
+}
+
+func applyStopLossMinimumHolding(signal *trading.Signal, cfg config.Config) {
+	if signal == nil || signal.PositionEffect != trading.PositionEffectOpen || !cfg.Trading.PositionMonitor.Enabled {
+		return
+	}
+	minutes := cfg.Trading.PositionMonitor.StopLossMinHoldingMinutes
+	if minutes > 0 {
+		signal.Risk.StopLossMinHoldingMinutes = minutes
+	}
 }
 
 func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {

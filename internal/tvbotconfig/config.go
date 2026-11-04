@@ -165,18 +165,21 @@ type PositionMonitorConfig struct {
 	Enabled bool `json:"enabled"`
 	// Legacy exchange flags remain decodable for old configuration files. The
 	// runtime scanner now uses the tenant's active account per environment.
-	OKXEnabled              bool    `json:"okx_enabled"`
-	BinanceEnabled          bool    `json:"binance_enabled"`
-	GateEnabled             bool    `json:"gate_enabled"`
-	PollIntervalSeconds     int     `json:"poll_interval_seconds"`
-	TakeProfitPct           float64 `json:"take_profit_pct"`
-	StopLossPct             float64 `json:"stop_loss_pct"`
-	HoldingTimeCloseEnabled bool    `json:"holding_time_close_enabled"`
-	HoldingTimeCloseHours   int     `json:"holding_time_close_hours"`
-	LowMarginCloseEnabled   bool    `json:"low_margin_close_enabled"`
-	LowMarginThresholdUSDT  float64 `json:"low_margin_threshold_usdt"`
-	LowMarginHoldingHours   int     `json:"low_margin_holding_hours"`
+	OKXEnabled                bool    `json:"okx_enabled"`
+	BinanceEnabled            bool    `json:"binance_enabled"`
+	GateEnabled               bool    `json:"gate_enabled"`
+	PollIntervalSeconds       int     `json:"poll_interval_seconds"`
+	TakeProfitPct             float64 `json:"take_profit_pct"`
+	StopLossPct               float64 `json:"stop_loss_pct"`
+	StopLossMinHoldingMinutes int     `json:"stop_loss_min_holding_minutes"`
+	HoldingTimeCloseEnabled   bool    `json:"holding_time_close_enabled"`
+	HoldingTimeCloseHours     int     `json:"holding_time_close_hours"`
+	LowMarginCloseEnabled     bool    `json:"low_margin_close_enabled"`
+	LowMarginThresholdUSDT    float64 `json:"low_margin_threshold_usdt"`
+	LowMarginHoldingHours     int     `json:"low_margin_holding_hours"`
 }
+
+const MinimumStopLossHoldingMinutes = 30
 
 type SymbolConfig struct {
 	Coinpair string  `json:"coinpair"`
@@ -341,18 +344,19 @@ func Default() Config {
 				OnlyBotOrders:          true,
 			},
 			PositionMonitor: PositionMonitorConfig{
-				Enabled:                 true,
-				OKXEnabled:              false,
-				BinanceEnabled:          false,
-				GateEnabled:             false,
-				PollIntervalSeconds:     300,
-				TakeProfitPct:           5,
-				StopLossPct:             8,
-				HoldingTimeCloseEnabled: true,
-				HoldingTimeCloseHours:   6,
-				LowMarginCloseEnabled:   false,
-				LowMarginThresholdUSDT:  50,
-				LowMarginHoldingHours:   1,
+				Enabled:                   true,
+				OKXEnabled:                false,
+				BinanceEnabled:            false,
+				GateEnabled:               false,
+				PollIntervalSeconds:       300,
+				TakeProfitPct:             5,
+				StopLossPct:               8,
+				StopLossMinHoldingMinutes: MinimumStopLossHoldingMinutes,
+				HoldingTimeCloseEnabled:   true,
+				HoldingTimeCloseHours:     6,
+				LowMarginCloseEnabled:     false,
+				LowMarginThresholdUSDT:    50,
+				LowMarginHoldingHours:     1,
 			},
 		},
 		Symbols: map[string]SymbolConfig{
@@ -559,6 +563,9 @@ func (c *Config) Normalize() {
 	if c.Trading.PositionMonitor.StopLossPct <= 0 {
 		c.Trading.PositionMonitor.StopLossPct = 8
 	}
+	if c.Trading.PositionMonitor.StopLossMinHoldingMinutes < MinimumStopLossHoldingMinutes {
+		c.Trading.PositionMonitor.StopLossMinHoldingMinutes = MinimumStopLossHoldingMinutes
+	}
 	if c.Trading.PositionMonitor.HoldingTimeCloseHours <= 0 {
 		c.Trading.PositionMonitor.HoldingTimeCloseHours = 6
 	}
@@ -708,6 +715,9 @@ func (c Config) validate(validateSymbols bool) error {
 	}
 	if c.Trading.PositionMonitor.StopLossPct <= 0 {
 		return errors.New("position_monitor.stop_loss_pct must be positive")
+	}
+	if c.Trading.PositionMonitor.StopLossMinHoldingMinutes < MinimumStopLossHoldingMinutes {
+		return fmt.Errorf("position_monitor.stop_loss_min_holding_minutes must be at least %d", MinimumStopLossHoldingMinutes)
 	}
 	if c.Trading.PositionMonitor.HoldingTimeCloseHours <= 0 {
 		return errors.New("position_monitor.holding_time_close_hours must be positive")

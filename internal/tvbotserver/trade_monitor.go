@@ -865,6 +865,7 @@ func (s *Server) maybeSubmitAutoReentry(ctx context.Context, cfg config.Config, 
 		return nil
 	}
 	orderCtx, cancel := context.WithTimeout(ctx, tradeMonitorOrderTimeout)
+	applyStopLossMinimumHolding(&signal, execCfg)
 	result, err := s.Executor.ExecuteSignal(orderCtx, signal, execCfg)
 	cancel()
 	result.SignalID = record.SignalID
