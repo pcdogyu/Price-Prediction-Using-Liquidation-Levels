@@ -589,7 +589,9 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("tvbot ui should include retry controls")
 	}
 	if !bytes.Contains(ui.Body.Bytes(), []byte("自动扫描持仓")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-okx-enabled")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-enabled")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-low-margin-threshold")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-active-exchanges")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-holding-enabled")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-holding-hours")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position_monitor")) {
@@ -1118,7 +1120,7 @@ func TestTVBotConfigSavesGammaNegativePolicyAndRejectsInvalidValue(t *testing.T)
 
 func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 	srv := newTestServer(t)
-	req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"okx_enabled":true,"binance_enabled":true,"gate_enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8,"holding_time_close_enabled":true,"holding_time_close_hours":6}}}`)))
+	req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8,"holding_time_close_enabled":true,"holding_time_close_hours":6,"low_margin_close_enabled":true,"low_margin_threshold_usdt":50,"low_margin_holding_hours":1}}}`)))
 	req.SetBasicAuth("admin", "Admin123")
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
@@ -1130,16 +1132,23 @@ func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	monitor := cfg.Trading.PositionMonitor
-	if !monitor.OKXEnabled || !monitor.BinanceEnabled || !monitor.GateEnabled || monitor.PollIntervalSeconds != 300 || monitor.TakeProfitPct != 5 || monitor.StopLossPct != 8 || !monitor.HoldingTimeCloseEnabled || monitor.HoldingTimeCloseHours != 6 {
+	if !monitor.Enabled || monitor.PollIntervalSeconds != 300 || monitor.TakeProfitPct != 5 || monitor.StopLossPct != 8 || !monitor.HoldingTimeCloseEnabled || monitor.HoldingTimeCloseHours != 6 || !monitor.LowMarginCloseEnabled || monitor.LowMarginThresholdUSDT != 50 || monitor.LowMarginHoldingHours != 1 {
 		t.Fatalf("position monitor not saved: %#v", monitor)
 	}
 
-	badReq := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"okx_enabled":true,"poll_interval_seconds":0,"take_profit_pct":5,"stop_loss_pct":8,"holding_time_close_hours":6}}}`)))
+	badReq := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":0,"take_profit_pct":5,"stop_loss_pct":8,"holding_time_close_enabled":true,"holding_time_close_hours":6,"low_margin_threshold_usdt":50,"low_margin_holding_hours":1}}}`)))
 	badReq.SetBasicAuth("admin", "Admin123")
 	bad := httptest.NewRecorder()
 	srv.ServeHTTP(bad, badReq)
 	if bad.Code != http.StatusBadRequest || !bytes.Contains(bad.Body.Bytes(), []byte("position_monitor.poll_interval_seconds")) {
 		t.Fatalf("bad position monitor status=%d body=%s", bad.Code, bad.Body.String())
+	}
+	badMarginReq := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8,"holding_time_close_enabled":true,"holding_time_close_hours":6,"low_margin_threshold_usdt":0,"low_margin_holding_hours":1}}}`)))
+	badMarginReq.SetBasicAuth("admin", "Admin123")
+	badMargin := httptest.NewRecorder()
+	srv.ServeHTTP(badMargin, badMarginReq)
+	if badMargin.Code != http.StatusBadRequest || !bytes.Contains(badMargin.Body.Bytes(), []byte("position_monitor.low_margin_threshold_usdt")) {
+		t.Fatalf("bad low margin config status=%d body=%s", badMargin.Code, badMargin.Body.String())
 	}
 }
 
@@ -6367,19 +6376,18 @@ func TestTVBotPositionLimitCloseReplacesAndFallsBackToMarket(t *testing.T) {
 }
 
 func TestLowMarginPositionMonitorStartsLimitClose(t *testing.T) {
-	oldPoll := positionClosePollInterval
-	oldTimeout := positionCloseLimitTimeout
+	oldChase := lowMarginPositionChaseInterval
 	oldJobs := positionCloseJobs
-	positionClosePollInterval = time.Hour
-	positionCloseLimitTimeout = time.Hour
+	lowMarginPositionChaseInterval = time.Hour
 	positionCloseJobs = newPositionCloseRegistry()
 	t.Cleanup(func() {
-		positionClosePollInterval = oldPoll
-		positionCloseLimitTimeout = oldTimeout
+		lowMarginPositionChaseInterval = oldChase
 		positionCloseJobs = oldJobs
 	})
 
 	srv := newTestServer(t)
+	entryTime := srv.now().UTC().Add(-2 * time.Hour).UnixMilli()
+	closeTime := srv.now().UTC().Add(-90 * time.Minute).UnixMilli()
 	var mu sync.Mutex
 	var orders []map[string]any
 	okxServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -6391,6 +6399,15 @@ func TestLowMarginPositionMonitorStartsLimitClose(t *testing.T) {
 				{"instType":"SWAP","instId":"ETH-USDT-SWAP","mgnMode":"isolated","posId":"2","posSide":"short","pos":"1","availPos":"1","avgPx":"2500","markPx":"2490","upl":"10","uplRatio":"0.01","lever":"5","notionalUsd":"2490","margin":"10","uTime":"1784880000000"},
 				{"instType":"SWAP","instId":"DOGE-USDT-SWAP","mgnMode":"isolated","posId":"3","posSide":"long","pos":"100","availPos":"100","avgPx":"0.2","markPx":"0.21","upl":"1","uplRatio":"0.01","lever":"5","notionalUsd":"21","margin":"","uTime":"1784880000000"}
 			]}`))
+		case "/api/v5/trade/orders-pending":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
+		case "/api/v5/trade/orders-algo-pending":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
+		case "/api/v5/trade/fills-history":
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[
+				{"instId":"BTC-USDT-SWAP","tradeId":"entry-trade","ordId":"entry-order","side":"buy","posSide":"long","fillSz":"1","fillTime":"%d"},
+				{"instId":"BTC-USDT-SWAP","tradeId":"reduce-trade","ordId":"reduce-order","side":"sell","posSide":"long","fillSz":"0.5","fillTime":"%d"}
+			]}`, entryTime, closeTime)))
 		case "/api/v5/public/instruments":
 			if r.URL.Query().Get("instId") != "BTC-USDT-SWAP" {
 				t.Fatalf("low margin monitor should only query BTC instrument, got %s", r.URL.RawQuery)
@@ -6417,6 +6434,11 @@ func TestLowMarginPositionMonitorStartsLimitClose(t *testing.T) {
 	defer okxServer.Close()
 	cfg := srv.ConfigStore.Get()
 	cfg.Trading.BaseURL = okxServer.URL
+	cfg.Trading.PositionMonitor.Enabled = true
+	cfg.Trading.PositionMonitor.LowMarginCloseEnabled = true
+	cfg.Trading.PositionMonitor.LowMarginThresholdUSDT = 50
+	cfg.Trading.PositionMonitor.LowMarginHoldingHours = 1
+	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.OKXHTTPClient = okxServer.Client()
 	if _, err := srv.OKXCredentials.UpdateAccount(okx.CredentialAccountUpdate{

@@ -532,6 +532,55 @@ func TestPositionMonitorHoldingTimeFallsBackToPositionOpenTime(t *testing.T) {
 	}
 }
 
+func TestPositionMonitorLowMarginRequiresAValidReductionRecord(t *testing.T) {
+	now := time.Now().UTC()
+	position := okx.Position{InstID: "BTC-USDT-SWAP", PosSide: "long", Pos: "0.8", Margin: "49.99"}
+	monitor := config.PositionMonitorConfig{
+		Enabled:                true,
+		LowMarginCloseEnabled:  true,
+		LowMarginThresholdUSDT: 50,
+		LowMarginHoldingHours:  1,
+	}
+	entry := positionEntryFill{InstID: position.InstID, OrdID: "entry", PosSide: "long", Side: "buy", Size: 1, FillTime: now.Add(-2 * time.Hour)}
+	reductionA := positionEntryFill{InstID: position.InstID, OrdID: "close-order", PosSide: "long", Side: "sell", Size: 0.1, FillTime: now.Add(-90 * time.Minute)}
+	reductionB := reductionA
+	reductionB.FillTime = now.Add(-89 * time.Minute)
+
+	if _, hit, _, _, _ := positionMonitorTriggerForPosition(position, monitor, false, now, []positionEntryFill{entry}, nil, false); hit {
+		t.Fatal("position without a reduction fill must not be closed")
+	}
+	if _, hit, _, _, _ := positionMonitorTriggerForPosition(position, monitor, false, now, []positionEntryFill{entry, reductionA, reductionB}, nil, false); !hit {
+		t.Fatal("position with a valid filled reduction must be closed")
+	}
+
+	equalMargin := position
+	equalMargin.Margin = "50"
+	if _, hit, _, _, _ := positionMonitorTriggerForPosition(equalMargin, monitor, false, now, []positionEntryFill{entry, reductionA}, nil, false); hit {
+		t.Fatal("margin equal to the threshold must not be closed")
+	}
+	tooRecent := entry
+	tooRecent.FillTime = now.Add(-30 * time.Minute)
+	if _, hit, _, _, _ := positionMonitorTriggerForPosition(position, monitor, false, now, []positionEntryFill{tooRecent, reductionA}, nil, false); hit {
+		t.Fatal("position held for less than the configured hour must not be closed")
+	}
+	if _, hit, _, _, _ := positionMonitorTriggerForPosition(position, monitor, false, now, []positionEntryFill{entry, reductionA}, errors.New("history unavailable"), false); hit {
+		t.Fatal("unavailable fill history must fail closed")
+	}
+}
+
+func TestActiveAPIIDsOnlyReturnsTheConfiguredActiveAccount(t *testing.T) {
+	if got := activeAPIIDs(false, "active"); len(got) != 0 {
+		t.Fatalf("unconfigured store returned active account: %#v", got)
+	}
+	if got := activeAPIIDs(true, ""); len(got) != 0 {
+		t.Fatalf("empty active id returned account: %#v", got)
+	}
+	got := activeAPIIDs(true, " active ")
+	if len(got) != 1 || got[0] != "active" {
+		t.Fatalf("active account selection = %#v", got)
+	}
+}
+
 func isolatePositionCloseJobsForTest() func() {
 	oldPoll := positionClosePollInterval
 	oldTimeout := positionCloseLimitTimeout

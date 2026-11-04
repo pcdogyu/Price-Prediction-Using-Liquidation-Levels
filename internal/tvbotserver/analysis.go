@@ -317,6 +317,14 @@ func configuredAPIIDs(status okx.CredentialStatus) []string {
 	return ids
 }
 
+func activeAPIIDs(configured bool, activeID string) []string {
+	activeID = strings.TrimSpace(activeID)
+	if !configured || activeID == "" {
+		return nil
+	}
+	return []string{activeID}
+}
+
 func configuredBinanceAPIIDs(status binance.CredentialStatus) []string {
 	ids := make([]string, 0, len(status.Credentials))
 	seen := map[string]bool{}

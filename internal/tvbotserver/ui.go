@@ -1023,7 +1023,7 @@ const tvbotHTML = `<!doctype html>
     }
     .position-monitor-grid {
       display: grid;
-      grid-template-columns: repeat(6, minmax(140px, 1fr));
+      grid-template-columns: repeat(4, minmax(140px, 1fr));
       gap: 10px;
       align-items: end;
       margin-top: 10px;
@@ -1033,7 +1033,7 @@ const tvbotHTML = `<!doctype html>
     }
     .position-monitor-timeout {
       display: grid;
-      grid-template-columns: minmax(220px, 240px);
+      grid-template-columns: minmax(220px, 240px) minmax(180px, 240px);
       gap: 10px;
       align-items: end;
       margin-top: 10px;
@@ -2242,16 +2242,18 @@ const tvbotHTML = `<!doctype html>
           <div>
             <h3>自动扫描持仓</h3>
             <div class="position-monitor-status" id="position-monitor-status">-</div>
+            <div class="position-monitor-status" id="position-monitor-active-exchanges">当前租户启用交易所：-</div>
           </div>
           <button class="btn primary" type="button" id="save-position-monitor">保存自动扫描</button>
         </div>
         <div class="position-monitor-grid">
-          <label class="check"><input id="position-monitor-okx-enabled" type="checkbox">OKX 自动扫描/平仓</label>
-          <label class="check"><input id="position-monitor-binance-enabled" type="checkbox">Binance 自动扫描/平仓</label>
-          <label class="check"><input id="position-monitor-gate-enabled" type="checkbox">Gate 自动扫描/平仓</label>
+          <label class="check"><input id="position-monitor-enabled" type="checkbox">启用自动扫描/平仓</label>
           <label>扫描间隔秒<input id="position-monitor-interval" type="number" min="1" step="1"></label>
           <label>止盈 %<input id="position-monitor-tp" type="number" min="0.01" step="0.01"></label>
           <label>止损 %<input id="position-monitor-sl" type="number" min="0.01" step="0.01"></label>
+          <label class="check"><input id="position-monitor-low-margin-enabled" type="checkbox">低保证金自动清理</label>
+          <label>保证金阈值（USDT）<input id="position-monitor-low-margin-threshold" type="number" min="0.01" step="0.01"></label>
+          <label>低保证金持仓小时数<input id="position-monitor-low-margin-hours" type="number" min="1" step="1"></label>
         </div>
         <div class="position-monitor-timeout">
           <label class="check"><input id="position-monitor-holding-enabled" type="checkbox">持仓超时自动平仓</label>
@@ -4450,6 +4452,8 @@ const tvbotHTML = `<!doctype html>
       renderAPIKeys();
       renderTemplateAPIs();
       renderPositionAPIs();
+      renderPositionMonitor();
+      renderSystem();
       renderOrders();
       updateMetrics();
     }
@@ -5070,39 +5074,40 @@ const tvbotHTML = `<!doctype html>
       const trading = state.config && state.config.trading ? state.config.trading : {};
       const monitor = trading.position_monitor || {};
       return {
-        okx_enabled: !!monitor.okx_enabled,
-        binance_enabled: !!monitor.binance_enabled,
-        gate_enabled: !!monitor.gate_enabled,
+        enabled: monitor.enabled !== false,
         poll_interval_seconds: Number(monitor.poll_interval_seconds || 300),
         take_profit_pct: Number(monitor.take_profit_pct || 5),
         stop_loss_pct: Number(monitor.stop_loss_pct || 8),
         holding_time_close_enabled: monitor.holding_time_close_enabled !== false,
-        holding_time_close_hours: Number(monitor.holding_time_close_hours || 6)
+        holding_time_close_hours: Number(monitor.holding_time_close_hours || 6),
+        low_margin_close_enabled: !!monitor.low_margin_close_enabled,
+        low_margin_threshold_usdt: Number(monitor.low_margin_threshold_usdt || 50),
+        low_margin_holding_hours: Number(monitor.low_margin_holding_hours || 1)
       };
     }
 
     function renderPositionMonitor() {
       if (!$("position-monitor-interval")) return;
       const monitor = positionMonitorConfig();
-      $("position-monitor-okx-enabled").checked = !!monitor.okx_enabled;
-      $("position-monitor-binance-enabled").checked = !!monitor.binance_enabled;
-      $("position-monitor-gate-enabled").checked = !!monitor.gate_enabled;
+      $("position-monitor-enabled").checked = !!monitor.enabled;
       $("position-monitor-interval").value = monitor.poll_interval_seconds || 300;
       $("position-monitor-tp").value = monitor.take_profit_pct || 5;
       $("position-monitor-sl").value = monitor.stop_loss_pct || 8;
       $("position-monitor-holding-enabled").checked = !!monitor.holding_time_close_enabled;
       $("position-monitor-holding-hours").value = monitor.holding_time_close_hours || 6;
-      const active = [
-        monitor.okx_enabled ? "OKX" : "",
-        monitor.binance_enabled ? "Binance" : "",
-        monitor.gate_enabled ? "Gate" : ""
-      ].filter(Boolean).join(" + ");
-      const activeLabel = active || (monitor.holding_time_close_enabled ? "超时平仓" : "已关闭");
-      $("position-monitor-status").textContent = activeLabel +
+      $("position-monitor-low-margin-enabled").checked = !!monitor.low_margin_close_enabled;
+      $("position-monitor-low-margin-threshold").value = monitor.low_margin_threshold_usdt || 50;
+      $("position-monitor-low-margin-hours").value = monitor.low_margin_holding_hours || 1;
+      const activeExchanges = state.exchangeAvailabilityReady
+        ? configuredExchangesForCurrentEnvironment().map(exchangeLabel).join("、")
+        : "读取中";
+      $("position-monitor-active-exchanges").textContent = "当前租户启用交易所：" + (activeExchanges || "无");
+      $("position-monitor-status").textContent = (monitor.enabled ? "已启用" : "已关闭") +
         " / " + asText(monitor.poll_interval_seconds || 300) + "s" +
         " / +" + asText(monitor.take_profit_pct || 5) + "%" +
         " / -" + asText(monitor.stop_loss_pct || 8) + "%" +
-        " / 超时平仓" + (monitor.holding_time_close_enabled ? " " + asText(monitor.holding_time_close_hours || 6) + "h" : "关闭");
+        " / 超时平仓" + (monitor.holding_time_close_enabled ? " " + asText(monitor.holding_time_close_hours || 6) + "h" : "关闭") +
+        " / 低保证金" + (monitor.low_margin_close_enabled ? " <" + asText(monitor.low_margin_threshold_usdt || 50) + " USDT / " + asText(monitor.low_margin_holding_hours || 1) + "h" : "关闭");
     }
 
     function renderDashboard() {
@@ -5175,11 +5180,7 @@ const tvbotHTML = `<!doctype html>
       const fillMonitorExchanges = Array.isArray(fillMonitor.exchange) ? fillMonitor.exchange.join(", ") : "binance";
       const autoReentry = t.auto_reentry || {};
       const positionMonitor = positionMonitorConfig();
-      const positionMonitorExchanges = [
-        positionMonitor.okx_enabled ? "OKX" : "",
-        positionMonitor.binance_enabled ? "Binance" : "",
-        positionMonitor.gate_enabled ? "Gate" : ""
-      ].filter(Boolean).join(", ");
+      const positionMonitorExchanges = configuredExchangesForCurrentEnvironment().map(exchangeLabel).join(", ");
       const rows = [
         ["服务地址", state.config.server ? state.config.server.addr : "-"],
         ["数据文件", state.config.data_file],
@@ -5204,7 +5205,7 @@ const tvbotHTML = `<!doctype html>
         ["空单限价", "当前价格 x " + asText(t.short_limit_price_multiplier)],
         ["成交监听", fillMonitor.enabled ? ("enabled / " + fillMonitorExchanges + " / " + asText(fillMonitor.poll_interval_seconds) + "s") : "disabled"],
         ["自动补回", autoReentry.enabled ? ("enabled / " + asText(autoReentry.reentry_amount_pct) + "%") : "disabled"],
-        ["持仓扫描", positionMonitorExchanges ? (positionMonitorExchanges + " / " + asText(positionMonitor.poll_interval_seconds) + "s / +" + asText(positionMonitor.take_profit_pct) + "% / -" + asText(positionMonitor.stop_loss_pct) + "%") : "disabled"]
+        ["持仓扫描", positionMonitor.enabled && positionMonitorExchanges ? (positionMonitorExchanges + " / " + asText(positionMonitor.poll_interval_seconds) + "s / +" + asText(positionMonitor.take_profit_pct) + "% / -" + asText(positionMonitor.stop_loss_pct) + "%") : "disabled"]
       ];
       $("system-config").innerHTML = rows.map((row) => "<tr><th>" + escapeHTML(row[0]) + "</th><td>" + escapeHTML(asText(row[1])) + "</td></tr>").join("");
     }
@@ -8689,14 +8690,15 @@ const tvbotHTML = `<!doctype html>
         const patch = {
           trading: {
             position_monitor: {
-              okx_enabled: $("position-monitor-okx-enabled").checked,
-              binance_enabled: $("position-monitor-binance-enabled").checked,
-              gate_enabled: $("position-monitor-gate-enabled").checked,
+              enabled: $("position-monitor-enabled").checked,
               poll_interval_seconds: Number($("position-monitor-interval").value),
               take_profit_pct: Number($("position-monitor-tp").value),
               stop_loss_pct: Number($("position-monitor-sl").value),
               holding_time_close_enabled: $("position-monitor-holding-enabled").checked,
-              holding_time_close_hours: Number($("position-monitor-holding-hours").value)
+              holding_time_close_hours: Number($("position-monitor-holding-hours").value),
+              low_margin_close_enabled: $("position-monitor-low-margin-enabled").checked,
+              low_margin_threshold_usdt: Number($("position-monitor-low-margin-threshold").value),
+              low_margin_holding_hours: Number($("position-monitor-low-margin-hours").value)
             }
           }
         };

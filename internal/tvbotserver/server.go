@@ -1300,6 +1300,12 @@ func validateConfigPatch(patch configPatch) error {
 	if monitor.HoldingTimeCloseHours <= 0 {
 		return errors.New("position_monitor.holding_time_close_hours must be positive")
 	}
+	if monitor.LowMarginThresholdUSDT <= 0 {
+		return errors.New("position_monitor.low_margin_threshold_usdt must be positive")
+	}
+	if monitor.LowMarginHoldingHours <= 0 {
+		return errors.New("position_monitor.low_margin_holding_hours must be positive")
+	}
 	return nil
 }
 

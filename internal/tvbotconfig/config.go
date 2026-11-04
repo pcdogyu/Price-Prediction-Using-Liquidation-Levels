@@ -162,6 +162,9 @@ type AutoReentryConfig struct {
 }
 
 type PositionMonitorConfig struct {
+	Enabled bool `json:"enabled"`
+	// Legacy exchange flags remain decodable for old configuration files. The
+	// runtime scanner now uses the tenant's active account per environment.
 	OKXEnabled              bool    `json:"okx_enabled"`
 	BinanceEnabled          bool    `json:"binance_enabled"`
 	GateEnabled             bool    `json:"gate_enabled"`
@@ -170,6 +173,9 @@ type PositionMonitorConfig struct {
 	StopLossPct             float64 `json:"stop_loss_pct"`
 	HoldingTimeCloseEnabled bool    `json:"holding_time_close_enabled"`
 	HoldingTimeCloseHours   int     `json:"holding_time_close_hours"`
+	LowMarginCloseEnabled   bool    `json:"low_margin_close_enabled"`
+	LowMarginThresholdUSDT  float64 `json:"low_margin_threshold_usdt"`
+	LowMarginHoldingHours   int     `json:"low_margin_holding_hours"`
 }
 
 type SymbolConfig struct {
@@ -335,6 +341,7 @@ func Default() Config {
 				OnlyBotOrders:          true,
 			},
 			PositionMonitor: PositionMonitorConfig{
+				Enabled:                 true,
 				OKXEnabled:              false,
 				BinanceEnabled:          false,
 				GateEnabled:             false,
@@ -343,6 +350,9 @@ func Default() Config {
 				StopLossPct:             8,
 				HoldingTimeCloseEnabled: true,
 				HoldingTimeCloseHours:   6,
+				LowMarginCloseEnabled:   false,
+				LowMarginThresholdUSDT:  50,
+				LowMarginHoldingHours:   1,
 			},
 		},
 		Symbols: map[string]SymbolConfig{
@@ -552,6 +562,12 @@ func (c *Config) Normalize() {
 	if c.Trading.PositionMonitor.HoldingTimeCloseHours <= 0 {
 		c.Trading.PositionMonitor.HoldingTimeCloseHours = 6
 	}
+	if c.Trading.PositionMonitor.LowMarginThresholdUSDT <= 0 {
+		c.Trading.PositionMonitor.LowMarginThresholdUSDT = 50
+	}
+	if c.Trading.PositionMonitor.LowMarginHoldingHours <= 0 {
+		c.Trading.PositionMonitor.LowMarginHoldingHours = 1
+	}
 	if c.Symbols == nil {
 		c.Symbols = map[string]SymbolConfig{}
 	}
@@ -695,6 +711,12 @@ func (c Config) validate(validateSymbols bool) error {
 	}
 	if c.Trading.PositionMonitor.HoldingTimeCloseHours <= 0 {
 		return errors.New("position_monitor.holding_time_close_hours must be positive")
+	}
+	if c.Trading.PositionMonitor.LowMarginThresholdUSDT <= 0 {
+		return errors.New("position_monitor.low_margin_threshold_usdt must be positive")
+	}
+	if c.Trading.PositionMonitor.LowMarginHoldingHours <= 0 {
+		return errors.New("position_monitor.low_margin_holding_hours must be positive")
 	}
 	if validateSymbols {
 		for key, sym := range c.Symbols {

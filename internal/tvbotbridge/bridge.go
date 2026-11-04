@@ -376,7 +376,6 @@ func (b *Bridge) startMonitors(ctx context.Context, handler *tvbotserver.Server)
 		return
 	}
 	handler.StartUSDTBalanceSampler(ctx)
-	handler.StartLowMarginPositionMonitor(ctx)
 	handler.StartPositionMonitor(ctx)
 	handler.StartStalePendingOrderCancelMonitor(ctx)
 	handler.StartTradeFillMonitor(ctx)

@@ -474,10 +474,10 @@ func TestNormalizePositionMonitorDefaultsAndValidation(t *testing.T) {
 	cfg.Trading.PositionMonitor = PositionMonitorConfig{}
 	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = true
 	cfg.Normalize()
-	if cfg.Trading.PositionMonitor.OKXEnabled || cfg.Trading.PositionMonitor.BinanceEnabled || cfg.Trading.PositionMonitor.GateEnabled {
-		t.Fatalf("position monitor should default disabled: %#v", cfg.Trading.PositionMonitor)
+	if cfg.Trading.PositionMonitor.Enabled {
+		t.Fatalf("zero-value position monitor should preserve disabled master switch: %#v", cfg.Trading.PositionMonitor)
 	}
-	if cfg.Trading.PositionMonitor.PollIntervalSeconds != 300 || cfg.Trading.PositionMonitor.TakeProfitPct != 5 || cfg.Trading.PositionMonitor.StopLossPct != 8 || !cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled || cfg.Trading.PositionMonitor.HoldingTimeCloseHours != 6 {
+	if cfg.Trading.PositionMonitor.OKXEnabled || cfg.Trading.PositionMonitor.BinanceEnabled || cfg.Trading.PositionMonitor.GateEnabled || cfg.Trading.PositionMonitor.PollIntervalSeconds != 300 || cfg.Trading.PositionMonitor.TakeProfitPct != 5 || cfg.Trading.PositionMonitor.StopLossPct != 8 || !cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled || cfg.Trading.PositionMonitor.HoldingTimeCloseHours != 6 || cfg.Trading.PositionMonitor.LowMarginThresholdUSDT != 50 || cfg.Trading.PositionMonitor.LowMarginHoldingHours != 1 || cfg.Trading.PositionMonitor.LowMarginCloseEnabled {
 		t.Fatalf("bad position monitor defaults: %#v", cfg.Trading.PositionMonitor)
 	}
 	if err := cfg.Validate(); err != nil {
@@ -502,6 +502,32 @@ func TestNormalizePositionMonitorDefaultsAndValidation(t *testing.T) {
 	cfg.Trading.PositionMonitor.HoldingTimeCloseHours = 0
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("zero position monitor holding time should be rejected")
+	}
+	cfg.Trading.PositionMonitor.HoldingTimeCloseHours = 6
+	cfg.Trading.PositionMonitor.LowMarginThresholdUSDT = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("zero low margin threshold should be rejected")
+	}
+	cfg.Trading.PositionMonitor.LowMarginThresholdUSDT = 50
+	cfg.Trading.PositionMonitor.LowMarginHoldingHours = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("zero low margin holding time should be rejected")
+	}
+}
+
+func TestLoadLegacyPositionMonitorMigratesToUnifiedDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.json")
+	legacy := `{"trading":{"position_monitor":{"okx_enabled":true,"poll_interval_seconds":120,"take_profit_pct":4,"stop_loss_pct":7,"holding_time_close_enabled":true,"holding_time_close_hours":3}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitor := cfg.Trading.PositionMonitor
+	if !monitor.Enabled || !monitor.OKXEnabled || monitor.PollIntervalSeconds != 120 || monitor.LowMarginCloseEnabled || monitor.LowMarginThresholdUSDT != 50 || monitor.LowMarginHoldingHours != 1 {
+		t.Fatalf("legacy position monitor was not migrated: %#v", monitor)
 	}
 }
 

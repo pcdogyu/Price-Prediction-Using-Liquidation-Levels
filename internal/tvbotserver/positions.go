@@ -37,8 +37,7 @@ var (
 	binanceReduceOnlyRetryDelay       = 250 * time.Millisecond
 	binanceOrderCleanupAttempts       = 4
 	binanceOrderCleanupRetryDelay     = 250 * time.Millisecond
-	lowMarginPositionCheckInterval    = time.Minute
-	lowMarginPositionThresholdUSDT    = 10.0
+	lowMarginPositionChaseInterval    = 30 * time.Second
 	autoProfitPositionCheckInterval   = 5 * time.Minute
 	autoProfitPositionReturnThreshold = 0.05
 	autoProfitClosePollInterval       = 10 * time.Second
@@ -1057,10 +1056,8 @@ func (s *Server) handleBinancePendingAlgoOrderChaseAction(w http.ResponseWriter,
 }
 
 func (s *Server) StartLowMarginPositionMonitor(ctx context.Context) {
-	if s.ConfigStore == nil || (s.OKXCredentials == nil && s.OKXLiveCredentials == nil) {
-		return
-	}
-	go s.runLowMarginPositionMonitor(ctx, lowMarginPositionCheckInterval)
+	// Low-margin cleanup is scheduled by StartPositionMonitor. This method is
+	// retained for callers compiled against older versions.
 }
 
 func (s *Server) StartPositionMonitor(ctx context.Context) {
@@ -1096,18 +1093,16 @@ func positionMonitorInterval(cfg config.Config) time.Duration {
 func (s *Server) scanPositionMonitor(ctx context.Context) {
 	cfg := s.ConfigStore.Get()
 	monitor := cfg.Trading.PositionMonitor
-	if !monitor.OKXEnabled && !monitor.BinanceEnabled && !monitor.GateEnabled && !monitor.HoldingTimeCloseEnabled {
+	if !monitor.Enabled || !positionMonitorHasRule(monitor) {
 		return
 	}
-	if monitor.OKXEnabled || monitor.HoldingTimeCloseEnabled {
-		s.scanOKXPositionMonitor(ctx, cfg, monitor)
-	}
-	if monitor.BinanceEnabled || monitor.HoldingTimeCloseEnabled {
-		s.scanBinancePositionMonitor(ctx, cfg, monitor)
-	}
-	if monitor.GateEnabled || monitor.HoldingTimeCloseEnabled {
-		s.scanGatePositionMonitor(ctx, cfg, monitor)
-	}
+	s.scanOKXPositionMonitor(ctx, cfg, monitor)
+	s.scanBinancePositionMonitor(ctx, cfg, monitor)
+	s.scanGatePositionMonitor(ctx, cfg, monitor)
+}
+
+func positionMonitorHasRule(monitor config.PositionMonitorConfig) bool {
+	return monitor.TakeProfitPct > 0 || monitor.StopLossPct > 0 || monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled
 }
 
 func (s *Server) scanOKXPositionMonitor(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig) {
@@ -1118,7 +1113,8 @@ func (s *Server) scanOKXPositionMonitor(ctx context.Context, cfg config.Config, 
 		return
 	}
 	store := s.okxCredentialStore(cfg.Trading.Env)
-	for _, requestedAPIID := range configuredAPIIDs(store.Status()) {
+	status := store.Status()
+	for _, requestedAPIID := range activeAPIIDs(status.Configured, status.ActiveID) {
 		scanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
 		err := s.scanOKXPositionMonitorForAPI(scanCtx, cfg, monitor, requestedAPIID)
 		cancel()
@@ -1150,7 +1146,7 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 	now := s.now()
 	var fills []positionEntryFill
 	var fillErr error
-	if monitor.HoldingTimeCloseEnabled {
+	if monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled {
 		fills, fillErr = s.cachedPositionEntryFills(
 			trading.ExchangeOKX+"|"+apiID+"|"+strings.TrimRight(client.BaseURL, "/")+"|SWAP",
 			now,
@@ -1164,14 +1160,20 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 		}
 	}
 	for _, position := range open {
-		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, monitor.OKXEnabled, now, fills, fillErr, true)
+		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fills, fillErr, true)
 		if !hit {
 			if monitor.HoldingTimeCloseEnabled && entryErr != "" && s.Logger != nil {
 				s.Logger.Warn("OKX holding-time auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
 			}
 			continue
 		}
-		order, started, err := s.startLimitPositionClose(ctx, apiID, cfg, client, position, "")
+		var order positionCloseOrder
+		var started bool
+		if trigger == "low_margin" {
+			order, started, err = s.startLowMarginLimitPositionClose(ctx, apiID, cfg, client, position)
+		} else {
+			order, started, err = s.startLimitPositionClose(ctx, apiID, cfg, client, position, "")
+		}
 		if err != nil {
 			if s.Logger != nil {
 				s.Logger.Warn("failed to start OKX auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "holding_time_close_hours", monitor.HoldingTimeCloseHours, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "error", err)
@@ -1220,7 +1222,8 @@ func (s *Server) scanBinancePositionMonitor(ctx context.Context, cfg config.Conf
 		return
 	}
 	store := s.binanceCredentialStore(cfg.Trading.Env)
-	for _, requestedAPIID := range configuredBinanceAPIIDs(store.Status()) {
+	status := store.Status()
+	for _, requestedAPIID := range activeAPIIDs(status.Configured, status.ActiveID) {
 		scanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
 		err := s.scanBinancePositionMonitorForAPI(scanCtx, cfg, monitor, requestedAPIID)
 		cancel()
@@ -1257,7 +1260,7 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 	now := s.now()
 	fillsBySymbol := make(map[string][]positionEntryFill)
 	errorsBySymbol := make(map[string]error)
-	if monitor.HoldingTimeCloseEnabled {
+	if monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled {
 		positionsBySymbol := positionsByInstID(open)
 		for symbol, symbolPositions := range positionsBySymbol {
 			fills, fillErr := s.cachedPositionEntryFills(
@@ -1279,14 +1282,20 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 	}
 	for _, position := range open {
 		symbol := strings.ToUpper(strings.TrimSpace(position.InstID))
-		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, monitor.BinanceEnabled, now, fillsBySymbol[symbol], errorsBySymbol[symbol], false)
+		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fillsBySymbol[symbol], errorsBySymbol[symbol], false)
 		if !hit {
 			if monitor.HoldingTimeCloseEnabled && entryErr != "" && s.Logger != nil {
 				s.Logger.Warn("Binance holding-time auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
 			}
 			continue
 		}
-		order, started, err := s.startBinanceLimitPositionClose(ctx, apiID, client, position, "")
+		var order positionCloseOrder
+		var started bool
+		if trigger == "low_margin" {
+			order, started, err = s.startBinanceLowMarginLimitPositionClose(ctx, apiID, client, position, positionMonitorInterval(cfg))
+		} else {
+			order, started, err = s.startBinanceLimitPositionClose(ctx, apiID, client, position, "")
+		}
 		if err != nil {
 			if s.Logger != nil {
 				s.Logger.Warn("failed to start Binance auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "holding_time_close_hours", monitor.HoldingTimeCloseHours, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "error", err)
@@ -1335,7 +1344,8 @@ func (s *Server) scanGatePositionMonitor(ctx context.Context, cfg config.Config,
 		return
 	}
 	store := s.gateCredentialStore(cfg.Trading.Env)
-	for _, requestedAPIID := range configuredGateAPIIDs(store.Status()) {
+	status := store.Status()
+	for _, requestedAPIID := range activeAPIIDs(status.Configured, status.ActiveID) {
 		scanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
 		err := s.scanGatePositionMonitorForAPI(scanCtx, cfg, monitor, requestedAPIID)
 		cancel()
@@ -1381,7 +1391,7 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 	now := s.now()
 	fillsByContract := make(map[string][]positionEntryFill)
 	errorsByContract := make(map[string]error)
-	if monitor.HoldingTimeCloseEnabled {
+	if monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled {
 		for _, item := range open {
 			contract := strings.ToUpper(strings.TrimSpace(firstNonEmpty(item.raw.Contract, item.position.InstID)))
 			if contract == "" {
@@ -1405,7 +1415,7 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 		raw := item.raw
 		position := item.position
 		contract := strings.ToUpper(strings.TrimSpace(firstNonEmpty(raw.Contract, position.InstID)))
-		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, monitor.GateEnabled, now, fillsByContract[contract], errorsByContract[contract], true)
+		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fillsByContract[contract], errorsByContract[contract], true)
 		if !hit {
 			if monitor.HoldingTimeCloseEnabled && entryErr != "" && s.Logger != nil {
 				s.Logger.Warn("Gate holding-time auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
@@ -1413,6 +1423,19 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 			continue
 		}
 		if contract == "" {
+			continue
+		}
+		if trigger == "low_margin" {
+			order, started, err := s.startGateLowMarginLimitPositionClose(ctx, apiID, cfg, client, position, positionMonitorInterval(cfg))
+			if err != nil {
+				if s.Logger != nil {
+					s.Logger.Warn("failed to start Gate low margin position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "error", err)
+				}
+				continue
+			}
+			if started && s.Logger != nil {
+				s.Logger.Info("Gate low margin position close started", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "margin", position.Margin, "px", order.Px, "ord_id", order.Order.IDString())
+			}
 			continue
 		}
 		operationKey := gateContractOperationKey(apiID, contract)
@@ -1800,6 +1823,16 @@ func positionMonitorTriggerForPosition(position okx.Position, monitor config.Pos
 			}
 		}
 	}
+	if monitor.LowMarginCloseEnabled && monitor.LowMarginThresholdUSDT > 0 && monitor.LowMarginHoldingHours > 0 {
+		entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, false)
+		if entryErr == "" {
+			heldFor := now.UTC().Sub(entryAt.UTC())
+			_, low := lowMarginPosition(position, monitor.LowMarginThresholdUSDT)
+			if heldFor >= time.Duration(monitor.LowMarginHoldingHours)*time.Hour && low && positionReductionRecordCount(position, fills, entryAt, now) > 0 {
+				return "low_margin", true, entryAt, heldFor, ""
+			}
+		}
+	}
 	if !monitor.HoldingTimeCloseEnabled || monitor.HoldingTimeCloseHours <= 0 {
 		return "", false, time.Time{}, 0, ""
 	}
@@ -1815,6 +1848,38 @@ func positionMonitorTriggerForPosition(position okx.Position, monitor config.Pos
 		return "holding_time", true, entryAt, heldFor, ""
 	}
 	return "", false, entryAt, heldFor, ""
+}
+
+func positionReductionRecordCount(position okx.Position, fills []positionEntryFill, entryAt, now time.Time) int {
+	current, ok := signedPositionSize(position)
+	if !ok || nearlyZero(current) {
+		return 0
+	}
+	currentSign := signOf(current)
+	seen := make(map[string]struct{})
+	count := 0
+	for _, fill := range fills {
+		if !positionEntryFillMatches(position, fill) || fill.FillTime.IsZero() || fill.FillTime.Before(entryAt) || fill.FillTime.After(now) {
+			continue
+		}
+		delta, ok := signedFillSize(fill)
+		if !ok || signOf(delta) == currentSign {
+			continue
+		}
+		id := strings.TrimSpace(fill.OrdID)
+		if id == "" {
+			id = strings.TrimSpace(fill.ClOrdID)
+		}
+		if id == "" {
+			id = fmt.Sprintf("%s|%s|%s|%s", fill.InstID, fill.Side, fill.FillTime.UTC().Format(time.RFC3339Nano), strconv.FormatFloat(fill.Size, 'g', -1, 64))
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		count++
+	}
+	return count
 }
 
 func positionMonitorEntryTime(position okx.Position, fills []positionEntryFill, fillErr error, allowPositionTimeFallback bool) (time.Time, string) {
@@ -1852,70 +1917,17 @@ func formatPositionMonitorEntryTime(entryAt time.Time) string {
 }
 
 func (s *Server) runLowMarginPositionMonitor(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		interval = lowMarginPositionCheckInterval
-	}
-	s.closeLowMarginPositions(ctx)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.closeLowMarginPositions(ctx)
-		}
-	}
+	// Compatibility shim. StartPositionMonitor owns the scheduler.
 }
 
 func (s *Server) closeLowMarginPositions(ctx context.Context) {
-	cfg := s.ConfigStore.Get()
-	store := s.okxCredentialStore(cfg.Trading.Env)
-	if store == nil {
-		return
-	}
-	ids := configuredAPIIDs(store.Status())
-	if len(ids) == 0 {
-		return
-	}
-	for _, requestedAPIID := range ids {
-		scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		err := s.closeLowMarginPositionsForAPI(scanCtx, cfg, requestedAPIID)
-		cancel()
-		if err != nil && s.Logger != nil {
-			s.Logger.Warn("failed to scan low margin positions", "api_id", requestedAPIID, "error", err)
-		}
+	if s.ConfigStore != nil {
+		s.scanPositionMonitor(ctx)
 	}
 }
 
 func (s *Server) closeLowMarginPositionsForAPI(ctx context.Context, cfg config.Config, requestedAPIID string) error {
-	client, apiID, err := s.okxClientForCredentials(cfg, requestedAPIID)
-	if err != nil {
-		return err
-	}
-	positions, _, err := client.Positions(ctx, "SWAP")
-	if err != nil {
-		return err
-	}
-	for _, position := range openPositions(positions) {
-		margin, low := lowMarginPosition(position, lowMarginPositionThresholdUSDT)
-		if !low {
-			continue
-		}
-		orderCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		order, started, err := s.startLimitPositionClose(orderCtx, apiID, cfg, client, position, "")
-		cancel()
-		if err != nil {
-			if s.Logger != nil {
-				s.Logger.Warn("failed to start low margin position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "margin", margin, "error", err)
-			}
-			continue
-		}
-		if started && s.Logger != nil {
-			s.Logger.Info("low margin position close started", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "margin", margin, "px", order.Px, "ord_id", order.Ack.OrdID)
-		}
-	}
-	return nil
+	return s.scanOKXPositionMonitorForAPI(ctx, cfg, cfg.Trading.PositionMonitor, requestedAPIID)
 }
 
 // StartAutoProfitPositionCloseMonitor closes profitable OKX positions with a
@@ -2293,6 +2305,14 @@ func cancelAllGateContractOrders(ctx context.Context, client gate.Client, contra
 }
 
 func (s *Server) startGateLimitPositionClose(ctx context.Context, apiID string, cfg config.Config, client gate.Client, position okx.Position, closeSz string) (gatePositionCloseOrder, bool, error) {
+	return s.startGateLimitPositionCloseWithOptions(ctx, apiID, cfg, client, position, closeSz, positionClosePollInterval, positionCloseLimitTimeout)
+}
+
+func (s *Server) startGateLowMarginLimitPositionClose(ctx context.Context, apiID string, cfg config.Config, client gate.Client, position okx.Position, timeout time.Duration) (gatePositionCloseOrder, bool, error) {
+	return s.startGateLimitPositionCloseWithOptions(ctx, apiID, cfg, client, position, "", lowMarginPositionChaseInterval, timeout)
+}
+
+func (s *Server) startGateLimitPositionCloseWithOptions(ctx context.Context, apiID string, cfg config.Config, client gate.Client, position okx.Position, closeSz string, pollInterval, timeout time.Duration) (gatePositionCloseOrder, bool, error) {
 	key := positionCloseKey(trading.ExchangeGate, apiID, position.InstID, position.PosSide)
 	if !positionCloseJobs.start(key) {
 		return gatePositionCloseOrder{}, false, nil
@@ -2302,7 +2322,7 @@ func (s *Server) startGateLimitPositionClose(ctx context.Context, apiID string, 
 		positionCloseJobs.done(key)
 		return gatePositionCloseOrder{}, false, err
 	}
-	go s.watchGateLimitPositionClose(apiID, cfg, client, order)
+	go s.watchGateLimitPositionCloseWithOptions(apiID, cfg, client, order, pollInterval, timeout)
 	return order, true, nil
 }
 
@@ -2538,14 +2558,16 @@ func gatePartialCloseRemaining(active gatePositionCloseOrder, position okx.Posit
 }
 
 func (s *Server) watchGateLimitPositionClose(apiID string, cfg config.Config, client gate.Client, active gatePositionCloseOrder) {
+	s.watchGateLimitPositionCloseWithOptions(apiID, cfg, client, active, positionClosePollInterval, positionCloseLimitTimeout)
+}
+
+func (s *Server) watchGateLimitPositionCloseWithOptions(apiID string, cfg config.Config, client gate.Client, active gatePositionCloseOrder, pollInterval, timeoutDuration time.Duration) {
 	key := positionCloseKey(trading.ExchangeGate, apiID, active.Position.InstID, active.Position.PosSide)
 	defer positionCloseJobs.done(key)
 
-	pollInterval := positionClosePollInterval
 	if pollInterval <= 0 {
 		pollInterval = 250 * time.Millisecond
 	}
-	timeoutDuration := positionCloseLimitTimeout
 	if timeoutDuration <= 0 {
 		timeoutDuration = 60 * time.Second
 	}
@@ -3077,6 +3099,14 @@ func waitBinanceOrderCleanupRetry(ctx context.Context) error {
 }
 
 func (s *Server) startLimitPositionClose(ctx context.Context, apiID string, cfg config.Config, client okx.Client, position okx.Position, closeSz string) (positionCloseOrder, bool, error) {
+	return s.startLimitPositionCloseWithOptions(ctx, apiID, cfg, client, position, closeSz, positionClosePollInterval, positionCloseLimitTimeout)
+}
+
+func (s *Server) startLowMarginLimitPositionClose(ctx context.Context, apiID string, cfg config.Config, client okx.Client, position okx.Position) (positionCloseOrder, bool, error) {
+	return s.startLimitPositionCloseWithOptions(ctx, apiID, cfg, client, position, "", lowMarginPositionChaseInterval, positionMonitorInterval(cfg))
+}
+
+func (s *Server) startLimitPositionCloseWithOptions(ctx context.Context, apiID string, cfg config.Config, client okx.Client, position okx.Position, closeSz string, pollInterval, timeout time.Duration) (positionCloseOrder, bool, error) {
 	key := positionCloseKey(trading.ExchangeOKX, apiID, position.InstID, position.PosSide)
 	if !positionCloseJobs.start(key) {
 		return positionCloseOrder{}, false, nil
@@ -3086,7 +3116,7 @@ func (s *Server) startLimitPositionClose(ctx context.Context, apiID string, cfg 
 		positionCloseJobs.done(key)
 		return positionCloseOrder{}, false, err
 	}
-	go s.watchLimitPositionClose(apiID, cfg, client, order)
+	go s.watchLimitPositionCloseWithOptions(apiID, cfg, client, order, pollInterval, timeout)
 	return order, true, nil
 }
 
@@ -3123,6 +3153,14 @@ func (s *Server) startAutoProfitLimitPositionClose(ctx context.Context, apiID st
 }
 
 func (s *Server) startBinanceLimitPositionClose(ctx context.Context, apiID string, client binance.Client, position okx.Position, closeSz string) (positionCloseOrder, bool, error) {
+	return s.startBinanceLimitPositionCloseWithOptions(ctx, apiID, client, position, closeSz, positionClosePollInterval, positionCloseLimitTimeout)
+}
+
+func (s *Server) startBinanceLowMarginLimitPositionClose(ctx context.Context, apiID string, client binance.Client, position okx.Position, timeout time.Duration) (positionCloseOrder, bool, error) {
+	return s.startBinanceLimitPositionCloseWithOptions(ctx, apiID, client, position, "", lowMarginPositionChaseInterval, timeout)
+}
+
+func (s *Server) startBinanceLimitPositionCloseWithOptions(ctx context.Context, apiID string, client binance.Client, position okx.Position, closeSz string, pollInterval, timeout time.Duration) (positionCloseOrder, bool, error) {
 	key := positionCloseKey(trading.ExchangeBinance, apiID, position.InstID, position.PosSide)
 	if !positionCloseJobs.start(key) {
 		return positionCloseOrder{}, false, nil
@@ -3132,7 +3170,7 @@ func (s *Server) startBinanceLimitPositionClose(ctx context.Context, apiID strin
 		positionCloseJobs.done(key)
 		return positionCloseOrder{}, false, err
 	}
-	go s.watchBinanceLimitPositionClose(apiID, client, order)
+	go s.watchBinanceLimitPositionCloseWithOptions(apiID, client, order, pollInterval, timeout)
 	return order, true, nil
 }
 
@@ -7655,12 +7693,22 @@ func fallbackPartialMarketPositionClose(cfg config.Config, client okx.Client, ac
 }
 
 func (s *Server) watchBinanceLimitPositionClose(apiID string, client binance.Client, active positionCloseOrder) {
+	s.watchBinanceLimitPositionCloseWithOptions(apiID, client, active, positionClosePollInterval, positionCloseLimitTimeout)
+}
+
+func (s *Server) watchBinanceLimitPositionCloseWithOptions(apiID string, client binance.Client, active positionCloseOrder, pollInterval, timeoutDuration time.Duration) {
 	key := positionCloseKey(trading.ExchangeBinance, apiID, active.Position.InstID, active.Position.PosSide)
 	defer positionCloseJobs.done(key)
 
-	poll := time.NewTicker(positionClosePollInterval)
+	if pollInterval <= 0 {
+		pollInterval = 250 * time.Millisecond
+	}
+	if timeoutDuration <= 0 {
+		timeoutDuration = 60 * time.Second
+	}
+	poll := time.NewTicker(pollInterval)
 	defer poll.Stop()
-	timeout := time.NewTimer(positionCloseLimitTimeout)
+	timeout := time.NewTimer(timeoutDuration)
 	defer timeout.Stop()
 
 	for {

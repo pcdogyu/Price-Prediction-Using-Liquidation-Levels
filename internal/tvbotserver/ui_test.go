@@ -51,8 +51,12 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`throw new Error(localizeErrorMessage(msg));`,
 		`平仓数量低于最小步长，请提高平仓比例或选择全部平仓`,
 		`平仓数量 " + minimum[1] + " 低于最小数量 " + minimum[2]`,
-		`id="position-monitor-gate-enabled"`,
-		`gate_enabled: $("position-monitor-gate-enabled").checked`,
+		`id="position-monitor-enabled"`,
+		`enabled: $("position-monitor-enabled").checked`,
+		`id="position-monitor-low-margin-enabled"`,
+		`low_margin_threshold_usdt: Number($("position-monitor-low-margin-threshold").value)`,
+		`id="position-monitor-active-exchanges"`,
+		`position-monitor-timeout`,
 		`formatAveragePriceAmount(row, row.avgPx)`,
 		`function rawDecimalPrecision(value)`,
 		`const markPrecision = normalizedPrecision(row && row.price_precision)`,
@@ -65,6 +69,18 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("unified header missing %q", want)
+		}
+	}
+	for _, removed := range []string{
+		`position-monitor-okx-enabled`,
+		`position-monitor-binance-enabled`,
+		`position-monitor-gate-enabled`,
+		`okx_enabled:`,
+		`binance_enabled:`,
+		`gate_enabled:`,
+	} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("legacy position monitor exchange control should be absent: %q", removed)
 		}
 	}
 	if strings.Contains(page, "shared-logs") || strings.Contains(page, "shared-log-content") {
