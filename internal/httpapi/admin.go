@@ -44,6 +44,7 @@ func defaultTVBotMenuItems() []adminMenuItem {
 		{Key: "orders", Title: "信号", Href: "/tvbot?tab=orders", Group: "trading"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot?tab=positions", Group: "trading"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot?tab=analysis", Group: "trading"},
+		{Key: "history-orders", Title: "历史订单", Href: "/tvbot?tab=historyOrders", Group: "trading"},
 		{Key: "symbols", Title: "币对配置", Href: "/tvbot?tab=symbols", Group: "trading"},
 		{Key: "config", Title: "订单配置", Href: "/tvbot?tab=config", Group: "trading"},
 		{Key: "api-keys", Title: "API Key", Href: "/tvbot?tab=apiKeys", Group: "trading"},
@@ -79,7 +80,7 @@ var legacyDefaultAdminMenuKeys = []string{
 
 var canonicalDefaultAdminMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-	"orders", "positions", "analysis", "symbols", "config", "api-keys",
+	"orders", "positions", "analysis", "history-orders", "symbols", "config", "api-keys",
 	"order-settings", "template", "trade-monitor", "upgrade",
 	"system-info", "menu", "system",
 }
@@ -104,7 +105,7 @@ var legacyOrdersFirstAdminMenuKeys = []string{
 
 var canonicalPersonalMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-	"orders", "positions", "analysis", "symbols", "config", "api-keys",
+	"orders", "positions", "analysis", "history-orders", "symbols", "config", "api-keys",
 	"order-settings", "template", "trade-monitor", "upgrade",
 	"system-info",
 }
@@ -130,7 +131,10 @@ func reorderLegacyDefaultAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool)
 	for _, key := range canonicalDefaultAdminMenuKeys {
 		item, ok := byKey[key]
 		if !ok {
-			return menu, false
+			item, ok = defaultTVBotMenuItemByKey(key)
+			if !ok {
+				return menu, false
+			}
 		}
 		ordered = append(ordered, item)
 	}
@@ -152,7 +156,10 @@ func reorderLegacyPersonalMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	for _, key := range canonicalPersonalMenuKeys {
 		item, ok := byKey[key]
 		if !ok {
-			return menu, false
+			item, ok = defaultTVBotMenuItemByKey(key)
+			if !ok {
+				return menu, false
+			}
 		}
 		ordered = append(ordered, item)
 	}
@@ -174,7 +181,10 @@ func reorderLegacyOrdersFirstAdminMenu(menu []adminMenuItem) ([]adminMenuItem, b
 	for _, key := range canonicalDefaultAdminMenuKeys {
 		item, ok := byKey[key]
 		if !ok {
-			return menu, false
+			item, ok = defaultTVBotMenuItemByKey(key)
+			if !ok {
+				return menu, false
+			}
 		}
 		ordered = append(ordered, item)
 	}
@@ -196,17 +206,30 @@ func reorderMenuKeys(menu []adminMenuItem, legacyKeys, canonicalKeys []string) (
 	for _, key := range canonicalKeys {
 		item, ok := byKey[key]
 		if !ok {
-			return menu, false
+			item, ok = defaultTVBotMenuItemByKey(key)
+			if !ok {
+				return menu, false
+			}
 		}
 		ordered = append(ordered, item)
 	}
 	return ordered, true
 }
 
+func defaultTVBotMenuItemByKey(key string) (adminMenuItem, bool) {
+	for _, item := range defaultTVBotMenuItems() {
+		if item.Key == key {
+			return item, true
+		}
+	}
+	return adminMenuItem{}, false
+}
+
 var tvbotMenuTabs = map[string]string{
 	"orders":         "orders",
 	"positions":      "positions",
 	"analysis":       "analysis",
+	"history-orders": "historyOrders",
 	"symbols":        "symbols",
 	"config":         "config",
 	"api-keys":       "apiKeys",

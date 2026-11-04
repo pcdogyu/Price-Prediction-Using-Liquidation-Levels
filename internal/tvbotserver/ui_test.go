@@ -198,7 +198,7 @@ func TestRenderTVBotPositionSyncIndicator(t *testing.T) {
 }
 
 func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
-	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=analysis", nil))
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=historyOrders", nil))
 	for _, want := range []string{
 		`交易所历史订单`,
 		`id="exchange-order-sync"`,
@@ -220,6 +220,14 @@ func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
 	}
 	if strings.Contains(page, `data-exchange-order-retry`) || strings.Contains(page, `/exchange-orders/" +`) {
 		t.Fatal("exchange order history should not expose remote retry actions")
+	}
+	analysisStart := strings.Index(page, `<section id="analysis"`)
+	historyStart := strings.Index(page, `<section id="historyOrders"`)
+	if analysisStart < 0 || historyStart < 0 || historyStart <= analysisStart {
+		t.Fatalf("history orders should be rendered in a separate page section: analysis=%d history=%d", analysisStart, historyStart)
+	}
+	if strings.Contains(page[analysisStart:historyStart], `id="exchange-order-rows"`) {
+		t.Fatal("analysis page should no longer contain the exchange order history table")
 	}
 	loadStart := strings.Index(page, "async function loadExchangeOrders")
 	syncStart := strings.Index(page, "function queueExchangeOrderSync")

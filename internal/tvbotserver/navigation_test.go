@@ -34,6 +34,7 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 		`data-tab="orders" href="/tvbot?tab=orders"`,
 		`data-tab="positions" href="/tvbot?tab=positions"`,
 		`data-tab="analysis" href="/tvbot?tab=analysis"`,
+		`data-tab="historyOrders" href="/tvbot?tab=historyOrders">历史订单`,
 		`data-tab="symbols" href="/tvbot?tab=symbols"`,
 		`data-tab="config" href="/tvbot?tab=config"`,
 		`data-tab="apiKeys" href="/tvbot?tab=apiKeys"`,

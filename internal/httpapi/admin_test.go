@@ -56,7 +56,7 @@ func TestDefaultAdminMenuUsesRequestedTopOrder(t *testing.T) {
 	menu := defaultAdminMenu()
 	want := []string{
 		"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-		"orders", "positions", "analysis", "symbols", "config", "api-keys",
+		"orders", "positions", "analysis", "history-orders", "symbols", "config", "api-keys",
 		"order-settings", "template", "trade-monitor", "upgrade",
 		"system-info", "menu", "system",
 	}

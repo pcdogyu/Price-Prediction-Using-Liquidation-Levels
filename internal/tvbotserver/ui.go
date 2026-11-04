@@ -94,6 +94,7 @@ func defaultTopMenu() []TopMenuItem {
 		{Key: "orders", Title: "信号", Href: "/tvbot?tab=orders"},
 		{Key: "positions", Title: "持仓", Href: "/tvbot?tab=positions"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot?tab=analysis"},
+		{Key: "history-orders", Title: "历史订单", Href: "/tvbot?tab=historyOrders"},
 		{Key: "symbols", Title: "币对配置", Href: "/tvbot?tab=symbols"},
 		{Key: "config", Title: "订单配置", Href: "/tvbot?tab=config"},
 		{Key: "api-keys", Title: "API Key", Href: "/tvbot?tab=apiKeys"},
@@ -2425,9 +2426,12 @@ const tvbotHTML = `<!doctype html>
           <button class="btn small" type="button" id="analysis-trade-next">下一页</button>
         </div>
       </div>
+    </section>
+
+    <section id="historyOrders" aria-label="历史订单">
       <div class="analysis-trade-history-card exchange-order-history-card">
         <div class="section-head" style="margin-bottom:10px">
-          <h3>交易所历史订单</h3>
+          <h2>交易所历史订单</h2>
           <div class="analysis-trade-history-actions">
             <button class="btn small" type="button" id="exchange-order-sync">同步交易所订单</button>
             <span class="muted" id="exchange-order-sync-status">本地优先加载</span>
@@ -2880,6 +2884,7 @@ const tvbotHTML = `<!doctype html>
       analysisTradePage: 1,
       analysisTradeAggregate: false,
       exchangeOrders: [],
+      exchangeOrdersLoaded: false,
       exchangeOrdersTotal: 0,
       exchangeOrdersPage: 1,
       exchangeOrderStatus: "",
@@ -2943,6 +2948,7 @@ const tvbotHTML = `<!doctype html>
       { tab: "system", label: "系统信息", locked: true },
       { tab: "positions", label: "持仓" },
       { tab: "analysis", label: "订单分析" },
+      { tab: "historyOrders", label: "历史订单" },
       { tab: "symbols", label: "币对配置" },
       { tab: "config", label: "订单配置" },
       { tab: "apiKeys", label: "API Key" },
@@ -4328,6 +4334,9 @@ const tvbotHTML = `<!doctype html>
       if (target === "analysis" && !state.analysis) {
         loadAnalysis(false).catch((err) => toast(err.message));
       }
+      if (target === "historyOrders" && !state.exchangeOrdersLoaded) {
+        loadHistoryOrders(false).catch((err) => toast(err.message));
+      }
       if (target === "dashboard" && !state.dashboardAnalysis) {
         loadDashboardOrderAnalysis(false).catch((err) => toast(err.message));
       }
@@ -4371,6 +4380,8 @@ const tvbotHTML = `<!doctype html>
         tabLoads.push(loadDashboardOrderAnalysis(false));
       } else if (target === "analysis") {
         tabLoads.push(loadAnalysis(false));
+      } else if (target === "historyOrders" && !state.exchangeOrdersLoaded) {
+        tabLoads.push(loadHistoryOrders(false));
       } else if (target === "positions") {
         tabLoads.push(loadPositionView(false));
       } else if (target === "tradeMonitor") {
@@ -4580,13 +4591,6 @@ const tvbotHTML = `<!doctype html>
     async function loadAnalysis(refresh) {
       const qs = new URLSearchParams({ price_days: "3", pnl_minutes: String(analysisPNLWindowMinutes()) });
       if (refresh) qs.set("refresh", "true");
-      loadExchangeOrders(!!refresh).catch((err) => {
-        state.exchangeOrders = [];
-        state.exchangeOrdersTotal = 0;
-        state.exchangeOrdersError = err.message;
-        renderExchangeOrders();
-      });
-      queueExchangeOrderSync();
       await Promise.all([loadBalanceOverview(!!refresh, state.balanceWindowMinutes), loadAnalysisPositions(!!refresh)]);
       try {
         state.analysis = await api("/tvbot/analysis?" + qs.toString());
@@ -4598,6 +4602,20 @@ const tvbotHTML = `<!doctype html>
         state.analysisTradePage = 1;
       }
       renderAnalysis();
+    }
+
+    async function loadHistoryOrders(refresh) {
+      try {
+        await loadExchangeOrders(!!refresh);
+        queueExchangeOrderSync();
+      } catch (err) {
+        state.exchangeOrdersLoaded = false;
+        state.exchangeOrders = [];
+        state.exchangeOrdersTotal = 0;
+        state.exchangeOrdersError = err.message;
+        renderExchangeOrders();
+        throw err;
+      }
     }
 
     async function loadExchangeOrders(resetPage) {
@@ -4614,6 +4632,7 @@ const tvbotHTML = `<!doctype html>
       state.exchangeOrderTarget = result.target || null;
       state.exchangeOrderSync = result.sync || null;
       state.exchangeOrdersError = result.target_error || "";
+      state.exchangeOrdersLoaded = true;
       renderExchangeOrders();
       return result;
     }
