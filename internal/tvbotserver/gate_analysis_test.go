@@ -79,6 +79,71 @@ func TestBuildAnalysisSupportsGateWithoutOKX(t *testing.T) {
 	}
 }
 
+func TestApplyGatePositionStrategiesFromOpeningTrades(t *testing.T) {
+	base := time.Date(2026, 11, 4, 1, 0, 0, 0, time.UTC)
+	positions := []analysisPositionTrade{{
+		Exchange:  tvbottrading.ExchangeGate,
+		APIID:     "gate-main",
+		InstID:    "BTC_USDT",
+		Side:      tvbottrading.PositionSideLong,
+		EntryTime: base,
+		ExitTime:  base.Add(time.Hour),
+	}}
+	trades := []analysisTrade{{
+		Exchange:       tvbottrading.ExchangeGate,
+		APIID:          "gate-main",
+		InstID:         "BTC_USDT",
+		PosSide:        tvbottrading.PositionSideLong,
+		PositionEffect: tvbottrading.PositionEffectOpen,
+		Strategy:       "value_area",
+		FillTime:       base,
+	}}
+
+	applyGatePositionStrategies(positions, trades)
+	if positions[0].Strategy != "value_area" {
+		t.Fatalf("Gate position strategy=%q, want value_area", positions[0].Strategy)
+	}
+}
+
+func TestAnalysisExternalDataEnrichesGateClosedPositionStrategy(t *testing.T) {
+	srv := newTestServer(t)
+	cfg := srv.ConfigStore.Get()
+	base := time.Date(2026, 11, 4, 1, 0, 0, 0, time.UTC)
+	open := analysisTrade{
+		Exchange:       tvbottrading.ExchangeGate,
+		APIID:          "gate-main",
+		InstID:         "BTC_USDT",
+		TradeID:        "gate-open",
+		OrdID:          "gate-entry",
+		PosSide:        tvbottrading.PositionSideLong,
+		PositionEffect: tvbottrading.PositionEffectOpen,
+		Strategy:       "value_area",
+		FillPx:         "100",
+		FillSz:         "2",
+		FillTime:       base,
+		FillTS:         base.UnixMilli(),
+		FillCount:      1,
+	}
+	closed := analysisPositionTrade{
+		Exchange:    tvbottrading.ExchangeGate,
+		APIID:       "gate-main",
+		InstID:      "BTC_USDT",
+		Side:        tvbottrading.PositionSideLong,
+		EntryTime:   base,
+		EntryTS:     base.UnixMilli(),
+		ExitTime:    base.Add(time.Hour),
+		ExitTS:      base.Add(time.Hour).UnixMilli(),
+		EntryPx:     "100",
+		ExitPx:      "110",
+		Qty:         "2",
+		RealizedPnL: "20",
+	}
+	resp := srv.analysisFromExternalData(cfg, "", "", "gate-main", "demo", 1, 120, base.Add(2*time.Hour), analysisSourceStatus{Gate: "gate"}, nil, nil, []analysisTrade{open}, []analysisPositionTrade{closed})
+	if len(resp.PositionTrades) != 1 || resp.PositionTrades[0].Strategy != "value_area" {
+		t.Fatalf("Gate closed position strategy=%#v", resp.PositionTrades)
+	}
+}
+
 func TestHandleAnalysisReturnsGateDataWhenOKXIsNotConfigured(t *testing.T) {
 	srv := newTestServer(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

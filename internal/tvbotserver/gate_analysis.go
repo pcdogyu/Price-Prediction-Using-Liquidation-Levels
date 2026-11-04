@@ -69,6 +69,33 @@ func (s *Server) fetchGateAnalysisData(ctx context.Context, client tvbotgate.Cli
 	return convertedTrades, convertedPositions, errors.Join(tradeErr, positionErr)
 }
 
+// applyGatePositionStrategies carries strategy metadata from Gate's opening
+// fills onto the exchange-provided position-close rows. Gate exposes the
+// realized PnL summary separately from its fill history, so those rows do not
+// have an order ID that can be enriched directly.
+func applyGatePositionStrategies(positions []analysisPositionTrade, trades []analysisTrade) {
+	for i := range positions {
+		position := &positions[i]
+		if strings.TrimSpace(position.Strategy) != "" || position.EntryTime.IsZero() {
+			continue
+		}
+		for _, trade := range trades {
+			if tvbottrading.NormalizeExchange(trade.Exchange) != tvbottrading.ExchangeGate ||
+				!strings.EqualFold(strings.TrimSpace(trade.APIID), strings.TrimSpace(position.APIID)) ||
+				!strings.EqualFold(strings.TrimSpace(trade.InstID), strings.TrimSpace(position.InstID)) ||
+				normalizeAnalysisPositionSide(trade.PosSide) != normalizeAnalysisPositionSide(position.Side) ||
+				normalizeAnalysisPositionEffect(trade.PositionEffect) != tvbottrading.PositionEffectOpen ||
+				trade.FillTime.Before(position.EntryTime.Add(-2*time.Second)) {
+				continue
+			}
+			if !position.ExitTime.IsZero() && trade.FillTime.After(position.ExitTime.Add(2*time.Second)) {
+				continue
+			}
+			mergeAnalysisStrategy(&position.Strategy, trade.Strategy)
+		}
+	}
+}
+
 func fetchGateAnalysisTrades(ctx context.Context, client tvbotgate.Client, since, until time.Time) ([]tvbotgate.MyTrade, error) {
 	out := []tvbotgate.MyTrade{}
 	for page := 0; page < gateAnalysisMaxPages; page++ {
