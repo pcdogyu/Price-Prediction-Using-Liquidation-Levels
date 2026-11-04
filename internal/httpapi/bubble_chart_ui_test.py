@@ -295,10 +295,10 @@ with sync_playwright() as playwright:
     pattern_view = page.evaluate("""() => ({
       tips: Array.from(document.querySelectorAll('[data-tip*="K线形态"]'), e => e.getAttribute('data-tip')),
       legend: document.querySelector('.legend').textContent,
-      footer: document.querySelector('.status-row .panel:last-child .footer-note').textContent
+      statusRow: document.querySelector('.status-row')
     })""")
     assert not pattern_view["tips"], pattern_view
-    assert "形态" not in pattern_view["legend"] and "形态" not in pattern_view["footer"], pattern_view
+    assert "形态" not in pattern_view["legend"] and pattern_view["statusRow"] is None, pattern_view
     trade_view_status = page.evaluate("""() => ({
       count: Number(document.getElementById('market-chart').dataset.tradeMarkerCount || 0),
       context: document.getElementById('chart-context').textContent,
