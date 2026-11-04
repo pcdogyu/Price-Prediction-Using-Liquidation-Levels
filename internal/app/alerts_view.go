@@ -27,6 +27,9 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 		GeneratedAt: now,
 	}
 	strategy := rtm.snapshotStrategySettings()
+	view.Thresholds.BlockOpen0800To0900 = strategy.BlockOpen0800To0900
+	view.Thresholds.BlockOpen1600To1700 = strategy.BlockOpen1600To1700
+	view.Thresholds.BlockOpen2130To2230 = strategy.BlockOpen2130To2230
 	view.Thresholds.ValueAreaStartMinute = strategy.ValueAreaStartMinute
 	view.Thresholds.ValueAreaEndMinute = strategy.ValueAreaEndMinute
 	view.Method = domain.AlertMonitorMethod(view.Thresholds.WindowMinutes, view.Thresholds.RefreshMinutes, view.Thresholds.TopSymbols)

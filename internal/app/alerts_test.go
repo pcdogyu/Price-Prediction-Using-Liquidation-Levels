@@ -34,7 +34,47 @@ func alertTestService(t *testing.T, name string) (*Service, config.Config, *stor
 		AlertThresholdBTCUSD:     100000,
 		AlertDeepQuotaMultiplier: 1,
 	}
-	return New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil))), cfg, st
+	svc := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// Keep legacy webhook tests independent from the wall clock. Dedicated
+	// time-window tests opt into the production defaults explicitly.
+	svc.alerts.blockOpen0800To0900 = false
+	svc.alerts.blockOpen1600To1700 = false
+	svc.alerts.blockOpen2130To2230 = false
+	return svc, cfg, st
+}
+
+func TestAlertOpenBlockNameUsesBeijingBoundariesAndIndependentSwitches(t *testing.T) {
+	settings := domain.AlertStrategySettings{
+		BlockOpen0800To0900: true,
+		BlockOpen1600To1700: true,
+		BlockOpen2130To2230: true,
+	}
+	beijing := time.FixedZone("test-beijing", 8*60*60)
+	cases := []struct {
+		name string
+		at   time.Time
+		want string
+	}{
+		{name: "first start inclusive", at: time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC), want: "08:00–09:00"},
+		{name: "first end exclusive", at: time.Date(2026, 11, 4, 1, 0, 0, 0, time.UTC)},
+		{name: "second start inclusive", at: time.Date(2026, 11, 4, 16, 0, 0, 0, beijing), want: "16:00–17:00"},
+		{name: "third end exclusive", at: time.Date(2026, 11, 4, 22, 30, 0, 0, beijing)},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := alertOpenBlockName(test.at, settings); got != test.want {
+				t.Fatalf("alertOpenBlockName(%s) = %q, want %q", test.at, got, test.want)
+			}
+		})
+	}
+
+	settings.BlockOpen1600To1700 = false
+	if got := alertOpenBlockName(time.Date(2026, 11, 4, 16, 30, 0, 0, beijing), settings); got != "" {
+		t.Fatalf("disabled 16:00–17:00 block still matched: %q", got)
+	}
+	if got := alertOpenBlockName(time.Date(2026, 11, 4, 21, 45, 0, 0, beijing), settings); got != "21:30–22:30" {
+		t.Fatalf("independent 21:30–22:30 block = %q", got)
+	}
 }
 
 func alertTestEvent(id, symbol, side string, at time.Time, usd float64) domain.LiquidationEvent {

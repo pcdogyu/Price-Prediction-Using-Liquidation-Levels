@@ -63,8 +63,9 @@
     <div class="alerts-strategy-switches">
       <div class="section-head alerts-strategy-switch-head"><div><h3>策略开关</h3><p class="muted alerts-section-lead">四类实时信号分别控制平仓和开仓，可单独打开或关闭；交易所刷单策略按 VAL/VAH 来回穿越触发，BTCUSDT 使用 BTCUSDT Gamma，ETHUSDT 及其他币对使用 ETHUSDT Gamma；Gamma&lt;0 时按“下单设置”的开仓策略处理。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>
     <form id="alerts-order-signal-settings">
-      <div class="table-scroll">
-        <table class="alerts-order-signal-table">
+      <div class="alerts-order-signal-layout">
+        <div class="table-scroll">
+          <table class="alerts-order-signal-table">
           <thead><tr><th>信号类别</th><th>触发时机</th><th>平仓</th><th>开仓</th></tr></thead>
           <tbody>
             <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-alert"></span>预警信号</th><td>首次达到爆仓阈值</td><td><label class="alerts-signal-toggle"><input id="alerts-order-alert-close" type="checkbox"><span>发送平仓</span></label></td><td><label class="alerts-signal-toggle"><input id="alerts-order-alert" type="checkbox"><span>发送开仓</span></label></td></tr>
@@ -72,7 +73,17 @@
             <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-steady"></span>稳健信号</th><td>反向爆仓确认完成</td><td><label class="alerts-signal-toggle"><input id="alerts-order-steady-close" type="checkbox"><span>发送平仓</span></label></td><td><label class="alerts-signal-toggle"><input id="alerts-order-steady" type="checkbox"><span>发送开仓</span></label></td></tr>
             <tr><th scope="row"><span class="alerts-signal-dot alerts-signal-dot-steady"></span>交易所刷单</th><td><div class="alerts-value-area-trigger"><span>VAL/VAH 来回刷</span><span class="alerts-value-area-window-controls" aria-label="交易所刷单北京时间区间"><span>北京时间</span><label for="alerts-value-area-start">刷单开始<input id="alerts-value-area-start" type="text" inputmode="numeric" pattern="(?:[01]\d|2[0-3]):[0-5]\d" maxlength="5" placeholder="20:00" autocomplete="off"></label><span aria-hidden="true">–</span><label for="alerts-value-area-end">刷单结束<input id="alerts-value-area-end" type="text" inputmode="numeric" pattern="(?:[01]\d|2[0-3]):[0-5]\d|24:00" maxlength="5" placeholder="24:00" autocomplete="off"></label></span></div></td><td><label class="alerts-signal-toggle"><input id="alerts-order-value-area-close" type="checkbox"><span>发送平仓</span></label></td><td><label class="alerts-signal-toggle"><input id="alerts-order-value-area" type="checkbox"><span>发送开仓</span></label></td></tr>
           </tbody>
-        </table>
+          </table>
+        </div>
+        <aside class="alerts-open-block-card" aria-label="北京时间禁止自动开仓">
+          <div class="alerts-open-block-card-head"><h4>禁止自动开仓</h4><span class="muted">北京时间</span></div>
+          <p class="muted">只限制实时自动开仓，平仓不受影响。</p>
+          <div class="alerts-open-block-list">
+            <label class="alerts-signal-toggle alerts-open-block-toggle"><input id="alerts-block-open-0800-0900" type="checkbox"><span>08:00–09:00</span></label>
+            <label class="alerts-signal-toggle alerts-open-block-toggle"><input id="alerts-block-open-1600-1700" type="checkbox"><span>16:00–17:00</span></label>
+            <label class="alerts-signal-toggle alerts-open-block-toggle"><input id="alerts-block-open-2130-2230" type="checkbox"><span>21:30–22:30</span></label>
+          </div>
+        </aside>
       </div>
       <div class="alerts-order-signal-footer"><span id="alerts-order-signal-summary" class="muted">—</span><button id="alerts-order-signal-save" type="submit">保存策略开关</button></div>
       <p class="muted alerts-note">每类实时信号按本页开关独立发送平仓和开仓指令。交易所刷单策略的自动 Telegram 报警、交易指令和 TVBot 自动开仓均按本行配置的北京时间区间执行，开始时间包含、结束时间不包含；Gamma 小于 0 时按“下单设置”的 Gamma 开仓策略执行：选择“忽略”会跳过本次刷单开仓，并发送对应策略持仓的 close-only，是否发送平仓仍由交易所刷单平仓开关决定；历史记录中的“触发下单”会按信号保存的 open/close 效果执行，手动仅平仓且检测不到对应仓位时自动转为同方向开仓。</p>

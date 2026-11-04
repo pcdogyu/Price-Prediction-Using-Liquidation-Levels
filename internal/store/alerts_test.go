@@ -161,7 +161,7 @@ func TestImportAlertHistoryIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestAlertStrategyMigrationDefaultsNewFiltersOn(t *testing.T) {
+func TestAlertStrategyMigrationDefaultsNewFiltersAndOpenBlocksOn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy-alerts.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -185,12 +185,12 @@ INSERT INTO alert_tenant_strategy_settings(tenant_id,window_minutes,btc_usd,eth_
 	defer store.Close()
 	ctx := context.Background()
 	global, found, err := store.AlertStrategySettings(ctx)
-	if err != nil || !found || !global.VWAPFilterEnabled || !global.DonchianFilterEnabled {
-		t.Fatalf("legacy global strategy filters must default on: %+v found=%v err=%v", global, found, err)
+	if err != nil || !found || !global.VWAPFilterEnabled || !global.DonchianFilterEnabled || !global.BlockOpen0800To0900 || !global.BlockOpen1600To1700 || !global.BlockOpen2130To2230 {
+		t.Fatalf("legacy global strategy filters and open blocks must default on: %+v found=%v err=%v", global, found, err)
 	}
 	tenant, found, err := store.AlertStrategySettingsForTenant(ctx, "alice")
-	if err != nil || !found || !tenant.VWAPFilterEnabled || !tenant.DonchianFilterEnabled {
-		t.Fatalf("legacy tenant strategy filters must default on: %+v found=%v err=%v", tenant, found, err)
+	if err != nil || !found || !tenant.VWAPFilterEnabled || !tenant.DonchianFilterEnabled || !tenant.BlockOpen0800To0900 || !tenant.BlockOpen1600To1700 || !tenant.BlockOpen2130To2230 {
+		t.Fatalf("legacy tenant strategy filters and open blocks must default on: %+v found=%v err=%v", tenant, found, err)
 	}
 }
 
@@ -540,12 +540,12 @@ func TestWatchListAndSettingsPersistence(t *testing.T) {
 	if err != nil || stored.TelegramEnabled || stored.TelegramToken != "123:secret" {
 		t.Fatalf("the settings row must be updated in place: %+v err %v", stored, err)
 	}
-	strategy := domain.AlertStrategySettings{WindowMinutes: 5, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 100000, VWAPFilterEnabled: true, DonchianFilterEnabled: true}
+	strategy := domain.AlertStrategySettings{WindowMinutes: 5, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 100000, VWAPFilterEnabled: true, DonchianFilterEnabled: true, BlockOpen0800To0900: true, BlockOpen1600To1700: false, BlockOpen2130To2230: true}
 	if err := store.SaveAlertStrategySettings(ctx, strategy); err != nil {
 		t.Fatal(err)
 	}
 	storedStrategy, found, err := store.AlertStrategySettings(ctx)
-	if err != nil || !found || storedStrategy.WindowMinutes != 5 || storedStrategy.ETHUSD != 200000 || storedStrategy.OtherUSD != 100000 || !storedStrategy.VWAPFilterEnabled || !storedStrategy.DonchianFilterEnabled {
+	if err != nil || !found || storedStrategy.WindowMinutes != 5 || storedStrategy.ETHUSD != 200000 || storedStrategy.OtherUSD != 100000 || !storedStrategy.VWAPFilterEnabled || !storedStrategy.DonchianFilterEnabled || !storedStrategy.BlockOpen0800To0900 || storedStrategy.BlockOpen1600To1700 || !storedStrategy.BlockOpen2130To2230 {
 		t.Fatalf("the strategy settings did not round trip: %+v found=%v err=%v", storedStrategy, found, err)
 	}
 }

@@ -501,6 +501,12 @@
     const donchianFilter = $('alerts-donchian-filter');
     if (document.activeElement !== vwapFilter) vwapFilter.checked = settings.vwap_filter_enabled !== false;
     if (document.activeElement !== donchianFilter) donchianFilter.checked = settings.donchian_filter_enabled !== false;
+    const blockOpen0800 = $('alerts-block-open-0800-0900');
+    const blockOpen1600 = $('alerts-block-open-1600-1700');
+    const blockOpen2130 = $('alerts-block-open-2130-2230');
+    if (document.activeElement !== blockOpen0800) blockOpen0800.checked = settings.block_open_0800_0900 !== false;
+    if (document.activeElement !== blockOpen1600) blockOpen1600.checked = settings.block_open_1600_1700 !== false;
+    if (document.activeElement !== blockOpen2130) blockOpen2130.checked = settings.block_open_2130_2230 !== false;
     const valueAreaStart = $('alerts-value-area-start');
     const valueAreaEnd = $('alerts-value-area-end');
     if (document.activeElement !== valueAreaStart) valueAreaStart.value = minuteText(settings.value_area_start_minute);
@@ -610,6 +616,9 @@
       vwap_donchian_pct: Number($('alerts-vwap-donchian').value),
       vwap_filter_enabled: $('alerts-vwap-filter').checked,
       donchian_filter_enabled: $('alerts-donchian-filter').checked,
+      block_open_0800_0900: $('alerts-block-open-0800-0900').checked,
+      block_open_1600_1700: $('alerts-block-open-1600-1700').checked,
+      block_open_2130_2230: $('alerts-block-open-2130-2230').checked,
       value_area_start_minute: parseMinuteText($('alerts-value-area-start').value),
       value_area_end_minute: parseMinuteText($('alerts-value-area-end').value, true)
     };
@@ -823,7 +832,7 @@
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
   ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes', 'alerts-vwap-range-hours', 'alerts-vwap-min-drawdown', 'alerts-vwap-donchian', 'alerts-value-area-start', 'alerts-value-area-end'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
-  ['alerts-vwap-filter', 'alerts-donchian-filter'].forEach(id => $(id).addEventListener('change', () => { void saveStrategySettings(null, true); }));
+  ['alerts-vwap-filter', 'alerts-donchian-filter', 'alerts-block-open-0800-0900', 'alerts-block-open-1600-1700', 'alerts-block-open-2130-2230'].forEach(id => $(id).addEventListener('change', () => { void saveStrategySettings(null, true); }));
   $('alerts-signal-recalculate').addEventListener('click', recalculateSignals);
   $('alerts-backtest-run').addEventListener('click', runBacktest);
   document.querySelectorAll('.alerts-backtest-sort').forEach(button => button.addEventListener('click', () => sortBacktest(button.dataset.sortKey)));

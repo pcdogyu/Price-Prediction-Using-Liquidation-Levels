@@ -23,7 +23,7 @@ func TestTenantAlertSettingsAreIsolated(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveAlertStrategySettingsForContext(alice, domain.AlertStrategySettings{WindowMinutes: 7, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 150000, VWAPFilterEnabled: false, DonchianFilterEnabled: true}); err != nil {
+	if _, err := svc.SaveAlertStrategySettingsForContext(alice, domain.AlertStrategySettings{WindowMinutes: 7, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 150000, VWAPFilterEnabled: false, DonchianFilterEnabled: true, BlockOpen0800To0900: false, BlockOpen1600To1700: true, BlockOpen2130To2230: false}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -38,7 +38,7 @@ func TestTenantAlertSettingsAreIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bobStrategy.WindowMinutes == 7 || bobStrategy.BTCUSD == 300000 || !bobStrategy.VWAPFilterEnabled || !bobStrategy.DonchianFilterEnabled {
+	if bobStrategy.WindowMinutes == 7 || bobStrategy.BTCUSD == 300000 || !bobStrategy.VWAPFilterEnabled || !bobStrategy.DonchianFilterEnabled || !bobStrategy.BlockOpen0800To0900 || !bobStrategy.BlockOpen1600To1700 || !bobStrategy.BlockOpen2130To2230 {
 		t.Fatalf("bob inherited alice strategy: %+v", bobStrategy)
 	}
 
@@ -53,7 +53,7 @@ func TestTenantAlertSettingsAreIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if aliceStrategy.WindowMinutes != 7 || aliceStrategy.BTCUSD != 300000 || aliceStrategy.VWAPFilterEnabled || !aliceStrategy.DonchianFilterEnabled {
+	if aliceStrategy.WindowMinutes != 7 || aliceStrategy.BTCUSD != 300000 || aliceStrategy.VWAPFilterEnabled || !aliceStrategy.DonchianFilterEnabled || aliceStrategy.BlockOpen0800To0900 || !aliceStrategy.BlockOpen1600To1700 || aliceStrategy.BlockOpen2130To2230 {
 		t.Fatalf("alice strategy did not round trip: %+v", aliceStrategy)
 	}
 }
@@ -102,14 +102,24 @@ func TestTenantAlertHistoryIsDerivedFromSharedMarketEvents(t *testing.T) {
 	if err := st.SaveAlertStrategySettingsForTenant(ctx, "alice", domain.AlertStrategySettings{
 		WindowMinutes: 3, BTCUSD: 100000, ETHUSD: 200000, OtherUSD: 100000,
 		VWAPRangeHours: 24, VWAPMinDrawdownPct: 2.2, VWAPDonchianPct: 35,
+		BlockOpen0800To0900: true, BlockOpen1600To1700: false, BlockOpen2130To2230: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SaveAlertStrategySettingsForTenant(ctx, "bob", domain.AlertStrategySettings{
 		WindowMinutes: 3, BTCUSD: 200000, ETHUSD: 200000, OtherUSD: 100000,
 		VWAPRangeHours: 24, VWAPMinDrawdownPct: 2.2, VWAPDonchianPct: 35,
+		BlockOpen0800To0900: false, BlockOpen1600To1700: true, BlockOpen2130To2230: false,
 	}); err != nil {
 		t.Fatal(err)
+	}
+	aliceStrategy, found, err := st.AlertStrategySettingsForTenant(ctx, "alice")
+	if err != nil || !found || !aliceStrategy.BlockOpen0800To0900 || aliceStrategy.BlockOpen1600To1700 || !aliceStrategy.BlockOpen2130To2230 {
+		t.Fatalf("alice strategy blocks were not isolated: %+v found=%v err=%v", aliceStrategy, found, err)
+	}
+	bobStrategy, found, err := st.AlertStrategySettingsForTenant(ctx, "bob")
+	if err != nil || !found || bobStrategy.BlockOpen0800To0900 || !bobStrategy.BlockOpen1600To1700 || bobStrategy.BlockOpen2130To2230 {
+		t.Fatalf("bob strategy blocks were not isolated: %+v found=%v err=%v", bobStrategy, found, err)
 	}
 
 	alice := WithTenantID(ctx, "alice")

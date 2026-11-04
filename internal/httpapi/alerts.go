@@ -244,6 +244,9 @@ func (s *Server) alertOverview(w http.ResponseWriter, r *http.Request) {
 	view.Thresholds.VWAPDonchianPct = strategy.VWAPDonchianPct
 	view.Thresholds.VWAPFilterEnabled = strategy.VWAPFilterEnabled
 	view.Thresholds.DonchianFilterEnabled = strategy.DonchianFilterEnabled
+	view.Thresholds.BlockOpen0800To0900 = strategy.BlockOpen0800To0900
+	view.Thresholds.BlockOpen1600To1700 = strategy.BlockOpen1600To1700
+	view.Thresholds.BlockOpen2130To2230 = strategy.BlockOpen2130To2230
 	view.Method = domain.AlertMonitorMethod(view.Thresholds.WindowMinutes, view.Thresholds.RefreshMinutes, view.Thresholds.TopSymbols)
 	w.Header().Set("Cache-Control", "no-store")
 	settings, settingsErr := s.svc.AlertSettingsForContext(ctx)
@@ -789,13 +792,22 @@ func (s *Server) alertStrategySettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusServiceUnavailable, err)
 		return
 	}
-	// Older alert pages do not send the two new booleans. Keep the effective
+	// Older alert pages do not send the new booleans. Keep the effective
 	// value in that case; an explicitly supplied false remains a real update.
 	if _, ok := fields["vwap_filter_enabled"]; !ok {
 		in.VWAPFilterEnabled = current.VWAPFilterEnabled
 	}
 	if _, ok := fields["donchian_filter_enabled"]; !ok {
 		in.DonchianFilterEnabled = current.DonchianFilterEnabled
+	}
+	if _, ok := fields["block_open_0800_0900"]; !ok {
+		in.BlockOpen0800To0900 = current.BlockOpen0800To0900
+	}
+	if _, ok := fields["block_open_1600_1700"]; !ok {
+		in.BlockOpen1600To1700 = current.BlockOpen1600To1700
+	}
+	if _, ok := fields["block_open_2130_2230"]; !ok {
+		in.BlockOpen2130To2230 = current.BlockOpen2130To2230
 	}
 	if _, ok := fields["value_area_start_minute"]; !ok {
 		in.ValueAreaStartMinute = current.ValueAreaStartMinute

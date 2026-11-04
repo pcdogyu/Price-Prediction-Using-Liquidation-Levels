@@ -238,6 +238,99 @@ func TestDisabledOpeningSignalStillSendsPreclose(t *testing.T) {
 	}
 }
 
+func TestAutomaticOpenBlocksSuppressEntriesButPreserveCloseLegs(t *testing.T) {
+	requests := make(chan []byte, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	svc, cfg, _ := alertTestService(t, "automatic-open-blocks.db")
+	cfg.SteadyWebhookURL = server.URL
+	cfg.SteadyWebhookTokenNonce = "nonce-value"
+	cfg.SteadyWebhookToken = "token-value"
+	svc.alerts.webhookURL = cfg.SteadyWebhookURL
+	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
+	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	svc.alerts.webhookConfig = cfg
+	svc.alerts.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), svc.alerts.webhookSettings, 8, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.alerts.blockOpen0800To0900 = true
+	svc.alerts.blockOpen1600To1700 = true
+	svc.alerts.blockOpen2130To2230 = true
+	svc.alerts.setValueAreaWindow(valuearea.TradingWindow{StartMinute: 0, EndMinute: 24 * 60})
+	if _, err := svc.SaveAlertOrderSignalSettings(context.Background(), domain.OrderSignalSettings{
+		Alerts: true, Aggressive: true, Steady: true, ValueArea: true,
+		AlertsClose: true, AggressiveClose: true, SteadyClose: true, ValueAreaClose: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.alerts.webhook.Start(ctx)
+	blockedAt := time.Date(2026, 11, 4, 0, 30, 0, 0, time.UTC) // 08:30 Beijing
+	svc.alerts.submitSignalWebhook(domain.TradeSignal{Symbol: "BTCUSDT", Kind: domain.SignalAggressive, Side: "long", CreatedAt: blockedAt, ReferencePrice: 100}, true)
+	svc.alerts.submitSignalWebhook(domain.TradeSignal{Symbol: "ETHUSDT", Kind: domain.SignalSteady, Side: "short", CreatedAt: blockedAt, ReferencePrice: 100}, true)
+	svc.alerts.submitSignalWebhook(domain.TradeSignal{ID: "value-area-blocked", Symbol: "SOLUSDT", Kind: domain.SignalValueArea, Side: "long", PositionEffect: "open", CreatedAt: blockedAt, ReferencePrice: 100}, true)
+	svc.alerts.submitAlertWebhook(domain.LiquidationAlert{ID: "alert-blocked", Symbol: "BNBUSDT", TradeSide: "short", TriggeredAt: blockedAt, ReferencePrice: 100}, true)
+
+	for i := 0; i < 4; i++ {
+		select {
+		case raw := <-requests:
+			var payload map[string]any
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				t.Fatalf("blocked webhook body is not JSON: %v", err)
+			}
+			if payload["position_effect"] != "close" {
+				t.Fatalf("blocked automatic open emitted a non-close webhook: %#v", payload)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("blocked signal %d did not preserve its close leg", i+1)
+		}
+	}
+	select {
+	case raw := <-requests:
+		t.Fatalf("blocked automatic opens emitted an unexpected extra webhook: %s", raw)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	if _, err := svc.SaveAlertOrderSignalSettings(context.Background(), domain.OrderSignalSettings{
+		Alerts: true, Aggressive: true, Steady: true, ValueArea: true,
+		AlertsClose: false, AggressiveClose: false, SteadyClose: false, ValueAreaClose: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.alerts.submitSignalWebhook(domain.TradeSignal{Symbol: "BTCUSDT", Kind: domain.SignalAggressive, Side: "long", CreatedAt: blockedAt, ReferencePrice: 100}, true)
+	select {
+	case raw := <-requests:
+		t.Fatalf("close-disabled blocked signal emitted a webhook: %s", raw)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	if _, err := svc.SaveAlertOrderSignalSettings(context.Background(), domain.OrderSignalSettings{
+		Alerts: true, Aggressive: true, Steady: true, ValueArea: true,
+		AlertsClose: true, AggressiveClose: true, SteadyClose: true, ValueAreaClose: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	closeSignal := domain.TradeSignal{ID: "value-area-explicit-close", Symbol: "SOLUSDT", Kind: domain.SignalValueArea, Side: "short", PositionEffect: "close", CreatedAt: blockedAt, ReferencePrice: 100}
+	svc.alerts.submitSignalWebhook(closeSignal, true)
+	select {
+	case raw := <-requests:
+		var payload map[string]any
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatalf("explicit close body is not JSON: %v", err)
+		}
+		if payload["position_effect"] != "close" {
+			t.Fatalf("explicit close changed effect in blocked window: %#v", payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("explicit close was blocked by the automatic-open window")
+	}
+}
+
 func TestCloseOnlyRecordsSuppressAutomaticWebhooks(t *testing.T) {
 	requests := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -307,7 +400,7 @@ func TestNegativeETHGammaLeavesOpeningWebhookForUnifiedTVOrderPolicy(t *testing.
 	svc.alerts.webhookToken = cfg.SteadyWebhookToken
 	svc.alerts.webhookConfig = cfg
 	svc.alerts.webhook = notify.NewWebhookDispatcher(notify.NewWebhook(), svc.alerts.webhookSettings, 4, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	now := time.Now().UTC()
+	now := time.Date(2026, 11, 4, 2, 0, 0, 0, time.UTC)
 	svc.dashboard.Lock()
 	negative := -0.123456
 	svc.dashboard.deribit["ETHUSDT"] = domain.OptionGammaPoint{Symbol: "ETHUSDT", Underlying: "ETH", Source: "deribit", State: "ok", Time: now, Gamma: &negative, Contracts: 80}

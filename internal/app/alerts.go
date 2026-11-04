@@ -36,6 +36,9 @@ type alertRuntime struct {
 	webhookURL, webhookTokenNonce, webhookToken string
 	webhookConfig                               config.Config
 	valueAreaWindow                             valuearea.TradingWindow
+	blockOpen0800To0900                         bool
+	blockOpen1600To1700                         bool
+	blockOpen2130To2230                         bool
 
 	mu       sync.RWMutex
 	settings domain.NotificationSettings
@@ -95,9 +98,10 @@ func (s *Service) newAlertRuntime() *alertRuntime {
 	rtm := &alertRuntime{
 		service: s,
 		engine:  alert.New(cfg), valueArea: valuearea.New(), store: s.store, log: s.log, cfg: cfg,
-		valueAreaWindow: valuearea.DefaultTradingWindow(),
-		sender:          notify.NewTelegram(s.cfg.TelegramAPIBase),
-		envToken:        s.cfg.TelegramBotToken, envChat: s.cfg.TelegramChatID,
+		valueAreaWindow:     valuearea.DefaultTradingWindow(),
+		blockOpen0800To0900: true, blockOpen1600To1700: true, blockOpen2130To2230: true,
+		sender:   notify.NewTelegram(s.cfg.TelegramAPIBase),
+		envToken: s.cfg.TelegramBotToken, envChat: s.cfg.TelegramChatID,
 		webhookURL: s.cfg.SteadyWebhookURL, webhookTokenNonce: s.cfg.SteadyWebhookTokenNonce,
 		webhookToken:  s.cfg.SteadyWebhookToken,
 		webhookConfig: s.cfg,
@@ -245,7 +249,12 @@ func (rtm *alertRuntime) restoreStrategySettings(ctx context.Context) {
 
 func (rtm *alertRuntime) snapshotStrategySettings() domain.AlertStrategySettings {
 	settings := strategySettingsFromConfig(rtm.engine.Config())
-	window := rtm.valueAreaWindowSnapshot()
+	rtm.mu.RLock()
+	window := rtm.valueAreaWindow
+	settings.BlockOpen0800To0900 = rtm.blockOpen0800To0900
+	settings.BlockOpen1600To1700 = rtm.blockOpen1600To1700
+	settings.BlockOpen2130To2230 = rtm.blockOpen2130To2230
+	rtm.mu.RUnlock()
 	settings.ValueAreaStartMinute = window.StartMinute
 	settings.ValueAreaEndMinute = window.EndMinute
 	return settings
@@ -285,6 +294,11 @@ func (rtm *alertRuntime) applyStrategySettings(in domain.AlertStrategySettings) 
 	cfg.DonchianFilterEnabled = in.DonchianFilterEnabled
 	cfg.FilterSettingsSet = true
 	rtm.engine.UpdateConfig(cfg)
+	rtm.mu.Lock()
+	rtm.blockOpen0800To0900 = in.BlockOpen0800To0900
+	rtm.blockOpen1600To1700 = in.BlockOpen1600To1700
+	rtm.blockOpen2130To2230 = in.BlockOpen2130To2230
+	rtm.mu.Unlock()
 	rtm.setValueAreaWindow(valuearea.TradingWindow{StartMinute: in.ValueAreaStartMinute, EndMinute: in.ValueAreaEndMinute})
 }
 
@@ -607,6 +621,12 @@ func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNot
 		return
 	}
 	precloseSignal := rtm.valueAreaPrecloseSignal(signal)
+	if rtm.automaticOpenBlockName(signal.CreatedAt) != "" {
+		if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(precloseSignal) {
+			return
+		}
+		return
+	}
 	if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(precloseSignal) {
 		return
 	}
@@ -653,6 +673,12 @@ func (rtm *alertRuntime) submitAlertWebhook(alertRow domain.LiquidationAlert, al
 	// order webhook. In particular, do not send the preclose leg for a
 	// close-only zone; the alert history remains available for manual action.
 	if signal.FilterApplied && !signal.OpenAllowed {
+		return
+	}
+	if rtm.automaticOpenBlockName(signal.CreatedAt) != "" {
+		if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(signal) {
+			return
+		}
 		return
 	}
 	if (!signal.FilterApplied || signal.CloseAllowed) && !rtm.submitPrecloseWebhook(signal) {
