@@ -488,12 +488,30 @@ type CancelAlgoOrderAck struct {
 }
 
 type AmendOrderRequest struct {
-	InstID         string              `json:"instId"`
-	OrdID          string              `json:"ordId,omitempty"`
-	ClOrdID        string              `json:"clOrdId,omitempty"`
-	NewPx          string              `json:"newPx,omitempty"`
-	NewSz          string              `json:"newSz,omitempty"`
-	AttachAlgoOrds []map[string]string `json:"attachAlgoOrds,omitempty"`
+	InstID              string              `json:"instId"`
+	OrdID               string              `json:"ordId,omitempty"`
+	ClOrdID             string              `json:"clOrdId,omitempty"`
+	NewPx               string              `json:"newPx,omitempty"`
+	NewSz               string              `json:"newSz,omitempty"`
+	AttachAlgoOrds      []map[string]string `json:"attachAlgoOrds,omitempty"`
+	ClearAttachAlgoOrds bool                `json:"-"`
+}
+
+func (r AmendOrderRequest) MarshalJSON() ([]byte, error) {
+	type wire AmendOrderRequest
+	if !r.ClearAttachAlgoOrds {
+		return json.Marshal(wire(r))
+	}
+	// An explicit empty array is required by OKX to remove existing attached
+	// TP/SL orders; omitting the field leaves them in place.
+	return json.Marshal(struct {
+		InstID         string              `json:"instId"`
+		OrdID          string              `json:"ordId,omitempty"`
+		ClOrdID        string              `json:"clOrdId,omitempty"`
+		NewPx          string              `json:"newPx,omitempty"`
+		NewSz          string              `json:"newSz,omitempty"`
+		AttachAlgoOrds []map[string]string `json:"attachAlgoOrds"`
+	}{InstID: r.InstID, OrdID: r.OrdID, ClOrdID: r.ClOrdID, NewPx: r.NewPx, NewSz: r.NewSz, AttachAlgoOrds: []map[string]string{}})
 }
 
 type AmendOrderAck struct {

@@ -379,6 +379,18 @@ func webhookCloseCooldownSourceFromText(text string) (string, bool) {
 	return "", false
 }
 
+func containsTakeProfitMarker(text string) bool {
+	if strings.Contains(text, "止盈") || strings.Contains(text, "止盈") || strings.Contains(text, "take_profit") || strings.Contains(text, "take-profit") || strings.Contains(text, "take profit") {
+		return true
+	}
+	for _, token := range tvOrderIntentTokens(text) {
+		if token == "tp" || token == "takeprofit" {
+			return true
+		}
+	}
+	return false
+}
+
 func containsStopLossMarker(text string) bool {
 	if strings.Contains(text, "止损") || strings.Contains(text, "止損") || strings.Contains(text, "stop_loss") || strings.Contains(text, "stop-loss") || strings.Contains(text, "stop loss") {
 		return true

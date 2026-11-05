@@ -70,7 +70,15 @@ func (s *Server) runScheduledOKXCloseForAPI(ctx context.Context, cfg tvbotconfig
 		return err
 	}
 	var errs []error
-	for _, position := range openPositions(positions) {
+	open := openPositions(positions)
+	fills, fillErr := fetchOKXPositionEntryFills(ctx, client, "SWAP", open, s.now())
+	for _, position := range open {
+		if err := automaticPositionHoldingError(position, cfg.Trading.PositionMonitor, fills, fillErr, true, s.now()); err != nil {
+			if s.Logger != nil {
+				s.Logger.Warn("scheduled OKX position close skipped", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", err)
+			}
+			continue
+		}
 		order, started, closeErr := s.startManualLimitPositionClose(ctx, apiID, cfg, client, position, "")
 		if closeErr != nil {
 			errs = append(errs, fmt.Errorf("%s %s: %w", position.InstID, position.PosSide, closeErr))
@@ -111,9 +119,17 @@ func (s *Server) runScheduledBinanceCloseForAPI(ctx context.Context, cfg tvbotco
 		return err
 	}
 	var errs []error
+	now := s.now()
 	for _, raw := range positions {
 		position := binancePositionToOKX(raw)
 		if !isOpenPosition(position.Pos) {
+			continue
+		}
+		fills, fillErr := fetchBinancePositionEntryFills(ctx, client, position.InstID, []tvbotokx.Position{position}, now)
+		if err := automaticPositionHoldingError(position, cfg.Trading.PositionMonitor, fills, fillErr, false, now); err != nil {
+			if s.Logger != nil {
+				s.Logger.Warn("scheduled Binance position close skipped", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", err)
+			}
 			continue
 		}
 		order, started, closeErr := s.startScheduledBinanceLimitPositionClose(ctx, apiID, client, position)
@@ -173,9 +189,17 @@ func (s *Server) runScheduledGateCloseForAPI(ctx context.Context, cfg tvbotconfi
 		return err
 	}
 	var errs []error
+	now := s.now()
 	for _, raw := range positions {
 		position := gatePositionToOKX(raw)
 		if !isOpenPosition(position.Pos) {
+			continue
+		}
+		trades, fillErr := client.MyTrades(ctx, raw.Contract)
+		if err := automaticPositionHoldingError(position, cfg.Trading.PositionMonitor, gatePositionEntryFills(trades), fillErr, true, now); err != nil {
+			if s.Logger != nil {
+				s.Logger.Warn("scheduled Gate position close skipped", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", err)
+			}
 			continue
 		}
 		order, started, closeErr := s.startScheduledGateLimitPositionClose(ctx, apiID, cfg, client, position)

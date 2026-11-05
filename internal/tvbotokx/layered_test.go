@@ -37,6 +37,7 @@ func TestTraderPlacesSixLayeredOKXOrdersFromOneTicker(t *testing.T) {
 	defer ts.Close()
 
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.BaseURL = ts.URL
 	cfg.Trading.OrderType = string(trading.OrderTypeLayered)
 	cfg.Trading.RiskType = string(trading.RiskTPSL)

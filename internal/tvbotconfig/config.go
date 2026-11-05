@@ -62,27 +62,31 @@ type TradingConfig struct {
 	// webhooks. It is intentionally independent from the process-wide default
 	// webhook environment so one user's API-key selection cannot route another
 	// user's orders.
-	TargetExchange            string                       `json:"target_exchange,omitempty"`
-	TargetAPIID               string                       `json:"target_api_id,omitempty"`
-	TargetTradeEnv            string                       `json:"target_trade_env,omitempty"`
-	AllowLiveTrading          bool                         `json:"allow_live_trading"`
-	BaseURL                   string                       `json:"base_url"`
-	BinanceBaseURL            string                       `json:"binance_base_url"`
-	BinanceDemoBaseURL        string                       `json:"binance_demo_base_url"`
-	GateBaseURL               string                       `json:"gate_base_url"`
-	GateDemoBaseURL           string                       `json:"gate_demo_base_url"`
-	DefaultMarginMode         string                       `json:"default_margin_mode"`
-	PositionMode              string                       `json:"position_mode"`
-	MarketTurnoverScope       string                       `json:"market_turnover_scope"`
-	GammaNegativePolicy       string                       `json:"gamma_negative_policy"`
-	SignalTTLSeconds          int                          `json:"signal_ttl_seconds"`
-	IgnoredCoinpair           string                       `json:"ignored_coinpair"`
-	IgnoredCoinpairs          []string                     `json:"ignored_coinpairs"`
-	CoinpairWhitelist         []string                     `json:"coinpair_whitelist"`
-	OrderAmountUSDT           float64                      `json:"order_amount_usdt"`
-	Leverage                  int                          `json:"leverage"`
-	OrderType                 string                       `json:"order_type"`
-	RiskType                  string                       `json:"risk_type"`
+	TargetExchange      string   `json:"target_exchange,omitempty"`
+	TargetAPIID         string   `json:"target_api_id,omitempty"`
+	TargetTradeEnv      string   `json:"target_trade_env,omitempty"`
+	AllowLiveTrading    bool     `json:"allow_live_trading"`
+	BaseURL             string   `json:"base_url"`
+	BinanceBaseURL      string   `json:"binance_base_url"`
+	BinanceDemoBaseURL  string   `json:"binance_demo_base_url"`
+	GateBaseURL         string   `json:"gate_base_url"`
+	GateDemoBaseURL     string   `json:"gate_demo_base_url"`
+	DefaultMarginMode   string   `json:"default_margin_mode"`
+	PositionMode        string   `json:"position_mode"`
+	MarketTurnoverScope string   `json:"market_turnover_scope"`
+	GammaNegativePolicy string   `json:"gamma_negative_policy"`
+	SignalTTLSeconds    int      `json:"signal_ttl_seconds"`
+	IgnoredCoinpair     string   `json:"ignored_coinpair"`
+	IgnoredCoinpairs    []string `json:"ignored_coinpairs"`
+	CoinpairWhitelist   []string `json:"coinpair_whitelist"`
+	OrderAmountUSDT     float64  `json:"order_amount_usdt"`
+	Leverage            int      `json:"leverage"`
+	OrderType           string   `json:"order_type"`
+	RiskType            string   `json:"risk_type"`
+	// ProtectionOrdersEnabled is the single policy switch for exchange-side
+	// TP/SL/trailing orders. It is disabled by default; legacy risk fields remain
+	// readable but cannot create protection while this switch is false.
+	ProtectionOrdersEnabled   bool                         `json:"protection_orders_enabled"`
 	TakeProfitPct             float64                      `json:"take_profit_pct"`
 	StopLossPct               float64                      `json:"stop_loss_pct"`
 	TrailingPct               float64                      `json:"trailing_pct"`
@@ -173,6 +177,7 @@ type PositionMonitorConfig struct {
 	PollIntervalSeconds       int     `json:"poll_interval_seconds"`
 	TakeProfitPct             float64 `json:"take_profit_pct"`
 	StopLossPct               float64 `json:"stop_loss_pct"`
+	MinHoldingMinutes         int     `json:"min_holding_minutes"`
 	StopLossMinHoldingMinutes int     `json:"stop_loss_min_holding_minutes"`
 	LowMarginCloseEnabled     bool    `json:"low_margin_close_enabled"`
 	LowMarginThresholdUSDT    float64 `json:"low_margin_threshold_usdt"`
@@ -182,6 +187,8 @@ type PositionMonitorConfig struct {
 }
 
 const MinimumStopLossHoldingMinutes = 30
+
+const MinimumAutomaticHoldingMinutes = 15
 
 type SymbolConfig struct {
 	Coinpair string  `json:"coinpair"`
@@ -320,6 +327,7 @@ func Default() Config {
 			Leverage:                  5,
 			OrderType:                 string(trading.OrderTypeMarket),
 			RiskType:                  string(trading.RiskTPSL),
+			ProtectionOrdersEnabled:   false,
 			TakeProfitPct:             2,
 			StopLossPct:               1,
 			TrailingPct:               1,
@@ -353,6 +361,7 @@ func Default() Config {
 				PollIntervalSeconds:       300,
 				TakeProfitPct:             5,
 				StopLossPct:               8,
+				MinHoldingMinutes:         MinimumAutomaticHoldingMinutes,
 				StopLossMinHoldingMinutes: MinimumStopLossHoldingMinutes,
 				LowMarginCloseEnabled:     false,
 				LowMarginThresholdUSDT:    50,
@@ -504,6 +513,9 @@ func (c *Config) Normalize() {
 	if c.Trading.RiskType == "" {
 		c.Trading.RiskType = string(trading.RiskTPSL)
 	}
+	if !c.Trading.ProtectionOrdersEnabled {
+		c.Trading.RiskType = string(trading.RiskNone)
+	}
 	if c.Trading.TakeProfitPct <= 0 {
 		c.Trading.TakeProfitPct = 2
 	}
@@ -567,6 +579,9 @@ func (c *Config) Normalize() {
 	}
 	if c.Trading.PositionMonitor.StopLossMinHoldingMinutes < MinimumStopLossHoldingMinutes {
 		c.Trading.PositionMonitor.StopLossMinHoldingMinutes = MinimumStopLossHoldingMinutes
+	}
+	if c.Trading.PositionMonitor.MinHoldingMinutes < MinimumAutomaticHoldingMinutes {
+		c.Trading.PositionMonitor.MinHoldingMinutes = MinimumAutomaticHoldingMinutes
 	}
 	if c.Trading.PositionMonitor.LowMarginThresholdUSDT <= 0 {
 		c.Trading.PositionMonitor.LowMarginThresholdUSDT = 50
@@ -718,6 +733,9 @@ func (c Config) validate(validateSymbols bool) error {
 	}
 	if c.Trading.PositionMonitor.StopLossMinHoldingMinutes < MinimumStopLossHoldingMinutes {
 		return fmt.Errorf("position_monitor.stop_loss_min_holding_minutes must be at least %d", MinimumStopLossHoldingMinutes)
+	}
+	if c.Trading.PositionMonitor.MinHoldingMinutes < MinimumAutomaticHoldingMinutes {
+		return fmt.Errorf("position_monitor.min_holding_minutes must be at least %d", MinimumAutomaticHoldingMinutes)
 	}
 	if c.Trading.PositionMonitor.LowMarginThresholdUSDT <= 0 {
 		return errors.New("position_monitor.low_margin_threshold_usdt must be positive")
@@ -1151,6 +1169,9 @@ func (c Config) PositionMode() string {
 
 func (c Config) OrderSettings() trading.OrderSettings {
 	risk := trading.Risk{Type: trading.RiskType(c.Trading.RiskType)}
+	if !c.Trading.ProtectionOrdersEnabled {
+		risk.Type = trading.RiskNone
+	}
 	switch risk.Type {
 	case trading.RiskTPSL:
 		tp := trading.NewFlexibleFloat(c.Trading.TakeProfitPct)

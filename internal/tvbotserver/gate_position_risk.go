@@ -215,6 +215,16 @@ func (s *Server) reconcileGatePositionRiskForRecord(ctx context.Context, record 
 	if err != nil {
 		return err
 	}
+	if !cfg.Trading.ProtectionOrdersEnabled {
+		if err := cancelManagedGateRiskOrders(ctx, client, contract, openRiskOrders); err != nil {
+			return err
+		}
+		result := record.Result
+		if clearGateRiskResult(&result) && !reflect.DeepEqual(result, record.Result) {
+			return s.Orders.UpdateResult(record.SignalID, result, s.now())
+		}
+		return nil
+	}
 	if !found {
 		if err := cancelManagedGateRiskOrders(ctx, client, contract, openRiskOrders); err != nil {
 			return err

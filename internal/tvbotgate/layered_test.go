@@ -38,6 +38,7 @@ func TestTraderPlacesSixLayeredGateOrdersFromOneTicker(t *testing.T) {
 	defer server.Close()
 
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.GateDemoBaseURL = server.URL
 	cfg.Trading.OrderType = string(trading.OrderTypeLayered)
 	cfg.Trading.RiskType = string(trading.RiskTPSL)

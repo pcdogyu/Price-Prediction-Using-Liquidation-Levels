@@ -25,6 +25,7 @@ import (
 
 var (
 	errPositionNotOpen                = errors.New("position is not open")
+	errMinAutomaticHoldingNotReached  = errors.New("minimum automatic holding time has not been reached")
 	errPendingOrderNoRemaining        = errors.New("pending order has no remaining size")
 	positionClosePollInterval         = 5 * time.Second
 	positionCloseLimitTimeout         = 60 * time.Second
@@ -483,6 +484,10 @@ func (s *Server) handlePendingOrderRisk(w http.ResponseWriter, r *http.Request) 
 	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pending_order_risk", err.Error())
+		return
+	}
+	if !cfg.Trading.ProtectionOrdersEnabled {
+		writeError(w, http.StatusForbidden, "protection_disabled", "TP/SL and trailing protection orders are disabled")
 		return
 	}
 	if s.okxCredentialStore(cfg.Trading.Env) == nil {
@@ -1102,18 +1107,21 @@ func (s *Server) scanPositionMonitor(ctx context.Context) {
 }
 
 func positionMonitorHasRule(monitor config.PositionMonitorConfig) bool {
-	return monitor.TakeProfitPct > 0 || monitor.StopLossPct > 0 || monitor.LowMarginCloseEnabled
+	return monitor.LowMarginCloseEnabled || monitor.TakeProfitPct > 0 || monitor.StopLossPct > 0
 }
 
 func positionMonitorNeedsEntryTimeForPosition(position okx.Position, monitor config.PositionMonitorConfig) bool {
 	if monitor.LowMarginCloseEnabled {
 		return true
 	}
-	if monitor.StopLossMinHoldingMinutes <= 0 || monitor.StopLossPct <= 0 {
+	if monitor.TakeProfitPct <= 0 && monitor.StopLossPct <= 0 {
 		return false
 	}
 	ratio, ok := positionMonitorUPLRatio(position)
-	return ok && ratio <= -monitor.StopLossPct/100
+	if !ok {
+		return false
+	}
+	return (monitor.TakeProfitPct > 0 && ratio >= monitor.TakeProfitPct/100) || (monitor.StopLossPct > 0 && ratio <= -monitor.StopLossPct/100)
 }
 
 func (s *Server) scanOKXPositionMonitor(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig) {
@@ -1857,35 +1865,57 @@ func positionMonitorTriggerForPosition(position okx.Position, monitor config.Pos
 	if priceTriggersEnabled {
 		if ratio, ok := positionMonitorUPLRatio(position); ok {
 			if trigger, hit := positionMonitorTrigger(ratio, monitor); hit {
-				if trigger == "stop_loss" && monitor.StopLossMinHoldingMinutes > 0 {
-					entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, allowPositionTimeFallback)
-					if entryErr != "" {
-						return "", false, entryAt, 0, entryErr
-					}
-					heldFor := now.UTC().Sub(entryAt.UTC())
-					if heldFor < 0 {
-						return "", false, entryAt, heldFor, "开仓时间晚于当前时间"
-					}
-					if heldFor < time.Duration(monitor.StopLossMinHoldingMinutes)*time.Minute {
-						return "", false, entryAt, heldFor, ""
-					}
-					return trigger, true, entryAt, heldFor, ""
-				}
-				return trigger, true, time.Time{}, 0, ""
+				return automaticPositionMonitorTrigger(position, monitor, trigger, now, fills, fillErr, allowPositionTimeFallback)
 			}
 		}
 	}
 	if monitor.LowMarginCloseEnabled && monitor.LowMarginThresholdUSDT > 0 && monitor.LowMarginHoldingHours > 0 {
-		entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, false)
+		entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, allowPositionTimeFallback)
 		if entryErr == "" {
 			heldFor := now.UTC().Sub(entryAt.UTC())
 			_, low := lowMarginPosition(position, monitor.LowMarginThresholdUSDT)
-			if heldFor >= time.Duration(monitor.LowMarginHoldingHours)*time.Hour && low && positionReductionRecordCount(position, fills, entryAt, now) > 0 {
+			if heldFor >= time.Duration(maxAutomaticHoldingMinutes(monitor))*time.Minute && heldFor >= time.Duration(monitor.LowMarginHoldingHours)*time.Hour && low && positionReductionRecordCount(position, fills, entryAt, now) > 0 {
 				return "low_margin", true, entryAt, heldFor, ""
 			}
+		} else {
+			return "", false, entryAt, 0, entryErr
 		}
 	}
 	return "", false, time.Time{}, 0, ""
+}
+
+func maxAutomaticHoldingMinutes(monitor config.PositionMonitorConfig) int {
+	if monitor.MinHoldingMinutes < config.MinimumAutomaticHoldingMinutes {
+		return config.MinimumAutomaticHoldingMinutes
+	}
+	return monitor.MinHoldingMinutes
+}
+
+func automaticPositionHoldingError(position okx.Position, monitor config.PositionMonitorConfig, fills []positionEntryFill, fillErr error, allowPositionTimeFallback bool, now time.Time) error {
+	entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, allowPositionTimeFallback)
+	if entryErr != "" {
+		return fmt.Errorf("%w: 自动平仓跳过：无法确认持仓开仓时间：%s", errMinAutomaticHoldingNotReached, entryErr)
+	}
+	heldFor := now.UTC().Sub(entryAt.UTC())
+	if heldFor < 0 || heldFor < time.Duration(maxAutomaticHoldingMinutes(monitor))*time.Minute {
+		return fmt.Errorf("%w: 自动平仓跳过：持仓仅 %s，至少需要 %d 分钟", errMinAutomaticHoldingNotReached, heldFor.Round(time.Second), maxAutomaticHoldingMinutes(monitor))
+	}
+	return nil
+}
+
+func automaticPositionMonitorTrigger(position okx.Position, monitor config.PositionMonitorConfig, trigger string, now time.Time, fills []positionEntryFill, fillErr error, allowPositionTimeFallback bool) (string, bool, time.Time, time.Duration, string) {
+	entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, allowPositionTimeFallback)
+	if entryErr != "" {
+		return "", false, entryAt, 0, entryErr
+	}
+	heldFor := now.UTC().Sub(entryAt.UTC())
+	if heldFor < 0 {
+		return "", false, entryAt, heldFor, "开仓时间晚于当前时间"
+	}
+	if heldFor < time.Duration(maxAutomaticHoldingMinutes(monitor))*time.Minute {
+		return "", false, entryAt, heldFor, "持仓未达到自动平仓最短持仓时间"
+	}
+	return trigger, true, entryAt, heldFor, ""
 }
 
 func positionReductionRecordCount(position okx.Position, fills []positionEntryFill, entryAt, now time.Time) int {
@@ -2023,7 +2053,24 @@ func (s *Server) closeProfitablePositionsForAPI(ctx context.Context, cfg config.
 	if err != nil {
 		return err
 	}
-	for _, position := range openPositions(positions) {
+	now := s.now()
+	open := openPositions(positions)
+	var fills []positionEntryFill
+	var fillErr error
+	if len(open) > 0 {
+		fills, fillErr = fetchOKXPositionEntryFills(ctx, client, "SWAP", open, now)
+	}
+	for _, position := range open {
+		entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, true)
+		if entryErr != "" {
+			if s.Logger != nil {
+				s.Logger.Warn("profitable position auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
+			}
+			continue
+		}
+		if now.Sub(entryAt) < time.Duration(maxAutomaticHoldingMinutes(cfg.Trading.PositionMonitor))*time.Minute {
+			continue
+		}
 		returnRatio, ok := positionReturnRatio(position)
 		if !ok || returnRatio <= autoProfitPositionReturnThreshold {
 			continue
@@ -2840,6 +2887,10 @@ func (s *Server) handlePositionProtection(w http.ResponseWriter, r *http.Request
 	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_position_protection", err.Error())
+		return
+	}
+	if !cfg.Trading.ProtectionOrdersEnabled {
+		writeError(w, http.StatusForbidden, "protection_disabled", "TP/SL and trailing protection orders are disabled")
 		return
 	}
 	if req.Exchange == trading.ExchangeGate {
@@ -7574,7 +7625,7 @@ func okxPositionProtectionOrderMatches(order okx.AlgoOrder, position okx.Positio
 	if !strings.EqualFold(strings.TrimSpace(order.InstID), strings.TrimSpace(position.InstID)) {
 		return false
 	}
-	if !okxProtectionPriceSet(order.TPTriggerPx) && !okxProtectionPriceSet(order.SLTriggerPx) {
+	if !okxProtectionPriceSet(order.TPTriggerPx) && !okxProtectionPriceSet(order.SLTriggerPx) && !strings.EqualFold(strings.TrimSpace(order.OrdType), "move_order_stop") && strings.TrimSpace(order.CallbackRatio) == "" && strings.TrimSpace(order.CallbackSpread) == "" {
 		return false
 	}
 	posSide := normalizePosSide(position.PosSide)

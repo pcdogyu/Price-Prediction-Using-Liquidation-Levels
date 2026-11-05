@@ -99,6 +99,7 @@ func TestTraderExecuteSignalPlacesDefaultMarketOrderWithTPSL(t *testing.T) {
 	defer ts.Close()
 
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.BaseURL = ts.URL
 	tp := trading.NewFlexibleFloat(2)
 	sl := trading.NewFlexibleFloat(1)

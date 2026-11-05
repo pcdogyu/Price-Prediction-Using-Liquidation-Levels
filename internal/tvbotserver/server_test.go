@@ -1157,7 +1157,7 @@ func TestTVBotConfigSavesGammaNegativePolicyAndRejectsInvalidValue(t *testing.T)
 
 func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 	srv := newTestServer(t)
-	req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8,"stop_loss_min_holding_minutes":30,"low_margin_close_enabled":true,"low_margin_threshold_usdt":50,"low_margin_holding_hours":1}}}`)))
+	req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8,"min_holding_minutes":15,"stop_loss_min_holding_minutes":30,"low_margin_close_enabled":true,"low_margin_threshold_usdt":50,"low_margin_holding_hours":1}}}`)))
 	req.SetBasicAuth("admin", "Admin123")
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
@@ -1169,7 +1169,7 @@ func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	monitor := cfg.Trading.PositionMonitor
-	if !monitor.Enabled || monitor.PollIntervalSeconds != 300 || monitor.TakeProfitPct != 5 || monitor.StopLossPct != 8 || monitor.StopLossMinHoldingMinutes != 30 || !monitor.LowMarginCloseEnabled || monitor.LowMarginThresholdUSDT != 50 || monitor.LowMarginHoldingHours != 1 || !monitor.DailyCloseEnabled || monitor.DailyCloseTime != "06:00" {
+	if !monitor.Enabled || monitor.PollIntervalSeconds != 300 || monitor.TakeProfitPct != 5 || monitor.StopLossPct != 8 || monitor.MinHoldingMinutes != 15 || monitor.StopLossMinHoldingMinutes != 30 || !monitor.LowMarginCloseEnabled || monitor.LowMarginThresholdUSDT != 50 || monitor.LowMarginHoldingHours != 1 || !monitor.DailyCloseEnabled || monitor.DailyCloseTime != "06:00" {
 		t.Fatalf("position monitor not saved: %#v", monitor)
 	}
 
@@ -6532,6 +6532,8 @@ func TestAutoProfitPositionMonitorStartsLimitClose(t *testing.T) {
 				{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"0.5","avgPx":"100","markPx":"101","upl":"1","uplRatio":"0.051","lever":"5","margin":"100"},
 				{"instType":"SWAP","instId":"ETH-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"1","avgPx":"100","markPx":"101","upl":"10","uplRatio":"0.05","lever":"5","margin":"100"}
 			]}`))
+		case "/api/v5/trade/fills-history":
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","ordId":"entry-btc","posSide":"long","side":"buy","fillSz":"0.5","fillTime":%q}]}`, strconv.FormatInt(srv.now().Add(-time.Hour).UnixMilli(), 10))))
 		case "/api/v5/public/instruments":
 			if r.URL.Query().Get("instId") != "BTC-USDT-SWAP" {
 				t.Fatalf("auto-profit monitor should only query BTC instrument, got %s", r.URL.RawQuery)
@@ -6801,6 +6803,7 @@ func TestUpgradeEndpointRequiresAdminAndStartsRunner(t *testing.T) {
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	dir := t.TempDir()
 	cfg.DataFile = filepath.Join(dir, "orders.json")
 	cfg.DatabaseFile = filepath.Join(dir, "tvbot.db")

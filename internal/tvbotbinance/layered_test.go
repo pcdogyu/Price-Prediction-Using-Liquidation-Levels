@@ -43,6 +43,7 @@ func TestTraderPlacesSixLayeredBinanceOrdersFromOneTicker(t *testing.T) {
 	defer ts.Close()
 
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.BinanceDemoBaseURL = ts.URL
 	cfg.Trading.OrderType = string(trading.OrderTypeLayered)
 	cfg.Trading.RiskType = string(trading.RiskNone)
@@ -95,6 +96,7 @@ func TestTraderPlacesTPSLAlgoOrdersForEachBinanceLayer(t *testing.T) {
 	defer ts.Close()
 
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.BinanceDemoBaseURL = ts.URL
 	cfg.Trading.OrderType = string(trading.OrderTypeLayered)
 	cfg.Trading.RiskType = string(trading.RiskTPSL)

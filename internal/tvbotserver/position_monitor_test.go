@@ -127,6 +127,8 @@ func TestScheduledPositionCloseStartsFullOKXLimitClose(t *testing.T) {
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","tickSz":"0.1","ctVal":"1","lotSz":"1","minSz":"1"}]}`))
 		case "/api/v5/market/ticker":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","bidPx":"99.9","askPx":"100.1","last":"100","ts":"1784880000000"}]}`))
+		case "/api/v5/trade/fills-history":
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":"ETH-USDT-SWAP","ordId":"entry","posSide":"long","side":"buy","fillSz":"1","fillTime":%q}]}`, strconv.FormatInt(srv.now().Add(-time.Hour).UnixMilli(), 10))))
 		case "/api/v5/trade/order":
 			if err := json.NewDecoder(r.Body).Decode(&order); err != nil {
 				t.Fatal(err)
@@ -184,6 +186,8 @@ func TestPositionMonitorBinanceStartsLimitCloseAtThresholds(t *testing.T) {
 		case "/fapi/v1/userTrades":
 			if r.URL.Query().Get("symbol") == "ETHUSDT" {
 				_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":"ETHUSDT","orderId":2001,"price":"100","qty":"3","side":"SELL","positionSide":"BOTH","time":%d}]`, srv.now().Add(-time.Hour).UnixMilli())))
+			} else if r.URL.Query().Get("symbol") == "BTCUSDT" {
+				_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":"BTCUSDT","orderId":2002,"price":"100","qty":"2","side":"BUY","positionSide":"BOTH","time":%d}]`, srv.now().Add(-time.Hour).UnixMilli())))
 			} else {
 				_, _ = w.Write([]byte(`[]`))
 			}
@@ -292,6 +296,8 @@ func TestPositionMonitorGateSubmitsFullMarketCloseAtThresholds(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/futures/usdt/my_trades":
 			if r.URL.Query().Get("contract") == "ETH_USDT" {
 				_, _ = w.Write([]byte(fmt.Sprintf(`[{"id":"entry-eth","contract":"ETH_USDT","order_id":"entry-eth","size":"-3","create_time":%q}]`, strconv.FormatInt(srv.now().Add(-time.Hour).Unix(), 10))))
+			} else if r.URL.Query().Get("contract") == "BTC_USDT" {
+				_, _ = w.Write([]byte(fmt.Sprintf(`[{"id":"entry-btc","contract":"BTC_USDT","order_id":"entry-btc","size":"2","create_time":%q}]`, strconv.FormatInt(srv.now().Add(-time.Hour).Unix(), 10))))
 			} else {
 				_, _ = w.Write([]byte(`[]`))
 			}
@@ -492,6 +498,7 @@ func TestPositionMonitorStopLossWaitsThirtyMinutesButTakeProfitRemainsImmediate(
 	monitor := config.PositionMonitorConfig{
 		TakeProfitPct:             5,
 		StopLossPct:               8,
+		MinHoldingMinutes:         15,
 		StopLossMinHoldingMinutes: 30,
 	}
 
@@ -509,22 +516,24 @@ func TestPositionMonitorStopLossWaitsThirtyMinutesButTakeProfitRemainsImmediate(
 			trigger, hit, _, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
 				InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Side: tc.entrySide, Size: 1, FillTime: entry,
 			}}, nil, false)
-			if hit || trigger != "" || heldFor != 10*time.Minute || entryErr != "" {
+			if hit || trigger != "" || heldFor != 10*time.Minute || entryErr == "" {
 				t.Fatalf("early stop-loss should be deferred: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
 			}
 
 			position.UplRatio = "0.06"
-			trigger, hit, _, _, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, nil, nil, false)
-			if !hit || trigger != "take_profit" || entryErr != "" {
-				t.Fatalf("take-profit should remain immediate: trigger=%q hit=%v err=%q", trigger, hit, entryErr)
+			trigger, hit, _, _, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
+				InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Side: tc.entrySide, Size: 1, FillTime: now.Add(-10 * time.Minute),
+			}}, nil, false)
+			if hit || trigger != "" || entryErr == "" {
+				t.Fatalf("take-profit before 15 minutes should be deferred: trigger=%q hit=%v err=%q", trigger, hit, entryErr)
 			}
 
 			position.UplRatio = "-0.09"
-			entry = now.Add(-31 * time.Minute)
+			entry = now.Add(-15 * time.Minute)
 			trigger, hit, _, heldFor, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
 				InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Side: tc.entrySide, Size: 1, FillTime: entry,
 			}}, nil, false)
-			if !hit || trigger != "stop_loss" || heldFor != 31*time.Minute || entryErr != "" {
+			if !hit || trigger != "stop_loss" || heldFor != 15*time.Minute || entryErr != "" {
 				t.Fatalf("stop-loss should trigger after minimum hold: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
 			}
 		})

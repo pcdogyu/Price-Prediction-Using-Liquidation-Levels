@@ -2260,9 +2260,10 @@ const tvbotHTML = `<!doctype html>
         <div class="position-monitor-grid position-monitor-primary-grid">
           <label class="check"><input id="position-monitor-enabled" type="checkbox">启用自动扫描/平仓</label>
           <label>扫描间隔秒<input id="position-monitor-interval" type="number" min="1" step="1"></label>
-          <label>止盈 %<input id="position-monitor-tp" type="number" min="0.01" step="0.01"></label>
-          <label>止损 %<input id="position-monitor-sl" type="number" min="0.01" step="0.01"></label>
-          <label>止损最短持仓（分钟）<input id="position-monitor-sl-minutes" type="number" min="30" step="1"></label>
+          <label>止盈 %<input id="position-monitor-tp" type="number" min="0.01" step="0.01" disabled></label>
+          <label>止损 %<input id="position-monitor-sl" type="number" min="0.01" step="0.01" disabled></label>
+          <label>自动平仓最短持仓（分钟）<input id="position-monitor-min-minutes" type="number" min="15" step="1"></label>
+          <input id="position-monitor-sl-minutes" type="hidden" value="30">
           </div>
         <div class="position-monitor-grid position-monitor-secondary-grid">
           <label class="check"><input id="position-monitor-low-margin-enabled" type="checkbox">低保证金自动清理</label>
@@ -2270,7 +2271,7 @@ const tvbotHTML = `<!doctype html>
           <label>低保证金持仓小时数<input id="position-monitor-low-margin-hours" type="number" min="1" step="1"></label>
           <label class="check"><input id="position-monitor-daily-enabled" type="checkbox">每日定时平仓</label>
           <label>平仓时间（中国时间）<input id="position-monitor-daily-time" type="time" min="00:00" max="23:59" step="60"></label>
-          <div class="muted position-monitor-daily-note">低保证金和每日定时平仓覆盖所有已配置交易所；限价追价。</div>
+          <div class="muted position-monitor-daily-note">自动平仓最短持仓15分钟；SL/TP已禁用。低保证金和每日定时平仓覆盖所有已配置交易所；限价追价。</div>
         </div>
       </div>
       <div class="section-head" style="margin:18px 0 10px">
@@ -2594,10 +2595,10 @@ const tvbotHTML = `<!doctype html>
         <label>USDT 下单金额<input id="order-amount" type="number" min="0" step="0.01"></label>
         <label>杠杆<input id="order-leverage" type="number" min="1" step="1"></label>
         <label>订单类型<select id="order-type"><option value="market">市价单</option><option value="limit">限价单</option><option value="layered">多层订单</option></select></label>
-        <label>风控模式<select id="order-risk-type"><option value="tp_sl">固定止盈止损</option><option value="trailing">移动止损</option><option value="none">不设置</option></select></label>
-        <label>固定止盈（保证金收益率）%<input id="order-tp" type="number" min="0" step="0.01"></label>
-        <label>固定止损（保证金亏损率）%<input id="order-sl" type="number" min="0" step="0.01"></label>
-        <label>移动止损 %<input id="order-trailing" type="number" min="0" step="0.01"></label>
+        <label>风控模式<select id="order-risk-type" disabled><option value="none">不设置（SL/TP已禁用）</option></select></label>
+        <label>固定止盈（已禁用）%<input id="order-tp" type="number" min="0" step="0.01" disabled></label>
+        <label>固定止损（已禁用）%<input id="order-sl" type="number" min="0" step="0.01" disabled></label>
+        <label>移动止损（已禁用）%<input id="order-trailing" type="number" min="0" step="0.01" disabled></label>
         <label>多单限价倍率<input id="order-long-multiplier" type="number" min="0" step="0.000001"></label>
         <label>空单限价倍率<input id="order-short-multiplier" type="number" min="0" step="0.000001"></label>
         <label>24h 交易额排名限制<select id="order-turnover-scope"><option value="top5">前 5</option><option value="top10">前 10</option><option value="top20">前 20</option><option value="top50">前 50</option><option value="top100">前 100</option><option value="top200">前 200</option><option value="top500">前 500</option><option value="all">不限排名</option></select></label>
@@ -2612,7 +2613,7 @@ const tvbotHTML = `<!doctype html>
         </div>
       </div>
       <div id="layered-order-fields" style="display:none;margin-top:14px">
-        <div class="muted">固定止盈止损按保证金收益率计算，实际价格距离会除以本次使用的杠杆；多层订单按一次实时价快照计算：市价层立即成交，信号价层按 TradingView 价格挂单，其余层按当前价格的方向性价差挂单。每层成交价都会单独计算并提交对应的止盈、止损触发价；比例合计必须为 100%。</div>
+        <div class="muted">SL/TP、移动止损及交易所保护单已禁用；多层订单只提交普通入场订单，比例合计必须为 100%。</div>
         <div class="grid two" style="margin-top:10px">
           <label>市价层金额 %<input id="order-layered-market-pct" type="number" min="0" step="0.01"></label>
           <label>信号价限价层金额 %<input id="order-layered-signal-pct" type="number" min="0" step="0.01"></label>
@@ -5163,6 +5164,7 @@ const tvbotHTML = `<!doctype html>
         poll_interval_seconds: Number(monitor.poll_interval_seconds || 300),
         take_profit_pct: Number(monitor.take_profit_pct || 5),
         stop_loss_pct: Number(monitor.stop_loss_pct || 8),
+        min_holding_minutes: Math.max(15, Number(monitor.min_holding_minutes || 15)),
         stop_loss_min_holding_minutes: Number(monitor.stop_loss_min_holding_minutes || 30),
         low_margin_close_enabled: !!monitor.low_margin_close_enabled,
         low_margin_threshold_usdt: Number(monitor.low_margin_threshold_usdt || 50),
@@ -5179,7 +5181,7 @@ const tvbotHTML = `<!doctype html>
       $("position-monitor-interval").value = monitor.poll_interval_seconds || 300;
       $("position-monitor-tp").value = monitor.take_profit_pct || 5;
       $("position-monitor-sl").value = monitor.stop_loss_pct || 8;
-      $("position-monitor-sl-minutes").value = monitor.stop_loss_min_holding_minutes || 30;
+      $("position-monitor-min-minutes").value = monitor.min_holding_minutes || 15;
       $("position-monitor-low-margin-enabled").checked = !!monitor.low_margin_close_enabled;
       $("position-monitor-low-margin-threshold").value = monitor.low_margin_threshold_usdt || 50;
       $("position-monitor-low-margin-hours").value = monitor.low_margin_holding_hours || 1;
@@ -5194,9 +5196,8 @@ const tvbotHTML = `<!doctype html>
         : " / 每日定时平仓关闭";
       $("position-monitor-status").textContent = (monitor.enabled ? "已启用" : "已关闭") +
         " / " + asText(monitor.poll_interval_seconds || 300) + "s" +
-        " / +" + asText(monitor.take_profit_pct || 5) + "%" +
-        " / -" + asText(monitor.stop_loss_pct || 8) + "%" +
-        " / SL锁定" + asText(monitor.stop_loss_min_holding_minutes || 30) + "分钟" +
+        " / 自动平仓最短" + asText(monitor.min_holding_minutes || 15) + "分钟" +
+        " / SL/TP已禁用" +
         " / 低保证金" + (monitor.low_margin_close_enabled ? " <" + asText(monitor.low_margin_threshold_usdt || 50) + " USDT / " + asText(monitor.low_margin_holding_hours || 1) + "h" : "关闭") + dailyLabel;
     }
 
@@ -5747,6 +5748,7 @@ const tvbotHTML = `<!doctype html>
         input.checked = input.value === gammaPolicy;
       });
       $("order-risk-type").value = trading.risk_type || "tp_sl";
+      $("order-risk-type").value = "none";
       updateOrderRiskFields();
       $("order-tp").value = trading.take_profit_pct || 2;
       $("order-sl").value = trading.stop_loss_pct || 1;
@@ -5799,12 +5801,17 @@ const tvbotHTML = `<!doctype html>
     }
 
     function updateOrderRiskFields() {
-      const riskType = String($("order-risk-type").value || "none").toLowerCase();
+      const riskType = "none";
+      $("order-risk-type").value = riskType;
+      $("order-risk-type").disabled = true;
       const fixedEnabled = riskType === "tp_sl";
       const trailingEnabled = riskType === "trailing";
       $("order-tp").disabled = !fixedEnabled;
       $("order-sl").disabled = !fixedEnabled;
       $("order-trailing").disabled = !trailingEnabled;
+      $("order-tp").disabled = true;
+      $("order-sl").disabled = true;
+      $("order-trailing").disabled = true;
     }
 
     function gammaNegativePolicy(trading) {
@@ -8716,7 +8723,8 @@ const tvbotHTML = `<!doctype html>
             order_type: $("order-type").value,
             market_turnover_scope: $("order-turnover-scope").value,
             gamma_negative_policy: selectedGammaNegativePolicy(),
-            risk_type: $("order-risk-type").value,
+            risk_type: "none",
+            protection_orders_enabled: false,
             take_profit_pct: Number($("order-tp").value),
             stop_loss_pct: Number($("order-sl").value),
             trailing_pct: Number($("order-trailing").value),
@@ -8792,6 +8800,7 @@ const tvbotHTML = `<!doctype html>
               poll_interval_seconds: Number($("position-monitor-interval").value),
               take_profit_pct: Number($("position-monitor-tp").value),
               stop_loss_pct: Number($("position-monitor-sl").value),
+              min_holding_minutes: Math.max(15, Number($("position-monitor-min-minutes").value || 15)),
               stop_loss_min_holding_minutes: Number($("position-monitor-sl-minutes").value),
               low_margin_close_enabled: $("position-monitor-low-margin-enabled").checked,
               low_margin_threshold_usdt: Number($("position-monitor-low-margin-threshold").value),

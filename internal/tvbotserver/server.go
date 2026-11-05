@@ -374,6 +374,15 @@ func (s *Server) handleTVOrder(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if signal.PositionEffect == trading.PositionEffectClose && isProtectionWebhookCloseSignal(signal) && !cfg.Trading.ProtectionOrdersEnabled {
+		record, err := s.Orders.RecordIgnoredReason(signal, "protection_disabled", "TP/SL webhook close signals are disabled", now)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": "ignored", "signal_id": record.SignalID, "reason": "protection_disabled"})
+		return
+	}
 	if signal.PositionEffect == trading.PositionEffectClose {
 		go s.executePositionCloseSignal(record.SignalID, signal, cfg)
 	} else {
@@ -635,6 +644,7 @@ func (s *Server) execute(signalID string, signal trading.Signal, cfg config.Conf
 		_ = s.Orders.MarkFailed(signalID, errors.New("executor is not configured"), s.now())
 		return
 	}
+	disableProtectionRiskIfNeeded(&signal, cfg)
 	applyStopLossMinimumHolding(&signal, cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), asyncOrderExecutionTimeout)
 	defer cancel()
@@ -657,12 +667,18 @@ func (s *Server) execute(signalID string, signal trading.Signal, cfg config.Conf
 }
 
 func applyStopLossMinimumHolding(signal *trading.Signal, cfg config.Config) {
-	if signal == nil || signal.PositionEffect != trading.PositionEffectOpen || !cfg.Trading.PositionMonitor.Enabled {
+	if signal == nil || signal.PositionEffect != trading.PositionEffectOpen || !cfg.Trading.PositionMonitor.Enabled || !cfg.Trading.ProtectionOrdersEnabled {
 		return
 	}
 	minutes := cfg.Trading.PositionMonitor.StopLossMinHoldingMinutes
 	if minutes > 0 {
 		signal.Risk.StopLossMinHoldingMinutes = minutes
+	}
+}
+
+func disableProtectionRiskIfNeeded(signal *trading.Signal, cfg config.Config) {
+	if signal != nil && !cfg.Trading.ProtectionOrdersEnabled {
+		signal.Risk = trading.Risk{Type: trading.RiskNone}
 	}
 }
 
@@ -1274,6 +1290,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		if !cfg.Trading.ProtectionOrdersEnabled {
+			go s.cleanupProtectionOrders(context.Background(), cfg)
+		}
 		writeJSON(w, http.StatusOK, cfg)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET, PUT and PATCH are allowed")
@@ -1310,6 +1329,9 @@ func validateConfigPatch(patch configPatch) error {
 	}
 	if monitor.StopLossMinHoldingMinutes != nil && *monitor.StopLossMinHoldingMinutes < config.MinimumStopLossHoldingMinutes {
 		return fmt.Errorf("position_monitor.stop_loss_min_holding_minutes must be at least %d", config.MinimumStopLossHoldingMinutes)
+	}
+	if monitor.MinHoldingMinutes != nil && *monitor.MinHoldingMinutes < config.MinimumAutomaticHoldingMinutes {
+		return fmt.Errorf("position_monitor.min_holding_minutes must be at least %d", config.MinimumAutomaticHoldingMinutes)
 	}
 	if monitor.LowMarginThresholdUSDT != nil && *monitor.LowMarginThresholdUSDT <= 0 {
 		return errors.New("position_monitor.low_margin_threshold_usdt must be positive")
@@ -2579,6 +2601,7 @@ func retrySignalFromRecord(rec storage.OrderRecord, cfg config.Config, now time.
 	if risk, ok := retryRiskFromRecord(rec); ok {
 		signal.Risk = risk
 	}
+	disableProtectionRiskIfNeeded(&signal, execCfg)
 	if err := signal.Validate(now, 0, execCfg); err != nil {
 		return trading.Signal{}, err
 	}
@@ -2587,6 +2610,11 @@ func retrySignalFromRecord(rec storage.OrderRecord, cfg config.Config, now time.
 
 func retryExecutionConfig(cfg config.Config, rec storage.OrderRecord) config.Config {
 	cfg = configForTradeEnv(cfg, orderRecordTradeEnv(rec))
+	if !cfg.Trading.ProtectionOrdersEnabled {
+		cfg.Trading.RiskType = string(trading.RiskNone)
+		cfg.Normalize()
+		return cfg
+	}
 	risk, ok := retryRiskFromRecord(rec)
 	if !ok {
 		return cfg
@@ -3015,6 +3043,7 @@ type tradingPatch struct {
 	Leverage                  *int                          `json:"leverage"`
 	OrderType                 *string                       `json:"order_type"`
 	RiskType                  *string                       `json:"risk_type"`
+	ProtectionOrdersEnabled   *bool                         `json:"protection_orders_enabled"`
 	TakeProfitPct             *float64                      `json:"take_profit_pct"`
 	StopLossPct               *float64                      `json:"stop_loss_pct"`
 	TrailingPct               *float64                      `json:"trailing_pct"`
@@ -3036,6 +3065,7 @@ type positionMonitorPatch struct {
 	TakeProfitPct             *float64 `json:"take_profit_pct"`
 	StopLossPct               *float64 `json:"stop_loss_pct"`
 	StopLossMinHoldingMinutes *int     `json:"stop_loss_min_holding_minutes"`
+	MinHoldingMinutes         *int     `json:"min_holding_minutes"`
 	LowMarginCloseEnabled     *bool    `json:"low_margin_close_enabled"`
 	LowMarginThresholdUSDT    *float64 `json:"low_margin_threshold_usdt"`
 	LowMarginHoldingHours     *int     `json:"low_margin_holding_hours"`
@@ -3133,6 +3163,9 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 	if patch.Trading.RiskType != nil {
 		c.Trading.RiskType = *patch.Trading.RiskType
 	}
+	if patch.Trading.ProtectionOrdersEnabled != nil {
+		c.Trading.ProtectionOrdersEnabled = *patch.Trading.ProtectionOrdersEnabled
+	}
 	if patch.Trading.TakeProfitPct != nil {
 		c.Trading.TakeProfitPct = *patch.Trading.TakeProfitPct
 	}
@@ -3218,6 +3251,9 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 		}
 		if monitor.StopLossMinHoldingMinutes != nil {
 			c.Trading.PositionMonitor.StopLossMinHoldingMinutes = *monitor.StopLossMinHoldingMinutes
+		}
+		if monitor.MinHoldingMinutes != nil {
+			c.Trading.PositionMonitor.MinHoldingMinutes = *monitor.MinHoldingMinutes
 		}
 		if monitor.LowMarginCloseEnabled != nil {
 			c.Trading.PositionMonitor.LowMarginCloseEnabled = *monitor.LowMarginCloseEnabled

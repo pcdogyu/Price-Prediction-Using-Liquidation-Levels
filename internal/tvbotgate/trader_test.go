@@ -37,6 +37,7 @@ func TestTraderConvertsUSDTNotionalToGateContracts(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.Env = config.EnvDemo
 	cfg.Trading.GateDemoBaseURL = server.URL
 	cfg.Trading.RiskType = string(trading.RiskNone)

@@ -58,6 +58,7 @@ func TestTraderPlacesLimitOrderAndTPSLAlgoOrders(t *testing.T) {
 	}))
 	defer ts.Close()
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.BinanceDemoBaseURL = ts.URL
 	cfg.Trading.OrderType = string(trading.OrderTypeLimit)
 	cfg.Trading.LongLimitPriceMultiplier = 0.997
@@ -149,6 +150,7 @@ func TestTraderPlacesMarketOrderAndTrailingAlgoOrder(t *testing.T) {
 	}))
 	defer ts.Close()
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.BinanceDemoBaseURL = ts.URL
 	cfg.Trading.RiskType = string(trading.RiskTrailing)
 	cfg.Trading.TrailingPct = 1.5
@@ -228,6 +230,7 @@ func TestTraderSplitsMarketOrderAboveBinanceMaxQty(t *testing.T) {
 	defer ts.Close()
 
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.BinanceDemoBaseURL = ts.URL
 	cfg.Trading.RiskType = string(trading.RiskTPSL)
 	cfg.Trading.TakeProfitPct = 2
@@ -315,6 +318,7 @@ func TestTraderAdjustsBinanceTPSLAwayFromMarkPrice(t *testing.T) {
 	defer ts.Close()
 
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.BinanceDemoBaseURL = ts.URL
 	cfg.Trading.RiskType = string(trading.RiskTPSL)
 	cfg.Trading.TakeProfitPct = 2
@@ -1056,6 +1060,7 @@ func TestTraderRejectsOutOfRangeBinanceTrailingBeforeSubmitting(t *testing.T) {
 	}))
 	defer ts.Close()
 	cfg := config.Default()
+	cfg.Trading.ProtectionOrdersEnabled = true
 	cfg.Trading.BinanceDemoBaseURL = ts.URL
 	cfg.Trading.RiskType = string(trading.RiskTrailing)
 	cfg.Trading.TrailingPct = 10.1
