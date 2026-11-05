@@ -3152,26 +3152,38 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 		c.Trading.LayeredOrder = *patch.Trading.LayeredOrder
 	}
 	if patch.Trading.LossCooldown != nil {
-		if patch.Trading.LossCooldown.Enabled != nil {
-			c.Trading.LossCooldown.Enabled = *patch.Trading.LossCooldown.Enabled
+		cooldownPatch := patch.Trading.LossCooldown
+		if cooldownPatch.Enabled != nil {
+			c.Trading.LossCooldown.Enabled = *cooldownPatch.Enabled
 		}
-		if patch.Trading.LossCooldown.GlobalEnabled != nil {
-			c.Trading.LossCooldown.GlobalEnabled = *patch.Trading.LossCooldown.GlobalEnabled
+		if cooldownPatch.GlobalEnabled != nil {
+			c.Trading.LossCooldown.GlobalEnabled = *cooldownPatch.GlobalEnabled
 		}
-		if patch.Trading.LossCooldown.CoinpairHours != nil {
-			c.Trading.LossCooldown.CoinpairHours = *patch.Trading.LossCooldown.CoinpairHours
+		// Scope-specific durations are meaningful only when their scope is
+		// enabled. This keeps a disabled scope from being configured as an
+		// accidental side effect of a UI save that only targets the other scope.
+		coinpairEnabled := c.Trading.LossCooldown.Enabled
+		if cooldownPatch.Enabled != nil {
+			coinpairEnabled = *cooldownPatch.Enabled
 		}
-		if patch.Trading.LossCooldown.GlobalHours != nil {
-			c.Trading.LossCooldown.GlobalHours = *patch.Trading.LossCooldown.GlobalHours
+		if cooldownPatch.CoinpairHours != nil && coinpairEnabled {
+			c.Trading.LossCooldown.CoinpairHours = *cooldownPatch.CoinpairHours
 		}
-		if patch.Trading.LossCooldown.Hours != nil {
+		globalEnabled := c.Trading.LossCooldown.GlobalEnabled
+		if cooldownPatch.GlobalEnabled != nil {
+			globalEnabled = *cooldownPatch.GlobalEnabled
+		}
+		if cooldownPatch.GlobalHours != nil && globalEnabled {
+			c.Trading.LossCooldown.GlobalHours = *cooldownPatch.GlobalHours
+		}
+		if cooldownPatch.Hours != nil {
 			// Keep older API clients functional by applying the legacy shared
 			// value to both scopes when no new value was supplied for that scope.
-			if patch.Trading.LossCooldown.CoinpairHours == nil {
-				c.Trading.LossCooldown.CoinpairHours = *patch.Trading.LossCooldown.Hours
+			if cooldownPatch.CoinpairHours == nil {
+				c.Trading.LossCooldown.CoinpairHours = *cooldownPatch.Hours
 			}
-			if patch.Trading.LossCooldown.GlobalHours == nil {
-				c.Trading.LossCooldown.GlobalHours = *patch.Trading.LossCooldown.Hours
+			if cooldownPatch.GlobalHours == nil {
+				c.Trading.LossCooldown.GlobalHours = *cooldownPatch.Hours
 			}
 		}
 	}

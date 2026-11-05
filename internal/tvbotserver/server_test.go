@@ -906,6 +906,32 @@ func TestTVBotConfigUpdatesGlobalLossCooldownAndPreservesScopes(t *testing.T) {
 	}
 }
 
+func TestTVBotConfigDoesNotApplyDisabledLossCooldownScopeHours(t *testing.T) {
+	srv := newTestServer(t)
+	cfg := config.Default()
+	cfg.Trading.LossCooldown.CoinpairHours = 24
+	cfg.Trading.LossCooldown.GlobalHours = 72
+	srv.ConfigStore = config.NewStore("", cfg)
+
+	put := func(payload string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPut, "/tvbot/config", strings.NewReader(payload))
+		req.SetBasicAuth("admin", "Admin123")
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+
+	rr := put(`{"trading":{"loss_cooldown":{"enabled":true,"global_enabled":false,"coinpair_hours":1,"global_hours":1}}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("save scoped loss cooldown status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	got := srv.ConfigStore.Get().Trading.LossCooldown
+	if !got.Enabled || got.GlobalEnabled || got.CoinpairHours != 1 || got.GlobalHours != 72 {
+		t.Fatalf("disabled global scope should retain its duration: %#v", got)
+	}
+}
+
 func TestTVBotUIIncludesLossCooldownControls(t *testing.T) {
 	for _, marker := range []string{
 		`id="loss-cooldown-enabled"`,
@@ -918,7 +944,12 @@ func TestTVBotUIIncludesLossCooldownControls(t *testing.T) {
 		`id="loss-cooldown-global-hours"`,
 		`id="save-loss-cooldown"`,
 		`function saveLossCooldownSettings()`,
-		`loss_cooldown: { enabled: enabled.checked, global_enabled: globalEnabled.checked, coinpair_hours: coinpairValue, global_hours: globalValue }`,
+		`const lossCooldown = {`,
+		`if (enabled.checked) lossCooldown.coinpair_hours = coinpairValue;`,
+		`if (globalEnabled.checked) lossCooldown.global_hours = globalValue;`,
+		`setLossCooldownSaveButtonState("saving");`,
+		`button.setAttribute("aria-busy", "true");`,
+		`button.textContent = "保存失败，重试";`,
 	} {
 		if !strings.Contains(tvbotHTML, marker) {
 			t.Fatalf("tvbot UI missing loss cooldown marker %q", marker)

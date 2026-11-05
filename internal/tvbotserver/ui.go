@@ -8010,26 +8010,84 @@ const tvbotHTML = `<!doctype html>
       syncLossCooldownControls();
     }
 
-    async function saveLossCooldownSettings() {
-      const enabled = $("loss-cooldown-enabled");
-      const globalEnabled = $("loss-cooldown-global-enabled");
-      const coinpairHours = $("loss-cooldown-coinpair-hours");
-      const globalHours = $("loss-cooldown-global-hours");
-      if (!enabled || !globalEnabled || !coinpairHours || !globalHours) return;
-      const coinpairValue = Number(coinpairHours.value);
-      const globalValue = Number(globalHours.value);
-      if (!Number.isInteger(coinpairValue) || coinpairValue < 1 || coinpairValue > 8760 || !Number.isInteger(globalValue) || globalValue < 1 || globalValue > 8760) {
-        throw new Error("单币对和全局冷静时长都必须是 1 到 8760 的整数小时");
+    let lossCooldownSaveResetTimer = 0;
+
+    function resetLossCooldownSaveButton() {
+      const button = $("save-loss-cooldown");
+      if (!button) return;
+      button.classList.remove("is-saving", "is-saved", "is-error");
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = "保存冷静期设置";
+    }
+
+    function setLossCooldownSaveButtonState(state) {
+      const button = $("save-loss-cooldown");
+      if (!button) return;
+      if (lossCooldownSaveResetTimer) {
+        window.clearTimeout(lossCooldownSaveResetTimer);
+        lossCooldownSaveResetTimer = 0;
       }
-      state.config = await api("/tvbot/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trading: { loss_cooldown: { enabled: enabled.checked, global_enabled: globalEnabled.checked, coinpair_hours: coinpairValue, global_hours: globalValue } } })
-      });
-      renderConfig();
-      renderDashboard();
-      await loadCoinpairBlocks();
-      toast((enabled.checked || globalEnabled.checked) ? ("亏损冷静期已保存：单币对 " + coinpairValue + " 小时，全局 " + globalValue + " 小时") : "亏损冷静期已关闭，自动冷静期已解除");
+      resetLossCooldownSaveButton();
+      if (state === "saving") {
+        button.classList.add("is-saving");
+        button.disabled = true;
+        button.setAttribute("aria-busy", "true");
+        button.textContent = "保存中…";
+        return;
+      }
+      if (state === "saved") {
+        button.classList.add("is-saved");
+        button.textContent = "保存完成 ✓";
+        lossCooldownSaveResetTimer = window.setTimeout(resetLossCooldownSaveButton, 1600);
+        return;
+      }
+      if (state === "error") {
+        button.classList.add("is-error");
+        button.textContent = "保存失败，重试";
+        lossCooldownSaveResetTimer = window.setTimeout(resetLossCooldownSaveButton, 2400);
+      }
+    }
+
+    async function saveLossCooldownSettings() {
+      setLossCooldownSaveButtonState("saving");
+      try {
+        const enabled = $("loss-cooldown-enabled");
+        const globalEnabled = $("loss-cooldown-global-enabled");
+        const coinpairHours = $("loss-cooldown-coinpair-hours");
+        const globalHours = $("loss-cooldown-global-hours");
+        if (!enabled || !globalEnabled || !coinpairHours || !globalHours) return;
+        const coinpairValue = Number(coinpairHours.value);
+        const globalValue = Number(globalHours.value);
+        if (enabled.checked && (!Number.isInteger(coinpairValue) || coinpairValue < 1 || coinpairValue > 8760)) {
+          throw new Error("单币对冷静时长必须是 1 到 8760 的整数小时");
+        }
+        if (globalEnabled.checked && (!Number.isInteger(globalValue) || globalValue < 1 || globalValue > 8760)) {
+          throw new Error("全局冷静时长必须是 1 到 8760 的整数小时");
+        }
+        const lossCooldown = {
+          enabled: enabled.checked,
+          global_enabled: globalEnabled.checked
+        };
+        if (enabled.checked) lossCooldown.coinpair_hours = coinpairValue;
+        if (globalEnabled.checked) lossCooldown.global_hours = globalValue;
+        state.config = await api("/tvbot/config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ trading: { loss_cooldown: lossCooldown } })
+        });
+        renderConfig();
+        renderDashboard();
+        await loadCoinpairBlocks();
+        const scopes = [];
+        if (enabled.checked) scopes.push("单币对 " + coinpairValue + " 小时");
+        if (globalEnabled.checked) scopes.push("全局 " + globalValue + " 小时");
+        toast(scopes.length ? ("亏损冷静期已保存：" + scopes.join("，")) : "亏损冷静期已关闭，自动冷静期已解除");
+        setLossCooldownSaveButtonState("saved");
+      } catch (err) {
+        setLossCooldownSaveButtonState("error");
+        throw err;
+      }
     }
 
     function syncIgnoredCoinpairControls() {
