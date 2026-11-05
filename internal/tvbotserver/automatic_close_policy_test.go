@@ -1,7 +1,7 @@
 package server
 
 import (
-	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,13 +51,14 @@ func TestProtectionOrdersDisabledRejectsCreation(t *testing.T) {
 	}
 }
 
-func TestManualLiquidationBypassesAutomaticHoldingGate(t *testing.T) {
+func TestManualLiquidationRequiresAutomaticHoldingGate(t *testing.T) {
 	now := time.Now().UTC()
 	cfg := tvbotconfig.Default()
 	position := tvbotokx.Position{InstID: "BTC-USDT-SWAP", PosSide: "long", Pos: "1"}
 	signal := tvbottrading.Signal{PositionEffect: tvbottrading.PositionEffectClose, Condition: "manual_liquidation_trigger"}
-	if err := enforceAutomaticCloseMinimumHolding(signal, cfg, position, nil, context.DeadlineExceeded, false, now); err != nil {
-		t.Fatalf("manual liquidation should bypass holding time: %v", err)
+	entry := positionEntryFill{InstID: position.InstID, PosSide: "long", Side: "buy", Size: 1, FillTime: now.Add(-time.Minute)}
+	if err := enforceAutomaticCloseMinimumHolding(signal, cfg, position, []positionEntryFill{entry}, nil, false, now); !errors.Is(err, errMinAutomaticHoldingNotReached) {
+		t.Fatalf("manual liquidation before 15 minutes should be blocked: %v", err)
 	}
 }
 

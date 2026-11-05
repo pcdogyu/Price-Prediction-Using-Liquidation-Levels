@@ -47,9 +47,6 @@ func isAutomaticCloseSignal(signal trading.Signal) bool {
 }
 
 func enforceAutomaticCloseMinimumHolding(signal trading.Signal, cfg config.Config, position okx.Position, fills []positionEntryFill, fillErr error, allowPositionTimeFallback bool, now time.Time) error {
-	if isManualLiquidationTrigger(signal) {
-		return nil
-	}
 	return automaticPositionHoldingError(position, cfg.Trading.PositionMonitor, fills, fillErr, allowPositionTimeFallback, now)
 }
 
