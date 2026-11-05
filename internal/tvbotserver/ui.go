@@ -8358,11 +8358,29 @@ const tvbotHTML = `<!doctype html>
       return returned ? "Binance 返回：" + returned[1] + " " + returned[2].trim() : "";
     }
 
+    function orderHistoryGateReturn(order) {
+      if (!order) return "";
+      const result = order.result || {};
+      const targetExchange = normalizeExchange(order.target_exchange || result.target_exchange);
+      if (targetExchange !== "gate") return "";
+      const label = String(result.gate_label || "").trim();
+      const message = String(result.gate_msg || "").trim();
+      if (label || message) {
+        return "Gate 返回：" + [label, message].filter(Boolean).join(" / ");
+      }
+      const error = String(order.error || "").trim();
+      const returned = error.match(/^gate api error\s*:\s*(.+)$/i);
+      if (!returned) return "";
+      return "Gate 返回：" + returned[1].trim().replace(/:\s*/, " / ");
+    }
+
     function orderHistoryErrorText(order) {
       if (!order) return "";
       const result = order.result || {};
       const exchangeReturn = orderHistoryBinanceReturn(order);
       if (exchangeReturn) return exchangeReturn;
+      const gateReturn = orderHistoryGateReturn(order);
+      if (gateReturn) return gateReturn;
       const code = String(order.error_code || "").trim();
       const error = String(order.error || "").trim();
       const details = (code + " " + error).toLowerCase();

@@ -50,3 +50,52 @@ func TestMarkPartiallySubmittedPersistsLayerResults(t *testing.T) {
 		})
 	}
 }
+
+func TestMarkFailedWithResultPersistsGateError(t *testing.T) {
+	tests := []struct {
+		name string
+		new  func(t *testing.T) *OrderStore
+	}{
+		{name: "memory", new: func(t *testing.T) *OrderStore {
+			store, err := NewOrderStore("")
+			if err != nil {
+				t.Fatal(err)
+			}
+			return store
+		}},
+		{name: "sqlite", new: func(t *testing.T) *OrderStore {
+			store, err := NewSQLiteOrderStore(filepath.Join(t.TempDir(), "orders.db"), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			return store
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := tc.new(t)
+			now := time.Date(2026, 11, 4, 0, 34, 42, 0, time.UTC)
+			signal := trading.Signal{Action: trading.ActionLong, TargetExchange: trading.ExchangeGate, Coinpair: "BTCUSDT", Ticker: "BTCUSDT", Price: trading.NewFlexibleFloat(76859.6), Amount: trading.NewFlexibleFloat(2000)}
+			record, duplicate, err := store.RecordAccepted(signal, "gate-error-dedupe", now)
+			if err != nil || duplicate {
+				t.Fatalf("record accepted: duplicate=%v err=%v", duplicate, err)
+			}
+			result := trading.OrderResult{
+				SignalID:       record.SignalID,
+				APIID:          "default",
+				TargetExchange: trading.ExchangeGate,
+				InstID:         "BTC_USDT",
+				GateLabel:      "INSUFFICIENT_AVAILABLE",
+				GateMsg:        "margin 10.263",
+			}
+			if err := store.MarkFailedWithResult(record.SignalID, result, errors.New("Gate API error: INSUFFICIENT_AVAILABLE: margin 10.263"), now.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := store.Get(record.SignalID)
+			if !ok || got.Status != StatusFailed || got.Result.GateLabel != "INSUFFICIENT_AVAILABLE" || got.Result.GateMsg != "margin 10.263" {
+				t.Fatalf("unexpected failed Gate record: ok=%v record=%#v", ok, got)
+			}
+		})
+	}
+}

@@ -358,20 +358,34 @@ func (s *OrderStore) MarkPartiallySubmitted(signalID string, result trading.Orde
 }
 
 func (s *OrderStore) MarkFailed(signalID string, err error, now time.Time) error {
-	return s.MarkFailedCode(signalID, "", err, now)
+	return s.MarkFailedWithResult(signalID, trading.OrderResult{}, err, now)
 }
 
 func (s *OrderStore) MarkFailedCode(signalID, code string, err error, now time.Time) error {
+	return s.MarkFailedCodeWithResult(signalID, code, trading.OrderResult{}, err, now)
+}
+
+// MarkFailedWithResult preserves exchange-side error metadata returned by the
+// executor. This is especially important for Gate, whose API returns useful
+// labels such as INSUFFICIENT_AVAILABLE when no order is created.
+func (s *OrderStore) MarkFailedWithResult(signalID string, result trading.OrderResult, err error, now time.Time) error {
+	return s.MarkFailedCodeWithResult(signalID, "", result, err, now)
+}
+
+func (s *OrderStore) MarkFailedCodeWithResult(signalID, code string, result trading.OrderResult, err error, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db != nil {
-		return s.markFailedSQLiteLocked(signalID, code, err, now)
+		return s.markFailedSQLiteLocked(signalID, code, result, err, now)
 	}
 	for i := range s.state.Orders {
 		if s.state.Orders[i].SignalID == signalID {
 			s.state.Orders[i].Status = StatusFailed
 			s.state.Orders[i].UpdatedAt = now.UTC()
 			s.state.Orders[i].ErrorCode = strings.TrimSpace(code)
+			if orderResultPresent(result) {
+				s.state.Orders[i].Result = result
+			}
 			if err != nil {
 				s.state.Orders[i].Error = err.Error()
 			}
@@ -1471,18 +1485,37 @@ func (s *OrderStore) markPartiallySubmittedSQLiteLocked(signalID string, result 
 	return nil
 }
 
-func (s *OrderStore) markFailedSQLiteLocked(signalID, code string, failErr error, now time.Time) error {
+func (s *OrderStore) markFailedSQLiteLocked(signalID, code string, result trading.OrderResult, failErr error, now time.Time) error {
 	message := ""
 	if failErr != nil {
 		message = failErr.Error()
 	}
-	res, err := s.db.Exec(`UPDATE orders SET status = ?, updated_at = ?, error_code = ?, error = ? WHERE signal_id = ?`,
-		string(StatusFailed),
-		now.UTC().Format(time.RFC3339Nano),
-		strings.TrimSpace(code),
-		message,
-		signalID,
+	var (
+		res sql.Result
+		err error
 	)
+	if orderResultPresent(result) {
+		resultJSON, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		res, err = s.db.Exec(`UPDATE orders SET status = ?, updated_at = ?, result_json = ?, error_code = ?, error = ? WHERE signal_id = ?`,
+			string(StatusFailed),
+			now.UTC().Format(time.RFC3339Nano),
+			string(resultJSON),
+			strings.TrimSpace(code),
+			message,
+			signalID,
+		)
+	} else {
+		res, err = s.db.Exec(`UPDATE orders SET status = ?, updated_at = ?, error_code = ?, error = ? WHERE signal_id = ?`,
+			string(StatusFailed),
+			now.UTC().Format(time.RFC3339Nano),
+			strings.TrimSpace(code),
+			message,
+			signalID,
+		)
+	}
 	if err != nil {
 		return err
 	}
@@ -1509,9 +1542,14 @@ func orderResultPresent(result trading.OrderResult) bool {
 		strings.TrimSpace(result.OKXMsg) != "" ||
 		result.BinanceCode != 0 ||
 		strings.TrimSpace(result.BinanceMsg) != "" ||
+		strings.TrimSpace(result.GateLabel) != "" ||
+		strings.TrimSpace(result.GateMsg) != "" ||
 		strings.TrimSpace(result.PositionEffect) != "" ||
 		strings.TrimSpace(result.PositionSide) != "" ||
+		strings.TrimSpace(result.RiskReference) != "" ||
 		result.Leverage != 0 ||
+		result.Partial ||
+		len(result.Layers) > 0 ||
 		len(result.RiskOrders) > 0
 }
 

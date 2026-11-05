@@ -655,7 +655,7 @@ func (s *Server) execute(signalID string, signal trading.Signal, cfg config.Conf
 			_ = s.Orders.MarkPartiallySubmitted(signalID, result, err, s.now())
 			s.reconcileGatePositionRiskForSignal(signalID)
 		} else {
-			_ = s.Orders.MarkFailed(signalID, err, s.now())
+			_ = s.Orders.MarkFailedWithResult(signalID, result, err, s.now())
 		}
 		if s.Logger != nil {
 			s.Logger.Error("order failed", "signal_id", signalID, "action", signal.Action, "coinpair", signal.Coinpair, "error", err)
