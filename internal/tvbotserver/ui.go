@@ -1023,27 +1023,19 @@ const tvbotHTML = `<!doctype html>
     }
     .position-monitor-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(140px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(6, minmax(150px, 1fr));
+      gap: 8px 10px;
       align-items: end;
-      margin-top: 10px;
+      margin-top: 8px;
     }
     .position-monitor-grid label {
       margin: 0;
+      min-width: 0;
     }
-    .position-monitor-timeout {
-      display: grid;
-      grid-template-columns: minmax(220px, 240px) minmax(180px, 240px);
-      gap: 10px;
-      align-items: end;
-      margin-top: 10px;
-    }
-    .position-monitor-daily {
-      display: grid;
-      grid-template-columns: minmax(220px, 240px) minmax(150px, 180px) minmax(260px, 1fr);
-      gap: 10px;
-      align-items: end;
-      margin-top: 10px;
+    .position-monitor-daily-note {
+      grid-column: span 2;
+      align-self: end;
+      padding-bottom: 8px;
     }
     .position-monitor-status {
       font-size: 12px;
@@ -2023,9 +2015,14 @@ const tvbotHTML = `<!doctype html>
       padding: 8px 18px 18px;
       overflow-wrap: anywhere;
     }
+    @media (max-width: 1200px) {
+      .position-monitor-grid { grid-template-columns: repeat(4, minmax(150px, 1fr)); }
+      .position-monitor-daily-note { grid-column: span 2; }
+    }
     @media (max-width: 880px) {
       .bar { gap: 6px; }
-      .status, .grid, .grid.two, .split, .api-key-layout, .analysis-metrics, .asset-metrics, .symbol-metrics, .position-metrics, .dashboard-balance-grid, .analysis-balance-grid, .position-monitor-grid, .position-monitor-timeout, .position-monitor-daily { grid-template-columns: 1fr; }
+      .status, .grid, .grid.two, .split, .api-key-layout, .analysis-metrics, .asset-metrics, .symbol-metrics, .position-metrics, .dashboard-balance-grid, .analysis-balance-grid, .position-monitor-grid { grid-template-columns: 1fr; }
+      .position-monitor-daily-note { grid-column: span 1; }
       .template-title-row { grid-template-columns: 1fr; }
       .analysis-period-row { flex-direction: column; }
       .analysis-time-status { min-width: 0; }
@@ -2262,15 +2259,11 @@ const tvbotHTML = `<!doctype html>
           <label class="check"><input id="position-monitor-low-margin-enabled" type="checkbox">低保证金自动清理</label>
           <label>保证金阈值（USDT）<input id="position-monitor-low-margin-threshold" type="number" min="0.01" step="0.01"></label>
           <label>低保证金持仓小时数<input id="position-monitor-low-margin-hours" type="number" min="1" step="1"></label>
-        </div>
-        <div class="position-monitor-timeout">
           <label class="check"><input id="position-monitor-holding-enabled" type="checkbox">持仓超时自动平仓</label>
           <label>最长持仓时间（小时）<input id="position-monitor-holding-hours" type="number" min="1" step="1"></label>
-        </div>
-        <div class="position-monitor-daily">
           <label class="check"><input id="position-monitor-daily-enabled" type="checkbox">每日定时平仓</label>
           <label>平仓时间（中国时间）<input id="position-monitor-daily-time" type="time" min="00:00" max="23:59" step="60"></label>
-          <div class="muted">覆盖所有已配置交易所；限价追价，超时沿用现有市价回退。</div>
+          <div class="muted position-monitor-daily-note">覆盖所有已配置交易所；限价追价，超时沿用现有市价回退。</div>
         </div>
       </div>
       <div class="section-head" style="margin:18px 0 10px">

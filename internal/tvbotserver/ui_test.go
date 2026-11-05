@@ -58,7 +58,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`id="position-monitor-low-margin-enabled"`,
 		`low_margin_threshold_usdt: Number($("position-monitor-low-margin-threshold").value)`,
 		`id="position-monitor-active-exchanges"`,
-		`position-monitor-timeout`,
+		`class="muted position-monitor-daily-note"`,
 		`formatAveragePriceAmount(row, row.avgPx)`,
 		`function rawDecimalPrecision(value)`,
 		`const markPrecision = normalizedPrecision(row && row.price_precision)`,
@@ -153,6 +153,44 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 	for _, removed := range []string{"tvbot#", "location.hash", "history.replaceState", "url.hash ="} {
 		if strings.Contains(page, removed) {
 			t.Fatalf("tvbot page still contains hash navigation marker %q", removed)
+		}
+	}
+}
+
+func TestPositionMonitorUsesCompactUnifiedGrid(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=positions", nil))
+	for _, want := range []string{
+		`grid-template-columns: repeat(6, minmax(150px, 1fr));`,
+		`@media (max-width: 1200px)`,
+		`grid-template-columns: repeat(4, minmax(150px, 1fr));`,
+		`class="position-monitor-grid"`,
+		`class="muted position-monitor-daily-note"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("compact position monitor layout is missing %q", want)
+		}
+	}
+	for _, removed := range []string{
+		`class="position-monitor-timeout"`,
+		`class="position-monitor-daily"`,
+	} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("position monitor should use one unified grid; found %q", removed)
+		}
+	}
+	gridStart := strings.Index(page, `<div class="position-monitor-grid">`)
+	if gridStart < 0 {
+		t.Fatal("position monitor grid is missing")
+	}
+	for _, field := range []string{
+		`id="position-monitor-enabled"`,
+		`id="position-monitor-holding-enabled"`,
+		`id="position-monitor-daily-enabled"`,
+		`id="position-monitor-daily-time"`,
+		`class="muted position-monitor-daily-note"`,
+	} {
+		if strings.Index(page[gridStart:], field) < 0 {
+			t.Fatalf("position monitor field %q is not inside the unified grid", field)
 		}
 	}
 }
