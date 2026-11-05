@@ -166,6 +166,59 @@ func TestPositionMonitorHoldingTimeClosesWithExchangeTriggerDisabled(t *testing.
 	}
 }
 
+func TestScheduledPositionCloseStartsFullOKXLimitClose(t *testing.T) {
+	restore := isolatePositionCloseJobsForTest()
+	defer restore()
+
+	srv := newTestServer(t)
+	var order map[string]any
+	okxServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v5/account/positions":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"1","availPos":"1","avgPx":"100","markPx":"100","upl":"0","uplRatio":"0","lever":"5","notionalUsd":"100","margin":"20"}]}`))
+		case "/api/v5/trade/orders-pending", "/api/v5/trade/orders-algo-pending":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
+		case "/api/v5/public/instruments":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","tickSz":"0.1","ctVal":"1","lotSz":"1","minSz":"1"}]}`))
+		case "/api/v5/market/ticker":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","bidPx":"99.9","askPx":"100.1","last":"100","ts":"1784880000000"}]}`))
+		case "/api/v5/trade/order":
+			if err := json.NewDecoder(r.Body).Decode(&order); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"ordId":"scheduled-close-1","clOrdId":"scheduled-close","sCode":"0","sMsg":""}]}`))
+		default:
+			t.Fatalf("unexpected OKX path %s", r.URL.Path)
+		}
+	}))
+	defer okxServer.Close()
+
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BaseURL = okxServer.URL
+	cfg.Trading.PositionMonitor.OKXEnabled = false
+	cfg.Trading.PositionMonitor.BinanceEnabled = false
+	cfg.Trading.PositionMonitor.GateEnabled = false
+	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
+	cfg.Trading.PositionMonitor.DailyCloseEnabled = true
+	cfg.Trading.PositionMonitor.DailyCloseTime = "06:00"
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.OKXHTTPClient = okxServer.Client()
+	if _, err := srv.OKXCredentials.UpdateAccount(okx.CredentialAccountUpdate{
+		ID: "default", Active: true,
+		Credentials: okx.Credentials{APIKey: "key", SecretKey: "secret", Passphrase: "pass"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.RunScheduledPositionClose(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if order["instId"] != "ETH-USDT-SWAP" || order["side"] != "sell" || order["ordType"] != "limit" || order["sz"] != "1" || order["posSide"] != "long" {
+		t.Fatalf("bad scheduled OKX close order: %#v", order)
+	}
+}
+
 func TestPositionMonitorBinanceStartsLimitCloseAtThresholds(t *testing.T) {
 	restore := isolatePositionCloseJobsForTest()
 	defer restore()

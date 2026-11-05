@@ -480,6 +480,9 @@ func TestNormalizePositionMonitorDefaultsAndValidation(t *testing.T) {
 	if cfg.Trading.PositionMonitor.OKXEnabled || cfg.Trading.PositionMonitor.BinanceEnabled || cfg.Trading.PositionMonitor.GateEnabled || cfg.Trading.PositionMonitor.PollIntervalSeconds != 300 || cfg.Trading.PositionMonitor.TakeProfitPct != 5 || cfg.Trading.PositionMonitor.StopLossPct != 8 || cfg.Trading.PositionMonitor.StopLossMinHoldingMinutes != MinimumStopLossHoldingMinutes || !cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled || cfg.Trading.PositionMonitor.HoldingTimeCloseHours != 6 || cfg.Trading.PositionMonitor.LowMarginThresholdUSDT != 50 || cfg.Trading.PositionMonitor.LowMarginHoldingHours != 1 || cfg.Trading.PositionMonitor.LowMarginCloseEnabled {
 		t.Fatalf("bad position monitor defaults: %#v", cfg.Trading.PositionMonitor)
 	}
+	if !Default().Trading.PositionMonitor.DailyCloseEnabled || Default().Trading.PositionMonitor.DailyCloseTime != DefaultDailyCloseTime {
+		t.Fatalf("bad daily close defaults: %#v", Default().Trading.PositionMonitor)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("defaulted position monitor should validate: %v", err)
 	}
@@ -533,6 +536,45 @@ func TestLoadLegacyPositionMonitorMigratesToUnifiedDefaults(t *testing.T) {
 	monitor := cfg.Trading.PositionMonitor
 	if !monitor.Enabled || !monitor.OKXEnabled || monitor.PollIntervalSeconds != 120 || monitor.LowMarginCloseEnabled || monitor.LowMarginThresholdUSDT != 50 || monitor.LowMarginHoldingHours != 1 {
 		t.Fatalf("legacy position monitor was not migrated: %#v", monitor)
+	}
+	cfg.Trading.PositionMonitor.DailyCloseTime = "24:00"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid daily close time should be rejected")
+	}
+}
+
+func TestLegacyConfigReceivesDailyCloseDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-daily-close.json")
+	if err := os.WriteFile(path, []byte(`{"trading":{"position_monitor":{"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8,"holding_time_close_hours":6}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Trading.PositionMonitor.DailyCloseEnabled || loaded.Trading.PositionMonitor.DailyCloseTime != DefaultDailyCloseTime {
+		t.Fatalf("legacy config did not receive daily close defaults: %#v", loaded.Trading.PositionMonitor)
+	}
+}
+
+func TestParseDailyCloseTime(t *testing.T) {
+	for _, test := range []struct {
+		value        string
+		hour, minute int
+	}{
+		{value: "00:00", hour: 0, minute: 0},
+		{value: "06:05", hour: 6, minute: 5},
+		{value: "23:59", hour: 23, minute: 59},
+	} {
+		hour, minute, err := ParseDailyCloseTime(test.value)
+		if err != nil || hour != test.hour || minute != test.minute {
+			t.Fatalf("ParseDailyCloseTime(%q) = %d:%d, %v", test.value, hour, minute, err)
+		}
+	}
+	for _, value := range []string{"6:00", "24:00", "12:60", "12-00"} {
+		if _, _, err := ParseDailyCloseTime(value); err == nil {
+			t.Fatalf("ParseDailyCloseTime(%q) should fail", value)
+		}
 	}
 }
 

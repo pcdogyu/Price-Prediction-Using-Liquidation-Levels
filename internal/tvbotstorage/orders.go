@@ -86,6 +86,7 @@ type orderState struct {
 	Orders              []OrderRecord     `json:"orders"`
 	CoinpairBlocks      []CoinpairBlock   `json:"coinpair_blocks,omitempty"`
 	CoinpairBlockEvents map[string]bool   `json:"coinpair_block_events,omitempty"`
+	ScheduledRuns       map[string]bool   `json:"scheduled_runs,omitempty"`
 }
 
 func NewOrderStore(path string) (*OrderStore, error) {
@@ -96,6 +97,7 @@ func NewOrderStore(path string) (*OrderStore, error) {
 			Orders:              []OrderRecord{},
 			CoinpairBlocks:      []CoinpairBlock{},
 			CoinpairBlockEvents: map[string]bool{},
+			ScheduledRuns:       map[string]bool{},
 		},
 	}
 	if path == "" {
@@ -150,6 +152,7 @@ func newSQLiteOrderStore(db *sql.DB, ownsDB bool, legacyJSONPath string) (*Order
 			Orders:              []OrderRecord{},
 			CoinpairBlocks:      []CoinpairBlock{},
 			CoinpairBlockEvents: map[string]bool{},
+			ScheduledRuns:       map[string]bool{},
 		},
 		db:     db,
 		ownsDB: ownsDB,
@@ -1111,6 +1114,16 @@ func (s *OrderStore) migrateSQLite() error {
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_coinpair_block_events_time ON coinpair_block_events(occurred_at)`,
+		`CREATE TABLE IF NOT EXISTS tvbot_scheduled_runs (
+			run_key TEXT NOT NULL,
+			run_date TEXT NOT NULL,
+			status TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			finished_at TEXT,
+			message TEXT,
+			PRIMARY KEY(run_key, run_date)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tvbot_scheduled_runs_started ON tvbot_scheduled_runs(started_at)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -2152,6 +2165,9 @@ func (s *OrderStore) load() error {
 	}
 	if s.state.CoinpairBlockEvents == nil {
 		s.state.CoinpairBlockEvents = map[string]bool{}
+	}
+	if s.state.ScheduledRuns == nil {
+		s.state.ScheduledRuns = map[string]bool{}
 	}
 	return nil
 }

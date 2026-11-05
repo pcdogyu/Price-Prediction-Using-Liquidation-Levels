@@ -1038,6 +1038,13 @@ const tvbotHTML = `<!doctype html>
       align-items: end;
       margin-top: 10px;
     }
+    .position-monitor-daily {
+      display: grid;
+      grid-template-columns: minmax(220px, 240px) minmax(150px, 180px) minmax(260px, 1fr);
+      gap: 10px;
+      align-items: end;
+      margin-top: 10px;
+    }
     .position-monitor-status {
       font-size: 12px;
       color: var(--muted);
@@ -2018,7 +2025,7 @@ const tvbotHTML = `<!doctype html>
     }
     @media (max-width: 880px) {
       .bar { gap: 6px; }
-      .status, .grid, .grid.two, .split, .api-key-layout, .analysis-metrics, .asset-metrics, .symbol-metrics, .position-metrics, .dashboard-balance-grid, .analysis-balance-grid, .position-monitor-grid, .position-monitor-timeout { grid-template-columns: 1fr; }
+      .status, .grid, .grid.two, .split, .api-key-layout, .analysis-metrics, .asset-metrics, .symbol-metrics, .position-metrics, .dashboard-balance-grid, .analysis-balance-grid, .position-monitor-grid, .position-monitor-timeout, .position-monitor-daily { grid-template-columns: 1fr; }
       .template-title-row { grid-template-columns: 1fr; }
       .analysis-period-row { flex-direction: column; }
       .analysis-time-status { min-width: 0; }
@@ -2259,6 +2266,11 @@ const tvbotHTML = `<!doctype html>
         <div class="position-monitor-timeout">
           <label class="check"><input id="position-monitor-holding-enabled" type="checkbox">持仓超时自动平仓</label>
           <label>最长持仓时间（小时）<input id="position-monitor-holding-hours" type="number" min="1" step="1"></label>
+        </div>
+        <div class="position-monitor-daily">
+          <label class="check"><input id="position-monitor-daily-enabled" type="checkbox">每日定时平仓</label>
+          <label>平仓时间（中国时间）<input id="position-monitor-daily-time" type="time" min="00:00" max="23:59" step="60"></label>
+          <div class="muted">覆盖所有已配置交易所；限价追价，超时沿用现有市价回退。</div>
         </div>
       </div>
       <div class="section-head" style="margin:18px 0 10px">
@@ -5096,7 +5108,9 @@ const tvbotHTML = `<!doctype html>
         holding_time_close_hours: Number(monitor.holding_time_close_hours || 6),
         low_margin_close_enabled: !!monitor.low_margin_close_enabled,
         low_margin_threshold_usdt: Number(monitor.low_margin_threshold_usdt || 50),
-        low_margin_holding_hours: Number(monitor.low_margin_holding_hours || 1)
+        low_margin_holding_hours: Number(monitor.low_margin_holding_hours || 1),
+        daily_close_enabled: monitor.daily_close_enabled !== false,
+        daily_close_time: String(monitor.daily_close_time || "06:00")
       };
     }
 
@@ -5113,17 +5127,22 @@ const tvbotHTML = `<!doctype html>
       $("position-monitor-low-margin-enabled").checked = !!monitor.low_margin_close_enabled;
       $("position-monitor-low-margin-threshold").value = monitor.low_margin_threshold_usdt || 50;
       $("position-monitor-low-margin-hours").value = monitor.low_margin_holding_hours || 1;
+      $("position-monitor-daily-enabled").checked = !!monitor.daily_close_enabled;
+      $("position-monitor-daily-time").value = monitor.daily_close_time || "06:00";
       const activeExchanges = state.exchangeAvailabilityReady
         ? configuredExchangesForCurrentEnvironment().map(exchangeLabel).join("、")
         : "读取中";
       $("position-monitor-active-exchanges").textContent = "当前租户启用交易所：" + (activeExchanges || "无");
+      const dailyLabel = monitor.daily_close_enabled
+        ? " / 每日 " + (monitor.daily_close_time || "06:00") + " 中国时间全交易所平仓"
+        : " / 每日定时平仓关闭";
       $("position-monitor-status").textContent = (monitor.enabled ? "已启用" : "已关闭") +
         " / " + asText(monitor.poll_interval_seconds || 300) + "s" +
         " / +" + asText(monitor.take_profit_pct || 5) + "%" +
         " / -" + asText(monitor.stop_loss_pct || 8) + "%" +
         " / SL锁定" + asText(monitor.stop_loss_min_holding_minutes || 30) + "分钟" +
         " / 超时平仓" + (monitor.holding_time_close_enabled ? " " + asText(monitor.holding_time_close_hours || 6) + "h" : "关闭") +
-        " / 低保证金" + (monitor.low_margin_close_enabled ? " <" + asText(monitor.low_margin_threshold_usdt || 50) + " USDT / " + asText(monitor.low_margin_holding_hours || 1) + "h" : "关闭");
+        " / 低保证金" + (monitor.low_margin_close_enabled ? " <" + asText(monitor.low_margin_threshold_usdt || 50) + " USDT / " + asText(monitor.low_margin_holding_hours || 1) + "h" : "关闭") + dailyLabel;
     }
 
     function renderDashboard() {
@@ -8713,9 +8732,11 @@ const tvbotHTML = `<!doctype html>
               stop_loss_min_holding_minutes: Number($("position-monitor-sl-minutes").value),
               holding_time_close_enabled: $("position-monitor-holding-enabled").checked,
               holding_time_close_hours: Number($("position-monitor-holding-hours").value),
-              low_margin_close_enabled: $("position-monitor-low-margin-enabled").checked,
-              low_margin_threshold_usdt: Number($("position-monitor-low-margin-threshold").value),
-              low_margin_holding_hours: Number($("position-monitor-low-margin-hours").value)
+	              low_margin_close_enabled: $("position-monitor-low-margin-enabled").checked,
+	              low_margin_threshold_usdt: Number($("position-monitor-low-margin-threshold").value),
+	              low_margin_holding_hours: Number($("position-monitor-low-margin-hours").value),
+              daily_close_enabled: $("position-monitor-daily-enabled").checked,
+              daily_close_time: $("position-monitor-daily-time").value || "06:00"
             }
           }
         };

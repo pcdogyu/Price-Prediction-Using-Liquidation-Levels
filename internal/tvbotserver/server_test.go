@@ -594,6 +594,10 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-active-exchanges")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-holding-enabled")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-holding-hours")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-daily-enabled")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-daily-time")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("daily_close_enabled")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("daily_close_time")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position_monitor")) {
 		t.Fatalf("tvbot ui should render position monitor controls and config payload")
 	}
@@ -1132,7 +1136,7 @@ func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	monitor := cfg.Trading.PositionMonitor
-	if !monitor.Enabled || monitor.PollIntervalSeconds != 300 || monitor.TakeProfitPct != 5 || monitor.StopLossPct != 8 || monitor.StopLossMinHoldingMinutes != 30 || !monitor.HoldingTimeCloseEnabled || monitor.HoldingTimeCloseHours != 6 || !monitor.LowMarginCloseEnabled || monitor.LowMarginThresholdUSDT != 50 || monitor.LowMarginHoldingHours != 1 {
+	if !monitor.Enabled || monitor.PollIntervalSeconds != 300 || monitor.TakeProfitPct != 5 || monitor.StopLossPct != 8 || monitor.StopLossMinHoldingMinutes != 30 || !monitor.HoldingTimeCloseEnabled || monitor.HoldingTimeCloseHours != 6 || !monitor.LowMarginCloseEnabled || monitor.LowMarginThresholdUSDT != 50 || monitor.LowMarginHoldingHours != 1 || !monitor.DailyCloseEnabled || monitor.DailyCloseTime != "06:00" {
 		t.Fatalf("position monitor not saved: %#v", monitor)
 	}
 
@@ -1149,6 +1153,14 @@ func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 	srv.ServeHTTP(badMargin, badMarginReq)
 	if badMargin.Code != http.StatusBadRequest || !bytes.Contains(badMargin.Body.Bytes(), []byte("position_monitor.low_margin_threshold_usdt")) {
 		t.Fatalf("bad low margin config status=%d body=%s", badMargin.Code, badMargin.Body.String())
+	}
+
+	badTimeReq := httptest.NewRequest(http.MethodPatch, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"daily_close_time":"24:00"}}}`)))
+	badTimeReq.SetBasicAuth("admin", "Admin123")
+	badTime := httptest.NewRecorder()
+	srv.ServeHTTP(badTime, badTimeReq)
+	if badTime.Code != http.StatusBadRequest || !bytes.Contains(badTime.Body.Bytes(), []byte("position_monitor.daily_close_time")) {
+		t.Fatalf("bad daily close time status=%d body=%s", badTime.Code, badTime.Body.String())
 	}
 }
 

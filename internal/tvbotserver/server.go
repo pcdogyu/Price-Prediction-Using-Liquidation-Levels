@@ -1299,23 +1299,31 @@ func validateConfigPatch(patch configPatch) error {
 		return nil
 	}
 	monitor := patch.Trading.PositionMonitor
-	if monitor.PollIntervalSeconds <= 0 {
+	if monitor.PollIntervalSeconds != nil && *monitor.PollIntervalSeconds <= 0 {
 		return errors.New("position_monitor.poll_interval_seconds must be positive")
 	}
-	if monitor.TakeProfitPct <= 0 {
+	if monitor.TakeProfitPct != nil && *monitor.TakeProfitPct <= 0 {
 		return errors.New("position_monitor.take_profit_pct must be positive")
 	}
-	if monitor.StopLossPct <= 0 {
+	if monitor.StopLossPct != nil && *monitor.StopLossPct <= 0 {
 		return errors.New("position_monitor.stop_loss_pct must be positive")
 	}
-	if monitor.HoldingTimeCloseHours <= 0 {
+	if monitor.HoldingTimeCloseHours != nil && *monitor.HoldingTimeCloseHours <= 0 {
 		return errors.New("position_monitor.holding_time_close_hours must be positive")
 	}
-	if monitor.LowMarginThresholdUSDT <= 0 {
+	if monitor.StopLossMinHoldingMinutes != nil && *monitor.StopLossMinHoldingMinutes < config.MinimumStopLossHoldingMinutes {
+		return fmt.Errorf("position_monitor.stop_loss_min_holding_minutes must be at least %d", config.MinimumStopLossHoldingMinutes)
+	}
+	if monitor.LowMarginThresholdUSDT != nil && *monitor.LowMarginThresholdUSDT <= 0 {
 		return errors.New("position_monitor.low_margin_threshold_usdt must be positive")
 	}
-	if monitor.LowMarginHoldingHours <= 0 {
+	if monitor.LowMarginHoldingHours != nil && *monitor.LowMarginHoldingHours <= 0 {
 		return errors.New("position_monitor.low_margin_holding_hours must be positive")
+	}
+	if monitor.DailyCloseTime != nil {
+		if _, _, err := config.ParseDailyCloseTime(*monitor.DailyCloseTime); err != nil {
+			return fmt.Errorf("position_monitor.daily_close_time: %w", err)
+		}
 	}
 	return nil
 }
@@ -3019,7 +3027,25 @@ type tradingPatch struct {
 	LossCooldown              *lossCooldownPatch            `json:"loss_cooldown"`
 	FillMonitor               *config.FillMonitorConfig     `json:"fill_monitor"`
 	AutoReentry               *config.AutoReentryConfig     `json:"auto_reentry"`
-	PositionMonitor           *config.PositionMonitorConfig `json:"position_monitor"`
+	PositionMonitor           *positionMonitorPatch         `json:"position_monitor"`
+}
+
+type positionMonitorPatch struct {
+	Enabled                   *bool    `json:"enabled"`
+	OKXEnabled                *bool    `json:"okx_enabled"`
+	BinanceEnabled            *bool    `json:"binance_enabled"`
+	GateEnabled               *bool    `json:"gate_enabled"`
+	PollIntervalSeconds       *int     `json:"poll_interval_seconds"`
+	TakeProfitPct             *float64 `json:"take_profit_pct"`
+	StopLossPct               *float64 `json:"stop_loss_pct"`
+	StopLossMinHoldingMinutes *int     `json:"stop_loss_min_holding_minutes"`
+	HoldingTimeCloseEnabled   *bool    `json:"holding_time_close_enabled"`
+	HoldingTimeCloseHours     *int     `json:"holding_time_close_hours"`
+	LowMarginCloseEnabled     *bool    `json:"low_margin_close_enabled"`
+	LowMarginThresholdUSDT    *float64 `json:"low_margin_threshold_usdt"`
+	LowMarginHoldingHours     *int     `json:"low_margin_holding_hours"`
+	DailyCloseEnabled         *bool    `json:"daily_close_enabled"`
+	DailyCloseTime            *string  `json:"daily_close_time"`
 }
 
 type lossCooldownPatch struct {
@@ -3161,7 +3187,52 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 		c.Trading.AutoReentry = *patch.Trading.AutoReentry
 	}
 	if patch.Trading.PositionMonitor != nil {
-		c.Trading.PositionMonitor = *patch.Trading.PositionMonitor
+		monitor := patch.Trading.PositionMonitor
+		if monitor.Enabled != nil {
+			c.Trading.PositionMonitor.Enabled = *monitor.Enabled
+		}
+		if monitor.OKXEnabled != nil {
+			c.Trading.PositionMonitor.OKXEnabled = *monitor.OKXEnabled
+		}
+		if monitor.BinanceEnabled != nil {
+			c.Trading.PositionMonitor.BinanceEnabled = *monitor.BinanceEnabled
+		}
+		if monitor.GateEnabled != nil {
+			c.Trading.PositionMonitor.GateEnabled = *monitor.GateEnabled
+		}
+		if monitor.PollIntervalSeconds != nil {
+			c.Trading.PositionMonitor.PollIntervalSeconds = *monitor.PollIntervalSeconds
+		}
+		if monitor.TakeProfitPct != nil {
+			c.Trading.PositionMonitor.TakeProfitPct = *monitor.TakeProfitPct
+		}
+		if monitor.StopLossPct != nil {
+			c.Trading.PositionMonitor.StopLossPct = *monitor.StopLossPct
+		}
+		if monitor.StopLossMinHoldingMinutes != nil {
+			c.Trading.PositionMonitor.StopLossMinHoldingMinutes = *monitor.StopLossMinHoldingMinutes
+		}
+		if monitor.HoldingTimeCloseEnabled != nil {
+			c.Trading.PositionMonitor.HoldingTimeCloseEnabled = *monitor.HoldingTimeCloseEnabled
+		}
+		if monitor.HoldingTimeCloseHours != nil {
+			c.Trading.PositionMonitor.HoldingTimeCloseHours = *monitor.HoldingTimeCloseHours
+		}
+		if monitor.LowMarginCloseEnabled != nil {
+			c.Trading.PositionMonitor.LowMarginCloseEnabled = *monitor.LowMarginCloseEnabled
+		}
+		if monitor.LowMarginThresholdUSDT != nil {
+			c.Trading.PositionMonitor.LowMarginThresholdUSDT = *monitor.LowMarginThresholdUSDT
+		}
+		if monitor.LowMarginHoldingHours != nil {
+			c.Trading.PositionMonitor.LowMarginHoldingHours = *monitor.LowMarginHoldingHours
+		}
+		if monitor.DailyCloseEnabled != nil {
+			c.Trading.PositionMonitor.DailyCloseEnabled = *monitor.DailyCloseEnabled
+		}
+		if monitor.DailyCloseTime != nil {
+			c.Trading.PositionMonitor.DailyCloseTime = *monitor.DailyCloseTime
+		}
 	}
 }
 

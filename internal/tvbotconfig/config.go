@@ -16,6 +16,8 @@ const (
 	EnvDemo = "demo"
 	EnvLive = "live"
 
+	DefaultDailyCloseTime = "06:00"
+
 	MarginIsolated = "isolated"
 	MarginCross    = "cross"
 
@@ -177,6 +179,8 @@ type PositionMonitorConfig struct {
 	LowMarginCloseEnabled     bool    `json:"low_margin_close_enabled"`
 	LowMarginThresholdUSDT    float64 `json:"low_margin_threshold_usdt"`
 	LowMarginHoldingHours     int     `json:"low_margin_holding_hours"`
+	DailyCloseEnabled         bool    `json:"daily_close_enabled"`
+	DailyCloseTime            string  `json:"daily_close_time"`
 }
 
 const MinimumStopLossHoldingMinutes = 30
@@ -357,6 +361,8 @@ func Default() Config {
 				LowMarginCloseEnabled:     false,
 				LowMarginThresholdUSDT:    50,
 				LowMarginHoldingHours:     1,
+				DailyCloseEnabled:         true,
+				DailyCloseTime:            DefaultDailyCloseTime,
 			},
 		},
 		Symbols: map[string]SymbolConfig{
@@ -575,6 +581,7 @@ func (c *Config) Normalize() {
 	if c.Trading.PositionMonitor.LowMarginHoldingHours <= 0 {
 		c.Trading.PositionMonitor.LowMarginHoldingHours = 1
 	}
+	c.Trading.PositionMonitor.DailyCloseTime = NormalizeDailyCloseTime(c.Trading.PositionMonitor.DailyCloseTime)
 	if c.Symbols == nil {
 		c.Symbols = map[string]SymbolConfig{}
 	}
@@ -728,6 +735,9 @@ func (c Config) validate(validateSymbols bool) error {
 	if c.Trading.PositionMonitor.LowMarginHoldingHours <= 0 {
 		return errors.New("position_monitor.low_margin_holding_hours must be positive")
 	}
+	if _, _, err := ParseDailyCloseTime(c.Trading.PositionMonitor.DailyCloseTime); err != nil {
+		return fmt.Errorf("position_monitor.daily_close_time: %w", err)
+	}
 	if validateSymbols {
 		for key, sym := range c.Symbols {
 			if sym.Coinpair == "" || sym.InstID == "" {
@@ -742,6 +752,36 @@ func (c Config) validate(validateSymbols bool) error {
 		return errors.New("menuSettings must be visible")
 	}
 	return nil
+}
+
+// NormalizeDailyCloseTime supplies the configured default without changing a
+// non-empty value. Validation is intentionally separate so malformed values
+// submitted through the API are rejected instead of silently rewritten.
+func NormalizeDailyCloseTime(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return DefaultDailyCloseTime
+	}
+	return raw
+}
+
+// ParseDailyCloseTime parses a 24-hour HH:MM time used in the China Standard
+// Time scheduler. China has no daylight-saving transitions, so the scheduler
+// can safely use the fixed UTC+8 offset represented by these values.
+func ParseDailyCloseTime(raw string) (hour, minute int, err error) {
+	raw = strings.TrimSpace(raw)
+	if len(raw) != 5 || raw[2] != ':' {
+		return 0, 0, errors.New("must use HH:MM format")
+	}
+	if raw[0] < '0' || raw[0] > '9' || raw[1] < '0' || raw[1] > '9' || raw[3] < '0' || raw[3] > '9' || raw[4] < '0' || raw[4] > '9' {
+		return 0, 0, errors.New("must use HH:MM format")
+	}
+	hour = int(raw[0]-'0')*10 + int(raw[1]-'0')
+	minute = int(raw[3]-'0')*10 + int(raw[4]-'0')
+	if hour > 23 || minute > 59 {
+		return 0, 0, errors.New("must be a valid 24-hour time")
+	}
+	return hour, minute, nil
 }
 
 func ValidMarketTurnoverScope(scope string) bool {

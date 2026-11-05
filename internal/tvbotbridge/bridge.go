@@ -369,6 +369,7 @@ func (b *Bridge) Start(ctx context.Context) {
 		})
 	}
 	b.startMonitors(ctx, b.Handler)
+	b.startDailyPositionCloseMonitor(ctx)
 }
 
 func (b *Bridge) startMonitors(ctx context.Context, handler *tvbotserver.Server) {
