@@ -24,6 +24,8 @@ const (
 	tradeMonitorPollTimeout         = 45 * time.Second
 	tradeMonitorOrderTimeout        = 20 * time.Second
 	tradeMonitorHistoryLimit        = 1000
+	binanceTradeMonitorMaxWindow    = 7 * 24 * time.Hour
+	binanceTradeMonitorWindowMargin = time.Second
 	coinpairCooldownOKXCheckpoint   = "__COINPAIR_COOLDOWN__"
 )
 
@@ -439,18 +441,21 @@ func (s *Server) pollBinanceSymbolFills(ctx context.Context, cfg config.Config, 
 	if err != nil {
 		return err
 	}
-	start := now.Add(-lookback)
-	if found && cp.LastFillTime > 0 {
-		start = time.UnixMilli(cp.LastFillTime).Add(-time.Second)
+	start, resetCheckpoint := binanceTradeMonitorStart(now, cp, found, lookback)
+	queryCheckpoint := cp
+	if resetCheckpoint {
+		queryCheckpoint.LastFillTime = 0
+		queryCheckpoint.LastTradeID = ""
 	}
-	trades, err := client.UserTrades(ctx, symbol, start, now.UTC(), tradeMonitorHistoryLimit)
+	end := now.UTC()
+	trades, err := client.UserTrades(ctx, symbol, start, end, tradeMonitorHistoryLimit)
 	if err != nil {
 		_ = s.Orders.UpsertTradeMonitorCheckpoint(storage.TradeMonitorCheckpoint{
 			Exchange:     trading.ExchangeBinance,
 			APIID:        apiID,
 			Symbol:       symbol,
-			LastFillTime: cp.LastFillTime,
-			LastTradeID:  cp.LastTradeID,
+			LastFillTime: queryCheckpoint.LastFillTime,
+			LastTradeID:  queryCheckpoint.LastTradeID,
 			LastPolledAt: now,
 			LastError:    err.Error(),
 			UpdatedAt:    now,
@@ -507,8 +512,8 @@ func (s *Server) pollBinanceSymbolFills(ctx context.Context, cfg config.Config, 
 			}
 		}
 	}
-	lastFillTime := cp.LastFillTime
-	lastTradeID := cp.LastTradeID
+	lastFillTime := queryCheckpoint.LastFillTime
+	lastTradeID := queryCheckpoint.LastTradeID
 	for _, fill := range fills {
 		if fill.FillTime > lastFillTime || (fill.FillTime == lastFillTime && fill.TradeID > lastTradeID) {
 			lastFillTime = fill.FillTime
@@ -531,6 +536,27 @@ func (s *Server) pollBinanceSymbolFills(ctx context.Context, cfg config.Config, 
 		return fmt.Errorf("Binance %s userTrades reached %d limit; trade monitor history may be incomplete", symbol, tradeMonitorHistoryLimit)
 	}
 	return nil
+}
+
+func binanceTradeMonitorStart(now time.Time, cp storage.TradeMonitorCheckpoint, found bool, lookback time.Duration) (time.Time, bool) {
+	end := now.UTC()
+	if lookback <= 0 {
+		lookback = 72 * time.Hour
+	}
+	minimumStart := end.Add(-binanceTradeMonitorMaxWindow + binanceTradeMonitorWindowMargin)
+	start := end.Add(-lookback)
+	if start.Before(minimumStart) {
+		start = minimumStart
+	}
+	if !found || cp.LastFillTime <= 0 {
+		return start, false
+	}
+
+	checkpointStart := time.UnixMilli(cp.LastFillTime).UTC().Add(-binanceTradeMonitorWindowMargin)
+	if checkpointStart.Before(minimumStart) || checkpointStart.After(end) {
+		return minimumStart, true
+	}
+	return checkpointStart, false
 }
 
 func (s *Server) recordBinanceFillLossCooldowns(cfg config.Config, fills []storage.BinanceFill, now time.Time) error {
