@@ -25,6 +25,8 @@ func TestPositionMonitorCancelsOrphanOKXOrders(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v5/account/positions":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"2","avgPx":"100","markPx":"100","upl":"0","uplRatio":"0.01","lever":"5","notionalUsd":"200","margin":"40"}]}`))
+		case "/api/v5/trade/fills-history":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		case "/api/v5/trade/orders-pending":
 			mu.Lock()
 			open := normalOpen
@@ -106,6 +108,8 @@ func TestPositionMonitorCancelsOrphanBinanceOrders(t *testing.T) {
 		switch r.URL.Path {
 		case "/fapi/v3/positionRisk":
 			_, _ = w.Write([]byte(`[{"symbol":"ETHUSDT","positionSide":"BOTH","positionAmt":"2","entryPrice":"100","markPrice":"100","unRealizedProfit":"0","notional":"200","marginAsset":"USDT","leverage":"5","marginType":"isolated","updateTime":1784880000000}]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/openOrders":
 			mu.Lock()
 			open := normalOpen
@@ -182,6 +186,8 @@ func TestPositionMonitorCancelsOrphanGateOrders(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/futures/usdt/positions":
 			_, _ = w.Write([]byte(`[{"contract":"ETH_USDT","size":"2","entry_price":"100","mark_price":"100","unrealised_pnl":"0","margin":"10"}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/futures/usdt/my_trades":
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/futures/usdt/orders":
 			mu.Lock()
 			open := normalOpen

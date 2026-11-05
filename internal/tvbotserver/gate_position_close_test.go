@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -41,7 +42,7 @@ func TestTVBotGateFullLimitPositionClose(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v4/futures/usdt/positions":
-			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"100","pos_margin_mode":"isolated","mode":"single"}]`))
+			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"100","pos_margin_mode":"isolated","mode":"single","open_time":"1784800000"}]`))
 		case "/api/v4/futures/usdt/contracts/BTC_USDT":
 			_, _ = w.Write([]byte(`{"name":"BTC_USDT","order_size_min":"1","order_price_round":"0.1","mark_price":"100","enable_decimal":false}`))
 		case "/api/v4/futures/usdt/tickers":
@@ -66,6 +67,8 @@ func TestTVBotGateFullLimitPositionClose(t *testing.T) {
 				t.Fatalf("unexpected Gate price order method: %s", r.Method)
 			}
 			_, _ = w.Write([]byte(`[]`))
+		case "/api/v4/futures/usdt/my_trades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"id":"entry-buy","contract":%q,"order_id":"entry-buy","size":"1000","create_time":"1784800000"},{"id":"entry-sell","contract":%q,"order_id":"entry-sell","size":"-1000","create_time":"1784800000"}]`, r.URL.Query().Get("contract"), r.URL.Query().Get("contract"))))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}
@@ -105,7 +108,7 @@ func TestTVBotGateMarketPositionCloseUsesRequiredTextPrefix(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v4/futures/usdt/positions":
-			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"100","pos_margin_mode":"isolated","mode":"single"}]`))
+			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"100","pos_margin_mode":"isolated","mode":"single","open_time":"1784800000"}]`))
 		case "/api/v4/futures/usdt/orders":
 			switch r.Method {
 			case http.MethodGet:
@@ -123,6 +126,8 @@ func TestTVBotGateMarketPositionCloseUsesRequiredTextPrefix(t *testing.T) {
 				t.Fatalf("unexpected Gate price order method: %s", r.Method)
 			}
 			_, _ = w.Write([]byte(`[]`))
+		case "/api/v4/futures/usdt/my_trades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"id":"entry-buy","contract":%q,"order_id":"entry-buy","size":"1000","create_time":"1784800000"},{"id":"entry-sell","contract":%q,"order_id":"entry-sell","size":"-1000","create_time":"1784800000"}]`, r.URL.Query().Get("contract"), r.URL.Query().Get("contract"))))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}
@@ -153,7 +158,7 @@ func TestTVBotGateMarketPositionCloseFallsBackToMarketableIOCOnPriceProtection(t
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v4/futures/usdt/positions":
-			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"84.755","pos_margin_mode":"isolated","mode":"single"}]`))
+			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"84.755","pos_margin_mode":"isolated","mode":"single","open_time":"1784800000"}]`))
 		case "/api/v4/futures/usdt/contracts/BTC_USDT":
 			_, _ = w.Write([]byte(`{"name":"BTC_USDT","order_size_min":"1","order_price_round":"0.1","mark_price":"84.755","enable_decimal":false}`))
 		case "/api/v4/futures/usdt/tickers":
@@ -185,6 +190,8 @@ func TestTVBotGateMarketPositionCloseFallsBackToMarketableIOCOnPriceProtection(t
 				t.Fatalf("unexpected Gate price order method: %s", r.Method)
 			}
 			_, _ = w.Write([]byte(`[]`))
+		case "/api/v4/futures/usdt/my_trades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"id":"entry-buy","contract":%q,"order_id":"entry-buy","size":"1000","create_time":"1784800000"},{"id":"entry-sell","contract":%q,"order_id":"entry-sell","size":"-1000","create_time":"1784800000"}]`, r.URL.Query().Get("contract"), r.URL.Query().Get("contract"))))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}
@@ -219,7 +226,7 @@ func TestTVBotGatePartialLimitPositionCloseUsesReduceOnlySize(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v4/futures/usdt/positions":
-			_, _ = w.Write([]byte(`[{"contract":"ETH_USDT","size":"2","entry_price":"100","mark_price":"100","pos_margin_mode":"cross","mode":"single"}]`))
+			_, _ = w.Write([]byte(`[{"contract":"ETH_USDT","size":"2","entry_price":"100","mark_price":"100","pos_margin_mode":"cross","mode":"single","open_time":"1784800000"}]`))
 		case "/api/v4/futures/usdt/contracts/ETH_USDT":
 			_, _ = w.Write([]byte(`{"name":"ETH_USDT","order_size_min":"1","order_price_round":"0.1","mark_price":"100","enable_decimal":false}`))
 		case "/api/v4/futures/usdt/tickers":
@@ -241,6 +248,8 @@ func TestTVBotGatePartialLimitPositionCloseUsesReduceOnlySize(t *testing.T) {
 				t.Fatalf("unexpected Gate price order method: %s", r.Method)
 			}
 			_, _ = w.Write([]byte(`[]`))
+		case "/api/v4/futures/usdt/my_trades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"id":"entry-buy","contract":%q,"order_id":"entry-buy","size":"1000","create_time":"1784800000"},{"id":"entry-sell","contract":%q,"order_id":"entry-sell","size":"-1000","create_time":"1784800000"}]`, r.URL.Query().Get("contract"), r.URL.Query().Get("contract"))))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}

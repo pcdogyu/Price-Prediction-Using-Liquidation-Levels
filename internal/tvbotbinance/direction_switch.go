@@ -24,7 +24,7 @@ type directionSwitchState struct {
 	openOrders []OpenOrder
 }
 
-func (t Trader) prepareDirectionSwitch(ctx context.Context, client Client, action trading.Side, symbol string, filters TradingFilters) (directionSwitchState, error) {
+func (t Trader) prepareDirectionSwitch(ctx context.Context, client Client, action trading.Side, symbol string, filters TradingFilters, minHoldingMinutes int) (directionSwitchState, error) {
 	var state directionSwitchState
 	opposite, ok := oppositeAction(action)
 	if !ok {
@@ -45,6 +45,11 @@ func (t Trader) prepareDirectionSwitch(ctx context.Context, client Client, actio
 	oppositePositions := binancePositionsForDirection(positions, symbol, opposite)
 	if len(oppositeOrders) == 0 && len(oppositePositions) == 0 {
 		return state, nil
+	}
+	for _, position := range oppositePositions {
+		if err := ensureBinanceReversePositionHolding(position, minHoldingMinutes, time.Now().UTC()); err != nil {
+			return state, err
+		}
 	}
 	if err := t.cancelBinanceOpenOrders(ctx, client, oppositeOrders); err != nil {
 		return state, err
@@ -69,6 +74,28 @@ func (t Trader) prepareDirectionSwitch(ctx context.Context, client Client, actio
 	}
 	state.positions = positions
 	return state, nil
+}
+
+func ensureBinanceReversePositionHolding(position Position, minHoldingMinutes int, now time.Time) error {
+	if minHoldingMinutes <= 0 {
+		return nil
+	}
+	if position.UpdateTime <= 0 {
+		return fmt.Errorf("binance reverse position %s %s has no reliable entry time; minimum holding period blocks close", position.Symbol, position.PositionSide)
+	}
+	entryAt := time.UnixMilli(position.UpdateTime).UTC()
+	heldFor := now.Sub(entryAt)
+	if heldFor < 0 || heldFor < time.Duration(minHoldingMinutes)*time.Minute {
+		return fmt.Errorf("binance reverse position %s %s cannot be closed before %d minutes (held_for=%s)", position.Symbol, position.PositionSide, minHoldingMinutes, heldFor)
+	}
+	return nil
+}
+
+func minimumReversePositionHoldingMinutes(configured int) int {
+	if configured < 15 {
+		return 15
+	}
+	return configured
 }
 
 func (t Trader) cancelBinanceOpenOrders(ctx context.Context, client Client, orders []OpenOrder) error {

@@ -89,7 +89,7 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 			if r.URL.Query().Get("symbol") != "BTCUSDT" {
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
-			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","liquidationPrice":"120","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","liquidationPrice":"120","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`))
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"BTCUSDT","status":"TRADING","pricePrecision":1,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.1"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":
@@ -101,6 +101,8 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -180,7 +182,7 @@ func TestTVBotBinanceMarketCloseCleansOrdersVisibleAfterClose(t *testing.T) {
 			open := positionOpen
 			mu.Unlock()
 			if open {
-				_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"2","entryPrice":"100","markPrice":"100","unRealizedProfit":"0","notional":"200","marginAsset":"USDT","leverage":"5","marginType":"isolated","updateTime":1784880000000}]`))
+				_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"2","entryPrice":"100","markPrice":"100","unRealizedProfit":"0","notional":"200","marginAsset":"USDT","leverage":"5","marginType":"isolated","updateTime":1784800000000}]`))
 			} else {
 				_, _ = w.Write([]byte(`[]`))
 			}
@@ -195,6 +197,8 @@ func TestTVBotBinanceMarketCloseCleansOrdersVisibleAfterClose(t *testing.T) {
 			}
 		case "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			if r.Method == http.MethodDelete {
 				if r.URL.Query().Get("orderId") != "101" {
@@ -271,6 +275,8 @@ func TestCancelAllBinanceSymbolOrdersRetriesEventuallyVisibleCancellation(t *tes
 			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			if r.Method != http.MethodDelete || r.URL.Query().Get("orderId") != "101" {
 				t.Fatalf("unexpected Binance cancellation: %s %s", r.Method, r.URL.String())
@@ -307,13 +313,15 @@ func TestTVBotBinancePartialPositionCloseUsesCloseTimeoutForSlowRequests(t *test
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/fapi/v3/positionRisk":
-			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","liquidationPrice":"120","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","liquidationPrice":"120","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`))
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"BTCUSDT","status":"TRADING","pricePrecision":1,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.1"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":
 			_, _ = w.Write([]byte(`{"symbol":"BTCUSDT","bidPrice":"100","bidQty":"1","askPrice":"100.2","askQty":"1","time":1784880000000}`))
 		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			_, _ = w.Write([]byte(`{"orderId":789,"symbol":"BTCUSDT","status":"NEW","clientOrderId":"close-slow","price":"100.2","origQty":"0.2","executedQty":"0","type":"LIMIT","side":"BUY","positionSide":"BOTH"}`))
 		default:
@@ -372,13 +380,15 @@ func TestTVBotBinanceLimitPositionCloseSplitsWhenQuantityExceedsMaxQty(t *testin
 		}
 		switch r.URL.Path {
 		case "/fapi/v3/positionRisk":
-			_, _ = w.Write([]byte(`[{"symbol":"MANTAUSDT","positionSide":"BOTH","positionAmt":"25000","entryPrice":"0.06","markPrice":"0.059","unRealizedProfit":"-25","isolatedMargin":"150","notional":"1475","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+			_, _ = w.Write([]byte(`[{"symbol":"MANTAUSDT","positionSide":"BOTH","positionAmt":"25000","entryPrice":"0.06","markPrice":"0.059","unRealizedProfit":"-25","isolatedMargin":"150","notional":"1475","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`))
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"MANTAUSDT","status":"TRADING","pricePrecision":4,"quantityPrecision":0,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.0001"},{"filterType":"LOT_SIZE","minQty":"1","maxQty":"10000","stepSize":"1"},{"filterType":"MARKET_LOT_SIZE","minQty":"1","maxQty":"10000","stepSize":"1"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":
 			_, _ = w.Write([]byte(`{"symbol":"MANTAUSDT","bidPrice":"0.0589","bidQty":"1","askPrice":"0.0591","askQty":"1","time":1784880000000}`))
 		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -453,9 +463,11 @@ func TestTVBotBinanceMarketCloseRecoversUnknownStatusByClientOrderID(t *testing.
 			if r.URL.Query().Get("symbol") != "BTCUSDT" {
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
-			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`))
 		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -532,9 +544,11 @@ func TestTVBotBinanceMarketCloseReturnsUnknownWhenTimeoutCannotBeResolved(t *tes
 		}
 		switch r.URL.Path {
 		case "/fapi/v3/positionRisk":
-			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`))
 		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -618,7 +632,7 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyConflict(t *testing.T) {
 			if r.URL.Query().Get("symbol") != "AVAXUSDT" {
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
-			_, _ = w.Write([]byte(`[{"symbol":"AVAXUSDT","positionSide":"BOTH","positionAmt":"-15","entryPrice":"6.816","markPrice":"6.6284","unRealizedProfit":"2.814317","isolatedMargin":"33.141895","notional":"99.426583","marginAsset":"USDT","leverage":"3","marginType":"isolated","updateTime":1784880000000}]`))
+			_, _ = w.Write([]byte(`[{"symbol":"AVAXUSDT","positionSide":"BOTH","positionAmt":"-15","entryPrice":"6.816","markPrice":"6.6284","unRealizedProfit":"2.814317","isolatedMargin":"33.141895","notional":"99.426583","marginAsset":"USDT","leverage":"3","marginType":"isolated","updateTime":1784800000000}]`))
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"AVAXUSDT","status":"TRADING","pricePrecision":4,"quantityPrecision":0,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.0001"},{"filterType":"LOT_SIZE","minQty":"1","stepSize":"1"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":
@@ -644,6 +658,8 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyConflict(t *testing.T) {
 				t.Fatalf("bad open algo orders query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"6.6","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"6.6","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -728,7 +744,7 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyAlgoConflict(t *testing.T) 
 			if r.URL.Query().Get("symbol") != "AVAXUSDT" {
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
-			_, _ = w.Write([]byte(`[{"symbol":"AVAXUSDT","positionSide":"BOTH","positionAmt":"-15","entryPrice":"6.816","markPrice":"6.6471","unRealizedProfit":"2.533067","isolatedMargin":"33.235645","notional":"99.706933","marginAsset":"USDT","leverage":"3","marginType":"isolated","updateTime":1784880000000}]`))
+			_, _ = w.Write([]byte(`[{"symbol":"AVAXUSDT","positionSide":"BOTH","positionAmt":"-15","entryPrice":"6.816","markPrice":"6.6471","unRealizedProfit":"2.533067","isolatedMargin":"33.235645","notional":"99.706933","marginAsset":"USDT","leverage":"3","marginType":"isolated","updateTime":1784800000000}]`))
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"AVAXUSDT","status":"TRADING","pricePrecision":4,"quantityPrecision":0,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.0001"},{"filterType":"LOT_SIZE","minQty":"1","stepSize":"1"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":
@@ -754,6 +770,8 @@ func TestTVBotBinanceLimitCloseRetriesAfterReduceOnlyAlgoConflict(t *testing.T) 
 				{"symbol":"AVAXUSDT","algoId":901,"clientAlgoId":"entry-signal","side":"BUY","positionSide":"BOTH","orderType":"STOP_MARKET","algoStatus":"NEW","quantity":"2","reduceOnly":false},
 				{"symbol":"AVAXUSDT","algoId":902,"clientAlgoId":"long-protect","side":"SELL","positionSide":"BOTH","orderType":"TAKE_PROFIT_MARKET","algoStatus":"NEW","quantity":"1","reduceOnly":true}
 			]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"6.6","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"6.6","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/algoOrder":
 			if r.Method != http.MethodDelete {
 				t.Fatalf("unexpected Binance algo method %s", r.Method)
@@ -832,6 +850,8 @@ func TestBinanceReduceOnlyCloseRetriesWhenConflictSnapshotIsEmpty(t *testing.T) 
 		case "/fapi/v1/openAlgoOrders":
 			algoChecks++
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			if r.Method != http.MethodPost {
 				t.Fatalf("unexpected Binance order method %s", r.Method)
@@ -889,7 +909,7 @@ func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t 
 			if positionQueries > 1 {
 				positionAmt = "4.319"
 			}
-			_, _ = fmt.Fprintf(w, `[{"symbol":"ZECUSDT","positionSide":"BOTH","positionAmt":%q,"entryPrice":"1073.1994","markPrice":"1145.8","unRealizedProfit":"313.2","liquidationPrice":"980","isolatedMargin":"765","notional":"4959","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`, positionAmt)
+			_, _ = fmt.Fprintf(w, `[{"symbol":"ZECUSDT","positionSide":"BOTH","positionAmt":%q,"entryPrice":"1073.1994","markPrice":"1145.8","unRealizedProfit":"313.2","liquidationPrice":"980","isolatedMargin":"765","notional":"4959","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`, positionAmt)
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"ZECUSDT","status":"TRADING","pricePrecision":2,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":
@@ -898,6 +918,8 @@ func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t 
 			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			if r.Method != http.MethodPost {
 				t.Fatalf("unexpected Binance order method %s", r.Method)
@@ -974,7 +996,7 @@ func TestTVBotBinanceLimitCloseFallsBackToMarketRemaining(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/fapi/v3/positionRisk":
-			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-10","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-1","isolatedMargin":"100","notional":"1001","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-10","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-1","isolatedMargin":"100","notional":"1001","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`))
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"BTCUSDT","status":"TRADING","pricePrecision":1,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.1"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":
@@ -990,6 +1012,8 @@ func TestTVBotBinanceLimitCloseFallsBackToMarketRemaining(t *testing.T) {
 			}
 		case "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)

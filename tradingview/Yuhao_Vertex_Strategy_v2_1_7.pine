@@ -1,6 +1,9 @@
 //@version=5
-strategy("Yuhao Vertex Strategy v2.1.7", overlay=true, max_labels_count=500, max_boxes_count=50, max_lines_count=50, pyramiding=2, process_orders_on_close=true, default_qty_type=strategy.percent_of_equity, default_qty_value=50)
+strategy("Yuhao Vertex Strategy v2.1.8", overlay=true, max_labels_count=500, max_boxes_count=50, max_lines_count=50, pyramiding=2, process_orders_on_close=true, default_qty_type=strategy.percent_of_equity, default_qty_value=50)
 
+// v2.1.8 更新：
+// 1) 默认最短持仓时间调整为15分钟，最短持仓前禁止止盈、止损、最大持仓和反向信号平仓。
+//
 // v2.1.7 更新：
 // 1) 新增“启用tvbot订单执行自动下单”开关，默认开启；关闭后所有策略订单仍参与回测，但不会触发tvbot订单执行报警。
 // 2) 多空入场 alert_message 改为 entry_long / entry_short，供tvbot JSON中的text与order_intent字段识别明确开仓方向。
@@ -184,7 +187,7 @@ enableLongTrade  = input.bool(true, "启用做多")
 enableShortTrade = input.bool(true, "启用做空")
 useObOsAsEntry   = input.bool(false, "启用普通 OBOS 信号参与开仓")
 closeOpposite    = input.bool(true, "反向入场信号时平掉原方向")
-minHoldHours     = input.float(1.0, "最小持仓时间（小时）", minval=0.0, step=0.5)
+minHoldHours     = input.float(0.25, "最小持仓时间（小时）", minval=0.25, step=0.25)
 useMaxHoldTime   = input.bool(true, "启用最大持仓时间")
 maxHoldHours     = input.float(48.0, "最大持仓时间（小时）", minval=1.0, step=1.0)
 takeProfitPct    = input.float(2.0, "止盈 %", minval=0.1, step=0.1)
@@ -599,7 +602,7 @@ if alertsOn and alertsOnStrongSignals and strongSellAlert
 //========================
 // 持仓时间、止盈止损与策略下单
 // - 同方向最多两次入场：首次开仓 + 一次加仓。
-// - 最小持仓从最后一次入场开始计算，保证加仓单也至少持有 1 小时。
+// - 最小持仓从最后一次入场开始计算，保证加仓单也至少持有15分钟。
 // - 启用最大持仓时间后，从首次入场开始计算，达到参数设定小时数强制平仓。
 // - 平仓订单全部 disable_alert=true，避免被 /tvorder 误识别为新开仓。
 //========================
@@ -618,9 +621,9 @@ longStopLossPrice   = strategy.position_avg_price * (1.0 - stopLossPct / 100.0)
 shortTakeProfitPrice = strategy.position_avg_price * (1.0 - takeProfitPct / 100.0)
 shortStopLossPrice   = strategy.position_avg_price * (1.0 + stopLossPct / 100.0)
 
-// 最大持仓优先级最高；最小持仓期间主动撤销止盈止损挂单。
+// 最小持仓期间主动撤销止盈止损挂单，也禁止最大持仓和反向信号提前平仓。
 if strategy.position_size > 0
-    if maxHoldReached
+    if maxHoldReached and minHoldOk
         strategy.cancel("Long TP/SL")
         strategy.close("Long", comment="Max Hold Exit", disable_alert=true)
     else if minHoldOk
@@ -631,7 +634,7 @@ else
     strategy.cancel("Long TP/SL")
 
 if strategy.position_size < 0
-    if maxHoldReached
+    if maxHoldReached and minHoldOk
         strategy.cancel("Short TP/SL")
         strategy.close("Short", comment="Max Hold Exit", disable_alert=true)
     else if minHoldOk

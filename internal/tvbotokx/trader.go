@@ -49,16 +49,16 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
-	switchState, err := t.prepareDirectionSwitch(ctx, client, cfg, signal.Action, sym.InstID)
-	if err != nil {
-		return trading.OrderResult{}, err
-	}
 	orderSettings := cfg.OrderSettings().Normalize()
 	stopLossMinHoldingMinutes := signal.Risk.StopLossMinHoldingMinutes
 	if signal.Risk.Type == "" {
 		orderSettings.ApplyToSignal(&signal)
 	}
 	signal.Risk.StopLossMinHoldingMinutes = stopLossMinHoldingMinutes
+	switchState, err := t.prepareDirectionSwitch(ctx, client, cfg, signal.Action, sym.InstID, minimumReversePositionHoldingMinutes(signal.Risk.StopLossMinHoldingMinutes))
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
 	if orderSettings.OrderType == trading.OrderTypeLayered && signal.PositionEffect != trading.PositionEffectClose {
 		return t.executeLayeredSignal(ctx, signal, cfg, orderSettings)
 	}
@@ -136,7 +136,7 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
-	switchState, err := t.prepareDirectionSwitch(ctx, client, cfg, signal.Action, sym.InstID)
+	switchState, err := t.prepareDirectionSwitch(ctx, client, cfg, signal.Action, sym.InstID, minimumReversePositionHoldingMinutes(signal.Risk.StopLossMinHoldingMinutes))
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
@@ -623,6 +623,9 @@ func attachAlgoOrders(signal trading.Signal, clOrdID string) []map[string]string
 
 func AttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID string, leverage int) []map[string]string {
 	risk.Normalize()
+	if risk.StopLossMinHoldingMinutes > 0 {
+		return nil
+	}
 	switch risk.Type {
 	case trading.RiskTPSL:
 		if risk.TPPct == nil || risk.SLPct == nil || leverage <= 0 {
@@ -634,11 +637,9 @@ func AttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID string, le
 			"tpOrdPx":           "-1",
 			"tpTriggerPxType":   "last",
 		}
-		if risk.StopLossMinHoldingMinutes <= 0 {
-			algo["slTriggerRatio"] = signedSLRatio(action, risk.SLPct.Value, leverage)
-			algo["slOrdPx"] = "-1"
-			algo["slTriggerPxType"] = "last"
-		}
+		algo["slTriggerRatio"] = signedSLRatio(action, risk.SLPct.Value, leverage)
+		algo["slOrdPx"] = "-1"
+		algo["slTriggerPxType"] = "last"
 		return []map[string]string{algo}
 	case trading.RiskTrailing:
 		if risk.TrailingPct == nil {
@@ -998,7 +999,7 @@ func firstRegexFloat(re *regexp.Regexp, text string) (float64, bool) {
 
 func fixedTPSLAttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID string, referencePx, tickSz float64, leverage int) []map[string]string {
 	risk.Normalize()
-	if risk.Type != trading.RiskTPSL || risk.TPPct == nil || risk.SLPct == nil || referencePx <= 0 || leverage <= 0 {
+	if risk.StopLossMinHoldingMinutes > 0 || risk.Type != trading.RiskTPSL || risk.TPPct == nil || risk.SLPct == nil || referencePx <= 0 || leverage <= 0 {
 		return nil
 	}
 	tpPx, slPx, err := trading.FixedTPSLTriggerPrices(action, referencePx, risk.TPPct.Value, risk.SLPct.Value, leverage)
@@ -1016,11 +1017,9 @@ func fixedTPSLAttachAlgoOrders(action trading.Side, risk trading.Risk, clOrdID s
 		"tpOrdPx":           "-1",
 		"tpTriggerPxType":   "last",
 	}
-	if risk.StopLossMinHoldingMinutes <= 0 {
-		algo["slTriggerPx"] = slTrigger
-		algo["slOrdPx"] = "-1"
-		algo["slTriggerPxType"] = "last"
-	}
+	algo["slTriggerPx"] = slTrigger
+	algo["slOrdPx"] = "-1"
+	algo["slTriggerPxType"] = "last"
 	return []map[string]string{algo}
 }
 

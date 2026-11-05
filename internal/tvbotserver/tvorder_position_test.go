@@ -89,7 +89,7 @@ func testTVOrderTPSLSignalExecutesBinanceLimitClose(t *testing.T, positionAmount
 			if r.URL.Query().Get("symbol") != "ESPORTSUSDT" {
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
-			_, _ = w.Write([]byte(`[{"symbol":"ESPORTSUSDT","positionSide":"BOTH","positionAmt":"` + positionAmount + `","entryPrice":"0.02261","markPrice":"0.02264","unRealizedProfit":"8.86","liquidationPrice":"0.03","isolatedMargin":"508.81","notional":"5013.06","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+			_, _ = w.Write([]byte(`[{"symbol":"ESPORTSUSDT","positionSide":"BOTH","positionAmt":"` + positionAmount + `","entryPrice":"0.02261","markPrice":"0.02264","unRealizedProfit":"8.86","liquidationPrice":"0.03","isolatedMargin":"508.81","notional":"5013.06","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`))
 		case "/fapi/v1/userTrades":
 			entrySide := "SELL"
 			if !strings.HasPrefix(positionAmount, "-") {

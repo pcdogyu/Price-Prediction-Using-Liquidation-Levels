@@ -446,6 +446,9 @@ func openGatePosition(ctx context.Context, client tvbotgate.Client, contract str
 }
 
 func gateLayerRiskPlans(record tvbotstorage.OrderRecord, layer tvbottrading.OrderLayerResult, index int, fill gateLayerFill, priceStep string, enableDecimal bool, apiID, marginMode string) ([]gateRiskPlan, error) {
+	if record.Risk.StopLossMinHoldingMinutes > 0 {
+		return nil, nil
+	}
 	if fill.quantity <= 0 || fill.price <= 0 {
 		return nil, errors.New("Gate layer fill must have positive quantity and price")
 	}

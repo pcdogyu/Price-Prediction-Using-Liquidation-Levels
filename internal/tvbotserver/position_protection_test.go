@@ -26,6 +26,8 @@ func TestTVBotOKXPositionProtectionOrders(t *testing.T) {
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"2","availPos":"2","avgPx":"100","markPx":"101","upl":"2","lever":"10","margin":"20"}]}`))
+		case "/api/v5/trade/fills-history":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","tradeId":"entry","ordId":"entry","posSide":"long","side":"buy","fillSz":"2","fillTime":"1784800000000"}]}`))
 		case "/api/v5/public/instruments":
 			if r.URL.Query().Get("instId") != "BTC-USDT-SWAP" {
 				t.Fatalf("bad instruments query: %s", r.URL.RawQuery)
@@ -115,6 +117,8 @@ func TestTVBotBinancePositionProtectionOrders(t *testing.T) {
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`[{"symbol":"ETHUSDT","positionSide":"SHORT","positionAmt":"-3","entryPrice":"100","markPrice":"99","unRealizedProfit":"3","notional":"297","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784880000000}]`))
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte(`[{"symbol":"ETHUSDT","orderId":1,"price":"100","qty":"1000","side":"SELL","positionSide":"SHORT","time":1784800000000}]`))
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"ETHUSDT","status":"TRADING","pricePrecision":1,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.1"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]}]}`))
 		case "/fapi/v1/algoOrder":
@@ -249,6 +253,8 @@ func TestTVBotPositionProtectionRejectsMissingEntryPrice(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v5/account/positions":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"2","avgPx":"","markPx":"101"}]}`))
+		case "/api/v5/trade/fills-history":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		case "/api/v5/public/instruments":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","tickSz":"0.1","ctVal":"1","lotSz":"1","minSz":"1"}]}`))
 		case "/api/v5/trade/order-algo":
@@ -274,7 +280,7 @@ func TestTVBotPositionProtectionRejectsMissingEntryPrice(t *testing.T) {
 	req.SetBasicAuth("admin", "Admin123")
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
-	if rr.Code != http.StatusBadGateway {
+	if rr.Code != http.StatusConflict {
 		t.Fatalf("missing entry status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	if orderAlgoCalled {

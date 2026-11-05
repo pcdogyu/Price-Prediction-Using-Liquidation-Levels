@@ -1,5 +1,6 @@
 //@version=6
-// SMC Order Block Only Test Strategy version: 4.1.1
+// SMC Order Block Only Test Strategy version: 4.1.2
+// v4.1.2：所有持仓至少持有15分钟；达到最短持仓前不创建任何止盈或止损离场单。
 // v4.1.1：ADX 25改为唯一行情分界。ADX>=25保持原方向并标记趋势行情，ADX<25由tvbot反向执行并标记震荡行情，不再保留20至25暂停区。
 // v4.1.0：新增可配置ADX行情分类。ADX>25保持原方向并标记趋势行情，ADX<20由tvbot反向执行并标记剥头皮策略，20<=ADX<=25不提交新仓；报警携带并锁定入场ADX供tvbot解析。
 // v4.0.26：止盈和止损订单执行均向tvbot发送明确平仓意图；任一止盈止损成交后从实际退出时间起固定冷静6小时，禁止再次开仓。
@@ -39,7 +40,7 @@
 // v3.0.0：FVG回补信号确认后使用strategy市价开仓，回测在下一根K线开盘成交。
 // Version rule: every future code change should increase the patch version by 0.0.1.
 
-const string SCRIPT_VERSION = "4.1.1"
+const string SCRIPT_VERSION = "4.1.2"
 const string STRUCTURE_TIMEFRAME = "60"
 const int DEFAULT_ORDER_BLOCK_STRUCTURE_LENGTH = 3
 
@@ -465,7 +466,7 @@ stopBufferBps = input.float(
 enableImmediateOrderBlockStop = input.bool(
      true,
      "启用订单块止损",
-     tooltip = "开启后，最短持仓时间结束后，多单在入场绿色订单块下沿外侧放置止损；空单在入场红色订单块上沿外侧放置止损。最短持仓时间内不创建任何止损，止盈仍然有效。",
+     tooltip = "开启后，最短持仓时间结束后，多单在入场绿色订单块下沿外侧放置止损；空单在入场红色订单块上沿外侧放置止损。最短持仓时间内不创建任何止盈或止损。",
      group = "04. 止盈止损")
 
 // =============================================================================
@@ -473,11 +474,11 @@ enableImmediateOrderBlockStop = input.bool(
 // =============================================================================
 
 minHoldHours = input.float(
-     0.5,
+     0.25,
      "最短持仓时间（小时）",
-     minval = 0.5,
+     minval = 0.25,
      step = 0.25,
-     tooltip = "开仓后至少持仓30分钟；在此期间不创建止损订单，但止盈订单立即有效。中频模式自动使用1小时，保守模式使用4小时，手动模式使用此参数。",
+     tooltip = "开仓后至少持仓15分钟；在此期间不创建任何止盈或止损订单。中频模式自动使用1小时，保守模式使用4小时，手动模式使用此参数。",
      group = "05. 持仓时间与冷静期")
 
 // v4.0.26：止盈或止损成交后均固定冷静6小时，不随交易频率模式变化。
@@ -486,7 +487,7 @@ const float EXIT_COOLDOWN_HOURS = 6.0
 float effectiveMinHoldHours =
      mediumFrequencyMode ? 1.0 :
      conservativeFrequencyMode ? 4.0 :
-     math.max(minHoldHours, 0.5)
+     math.max(minHoldHours, 0.25)
 
 // =============================================================================
 // 07. 订单区块矩形
@@ -2325,8 +2326,6 @@ if strategy.position_size > 0
             longOrderBlockStopControlsExit := not na(immediateLongOrderBlockStop)
 
         effectiveLongExitTarget := activeTarget
-    else
-        effectiveLongExitTarget := activeTarget
 
 if strategy.position_size < 0
     if minimumHoldCompleted
@@ -2339,8 +2338,6 @@ if strategy.position_size < 0
             effectiveShortExitStop := immediateShortOrderBlockStop
             shortOrderBlockStopControlsExit := not na(immediateShortOrderBlockStop)
 
-        effectiveShortExitTarget := activeTarget
-    else
         effectiveShortExitTarget := activeTarget
 
 string exitLongAlertMessage = f_tvbot_alert_message(TVBOT_EXIT_LONG_COMMENT, activeEntryAdx)
@@ -2673,8 +2670,8 @@ if barstate.islast
              str.tostring(remainingHoldMinutes, "#") +
              " 分钟\n" +
                   (immediateStructureStopActive ?
-                  "订单块止损已启用，止盈已启用" :
-                  "止损锁定中，止盈已启用")
+                  "订单块止损已启用，止盈止损均已启用" :
+                  "止盈止损均锁定中")
 
         statusLabel := label.new(
              x = bar_index,

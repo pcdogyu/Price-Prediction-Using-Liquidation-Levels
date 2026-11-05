@@ -936,7 +936,7 @@ func TestTraderClosesReversePositionBeforeNewDirection(t *testing.T) {
 		case "/fapi/v3/positionRisk":
 			positionCalls++
 			if positionCalls <= 2 {
-				_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"0.1","entryPrice":"50000"}]`))
+				_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"0.1","entryPrice":"50000","updateTime":1784800000000}]`))
 				return
 			}
 			_, _ = w.Write([]byte(`[]`))

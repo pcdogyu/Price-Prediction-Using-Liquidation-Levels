@@ -1124,6 +1124,32 @@ func positionMonitorNeedsEntryTimeForPosition(position okx.Position, monitor con
 	return (monitor.TakeProfitPct > 0 && ratio >= monitor.TakeProfitPct/100) || (monitor.StopLossPct > 0 && ratio <= -monitor.StopLossPct/100)
 }
 
+// positionMonitorHoldingLocked also protects against exchange-native TP/SL
+// orders left from before the monitor scan. If entry time cannot be proven,
+// fail closed and treat the position as locked so no native close can fire
+// during the configured minimum-hold window.
+func positionMonitorHoldingLocked(position okx.Position, monitor config.PositionMonitorConfig, fills []positionEntryFill, fillErr error, allowPositionTimeFallback bool, now time.Time) (bool, string) {
+	entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, allowPositionTimeFallback)
+	if entryErr != "" {
+		return true, entryErr
+	}
+	heldFor := now.UTC().Sub(entryAt.UTC())
+	if heldFor < 0 {
+		return true, "开仓时间晚于当前时间"
+	}
+	if heldFor < time.Duration(maxAutomaticHoldingMinutes(monitor))*time.Minute {
+		return true, ""
+	}
+	return false, ""
+}
+
+// enforceMinimumPositionHolding is the execution-side guard for direct
+// position actions. It shares the monitor's authoritative 15-minute minimum
+// with automatic closes and fails closed when entry time cannot be verified.
+func enforceMinimumPositionHolding(cfg config.Config, position okx.Position, fills []positionEntryFill, fillErr error, allowPositionTimeFallback bool, now time.Time) error {
+	return automaticPositionHoldingError(position, cfg.Trading.PositionMonitor, fills, fillErr, allowPositionTimeFallback, now)
+}
+
 func (s *Server) scanOKXPositionMonitor(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig) {
 	if s.okxCredentialStore(cfg.Trading.Env) == nil {
 		if s.Logger != nil {
@@ -1186,6 +1212,14 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 		}
 	}
 	for _, position := range open {
+		if locked, lockReason := positionMonitorHoldingLocked(position, monitor, fills, fillErr, true, now); locked {
+			if err := cancelOKXPositionProtectionOrders(ctx, client, position); err != nil && s.Logger != nil {
+				s.Logger.Warn("failed to cancel early OKX position protection orders", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "error", err)
+			}
+			if s.Logger != nil {
+				s.Logger.Info("OKX position protection orders deferred during minimum holding time", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", lockReason)
+			}
+		}
 		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fills, fillErr, true)
 		if !hit {
 			if positionMonitorNeedsEntryTimeForPosition(position, monitor) && entryErr != "" && s.Logger != nil {
@@ -1321,7 +1355,15 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 	}
 	for _, position := range open {
 		symbol := strings.ToUpper(strings.TrimSpace(position.InstID))
-		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fillsBySymbol[symbol], errorsBySymbol[symbol], false)
+		if locked, lockReason := positionMonitorHoldingLocked(position, monitor, fillsBySymbol[symbol], errorsBySymbol[symbol], false, now); locked {
+			if err := cancelBinancePositionProtectionOrders(ctx, client, symbol); err != nil && s.Logger != nil {
+				s.Logger.Warn("failed to cancel early Binance position protection orders", "api_id", apiID, "symbol", symbol, "error", err)
+			}
+			if s.Logger != nil {
+				s.Logger.Info("Binance position protection orders deferred during minimum holding time", "api_id", apiID, "symbol", symbol, "reason", lockReason)
+			}
+		}
+		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fillsBySymbol[symbol], errorsBySymbol[symbol], true)
 		if !hit {
 			if positionMonitorNeedsEntryTimeForPosition(position, monitor) && entryErr != "" && s.Logger != nil {
 				s.Logger.Warn("Binance position auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
@@ -1461,6 +1503,14 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 		raw := item.raw
 		position := item.position
 		contract := strings.ToUpper(strings.TrimSpace(firstNonEmpty(raw.Contract, position.InstID)))
+		if locked, lockReason := positionMonitorHoldingLocked(position, monitor, fillsByContract[contract], errorsByContract[contract], true, now); locked {
+			if err := cancelGatePositionProtectionOrders(ctx, client, contract); err != nil && s.Logger != nil {
+				s.Logger.Warn("failed to cancel early Gate position protection orders", "api_id", apiID, "contract", contract, "error", err)
+			}
+			if s.Logger != nil {
+				s.Logger.Info("Gate position protection orders deferred during minimum holding time", "api_id", apiID, "contract", contract, "reason", lockReason)
+			}
+		}
 		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fillsByContract[contract], errorsByContract[contract], true)
 		if !hit {
 			if positionMonitorNeedsEntryTimeForPosition(position, monitor) && entryErr != "" && s.Logger != nil {
@@ -1974,7 +2024,7 @@ func positionMonitorEntryTime(position okx.Position, fills []positionEntryFill, 
 }
 
 func positionMonitorPositionOpenTime(position okx.Position) (time.Time, bool) {
-	return parseExchangeMillisTime(position.CTime)
+	return exchangePositionTime(position)
 }
 
 func formatPositionMonitorEntryTime(entryAt time.Time) string {
@@ -2171,6 +2221,11 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "positions_failed", err.Error())
 		return
 	}
+	fills, fillErr := fetchOKXPositionEntryFills(ctx, client, "SWAP", []okx.Position{position}, s.now())
+	if err := enforceMinimumPositionHolding(cfg, position, fills, fillErr, true, s.now()); err != nil {
+		writeError(w, http.StatusConflict, "position_min_hold", err.Error())
+		return
+	}
 	closeSz := ""
 	if ratio < 1 {
 		closeSz, err = okxPositionCloseSize(ctx, client, position, ratio)
@@ -2267,6 +2322,11 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	converted := gatePositionToOKX(found)
+	trades, fillErr := client.MyTrades(ctx, found.Contract)
+	if err := enforceMinimumPositionHolding(cfg, converted, gatePositionEntryFills(trades), fillErr, true, s.now()); err != nil {
+		writeError(w, http.StatusConflict, "position_min_hold", err.Error())
+		return
+	}
 	if req.Mode == "limit" {
 		closeSz := ""
 		var closeErr error
@@ -2921,6 +2981,11 @@ func (s *Server) handlePositionProtection(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadGateway, "positions_failed", err.Error())
 		return
 	}
+	fills, fillErr := fetchOKXPositionEntryFills(ctx, client, "SWAP", []okx.Position{position}, s.now())
+	if err := enforceMinimumPositionHolding(cfg, position, fills, fillErr, true, s.now()); err != nil {
+		writeError(w, http.StatusConflict, "position_min_hold", err.Error())
+		return
+	}
 	resp, err := placeOKXPositionProtection(ctx, cfg, client, apiID, position, req.Kind)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "position_protection_failed", err.Error())
@@ -2952,6 +3017,11 @@ func (s *Server) handleBinancePositionProtection(w http.ResponseWriter, r *http.
 			return
 		}
 		writeError(w, http.StatusBadGateway, "positions_failed", err.Error())
+		return
+	}
+	fills, fillErr := fetchBinancePositionEntryFills(ctx, client, position.InstID, []okx.Position{position}, s.now())
+	if err := enforceMinimumPositionHolding(cfg, position, fills, fillErr, true, s.now()); err != nil {
+		writeError(w, http.StatusConflict, "position_min_hold", err.Error())
 		return
 	}
 	resp, err := placeBinancePositionProtection(ctx, cfg, client, apiID, position, req.Kind)
@@ -2986,6 +3056,11 @@ func (s *Server) handleBinancePositionClose(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		writeError(w, http.StatusBadGateway, "positions_failed", err.Error())
+		return
+	}
+	fills, fillErr := fetchBinancePositionEntryFills(ctx, client, position.InstID, []okx.Position{position}, s.now())
+	if err := enforceMinimumPositionHolding(cfg, position, fills, fillErr, true, s.now()); err != nil {
+		writeError(w, http.StatusConflict, "position_min_hold", err.Error())
 		return
 	}
 	if err := cancelAllBinanceSymbolOrders(ctx, client, position.InstID); err != nil {
@@ -3106,6 +3181,98 @@ func binancePositionCloseClient(client binance.Client) binance.Client {
 	clone.Timeout = binancePositionCloseTimeoutValue()
 	client.HTTPClient = &clone
 	return client
+}
+
+func cancelBinancePositionProtectionOrders(ctx context.Context, client binance.Client, symbol string) error {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return errors.New("Binance protection symbol is required")
+	}
+	regular, err := client.OpenOrders(ctx, symbol)
+	if err != nil {
+		return err
+	}
+	for _, order := range regular {
+		if !binancePositionProtectionOrder(order) {
+			continue
+		}
+		cancelReq := binance.CancelOrderRequest{Symbol: symbol}
+		if order.OrderID > 0 {
+			cancelReq.OrderID = strconv.FormatInt(order.OrderID, 10)
+		} else {
+			cancelReq.OrigClientOrderID = strings.TrimSpace(order.ClientOrderID)
+		}
+		if cancelReq.OrderID == "" && cancelReq.OrigClientOrderID == "" {
+			return fmt.Errorf("Binance protection order for %s has no cancel identifier", symbol)
+		}
+		if _, err := client.CancelOrder(ctx, cancelReq); err != nil {
+			return err
+		}
+	}
+	remainingRegular, err := client.OpenOrders(ctx, symbol)
+	if err != nil {
+		return err
+	}
+	for _, order := range remainingRegular {
+		if binancePositionProtectionOrder(order) {
+			return fmt.Errorf("Binance regular protection order remains for %s", symbol)
+		}
+	}
+	orders, err := client.OpenAlgoOrders(ctx, symbol)
+	if err != nil {
+		return err
+	}
+	for _, order := range orders {
+		if !binancePositionProtectionAlgo(order) {
+			continue
+		}
+		if _, err := client.CancelAlgoOrder(ctx, order.AlgoID, order.ClientAlgoID); err != nil {
+			return err
+		}
+	}
+	remaining, err := client.OpenAlgoOrders(ctx, symbol)
+	if err != nil {
+		return err
+	}
+	for _, order := range remaining {
+		if binancePositionProtectionAlgo(order) {
+			return fmt.Errorf("Binance position protection order %d remains for %s", order.AlgoID, symbol)
+		}
+	}
+	return nil
+}
+
+func binancePositionProtectionOrder(order binance.OpenOrder) bool {
+	typ := strings.ToUpper(strings.TrimSpace(order.Type))
+	if !strings.Contains(typ, "STOP") && !strings.Contains(typ, "TAKE_PROFIT") {
+		return false
+	}
+	return order.ReduceOnly || order.ClosePosition || binanceManagedCloseOrderID(order.ClientOrderID)
+}
+
+func binancePositionProtectionAlgo(order binance.AlgoOpenOrder) bool {
+	typ := strings.ToUpper(strings.TrimSpace(order.OrderType))
+	return strings.Contains(typ, "STOP") || strings.Contains(typ, "TAKE_PROFIT")
+}
+
+func cancelGatePositionProtectionOrders(ctx context.Context, client gate.Client, contract string) error {
+	contract = strings.ToUpper(strings.TrimSpace(contract))
+	if contract == "" {
+		return errors.New("Gate protection contract is required")
+	}
+	orders, err := client.OpenPriceTriggeredOrders(ctx, contract)
+	if err != nil {
+		return err
+	}
+	for _, order := range orders {
+		if !gatePriceOrderIsClose(order) && !gatePriceOrderIsReduceOnly(order) {
+			continue
+		}
+		if err := cancelGatePriceTriggeredOrder(ctx, client, order); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // cancelAllBinanceSymbolOrders clears both regular and conditional orders for
@@ -4230,6 +4397,7 @@ func binancePositionToOKX(position binance.Position) okx.Position {
 		NotionalUsd: notional,
 		Margin:      margin,
 		Adl:         strconv.Itoa(position.Adl),
+		CTime:       strconv.FormatInt(position.UpdateTime, 10),
 		UTime:       strconv.FormatInt(position.UpdateTime, 10),
 		Ccy:         strings.TrimSpace(position.MarginAsset),
 	}
@@ -4336,7 +4504,7 @@ func gatePositionToOKX(position gate.Position) okx.Position {
 		LiqPx:       strings.TrimSpace(position.LiquidationPrice),
 		NotionalUsd: notional,
 		Margin:      margin,
-		CTime:       gateTimeMillis(position.OpenTime),
+		CTime:       firstNonEmpty(gateTimeMillis(position.OpenTime), gateTimeMillis(position.UpdateTime)),
 		UTime:       gateTimeMillis(position.UpdateTime),
 		Ccy:         "USDT",
 	}
@@ -4927,7 +5095,7 @@ func rebuildPendingOrderRiskAtCurrentPrice(ctx context.Context, cfg config.Confi
 		return resp, errors.New(reason)
 	}
 	attachAlgoOrds := pendingOrderAttachAlgoOrders(cfg, order, "PENDINGRISK")
-	if len(attachAlgoOrds) == 0 {
+	if len(attachAlgoOrds) == 0 && len(order.AttachAlgoOrds) == 0 {
 		resp.Status = "unchanged"
 		resp.Px = strings.TrimSpace(order.Px)
 		resp.Message = "current order settings do not attach risk controls"
@@ -5800,7 +5968,7 @@ func pendingOrderOrderRequest(cfg config.Config, order okx.PendingOrder, remaini
 func shouldRebuildPendingOrderWithProtection(cfg config.Config, order okx.PendingOrder) bool {
 	attachAlgoOrds := pendingOrderAttachAlgoOrders(cfg, order, "PENDINGRISK")
 	if len(attachAlgoOrds) == 0 {
-		return false
+		return len(order.AttachAlgoOrds) > 0
 	}
 	if len(order.AttachAlgoOrds) == 0 {
 		return true

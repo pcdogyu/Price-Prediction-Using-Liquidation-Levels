@@ -25,7 +25,7 @@ type directionSwitchState struct {
 	pendingOrders []PendingOrder
 }
 
-func (t Trader) prepareDirectionSwitch(ctx context.Context, client Client, cfg trading.RuntimeConfig, action trading.Side, instID string) (directionSwitchState, error) {
+func (t Trader) prepareDirectionSwitch(ctx context.Context, client Client, cfg trading.RuntimeConfig, action trading.Side, instID string, minHoldingMinutes int) (directionSwitchState, error) {
 	var state directionSwitchState
 	opposite, ok := oppositeAction(action)
 	if !ok {
@@ -46,6 +46,11 @@ func (t Trader) prepareDirectionSwitch(ctx context.Context, client Client, cfg t
 	oppositePositions := okxPositionsForDirection(positions, instID, opposite)
 	if len(oppositeOrders) == 0 && len(oppositePositions) == 0 {
 		return state, nil
+	}
+	for _, position := range oppositePositions {
+		if err := ensureOKXReversePositionHolding(position, minHoldingMinutes, time.Now().UTC()); err != nil {
+			return state, err
+		}
 	}
 	if err := t.cancelOKXPendingOrders(ctx, client, oppositeOrders); err != nil {
 		return state, err
@@ -70,6 +75,35 @@ func (t Trader) prepareDirectionSwitch(ctx context.Context, client Client, cfg t
 	}
 	state.positions = positions
 	return state, nil
+}
+
+func ensureOKXReversePositionHolding(position Position, minHoldingMinutes int, now time.Time) error {
+	if minHoldingMinutes <= 0 {
+		return nil
+	}
+	var entryAt time.Time
+	for _, raw := range []string{position.CTime, position.UTime} {
+		ms, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err == nil && ms > 0 {
+			entryAt = time.UnixMilli(ms).UTC()
+			break
+		}
+	}
+	if entryAt.IsZero() {
+		return fmt.Errorf("OKX reverse position %s %s has no reliable entry time; minimum holding period blocks close", position.InstID, position.PosSide)
+	}
+	heldFor := now.Sub(entryAt)
+	if heldFor < 0 || heldFor < time.Duration(minHoldingMinutes)*time.Minute {
+		return fmt.Errorf("OKX reverse position %s %s cannot be closed before %d minutes (held_for=%s)", position.InstID, position.PosSide, minHoldingMinutes, heldFor)
+	}
+	return nil
+}
+
+func minimumReversePositionHoldingMinutes(configured int) int {
+	if configured < 15 {
+		return 15
+	}
+	return configured
 }
 
 func (t Trader) cancelOKXPendingOrders(ctx context.Context, client Client, orders []PendingOrder) error {

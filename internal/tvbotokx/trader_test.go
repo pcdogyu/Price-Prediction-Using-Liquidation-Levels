@@ -1005,7 +1005,7 @@ func TestTraderExecuteSignalClosesReversePositionBeforeNewDirection(t *testing.T
 		case "/api/v5/account/positions":
 			positionCalls++
 			if positionCalls <= 2 {
-				_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"isolated","posSide":"net","pos":"2","availPos":"2"}]}`))
+				_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"isolated","posSide":"net","pos":"2","availPos":"2","cTime":"1784800000000"}]}`))
 				return
 			}
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))

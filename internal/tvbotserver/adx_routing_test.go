@@ -260,7 +260,7 @@ func TestPine411ContainsADXAlertContract(t *testing.T) {
 	}
 	text := string(body)
 	markers := []string{
-		`const string SCRIPT_VERSION = "4.1.1"`,
+		`const string SCRIPT_VERSION = "4.1.2"`,
 		`adxTimeframe = input.timeframe(`,
 		`f_adx(adxDiLength, adxSmoothing)[1]`,
 		`bool adxTrendMarket = not na(confirmedAdx) and confirmedAdx >= 25.0`,

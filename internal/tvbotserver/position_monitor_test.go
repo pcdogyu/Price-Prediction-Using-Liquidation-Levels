@@ -493,7 +493,7 @@ func TestPositionMonitorBinanceLiveGuardSkipsAutoClose(t *testing.T) {
 	}
 }
 
-func TestPositionMonitorStopLossWaitsThirtyMinutesButTakeProfitRemainsImmediate(t *testing.T) {
+func TestPositionMonitorAllPriceClosesWaitAtLeast15Minutes(t *testing.T) {
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
 	monitor := config.PositionMonitorConfig{
 		TakeProfitPct:             5,
@@ -535,6 +535,14 @@ func TestPositionMonitorStopLossWaitsThirtyMinutesButTakeProfitRemainsImmediate(
 			}}, nil, false)
 			if !hit || trigger != "stop_loss" || heldFor != 15*time.Minute || entryErr != "" {
 				t.Fatalf("stop-loss should trigger after minimum hold: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
+			}
+
+			position.UplRatio = "0.06"
+			trigger, hit, _, heldFor, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
+				InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Side: tc.entrySide, Size: 1, FillTime: entry,
+			}}, nil, false)
+			if !hit || trigger != "take_profit" || heldFor != 15*time.Minute || entryErr != "" {
+				t.Fatalf("take-profit should trigger after minimum hold: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
 			}
 		})
 	}

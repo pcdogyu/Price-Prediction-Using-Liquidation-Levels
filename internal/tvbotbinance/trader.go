@@ -75,7 +75,7 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
-	switchState, err := t.prepareDirectionSwitch(ctx, client, signal.Action, symbol, filters)
+	switchState, err := t.prepareDirectionSwitch(ctx, client, signal.Action, symbol, filters, minimumReversePositionHoldingMinutes(signal.Risk.StopLossMinHoldingMinutes))
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
@@ -172,7 +172,7 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
-	switchState, err := t.prepareDirectionSwitch(ctx, client, signal.Action, symbol, filters)
+	switchState, err := t.prepareDirectionSwitch(ctx, client, signal.Action, symbol, filters, minimumReversePositionHoldingMinutes(signal.Risk.StopLossMinHoldingMinutes))
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
@@ -583,6 +583,12 @@ func binanceLeverageValueMatches(raw string, desired int) bool {
 func (t Trader) placeRiskOrders(ctx context.Context, client Client, signal trading.Signal, order PlaceOrderRequest, entryPx float64, filters TradingFilters) ([]trading.RiskOrderResult, error) {
 	risk := signal.Risk
 	risk.Normalize()
+	if risk.StopLossMinHoldingMinutes > 0 {
+		if t.Logger != nil {
+			t.Logger.Info("binance position protection deferred until minimum holding time", "symbol", order.Symbol, "minutes", risk.StopLossMinHoldingMinutes)
+		}
+		return nil, nil
+	}
 	switch risk.Type {
 	case trading.RiskNone:
 		return nil, nil
@@ -635,12 +641,6 @@ func (t Trader) placeRiskOrders(ctx context.Context, client Client, signal tradi
 		return t.cleanupBinanceRiskOrders(ctx, client, tpOrders, err)
 	}
 	out = append(out, tpOrders...)
-	if risk.StopLossMinHoldingMinutes > 0 {
-		if t.Logger != nil {
-			t.Logger.Info("binance stop-loss risk order deferred until minimum holding time", "symbol", order.Symbol, "minutes", risk.StopLossMinHoldingMinutes)
-		}
-		return out, nil
-	}
 	slOrders, err := t.placeSplitAlgoOrder(ctx, client, AlgoOrderRequest{
 		Symbol:           order.Symbol,
 		Side:             closeSide,
