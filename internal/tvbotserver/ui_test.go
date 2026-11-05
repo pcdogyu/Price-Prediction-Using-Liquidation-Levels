@@ -422,14 +422,15 @@ func TestRenderTVBotAnalysisAddsTradeTimeColumns(t *testing.T) {
 		`function analysisGateChartSymbol(instID)`,
 		`function analysisTradeSymbolHTML(row)`,
 		`exchange !== "gate" && exchange !== "binance"`,
-		`查看 Binance 买卖点 K 线`,
-		`data-analysis-chart-key=`,
+		`bubbles?symbol=`,
+		`target="_blank"`,
+		`rel="noopener"`,
+		`encodeURIComponent(symbol)`,
+		`气泡图`,
 		`tvbot.analysisChart.`,
 		`url.searchParams.set("trade_ref", token)`,
 		`url.searchParams.set("exchange", normalizedExchange)`,
 		`function buildPositionChartURL(symbol, exchange, trades, selectedRow)`,
-		`async function openStandalonePositionKline(options)`,
-		`openStandalonePositionKline({`,
 		`initialURL.searchParams.set("standalone", "1")`,
 		`window.open(initialURL.toString(), "_blank")`,
 		`function analysisTimeText(v)`,
@@ -442,13 +443,12 @@ func TestRenderTVBotAnalysisAddsTradeTimeColumns(t *testing.T) {
 			t.Fatalf("Gate trade chart integration marker missing %q", want)
 		}
 	}
-	analysisStart := strings.Index(page, "function openAnalysisTradeChart(row)")
-	if analysisStart < 0 {
-		t.Fatal("analysis trade chart handler is missing")
+	analysisSymbol := strings.Index(page, "function analysisTradeSymbolHTML(row)")
+	if analysisSymbol < 0 || !strings.Contains(page[analysisSymbol:], `class="analysis-symbol-link" target="_blank" rel="noopener"`) {
+		t.Fatal("analysis symbol links must open the corresponding bubble chart in a new tab")
 	}
-	analysisHandler := page[analysisStart:]
-	if strings.Contains(analysisHandler, "openSharedPositionKlineDialog({") || !strings.Contains(analysisHandler, "openStandalonePositionKline({") {
-		t.Fatal("analysis symbol details must use the standalone position K-line page")
+	if strings.Contains(page, `data-analysis-chart-key=`) {
+		t.Fatal("analysis symbols should no longer use the standalone position K-line handler")
 	}
 }
 
@@ -476,7 +476,6 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 		`analysis-trade-aggregate-toggle").addEventListener("click"`,
 		`state.analysisTradePage = 1`,
 		`共 " + trades.length + " 组（原始 " + rawTrades.length + " 条）`,
-		`analysisTradesForDisplay().find`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("analysis trade aggregation marker is missing %q", want)

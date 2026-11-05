@@ -7246,9 +7246,10 @@ const tvbotHTML = `<!doctype html>
       const exchange = activeExchange();
       if (exchange !== "gate" && exchange !== "binance") return escapeHTML(text);
       const symbol = analysisGateChartSymbol(row && row.inst_id);
-      const key = analysisTradeRowKey(row);
-      const title = exchange === "binance" ? "查看 Binance 买卖点 K 线" : "查看 Gate 买卖点 K 线";
-      return '<button type="button" class="analysis-symbol-link" data-analysis-chart-symbol="' + escapeHTML(symbol) + '" data-analysis-chart-key="' + escapeHTML(key) + '" title="' + title + '">' + escapeHTML(text) + '</button>';
+      if (!symbol) return escapeHTML(text);
+      const base = document.querySelector('meta[name="app-base"]')?.content || "/";
+      const href = base + "bubbles?symbol=" + encodeURIComponent(symbol);
+      return '<a class="analysis-symbol-link" target="_blank" rel="noopener" href="' + escapeHTML(href) + '" title="在新标签页打开 ' + escapeHTML(symbol) + ' 气泡图">' + escapeHTML(text) + '</a>';
     }
 
     function analysisPositionKlineURL() {
@@ -7289,35 +7290,6 @@ const tvbotHTML = `<!doctype html>
       return url;
     }
 
-    async function openStandalonePositionKline(options) {
-      const config = options || {};
-      const symbol = String(config.symbol || "");
-      const exchange = normalizeExchange(config.exchange || activeExchange());
-      const initialRows = Array.isArray(config.initialRows) ? config.initialRows : [];
-      const initialURL = buildPositionChartURL(symbol, exchange, initialRows, initialRows[0]);
-      if (!initialURL) {
-        toast(String(config.invalidStatus || "无法生成持仓详情页面"));
-        return;
-      }
-      initialURL.searchParams.set("standalone", "1");
-      const chartWindow = window.open(initialURL.toString(), "_blank");
-      if (!chartWindow) {
-        toast("浏览器阻止了新页面，请允许弹出窗口后重试");
-        return;
-      }
-      try {
-        const rows = typeof config.loadRows === "function" ? await config.loadRows() : initialRows;
-        const chartRows = Array.isArray(rows) ? rows : [];
-        const chartURL = buildPositionChartURL(symbol, exchange, chartRows, chartRows[0]);
-        if (chartURL && !chartWindow.closed) {
-          chartURL.searchParams.set("standalone", "1");
-          chartWindow.location.href = chartURL.toString();
-        }
-      } catch (err) {
-        toast(err && err.message ? err.message : "K 线下单信息读取失败");
-      }
-    }
-
     async function openSharedPositionKlineDialog(options) {
       const config = options || {};
       const symbol = String(config.symbol || "");
@@ -7350,28 +7322,6 @@ const tvbotHTML = `<!doctype html>
         if (status) status.textContent = String(config.errorStatus || "K 线加载完成；开平仓信息读取失败");
         toast(err && err.message ? err.message : "K 线下单信息读取失败");
       }
-    }
-
-    function openAnalysisTradeChart(row) {
-      const exchange = activeExchange();
-      if (exchange !== "gate" && exchange !== "binance") return;
-      const symbol = analysisGateChartSymbol(row && row.inst_id);
-      if (!symbol) {
-        toast("该币对无法转换为 Binance USDT K 线币对");
-        return;
-      }
-      const trades = analysisTradesForActiveExchange().filter((item) => analysisGateChartSymbol(item && item.inst_id) === symbol);
-      if (!trades.length) {
-        toast("当前分析窗口没有该币对的交易记录");
-        return;
-      }
-      openStandalonePositionKline({
-        symbol,
-        exchange,
-        initialRows: trades,
-        loadRows: async () => trades,
-        invalidStatus: "无法生成订单分析 K 线"
-      });
     }
 
     function positionSymbolTradeRows(row, includeAnalysis) {
@@ -9483,13 +9433,6 @@ const tvbotHTML = `<!doctype html>
     });
     $("analysis-trade-prev").addEventListener("click", () => changeAnalysisTradePage(-1));
     $("analysis-trade-next").addEventListener("click", () => changeAnalysisTradePage(1));
-    $("analysis-trade-rows").addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-analysis-chart-key]");
-      if (!button) return;
-      const rowKey = button.dataset.analysisChartKey || "";
-      const row = analysisTradesForDisplay().find((item) => analysisTradeRowKey(item) === rowKey);
-      if (row) openAnalysisTradeChart(row);
-    });
     $("exchange-order-sync").addEventListener("click", () => triggerExchangeOrderSync($("exchange-order-sync"), false).catch((err) => {
       state.exchangeOrdersError = err.message;
       renderExchangeOrders();
