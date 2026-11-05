@@ -163,7 +163,8 @@ func TestPositionMonitorUsesCompactUnifiedGrid(t *testing.T) {
 		`grid-template-columns: repeat(6, minmax(150px, 1fr));`,
 		`@media (max-width: 1200px)`,
 		`grid-template-columns: repeat(4, minmax(150px, 1fr));`,
-		`class="position-monitor-grid"`,
+		`class="position-monitor-grid position-monitor-primary-grid"`,
+		`class="position-monitor-grid position-monitor-secondary-grid"`,
 		`class="muted position-monitor-daily-note"`,
 	} {
 		if !strings.Contains(page, want) {
@@ -178,19 +179,38 @@ func TestPositionMonitorUsesCompactUnifiedGrid(t *testing.T) {
 			t.Fatalf("position monitor should use one unified grid; found %q", removed)
 		}
 	}
-	gridStart := strings.Index(page, `<div class="position-monitor-grid">`)
-	if gridStart < 0 {
-		t.Fatal("position monitor grid is missing")
+	primaryStart := strings.Index(page, `<div class="position-monitor-grid position-monitor-primary-grid">`)
+	secondaryStart := strings.Index(page, `<div class="position-monitor-grid position-monitor-secondary-grid">`)
+	if primaryStart < 0 || secondaryStart < 0 || primaryStart >= secondaryStart {
+		t.Fatalf("position monitor rows are missing or out of order: primary=%d secondary=%d", primaryStart, secondaryStart)
 	}
 	for _, field := range []string{
 		`id="position-monitor-enabled"`,
-		`id="position-monitor-holding-enabled"`,
+	} {
+		if strings.Index(page[primaryStart:secondaryStart], field) < 0 {
+			t.Fatalf("position monitor field %q is not inside the unified grid", field)
+		}
+	}
+	for _, field := range []string{
+		`id="position-monitor-low-margin-enabled"`,
 		`id="position-monitor-daily-enabled"`,
 		`id="position-monitor-daily-time"`,
 		`class="muted position-monitor-daily-note"`,
 	} {
-		if strings.Index(page[gridStart:], field) < 0 {
-			t.Fatalf("position monitor field %q is not inside the unified grid", field)
+		if strings.Index(page[secondaryStart:], field) < 0 {
+			t.Fatalf("position monitor field %q is not inside the second row", field)
+		}
+	}
+	for _, removed := range []string{
+		`position-monitor-holding-enabled`,
+		`position-monitor-holding-hours`,
+		`持仓超时自动平仓`,
+		`最长持仓时间`,
+		`holding_time_close_enabled`,
+		`holding_time_close_hours`,
+	} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("position monitor should not expose holding-time close controls; found %q", removed)
 		}
 	}
 }
@@ -809,6 +829,12 @@ func TestRenderTVBotSharesLivePositionSnapshotAcrossTabs(t *testing.T) {
 	for _, want := range []string{
 		`function positionSnapshot(results)`,
 		`const snapshot = positionSnapshot(results);`,
+		`const positionSnapshotStorageKey = "tvbot.positionSnapshot.v1";`,
+		`function readLocalPositionSnapshot(exchange)`,
+		`function saveLocalPositionSnapshot(result)`,
+		`if (!state.positions) loadLocalPositionSnapshot();`,
+		`local_snapshot: true`,
+		`持仓本地快照，等待远端同步`,
 		`syncActivePositionSnapshot(snapshot);`,
 		`syncAnalysisPositionSnapshot(snapshot);`,
 		`state.positions = positionSnapshot([result]);`,
@@ -817,6 +843,13 @@ func TestRenderTVBotSharesLivePositionSnapshotAcrossTabs(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Fatalf("positions and order analysis should share one live snapshot, missing %q", want)
 		}
+	}
+}
+
+func TestRenderTVBotScopesPositionSnapshotStorageToTenant(t *testing.T) {
+	page := renderTVBotHTMLWithTenantMenuAndUser(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=positions", nil), defaultTopMenu(), "tenant-a", "alice")
+	if !strings.Contains(page, `const positionSnapshotStorageKey = "tvbot.positionSnapshot.v1.tenant.tenant-a";`) {
+		t.Fatal("position snapshot localStorage key should be tenant-scoped")
 	}
 }
 

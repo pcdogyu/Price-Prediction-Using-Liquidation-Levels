@@ -1102,11 +1102,11 @@ func (s *Server) scanPositionMonitor(ctx context.Context) {
 }
 
 func positionMonitorHasRule(monitor config.PositionMonitorConfig) bool {
-	return monitor.TakeProfitPct > 0 || monitor.StopLossPct > 0 || monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled
+	return monitor.TakeProfitPct > 0 || monitor.StopLossPct > 0 || monitor.LowMarginCloseEnabled
 }
 
 func positionMonitorNeedsEntryTimeForPosition(position okx.Position, monitor config.PositionMonitorConfig) bool {
-	if monitor.HoldingTimeCloseEnabled || monitor.LowMarginCloseEnabled {
+	if monitor.LowMarginCloseEnabled {
 		return true
 	}
 	if monitor.StopLossMinHoldingMinutes <= 0 || monitor.StopLossPct <= 0 {
@@ -1174,7 +1174,7 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 			},
 		)
 		if fillErr != nil && s.Logger != nil {
-			s.Logger.Warn("failed to load OKX position entry fills for holding-time close", "api_id", apiID, "error", fillErr)
+			s.Logger.Warn("failed to load OKX position entry fills", "api_id", apiID, "error", fillErr)
 		}
 	}
 	for _, position := range open {
@@ -1194,7 +1194,7 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 		}
 		if err != nil {
 			if s.Logger != nil {
-				s.Logger.Warn("failed to start OKX auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "holding_time_close_hours", monitor.HoldingTimeCloseHours, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "error", err)
+				s.Logger.Warn("failed to start OKX auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "error", err)
 			}
 			continue
 		}
@@ -1220,7 +1220,7 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 		}
 		if started && s.Logger != nil {
 			ratio, _ := positionMonitorUPLRatio(position)
-			s.Logger.Info("OKX auto position close started", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "holding_time_close_hours", monitor.HoldingTimeCloseHours, "upl_ratio", ratio, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "px", order.Px, "ord_id", order.Ack.OrdID)
+			s.Logger.Info("OKX auto position close started", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "upl_ratio", ratio, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "px", order.Px, "ord_id", order.Ack.OrdID)
 		}
 	}
 	return nil
@@ -1306,7 +1306,7 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 			if fillErr != nil {
 				errorsBySymbol[symbol] = fillErr
 				if s.Logger != nil {
-					s.Logger.Warn("failed to load Binance position entry trades for holding-time close", "api_id", apiID, "symbol", symbol, "error", fillErr)
+					s.Logger.Warn("failed to load Binance position entry trades", "api_id", apiID, "symbol", symbol, "error", fillErr)
 				}
 			}
 		}
@@ -1329,7 +1329,7 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 		}
 		if err != nil {
 			if s.Logger != nil {
-				s.Logger.Warn("failed to start Binance auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "holding_time_close_hours", monitor.HoldingTimeCloseHours, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "error", err)
+				s.Logger.Warn("failed to start Binance auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "error", err)
 			}
 			continue
 		}
@@ -1355,7 +1355,7 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 		}
 		if started && s.Logger != nil {
 			ratio, _ := positionMonitorUPLRatio(position)
-			s.Logger.Info("Binance auto position close started", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "holding_time_close_hours", monitor.HoldingTimeCloseHours, "upl_ratio", ratio, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "px", order.Px, "ord_id", order.Ack.OrdID)
+			s.Logger.Info("Binance auto position close started", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "upl_ratio", ratio, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "px", order.Px, "ord_id", order.Ack.OrdID)
 		}
 	}
 	return nil
@@ -1442,7 +1442,7 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 			if tradeErr != nil {
 				errorsByContract[contract] = tradeErr
 				if s.Logger != nil {
-					s.Logger.Warn("failed to load Gate position entry trades for holding-time close", "api_id", apiID, "contract", contract, "error", tradeErr)
+					s.Logger.Warn("failed to load Gate position entry trades", "api_id", apiID, "contract", contract, "error", tradeErr)
 				}
 				continue
 			}
@@ -1490,7 +1490,7 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 			positionCloseJobs.done(key)
 			gateContractOperationJobs.done(operationKey)
 			if s.Logger != nil {
-				s.Logger.Warn("failed to submit Gate auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "holding_time_close_hours", monitor.HoldingTimeCloseHours, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "error", err)
+				s.Logger.Warn("failed to submit Gate auto position close", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "error", err)
 			}
 			continue
 		}
@@ -1517,7 +1517,7 @@ func (s *Server) scanGatePositionMonitorForAPI(ctx context.Context, cfg config.C
 		}
 		if s.Logger != nil {
 			ratio, _ := positionMonitorUPLRatio(position)
-			s.Logger.Info("Gate auto position close submitted", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "holding_time_close_hours", monitor.HoldingTimeCloseHours, "upl_ratio", ratio, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "ord_id", ack.IDString())
+			s.Logger.Info("Gate auto position close submitted", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "trigger", trigger, "upl_ratio", ratio, "held_for_seconds", heldFor.Seconds(), "entry_at", formatPositionMonitorEntryTime(entryAt), "ord_id", ack.IDString())
 		}
 	}
 	return nil
@@ -1885,21 +1885,7 @@ func positionMonitorTriggerForPosition(position okx.Position, monitor config.Pos
 			}
 		}
 	}
-	if !monitor.HoldingTimeCloseEnabled || monitor.HoldingTimeCloseHours <= 0 {
-		return "", false, time.Time{}, 0, ""
-	}
-	entryAt, entryErr := positionMonitorEntryTime(position, fills, fillErr, allowPositionTimeFallback)
-	if entryErr != "" {
-		return "", false, time.Time{}, 0, entryErr
-	}
-	heldFor := now.UTC().Sub(entryAt.UTC())
-	if heldFor < 0 {
-		return "", false, entryAt, heldFor, "开仓时间晚于当前时间"
-	}
-	if heldFor >= time.Duration(monitor.HoldingTimeCloseHours)*time.Hour {
-		return "holding_time", true, entryAt, heldFor, ""
-	}
-	return "", false, entryAt, heldFor, ""
+	return "", false, time.Time{}, 0, ""
 }
 
 func positionReductionRecordCount(position okx.Position, fills []positionEntryFill, entryAt, now time.Time) int {

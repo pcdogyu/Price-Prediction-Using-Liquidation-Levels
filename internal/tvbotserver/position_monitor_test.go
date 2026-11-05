@@ -75,7 +75,6 @@ func TestPositionMonitorOKXStartsLimitCloseAtThresholds(t *testing.T) {
 	cfg.Trading.PositionMonitor.PollIntervalSeconds = 300
 	cfg.Trading.PositionMonitor.TakeProfitPct = 5
 	cfg.Trading.PositionMonitor.StopLossPct = 8
-	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.OKXHTTPClient = okxServer.Client()
 	if _, err := srv.OKXCredentials.UpdateAccount(okx.CredentialAccountUpdate{
@@ -108,61 +107,6 @@ func TestPositionMonitorOKXStartsLimitCloseAtThresholds(t *testing.T) {
 	}
 	if len(blocks) != 1 || blocks[0].Keyword != "ETH" || blocks[0].TriggerPrice != "109" || blocks[0].Source != "position_monitor" {
 		t.Fatalf("OKX stop-loss cooldown not recorded correctly: %#v", blocks)
-	}
-}
-
-func TestPositionMonitorHoldingTimeClosesWithExchangeTriggerDisabled(t *testing.T) {
-	restore := isolatePositionCloseJobsForTest()
-	defer restore()
-
-	srv := newTestServer(t)
-	entryAt := srv.now().Add(-7 * time.Hour)
-	var orders []map[string]any
-	okxServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v5/account/positions":
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","mgnMode":"isolated","posId":"1","posSide":"long","pos":"1","availPos":"1","avgPx":"100","markPx":"100","upl":"0","uplRatio":"0","lever":"5","notionalUsd":"100","margin":"20","cTime":"%d"}]}`, entryAt.UnixMilli())))
-		case "/api/v5/trade/fills-history":
-			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
-		case "/api/v5/trade/orders-pending", "/api/v5/trade/orders-algo-pending":
-			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
-		case "/api/v5/public/instruments":
-			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","tickSz":"0.1","ctVal":"1","lotSz":"1","minSz":"1"}]}`))
-		case "/api/v5/market/ticker":
-			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","bidPx":"99.9","askPx":"100.1","last":"100","ts":"1784880000000"}]}`))
-		case "/api/v5/trade/order":
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			orders = append(orders, body)
-			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"ordId":"holding-close-1","clOrdId":"close","sCode":"0","sMsg":""}]}`))
-		default:
-			t.Fatalf("unexpected OKX path %s", r.URL.Path)
-		}
-	}))
-	defer okxServer.Close()
-
-	cfg := srv.ConfigStore.Get()
-	cfg.Trading.BaseURL = okxServer.URL
-	cfg.Trading.PositionMonitor.OKXEnabled = false
-	cfg.Trading.PositionMonitor.BinanceEnabled = false
-	cfg.Trading.PositionMonitor.GateEnabled = false
-	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = true
-	cfg.Trading.PositionMonitor.HoldingTimeCloseHours = 6
-	srv.ConfigStore = config.NewStore("", cfg)
-	srv.OKXHTTPClient = okxServer.Client()
-	if _, err := srv.OKXCredentials.UpdateAccount(okx.CredentialAccountUpdate{
-		ID: "default", Active: true,
-		Credentials: okx.Credentials{APIKey: "key", SecretKey: "secret", Passphrase: "pass"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	srv.scanPositionMonitor(context.Background())
-	if len(orders) != 1 || orders[0]["instId"] != "ETH-USDT-SWAP" || orders[0]["side"] != "sell" || orders[0]["ordType"] != "limit" || orders[0]["sz"] != "1" {
-		t.Fatalf("expected one holding-time close order with exchange trigger disabled, got %#v", orders)
 	}
 }
 
@@ -199,7 +143,6 @@ func TestScheduledPositionCloseStartsFullOKXLimitClose(t *testing.T) {
 	cfg.Trading.PositionMonitor.OKXEnabled = false
 	cfg.Trading.PositionMonitor.BinanceEnabled = false
 	cfg.Trading.PositionMonitor.GateEnabled = false
-	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	cfg.Trading.PositionMonitor.DailyCloseEnabled = true
 	cfg.Trading.PositionMonitor.DailyCloseTime = "06:00"
 	srv.ConfigStore = config.NewStore("", cfg)
@@ -283,7 +226,6 @@ func TestPositionMonitorBinanceStartsLimitCloseAtThresholds(t *testing.T) {
 	cfg.Trading.PositionMonitor.PollIntervalSeconds = 300
 	cfg.Trading.PositionMonitor.TakeProfitPct = 5
 	cfg.Trading.PositionMonitor.StopLossPct = 8
-	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.BinanceHTTPClient = binanceServer.Client()
 	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
@@ -400,7 +342,6 @@ func TestPositionMonitorGateSubmitsFullMarketCloseAtThresholds(t *testing.T) {
 	cfg.Trading.PositionMonitor.PollIntervalSeconds = 300
 	cfg.Trading.PositionMonitor.TakeProfitPct = 5
 	cfg.Trading.PositionMonitor.StopLossPct = 8
-	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.GateHTTPClient = gateServer.Client()
 	gateCredentials, err := tvbotgate.NewCredentialStore(filepath.Join(t.TempDir(), "gate-credentials.json"), tvbotgate.Credentials{})
@@ -482,7 +423,6 @@ func TestPositionMonitorGateLiveGuardSkipsAutoClose(t *testing.T) {
 	cfg.Trading.PositionMonitor.PollIntervalSeconds = 300
 	cfg.Trading.PositionMonitor.TakeProfitPct = 5
 	cfg.Trading.PositionMonitor.StopLossPct = 8
-	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.GateHTTPClient = gateServer.Client()
 	gateCredentials, err := tvbotgate.NewCredentialStore(filepath.Join(t.TempDir(), "gate-live-credentials.json"), tvbotgate.Credentials{})
@@ -531,7 +471,6 @@ func TestPositionMonitorBinanceLiveGuardSkipsAutoClose(t *testing.T) {
 	cfg.Trading.PositionMonitor.PollIntervalSeconds = 300
 	cfg.Trading.PositionMonitor.TakeProfitPct = 5
 	cfg.Trading.PositionMonitor.StopLossPct = 8
-	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.BinanceHTTPClient = binanceServer.Client()
 	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
@@ -545,26 +484,6 @@ func TestPositionMonitorBinanceLiveGuardSkipsAutoClose(t *testing.T) {
 	srv.scanPositionMonitor(context.Background())
 	if orders != 0 {
 		t.Fatalf("expected no Binance orders, got %d", orders)
-	}
-}
-
-func TestPositionMonitorHoldingTimeUsesEntryFillTime(t *testing.T) {
-	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	monitor := config.PositionMonitorConfig{
-		HoldingTimeCloseEnabled: true,
-		HoldingTimeCloseHours:   6,
-	}
-	position := okx.Position{InstID: "ETH-USDT-SWAP", PosSide: "long", Pos: "1", UTime: strconv.FormatInt(now.Add(-time.Minute).UnixMilli(), 10)}
-	entry := now.Add(-6 * time.Hour)
-	trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, false, now, []positionEntryFill{{
-		InstID:   "ETH-USDT-SWAP",
-		PosSide:  "long",
-		Side:     "buy",
-		Size:     1,
-		FillTime: entry,
-	}}, nil, false)
-	if !hit || trigger != "holding_time" || !entryAt.Equal(entry) || heldFor != 6*time.Hour || entryErr != "" {
-		t.Fatalf("holding-time trigger = %q, %v, entry=%s held=%s err=%q", trigger, hit, entryAt, heldFor, entryErr)
 	}
 }
 
@@ -609,43 +528,6 @@ func TestPositionMonitorStopLossWaitsThirtyMinutesButTakeProfitRemainsImmediate(
 				t.Fatalf("stop-loss should trigger after minimum hold: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
 			}
 		})
-	}
-}
-
-func TestPositionMonitorHoldingTimeSkipsBinanceWithoutEntryTime(t *testing.T) {
-	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	monitor := config.PositionMonitorConfig{
-		HoldingTimeCloseEnabled: true,
-		HoldingTimeCloseHours:   6,
-	}
-	position := okx.Position{
-		InstID:  "ETHUSDT",
-		PosSide: "net",
-		Pos:     "1",
-		UTime:   strconv.FormatInt(now.Add(-12*time.Hour).UnixMilli(), 10),
-	}
-	trigger, hit, _, _, entryErr := positionMonitorTriggerForPosition(position, monitor, false, now, nil, nil, false)
-	if hit || trigger != "" || !strings.Contains(entryErr, "成交不足") {
-		t.Fatalf("Binance holding-time trigger should skip without fills: trigger=%q hit=%v err=%q", trigger, hit, entryErr)
-	}
-}
-
-func TestPositionMonitorHoldingTimeFallsBackToPositionOpenTime(t *testing.T) {
-	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	monitor := config.PositionMonitorConfig{
-		HoldingTimeCloseEnabled: true,
-		HoldingTimeCloseHours:   6,
-	}
-	entry := now.Add(-7 * time.Hour)
-	position := okx.Position{
-		InstID:  "ETH-USDT-SWAP",
-		PosSide: "long",
-		Pos:     "1",
-		CTime:   strconv.FormatInt(entry.UnixMilli(), 10),
-	}
-	trigger, hit, entryAt, _, entryErr := positionMonitorTriggerForPosition(position, monitor, false, now, nil, errors.New("fills unavailable"), true)
-	if !hit || trigger != "holding_time" || !entryAt.Equal(entry) || entryErr != "" {
-		t.Fatalf("position-time fallback = %q, %v, entry=%s err=%q", trigger, hit, entryAt, entryErr)
 	}
 }
 

@@ -141,6 +141,7 @@ func renderTVBotHTMLWithTenantMenuAndUser(info BuildInfo, r *http.Request, menu 
 		suffix := ".tenant." + tenantID
 		page = strings.Replace(page, `const globalExchangeStorageKey = "tvbot.selectedExchange";`, `const globalExchangeStorageKey = "tvbot.selectedExchange`+suffix+`";`, 1)
 		page = strings.Replace(page, `const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3";`, `const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3`+suffix+`";`, 1)
+		page = strings.Replace(page, `const positionSnapshotStorageKey = "tvbot.positionSnapshot.v1";`, `const positionSnapshotStorageKey = "tvbot.positionSnapshot.v1`+suffix+`";`, 1)
 	}
 	return strings.Replace(page, "{{APP_FOOTER}}", html.EscapeString(info.FooterText()), 1)
 }
@@ -1027,6 +1028,12 @@ const tvbotHTML = `<!doctype html>
       gap: 8px 10px;
       align-items: end;
       margin-top: 8px;
+    }
+    .position-monitor-primary-grid {
+      grid-template-columns: repeat(5, minmax(150px, 1fr));
+    }
+    .position-monitor-secondary-grid {
+      grid-template-columns: repeat(6, minmax(150px, 1fr));
     }
     .position-monitor-grid label {
       margin: 0;
@@ -2250,20 +2257,20 @@ const tvbotHTML = `<!doctype html>
           </div>
           <button class="btn primary" type="button" id="save-position-monitor">保存自动扫描</button>
         </div>
-        <div class="position-monitor-grid">
+        <div class="position-monitor-grid position-monitor-primary-grid">
           <label class="check"><input id="position-monitor-enabled" type="checkbox">启用自动扫描/平仓</label>
           <label>扫描间隔秒<input id="position-monitor-interval" type="number" min="1" step="1"></label>
           <label>止盈 %<input id="position-monitor-tp" type="number" min="0.01" step="0.01"></label>
           <label>止损 %<input id="position-monitor-sl" type="number" min="0.01" step="0.01"></label>
           <label>止损最短持仓（分钟）<input id="position-monitor-sl-minutes" type="number" min="30" step="1"></label>
+          </div>
+        <div class="position-monitor-grid position-monitor-secondary-grid">
           <label class="check"><input id="position-monitor-low-margin-enabled" type="checkbox">低保证金自动清理</label>
           <label>保证金阈值（USDT）<input id="position-monitor-low-margin-threshold" type="number" min="0.01" step="0.01"></label>
           <label>低保证金持仓小时数<input id="position-monitor-low-margin-hours" type="number" min="1" step="1"></label>
-          <label class="check"><input id="position-monitor-holding-enabled" type="checkbox">持仓超时自动平仓</label>
-          <label>最长持仓时间（小时）<input id="position-monitor-holding-hours" type="number" min="1" step="1"></label>
           <label class="check"><input id="position-monitor-daily-enabled" type="checkbox">每日定时平仓</label>
           <label>平仓时间（中国时间）<input id="position-monitor-daily-time" type="time" min="00:00" max="23:59" step="60"></label>
-          <div class="muted position-monitor-daily-note">覆盖所有已配置交易所；限价追价，超时沿用现有市价回退。</div>
+          <div class="muted position-monitor-daily-note">低保证金和每日定时平仓覆盖所有已配置交易所；限价追价。</div>
         </div>
       </div>
       <div class="section-head" style="margin:18px 0 10px">
@@ -2976,6 +2983,7 @@ const tvbotHTML = `<!doctype html>
     ];
     const positionExchanges = ["okx", "binance", "gate"];
     const globalExchangeStorageKey = "tvbot.selectedExchange";
+    const positionSnapshotStorageKey = "tvbot.positionSnapshot.v1";
     const ordersPageSize = 20;
     const analysisTradePageSize = 20;
     const exchangeOrderPageSize = 20;
@@ -4355,7 +4363,7 @@ const tvbotHTML = `<!doctype html>
       if (target === "dashboard" && !state.dashboardAnalysis) {
         loadDashboardOrderAnalysis(false).catch((err) => toast(err.message));
       }
-      if (target === "positions" && (!state.positions || !state.pendingOrders)) {
+      if (target === "positions" && state.config && (!state.positions || !state.pendingOrders)) {
         loadPositionView().catch((err) => toast(err.message));
       }
       if (target === "symbols" && !state.symbols) {
@@ -4813,16 +4821,73 @@ const tvbotHTML = `<!doctype html>
         const results = await Promise.all([loadPositionExchange(activeExchange(), !!forceRefresh)]);
         const status = positionSyncStatusForResult(results[0]);
         setPositionSyncStatus(status.status, status.message);
-        const snapshot = positionSnapshot(results);
-        state.positions = snapshot;
-        syncAnalysisPositionSnapshot(snapshot);
-        state.positionsError = combinedErrors(results);
+        const remoteResult = results[0];
+        if (remoteResult && remoteResult.ok) {
+          saveLocalPositionSnapshot(remoteResult);
+          const snapshot = positionSnapshot(results);
+          state.positions = snapshot;
+          syncAnalysisPositionSnapshot(snapshot);
+          state.positionsError = combinedErrors(results);
+        } else {
+          state.positionsError = combinedErrors(results);
+          if (!state.positions) {
+            const snapshot = positionSnapshot(results);
+            state.positions = snapshot;
+            syncAnalysisPositionSnapshot(snapshot);
+          }
+        }
         renderPositions();
       } catch (err) {
         const status = positionSyncStatusForResult(null);
         setPositionSyncStatus(status.status, status.message);
         throw err;
       }
+    }
+
+    function positionSnapshotStorageID(exchange) {
+      const env = positionEnvironment();
+      const apiID = activeAPIID(exchange, env) || "default";
+      return [env, normalizeExchange(exchange), apiID].map((value) => encodeURIComponent(String(value || ""))).join(":");
+    }
+
+    function readLocalPositionSnapshot(exchange) {
+      try {
+        const raw = window.localStorage.getItem(positionSnapshotStorageKey + ":" + positionSnapshotStorageID(exchange));
+        if (!raw) return null;
+        const payload = JSON.parse(raw);
+        const cachedAt = new Date(payload && payload.cached_at ? payload.cached_at : "").getTime();
+        const result = payload && payload.result;
+        if (!result || !Array.isArray(result.positions) || !Number.isFinite(cachedAt) || Date.now() - cachedAt > 24 * 60 * 60 * 1000) return null;
+        return Object.assign({}, result, {
+          exchange: normalizeExchange(result.exchange || exchange),
+          local_snapshot: true,
+          stale: true
+        });
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function saveLocalPositionSnapshot(result) {
+      if (!result || !result.ok || !Array.isArray(result.positions)) return;
+      try {
+        window.localStorage.setItem(
+          positionSnapshotStorageKey + ":" + positionSnapshotStorageID(result.exchange || activeExchange()),
+          JSON.stringify({ version: 1, cached_at: new Date().toISOString(), result: result })
+        );
+      } catch (_) {}
+    }
+
+    function loadLocalPositionSnapshot() {
+      const result = readLocalPositionSnapshot(activeExchange());
+      if (!result) return false;
+      const snapshot = positionSnapshot([result]);
+      state.positions = snapshot;
+      state.positionsError = "";
+      setPositionSyncStatus("stale", "持仓本地快照，等待远端同步");
+      syncAnalysisPositionSnapshot(snapshot);
+      renderPositions();
+      return true;
     }
 
     function positionSnapshot(results) {
@@ -4982,7 +5047,8 @@ const tvbotHTML = `<!doctype html>
       return exchanges.map((result) => {
         const label = exchangeLabel(result.exchange);
         if (result && result.refreshed_at) {
-          return label + " " + shanghaiTime(result.refreshed_at) + (result.stale ? "（最近成功快照）" : "");
+          const source = result.local_snapshot ? "本地快照 " : "";
+          return label + " " + source + shanghaiTime(result.refreshed_at) + (result.stale ? "（最近成功快照）" : "");
         }
         if (result && result.error) return label + " 失败";
         return label + " -";
@@ -5043,6 +5109,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadPositionView(forceRefresh) {
+      if (!state.positions) loadLocalPositionSnapshot();
       await Promise.all([loadPositions(!!forceRefresh), loadPendingOrders(!!forceRefresh)]);
     }
 
@@ -5097,8 +5164,6 @@ const tvbotHTML = `<!doctype html>
         take_profit_pct: Number(monitor.take_profit_pct || 5),
         stop_loss_pct: Number(monitor.stop_loss_pct || 8),
         stop_loss_min_holding_minutes: Number(monitor.stop_loss_min_holding_minutes || 30),
-        holding_time_close_enabled: monitor.holding_time_close_enabled !== false,
-        holding_time_close_hours: Number(monitor.holding_time_close_hours || 6),
         low_margin_close_enabled: !!monitor.low_margin_close_enabled,
         low_margin_threshold_usdt: Number(monitor.low_margin_threshold_usdt || 50),
         low_margin_holding_hours: Number(monitor.low_margin_holding_hours || 1),
@@ -5115,8 +5180,6 @@ const tvbotHTML = `<!doctype html>
       $("position-monitor-tp").value = monitor.take_profit_pct || 5;
       $("position-monitor-sl").value = monitor.stop_loss_pct || 8;
       $("position-monitor-sl-minutes").value = monitor.stop_loss_min_holding_minutes || 30;
-      $("position-monitor-holding-enabled").checked = !!monitor.holding_time_close_enabled;
-      $("position-monitor-holding-hours").value = monitor.holding_time_close_hours || 6;
       $("position-monitor-low-margin-enabled").checked = !!monitor.low_margin_close_enabled;
       $("position-monitor-low-margin-threshold").value = monitor.low_margin_threshold_usdt || 50;
       $("position-monitor-low-margin-hours").value = monitor.low_margin_holding_hours || 1;
@@ -5134,7 +5197,6 @@ const tvbotHTML = `<!doctype html>
         " / +" + asText(monitor.take_profit_pct || 5) + "%" +
         " / -" + asText(monitor.stop_loss_pct || 8) + "%" +
         " / SL锁定" + asText(monitor.stop_loss_min_holding_minutes || 30) + "分钟" +
-        " / 超时平仓" + (monitor.holding_time_close_enabled ? " " + asText(monitor.holding_time_close_hours || 6) + "h" : "关闭") +
         " / 低保证金" + (monitor.low_margin_close_enabled ? " <" + asText(monitor.low_margin_threshold_usdt || 50) + " USDT / " + asText(monitor.low_margin_holding_hours || 1) + "h" : "关闭") + dailyLabel;
     }
 
@@ -8673,11 +8735,9 @@ const tvbotHTML = `<!doctype html>
               take_profit_pct: Number($("position-monitor-tp").value),
               stop_loss_pct: Number($("position-monitor-sl").value),
               stop_loss_min_holding_minutes: Number($("position-monitor-sl-minutes").value),
-              holding_time_close_enabled: $("position-monitor-holding-enabled").checked,
-              holding_time_close_hours: Number($("position-monitor-holding-hours").value),
-	              low_margin_close_enabled: $("position-monitor-low-margin-enabled").checked,
-	              low_margin_threshold_usdt: Number($("position-monitor-low-margin-threshold").value),
-	              low_margin_holding_hours: Number($("position-monitor-low-margin-hours").value),
+              low_margin_close_enabled: $("position-monitor-low-margin-enabled").checked,
+              low_margin_threshold_usdt: Number($("position-monitor-low-margin-threshold").value),
+              low_margin_holding_hours: Number($("position-monitor-low-margin-hours").value),
               daily_close_enabled: $("position-monitor-daily-enabled").checked,
               daily_close_time: $("position-monitor-daily-time").value || "06:00"
             }

@@ -592,13 +592,15 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-enabled")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-low-margin-threshold")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-active-exchanges")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-holding-enabled")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-holding-hours")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-daily-enabled")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-daily-time")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("daily_close_enabled")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("daily_close_time")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("position_monitor")) {
+		!bytes.Contains(ui.Body.Bytes(), []byte("position_monitor")) ||
+		bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-holding-enabled")) ||
+		bytes.Contains(ui.Body.Bytes(), []byte("position-monitor-holding-hours")) ||
+		bytes.Contains(ui.Body.Bytes(), []byte("持仓超时自动平仓")) ||
+		bytes.Contains(ui.Body.Bytes(), []byte("最长持仓时间")) {
 		t.Fatalf("tvbot ui should render position monitor controls and config payload")
 	}
 }
@@ -1124,7 +1126,7 @@ func TestTVBotConfigSavesGammaNegativePolicyAndRejectsInvalidValue(t *testing.T)
 
 func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 	srv := newTestServer(t)
-	req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8,"stop_loss_min_holding_minutes":30,"holding_time_close_enabled":true,"holding_time_close_hours":6,"low_margin_close_enabled":true,"low_margin_threshold_usdt":50,"low_margin_holding_hours":1}}}`)))
+	req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8,"stop_loss_min_holding_minutes":30,"low_margin_close_enabled":true,"low_margin_threshold_usdt":50,"low_margin_holding_hours":1}}}`)))
 	req.SetBasicAuth("admin", "Admin123")
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
@@ -1136,18 +1138,18 @@ func TestTVBotConfigSavesPositionMonitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	monitor := cfg.Trading.PositionMonitor
-	if !monitor.Enabled || monitor.PollIntervalSeconds != 300 || monitor.TakeProfitPct != 5 || monitor.StopLossPct != 8 || monitor.StopLossMinHoldingMinutes != 30 || !monitor.HoldingTimeCloseEnabled || monitor.HoldingTimeCloseHours != 6 || !monitor.LowMarginCloseEnabled || monitor.LowMarginThresholdUSDT != 50 || monitor.LowMarginHoldingHours != 1 || !monitor.DailyCloseEnabled || monitor.DailyCloseTime != "06:00" {
+	if !monitor.Enabled || monitor.PollIntervalSeconds != 300 || monitor.TakeProfitPct != 5 || monitor.StopLossPct != 8 || monitor.StopLossMinHoldingMinutes != 30 || !monitor.LowMarginCloseEnabled || monitor.LowMarginThresholdUSDT != 50 || monitor.LowMarginHoldingHours != 1 || !monitor.DailyCloseEnabled || monitor.DailyCloseTime != "06:00" {
 		t.Fatalf("position monitor not saved: %#v", monitor)
 	}
 
-	badReq := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":0,"take_profit_pct":5,"stop_loss_pct":8,"holding_time_close_enabled":true,"holding_time_close_hours":6,"low_margin_threshold_usdt":50,"low_margin_holding_hours":1}}}`)))
+	badReq := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":0,"take_profit_pct":5,"stop_loss_pct":8,"low_margin_threshold_usdt":50,"low_margin_holding_hours":1}}}`)))
 	badReq.SetBasicAuth("admin", "Admin123")
 	bad := httptest.NewRecorder()
 	srv.ServeHTTP(bad, badReq)
 	if bad.Code != http.StatusBadRequest || !bytes.Contains(bad.Body.Bytes(), []byte("position_monitor.poll_interval_seconds")) {
 		t.Fatalf("bad position monitor status=%d body=%s", bad.Code, bad.Body.String())
 	}
-	badMarginReq := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8,"holding_time_close_enabled":true,"holding_time_close_hours":6,"low_margin_threshold_usdt":0,"low_margin_holding_hours":1}}}`)))
+	badMarginReq := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"position_monitor":{"enabled":true,"poll_interval_seconds":300,"take_profit_pct":5,"stop_loss_pct":8,"low_margin_threshold_usdt":0,"low_margin_holding_hours":1}}}`)))
 	badMarginReq.SetBasicAuth("admin", "Admin123")
 	badMargin := httptest.NewRecorder()
 	srv.ServeHTTP(badMargin, badMarginReq)
@@ -6450,7 +6452,6 @@ func TestLowMarginPositionMonitorStartsLimitClose(t *testing.T) {
 	cfg.Trading.PositionMonitor.LowMarginCloseEnabled = true
 	cfg.Trading.PositionMonitor.LowMarginThresholdUSDT = 50
 	cfg.Trading.PositionMonitor.LowMarginHoldingHours = 1
-	cfg.Trading.PositionMonitor.HoldingTimeCloseEnabled = false
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.OKXHTTPClient = okxServer.Client()
 	if _, err := srv.OKXCredentials.UpdateAccount(okx.CredentialAccountUpdate{

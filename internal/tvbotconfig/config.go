@@ -174,8 +174,6 @@ type PositionMonitorConfig struct {
 	TakeProfitPct             float64 `json:"take_profit_pct"`
 	StopLossPct               float64 `json:"stop_loss_pct"`
 	StopLossMinHoldingMinutes int     `json:"stop_loss_min_holding_minutes"`
-	HoldingTimeCloseEnabled   bool    `json:"holding_time_close_enabled"`
-	HoldingTimeCloseHours     int     `json:"holding_time_close_hours"`
 	LowMarginCloseEnabled     bool    `json:"low_margin_close_enabled"`
 	LowMarginThresholdUSDT    float64 `json:"low_margin_threshold_usdt"`
 	LowMarginHoldingHours     int     `json:"low_margin_holding_hours"`
@@ -356,8 +354,6 @@ func Default() Config {
 				TakeProfitPct:             5,
 				StopLossPct:               8,
 				StopLossMinHoldingMinutes: MinimumStopLossHoldingMinutes,
-				HoldingTimeCloseEnabled:   true,
-				HoldingTimeCloseHours:     6,
 				LowMarginCloseEnabled:     false,
 				LowMarginThresholdUSDT:    50,
 				LowMarginHoldingHours:     1,
@@ -572,9 +568,6 @@ func (c *Config) Normalize() {
 	if c.Trading.PositionMonitor.StopLossMinHoldingMinutes < MinimumStopLossHoldingMinutes {
 		c.Trading.PositionMonitor.StopLossMinHoldingMinutes = MinimumStopLossHoldingMinutes
 	}
-	if c.Trading.PositionMonitor.HoldingTimeCloseHours <= 0 {
-		c.Trading.PositionMonitor.HoldingTimeCloseHours = 6
-	}
 	if c.Trading.PositionMonitor.LowMarginThresholdUSDT <= 0 {
 		c.Trading.PositionMonitor.LowMarginThresholdUSDT = 50
 	}
@@ -725,9 +718,6 @@ func (c Config) validate(validateSymbols bool) error {
 	}
 	if c.Trading.PositionMonitor.StopLossMinHoldingMinutes < MinimumStopLossHoldingMinutes {
 		return fmt.Errorf("position_monitor.stop_loss_min_holding_minutes must be at least %d", MinimumStopLossHoldingMinutes)
-	}
-	if c.Trading.PositionMonitor.HoldingTimeCloseHours <= 0 {
-		return errors.New("position_monitor.holding_time_close_hours must be positive")
 	}
 	if c.Trading.PositionMonitor.LowMarginThresholdUSDT <= 0 {
 		return errors.New("position_monitor.low_margin_threshold_usdt must be positive")

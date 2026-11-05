@@ -1308,9 +1308,6 @@ func validateConfigPatch(patch configPatch) error {
 	if monitor.StopLossPct != nil && *monitor.StopLossPct <= 0 {
 		return errors.New("position_monitor.stop_loss_pct must be positive")
 	}
-	if monitor.HoldingTimeCloseHours != nil && *monitor.HoldingTimeCloseHours <= 0 {
-		return errors.New("position_monitor.holding_time_close_hours must be positive")
-	}
 	if monitor.StopLossMinHoldingMinutes != nil && *monitor.StopLossMinHoldingMinutes < config.MinimumStopLossHoldingMinutes {
 		return fmt.Errorf("position_monitor.stop_loss_min_holding_minutes must be at least %d", config.MinimumStopLossHoldingMinutes)
 	}
@@ -3039,8 +3036,6 @@ type positionMonitorPatch struct {
 	TakeProfitPct             *float64 `json:"take_profit_pct"`
 	StopLossPct               *float64 `json:"stop_loss_pct"`
 	StopLossMinHoldingMinutes *int     `json:"stop_loss_min_holding_minutes"`
-	HoldingTimeCloseEnabled   *bool    `json:"holding_time_close_enabled"`
-	HoldingTimeCloseHours     *int     `json:"holding_time_close_hours"`
 	LowMarginCloseEnabled     *bool    `json:"low_margin_close_enabled"`
 	LowMarginThresholdUSDT    *float64 `json:"low_margin_threshold_usdt"`
 	LowMarginHoldingHours     *int     `json:"low_margin_holding_hours"`
@@ -3211,12 +3206,6 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 		}
 		if monitor.StopLossMinHoldingMinutes != nil {
 			c.Trading.PositionMonitor.StopLossMinHoldingMinutes = *monitor.StopLossMinHoldingMinutes
-		}
-		if monitor.HoldingTimeCloseEnabled != nil {
-			c.Trading.PositionMonitor.HoldingTimeCloseEnabled = *monitor.HoldingTimeCloseEnabled
-		}
-		if monitor.HoldingTimeCloseHours != nil {
-			c.Trading.PositionMonitor.HoldingTimeCloseHours = *monitor.HoldingTimeCloseHours
 		}
 		if monitor.LowMarginCloseEnabled != nil {
 			c.Trading.PositionMonitor.LowMarginCloseEnabled = *monitor.LowMarginCloseEnabled
