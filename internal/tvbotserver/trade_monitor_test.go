@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +147,76 @@ func TestBinanceLossFillCreatesCooldownWithoutBackfill(t *testing.T) {
 	}
 	if len(blocks) != 1 || blocks[0].Keyword != "ETH" || blocks[0].TriggerPrice != "2490" || blocks[0].Source != "exchange_fill" {
 		t.Fatalf("new Binance loss fill did not create cooldown: %#v", blocks)
+	}
+}
+
+func TestBinanceTradeMonitorResetsStaleCheckpointWithinSevenDays(t *testing.T) {
+	srv := newTestServer(t)
+	now := srv.now()
+	staleCheckpoint := storage.TradeMonitorCheckpoint{
+		Exchange:     trading.ExchangeBinance,
+		APIID:        "main",
+		Symbol:       "ETHUSDT",
+		LastFillTime: now.Add(-8 * 24 * time.Hour).UnixMilli(),
+		LastTradeID:  "old-trade",
+		LastPolledAt: now.Add(-8 * 24 * time.Hour),
+		UpdatedAt:    now.Add(-8 * 24 * time.Hour),
+	}
+	if err := srv.Orders.UpsertTradeMonitorCheckpoint(staleCheckpoint); err != nil {
+		t.Fatal(err)
+	}
+
+	var starts []time.Time
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fapi/v1/userTrades" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		q := r.URL.Query()
+		startMS, err := strconv.ParseInt(q.Get("startTime"), 10, 64)
+		if err != nil {
+			t.Fatalf("invalid startTime %q: %v", q.Get("startTime"), err)
+		}
+		endMS, err := strconv.ParseInt(q.Get("endTime"), 10, 64)
+		if err != nil {
+			t.Fatalf("invalid endTime %q: %v", q.Get("endTime"), err)
+		}
+		if endMS-startMS >= binanceTradeMonitorMaxWindow.Milliseconds() {
+			t.Fatalf("Binance userTrades window is too large: %d ms", endMS-startMS)
+		}
+		starts = append(starts, time.UnixMilli(startMS).UTC())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer ts.Close()
+
+	client := binance.Client{
+		BaseURL:     ts.URL,
+		Credentials: binance.Credentials{APIKey: "key", SecretKey: "secret"},
+		HTTPClient:  ts.Client(),
+		Now:         func() time.Time { return now },
+	}
+	cfg := config.Default()
+	if err := srv.pollBinanceSymbolFills(context.Background(), cfg, client, "main", "ETHUSDT", now, 72*time.Hour, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.pollBinanceSymbolFills(context.Background(), cfg, client, "main", "ETHUSDT", now.Add(2*time.Minute), 72*time.Hour, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(starts) != 2 {
+		t.Fatalf("expected two Binance polls, got %d", len(starts))
+	}
+	if !starts[0].Equal(now.Add(-binanceTradeMonitorMaxWindow + binanceTradeMonitorWindowMargin)) {
+		t.Fatalf("stale checkpoint was not clamped to the 7-day window: got %s", starts[0])
+	}
+	if !starts[1].Equal(now.Add(2*time.Minute - 72*time.Hour)) {
+		t.Fatalf("cleared checkpoint was not replaced by the configured lookback: got %s", starts[1])
+	}
+	cp, found, err := srv.Orders.TradeMonitorCheckpoint(trading.ExchangeBinance, "main", "ETHUSDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || cp.LastFillTime != 0 || cp.LastTradeID != "" || cp.LastError != "" {
+		t.Fatalf("stale checkpoint was not cleared after an empty poll: found=%v cp=%#v", found, cp)
 	}
 }
 
