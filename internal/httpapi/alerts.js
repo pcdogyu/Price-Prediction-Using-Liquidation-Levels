@@ -109,11 +109,25 @@
   };
 
   const SIGNAL_RECALCULATE_STORAGE = 'liquidation.alerts.signal-recalculate';
-  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', historyReplayed = (() => { try { return !!localStorage.getItem(SIGNAL_RECALCULATE_STORAGE); } catch (_) { return false; } })(), settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false, signalProgressTimer = 0, signalProgressValue = 1, backtestBusy = false, backtestRows = [], backtestSortKey = '', backtestSortDirection = 'asc';
+  let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', historyReplayed = (() => { try { return !!localStorage.getItem(SIGNAL_RECALCULATE_STORAGE); } catch (_) { return false; } })(), settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false, signalProgressTimer = 0, signalProgressValue = 1, orderSignalSaveBusy = false, toastTimer = 0, backtestBusy = false, backtestRows = [], backtestSortKey = '', backtestSortDirection = 'asc';
 
   function error(message) { const node = $('alerts-error'); node.classList.remove('success'); node.textContent = message; node.hidden = false; }
   function success(message) { const node = $('alerts-error'); node.classList.add('success'); node.innerHTML = message; node.hidden = false; }
   function clearError() { const node = $('alerts-error'); node.classList.remove('success'); node.hidden = true; }
+
+  function showToast(message, type = 'success', duration = 2600) {
+    const node = $('alerts-toast');
+    if (!node) return;
+    if (toastTimer) window.clearTimeout(toastTimer);
+    node.textContent = message;
+    node.classList.toggle('is-error', type === 'error');
+    node.hidden = false;
+    window.requestAnimationFrame(() => node.classList.add('is-visible'));
+    toastTimer = window.setTimeout(() => {
+      node.classList.remove('is-visible');
+      window.setTimeout(() => { if (!node.classList.contains('is-visible')) node.hidden = true; }, 180);
+    }, duration);
+  }
 
   // Reverse proxies can return an HTML error page when the service is busy or
   // temporarily unavailable. Never feed that page directly to JSON.parse:
@@ -735,7 +749,14 @@
 
   async function saveOrderSignalSettings(event) {
     event.preventDefault();
-    $('alerts-order-signal-save').disabled = true;
+    if (orderSignalSaveBusy) return;
+    const button = $('alerts-order-signal-save');
+    const original = button.textContent;
+    orderSignalSaveBusy = true;
+    button.disabled = true;
+    button.classList.add('is-saving');
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = '保存中…';
     $('alerts-order-signal-status').textContent = '正在保存下单信号设置…';
     try {
       const response = await fetch(base + 'api/v1/alerts/order-settings', { method: 'POST', cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(orderSignalSettingsBody()) });
@@ -743,12 +764,18 @@
       if (!response.ok) throw new Error(packet.detail || 'HTTP ' + response.status);
       renderOrderSignalSettings(packet);
       $('alerts-order-signal-status').textContent = '下单信号设置已保存并立即生效';
+      showToast('策略开关已保存并立即生效');
       clearError();
     } catch (caught) {
       error('保存下单信号设置失败：' + caught.message);
       $('alerts-order-signal-status').textContent = '保存失败';
+      showToast('保存策略开关失败：' + caught.message, 'error', 4200);
     } finally {
-      $('alerts-order-signal-save').disabled = false;
+      orderSignalSaveBusy = false;
+      button.disabled = false;
+      button.classList.remove('is-saving');
+      button.removeAttribute('aria-busy');
+      button.textContent = original;
     }
   }
 

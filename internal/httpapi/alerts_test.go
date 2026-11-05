@@ -51,7 +51,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 		t.Fatalf("alerts page status=%d body=%s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	for _, want := range []string{"报警", "成交额前 50 币对", `data-page="alerts"`, "assets/alerts.js", "assets/alerts.css", "aria-current=\"page\""} {
+	for _, want := range []string{"报警", "成交额前 50 币对", `data-page="alerts"`, "assets/alerts.js", "assets/alerts.css", `id="alerts-toast"`, "aria-current=\"page\""} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the alerts page must contain %q", want)
 		}
@@ -95,7 +95,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 		t.Fatal("the alerts script must expose the manual order trigger")
 	}
 	css := serveAlert(srv, http.MethodGet, "/assets/alerts.css", nil).Body.String()
-	for _, want := range []string{"alerts-toggle-input", "alerts-toggle-track", ".alerts-toggle-input:checked + .alerts-toggle-track", ".alerts-toggle-track::after"} {
+	for _, want := range []string{"alerts-toggle-input", "alerts-toggle-track", ".alerts-toggle-input:checked + .alerts-toggle-track", ".alerts-toggle-track::after", ".alerts-toast", ".alerts-toast.is-visible", "prefers-reduced-motion:reduce"} {
 		if !strings.Contains(css, want) {
 			t.Fatalf("the server-side filter controls must use sliding toggles: missing %q", want)
 		}
@@ -118,7 +118,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "下单中") || !strings.Contains(script, "button.textContent = original") || strings.Contains(script, "window.confirm") {
 		t.Fatal("manual order trigger must show in-button progress without a confirmation popup")
 	}
-	if !strings.Contains(script, "api/v1/alerts/order-settings") || !strings.Contains(script, "保存下单信号设置") {
+	if !strings.Contains(script, "api/v1/alerts/order-settings") || !strings.Contains(script, "保存下单信号设置") || !strings.Contains(script, "orderSignalSaveBusy") || !strings.Contains(script, "button.setAttribute('aria-busy', 'true')") || !strings.Contains(script, "button.textContent = '保存中…'") || !strings.Contains(script, "showToast('策略开关已保存并立即生效')") {
 		t.Fatal("the alerts script must expose order signal category settings")
 	}
 	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "api/v1/alerts/backtest") || !strings.Contains(script, "runBacktest") || !strings.Contains(script, "backtestParamsBody") || !strings.Contains(script, "JSON.stringify(backtestParamsBody())") || !strings.Contains(script, "Content-Type': 'application/json'") || !strings.Contains(script, "alerts-backtest-leverage") || !strings.Contains(script, "alerts-backtest-vwap-donchian") || !strings.Contains(script, "alerts-filter').value") || !strings.Contains(script, "filter: $('alerts-filter').value") || !strings.Contains(script, "params.set('replay', '1')") || !strings.Contains(script, "historyReplayed") || !strings.Contains(script, "过去 7 天") || !strings.Contains(script, "signal-recalculate") || !strings.Contains(script, "startSignalProgress") || !strings.Contains(script, "finishSignalProgress") || !strings.Contains(script, "Math.min(99") || !strings.Contains(script, "setSignalProgress(100") {
