@@ -47,7 +47,7 @@ func (s *Server) analysisGateClient(cfg tvbotconfig.Config, creds tvbotgate.Cred
 	}
 }
 
-func (s *Server) fetchGateAnalysisData(ctx context.Context, client tvbotgate.Client, apiID string, pnlMinutes int, now time.Time) ([]analysisTrade, []analysisPositionTrade, error) {
+func (s *Server) fetchGateAnalysisData(ctx context.Context, cfg tvbotconfig.Config, client tvbotgate.Client, apiID string, pnlMinutes int, now time.Time) ([]analysisTrade, []analysisPositionTrade, error) {
 	since := analysisPositionSince(now, pnlMinutes)
 	trades, tradeErr := fetchGateAnalysisTrades(ctx, client, since, now.UTC())
 	positions, positionErr := fetchGateAnalysisPositionCloses(ctx, client, analysisPNLSince(now, pnlMinutes), now.UTC())
@@ -61,7 +61,7 @@ func (s *Server) fetchGateAnalysisData(ctx context.Context, client tvbotgate.Cli
 	}
 	convertedPositions := make([]analysisPositionTrade, 0, len(positions))
 	for _, position := range positions {
-		row, ok := analysisPositionTradeFromGateClose(apiID, position, analysisPNLSince(now, pnlMinutes))
+		row, ok := analysisPositionTradeFromGateClose(cfg, apiID, position, analysisPNLSince(now, pnlMinutes))
 		if ok {
 			convertedPositions = append(convertedPositions, row)
 		}
@@ -200,7 +200,7 @@ func normalizedGateFee(raw string) string {
 	return tvbottrading.NormalizeFloat(value)
 }
 
-func analysisPositionTradeFromGateClose(apiID string, close tvbotgate.PositionClose, since time.Time) (analysisPositionTrade, bool) {
+func analysisPositionTradeFromGateClose(cfg tvbotconfig.Config, apiID string, close tvbotgate.PositionClose, since time.Time) (analysisPositionTrade, bool) {
 	instID := strings.ToUpper(strings.TrimSpace(close.Contract))
 	if instID == "" {
 		return analysisPositionTrade{}, false
@@ -235,23 +235,25 @@ func analysisPositionTradeFromGateClose(apiID string, close tvbotgate.PositionCl
 		entryTS = entryTime.UnixMilli()
 	}
 	return analysisPositionTrade{
-		Exchange:    tvbottrading.ExchangeGate,
-		APIID:       strings.TrimSpace(apiID),
-		InstID:      instID,
-		Side:        side,
-		EntryTime:   entryTime,
-		EntryTS:     entryTS,
-		ExitTime:    exitTime,
-		ExitTS:      exitTime.UnixMilli(),
-		EntryPx:     entryPx,
-		ExitPx:      exitPx,
-		Qty:         qty,
-		RealizedPnL: strings.TrimSpace(close.PnlPnl),
-		Fee:         strings.TrimSpace(close.PnlFee),
-		FeeCcy:      "USDT",
-		NetPnL:      strings.TrimSpace(close.Pnl),
-		Turnover:    turnover,
-		FillCount:   1,
+		Exchange:            tvbottrading.ExchangeGate,
+		APIID:               strings.TrimSpace(apiID),
+		InstID:              instID,
+		Side:                side,
+		EntryTime:           entryTime,
+		EntryTS:             entryTS,
+		ExitTime:            exitTime,
+		ExitTS:              exitTime.UnixMilli(),
+		EntryPx:             entryPx,
+		ExitPx:              exitPx,
+		Qty:                 qty,
+		RealizedPnL:         strings.TrimSpace(close.PnlPnl),
+		Fee:                 strings.TrimSpace(close.PnlFee),
+		FeeCcy:              "USDT",
+		NetPnL:              strings.TrimSpace(close.Pnl),
+		Turnover:            turnover,
+		ExitSource:          "exchange",
+		MinHoldingViolation: analysisMinHoldingViolation(cfg, entryTime, exitTime),
+		FillCount:           1,
 	}, true
 }
 

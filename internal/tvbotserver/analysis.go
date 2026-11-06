@@ -204,31 +204,33 @@ type analysisTrade struct {
 }
 
 type analysisPositionTrade struct {
-	Exchange          string    `json:"exchange"`
-	APIID             string    `json:"api_id,omitempty"`
-	InstID            string    `json:"inst_id"`
-	Side              string    `json:"side"`
-	EntryTime         time.Time `json:"entry_time"`
-	EntryTS           int64     `json:"entry_ts"`
-	ExitTime          time.Time `json:"exit_time"`
-	ExitTS            int64     `json:"exit_ts"`
-	EntryPx           string    `json:"entry_px,omitempty"`
-	ExitPx            string    `json:"exit_px,omitempty"`
-	Qty               string    `json:"qty,omitempty"`
-	Margin            string    `json:"margin,omitempty"`
-	Leverage          int       `json:"leverage,omitempty"`
-	RealizedPnL       string    `json:"realized_pnl,omitempty"`
-	Fee               string    `json:"fee,omitempty"`
-	FeeCcy            string    `json:"fee_ccy,omitempty"`
-	NetPnL            string    `json:"net_pnl,omitempty"`
-	Turnover          string    `json:"turnover,omitempty"`
-	GammaDirection    string    `json:"gamma_direction,omitempty"`
-	Strategy          string    `json:"strategy,omitempty"`
-	EntryOrdID        string    `json:"entry_ord_id,omitempty"`
-	ExitOrdID         string    `json:"exit_ord_id,omitempty"`
-	FillCount         int       `json:"fill_count"`
-	PricePrecision    *int      `json:"price_precision,omitempty"`
-	QuantityPrecision *int      `json:"quantity_precision,omitempty"`
+	Exchange            string    `json:"exchange"`
+	APIID               string    `json:"api_id,omitempty"`
+	InstID              string    `json:"inst_id"`
+	Side                string    `json:"side"`
+	EntryTime           time.Time `json:"entry_time"`
+	EntryTS             int64     `json:"entry_ts"`
+	ExitTime            time.Time `json:"exit_time"`
+	ExitTS              int64     `json:"exit_ts"`
+	EntryPx             string    `json:"entry_px,omitempty"`
+	ExitPx              string    `json:"exit_px,omitempty"`
+	Qty                 string    `json:"qty,omitempty"`
+	Margin              string    `json:"margin,omitempty"`
+	Leverage            int       `json:"leverage,omitempty"`
+	RealizedPnL         string    `json:"realized_pnl,omitempty"`
+	Fee                 string    `json:"fee,omitempty"`
+	FeeCcy              string    `json:"fee_ccy,omitempty"`
+	NetPnL              string    `json:"net_pnl,omitempty"`
+	Turnover            string    `json:"turnover,omitempty"`
+	GammaDirection      string    `json:"gamma_direction,omitempty"`
+	Strategy            string    `json:"strategy,omitempty"`
+	ExitSource          string    `json:"exit_source,omitempty"`
+	MinHoldingViolation bool      `json:"min_holding_violation,omitempty"`
+	EntryOrdID          string    `json:"entry_ord_id,omitempty"`
+	ExitOrdID           string    `json:"exit_ord_id,omitempty"`
+	FillCount           int       `json:"fill_count"`
+	PricePrecision      *int      `json:"price_precision,omitempty"`
+	QuantityPrecision   *int      `json:"quantity_precision,omitempty"`
 }
 
 type analysisGateContractMeta struct {
@@ -655,7 +657,7 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 			}
 		}
 		var gateErr error
-		gateTrades, gatePositions, gateErr = s.fetchGateAnalysisData(ctx, gateClient, gateAPIID, pnlMinutes, now)
+		gateTrades, gatePositions, gateErr = s.fetchGateAnalysisData(ctx, cfg, gateClient, gateAPIID, pnlMinutes, now)
 		gateDataReady = gateErr == nil || len(gateTrades) > 0 || len(gatePositions) > 0
 		source.Gate = "gate"
 		if gateErr != nil {
@@ -2298,6 +2300,7 @@ type analysisPositionTradeAccumulator struct {
 	Side           string
 	GammaDirection string
 	Strategy       string
+	ExitSource     string
 	EntryTime      time.Time
 	EntryTS        int64
 	ExitTime       time.Time
@@ -2597,7 +2600,7 @@ func closeAnalysisOpenLots(cfg config.Config, books map[string][]*analysisOpenLo
 		lot.feeRemaining -= entryFee
 		lot.turnoverRemaining -= entryTurnover
 		remainingCloseQty -= matchedQty
-		finalizeAnalysisPositionAccumulator(pending, lot.entryGroupKey, closeSince, out)
+		finalizeAnalysisPositionAccumulator(cfg, pending, lot.entryGroupKey, closeSince, out)
 		if lot.remaining <= positionEntrySizeEpsilon {
 			lots = lots[1:]
 		}
@@ -2675,6 +2678,7 @@ func applyAnalysisPositionCloseMatch(pending map[string]*analysisPositionTradeAc
 	if acc.Leverage <= 0 && lot.leverage > 0 {
 		acc.Leverage = lot.leverage
 	}
+	mergeAnalysisExitSource(&acc.ExitSource, analysisExitSource(trade))
 	acc.Qty += matchedQty
 	acc.EntryPxQty += lot.entryPx * matchedQty
 	acc.ExitPxQty += exitPx * matchedQty
@@ -2699,7 +2703,7 @@ func applyAnalysisPositionCloseMatch(pending map[string]*analysisPositionTradeAc
 	}
 }
 
-func finalizeAnalysisPositionAccumulator(pending map[string]*analysisPositionTradeAccumulator, entryGroupKey string, closeSince time.Time, out *[]analysisPositionTrade) {
+func finalizeAnalysisPositionAccumulator(cfg config.Config, pending map[string]*analysisPositionTradeAccumulator, entryGroupKey string, closeSince time.Time, out *[]analysisPositionTrade) {
 	if pending == nil || entryGroupKey == "" {
 		return
 	}
@@ -2723,30 +2727,33 @@ func finalizeAnalysisPositionAccumulator(pending map[string]*analysisPositionTra
 	if acc.Margin > 0 {
 		margin = trading.NormalizeFloat(acc.Margin)
 	}
+	minHoldingViolation := analysisMinHoldingViolation(cfg, acc.EntryTime, acc.ExitTime)
 	*out = append(*out, analysisPositionTrade{
-		Exchange:       acc.Exchange,
-		APIID:          acc.APIID,
-		InstID:         acc.InstID,
-		Side:           acc.Side,
-		GammaDirection: acc.GammaDirection,
-		Strategy:       acc.Strategy,
-		EntryTime:      acc.EntryTime,
-		EntryTS:        acc.EntryTS,
-		ExitTime:       acc.ExitTime,
-		ExitTS:         acc.ExitTS,
-		EntryPx:        entryPx,
-		ExitPx:         exitPx,
-		Qty:            trading.NormalizeFloat(acc.Qty),
-		Margin:         margin,
-		Leverage:       acc.Leverage,
-		RealizedPnL:    trading.NormalizeFloat(acc.RealizedPnL),
-		Fee:            trading.NormalizeFloat(acc.Fee),
-		FeeCcy:         "USDT",
-		NetPnL:         trading.NormalizeFloat(acc.NetPnL),
-		Turnover:       trading.NormalizeFloat(acc.Turnover),
-		EntryOrdID:     acc.EntryOrdID,
-		ExitOrdID:      strings.Join(acc.ExitOrdIDs, " / "),
-		FillCount:      maxInt(1, acc.EntryFillCount+acc.CloseFillCount),
+		Exchange:            acc.Exchange,
+		APIID:               acc.APIID,
+		InstID:              acc.InstID,
+		Side:                acc.Side,
+		GammaDirection:      acc.GammaDirection,
+		Strategy:            acc.Strategy,
+		ExitSource:          acc.ExitSource,
+		MinHoldingViolation: minHoldingViolation,
+		EntryTime:           acc.EntryTime,
+		EntryTS:             acc.EntryTS,
+		ExitTime:            acc.ExitTime,
+		ExitTS:              acc.ExitTS,
+		EntryPx:             entryPx,
+		ExitPx:              exitPx,
+		Qty:                 trading.NormalizeFloat(acc.Qty),
+		Margin:              margin,
+		Leverage:            acc.Leverage,
+		RealizedPnL:         trading.NormalizeFloat(acc.RealizedPnL),
+		Fee:                 trading.NormalizeFloat(acc.Fee),
+		FeeCcy:              "USDT",
+		NetPnL:              trading.NormalizeFloat(acc.NetPnL),
+		Turnover:            trading.NormalizeFloat(acc.Turnover),
+		EntryOrdID:          acc.EntryOrdID,
+		ExitOrdID:           strings.Join(acc.ExitOrdIDs, " / "),
+		FillCount:           maxInt(1, acc.EntryFillCount+acc.CloseFillCount),
 	})
 }
 
@@ -2777,6 +2784,44 @@ func analysisPositionCloseFillKey(trade analysisTrade) string {
 		strings.TrimSpace(trade.TradeID),
 		strconv.FormatInt(trade.FillTS, 10),
 	}, "|")
+}
+
+func analysisExitSource(trade analysisTrade) string {
+	source := normalizeAnalysisTradeSource(trade.OperationSource)
+	if source != "" {
+		return source
+	}
+	// A fill without a local order/event record is still a real exchange fill.
+	// Keep it separate from TVBot automatic/manual exits instead of inheriting
+	// the entry strategy and making the analysis row look like a local close.
+	return "exchange"
+}
+
+func analysisMinHoldingViolation(cfg config.Config, entryTime, exitTime time.Time) bool {
+	minimumHoldingMinutes := cfg.Trading.PositionMonitor.MinHoldingMinutes
+	if minimumHoldingMinutes < config.MinimumAutomaticHoldingMinutes {
+		minimumHoldingMinutes = config.MinimumAutomaticHoldingMinutes
+	}
+	return minimumHoldingMinutes > 0 && !entryTime.IsZero() && !exitTime.IsZero() &&
+		exitTime.Sub(entryTime) < time.Duration(minimumHoldingMinutes)*time.Minute
+}
+
+func mergeAnalysisExitSource(dst *string, src string) {
+	if dst == nil {
+		return
+	}
+	src = strings.ToLower(strings.TrimSpace(src))
+	if src == "" {
+		return
+	}
+	current := strings.ToLower(strings.TrimSpace(*dst))
+	if current == "" {
+		*dst = src
+		return
+	}
+	if current != src {
+		*dst = "mixed"
+	}
 }
 
 func analysisAddExitOrdIDs(acc *analysisPositionTradeAccumulator, raw string) {

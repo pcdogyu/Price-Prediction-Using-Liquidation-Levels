@@ -1750,6 +1750,7 @@ const tvbotHTML = `<!doctype html>
     .analysis-trade-table .analysis-side-col { width: 5.4%; }
     .analysis-trade-table .analysis-gamma-col { width: 7.2%; }
     .analysis-trade-table .analysis-strategy-col { width: 9.2%; }
+    .analysis-trade-table .analysis-exit-source-col { width: 10%; }
     .analysis-trade-table .analysis-entry-px-col { width: 7%; }
     .analysis-trade-table .analysis-exit-px-col { width: 7%; }
     .analysis-trade-table .analysis-qty-col { width: 7%; }
@@ -2998,6 +2999,7 @@ const tvbotHTML = `<!doctype html>
       { id: "side", title: "方向", colClass: "analysis-side-col", toneClass: (row) => analysisPositionSideToneClass(row.side), render: (row) => analysisPositionSideText(row.side) },
       { id: "gamma", title: "Gamma", colClass: "analysis-gamma-col", render: (row) => analysisGammaDirectionText(row) },
       { id: "strategy", title: "策略", colClass: "analysis-strategy-col", render: (row) => analysisStrategyText(row) },
+      { id: "exit_source", title: "平仓来源", colClass: "analysis-exit-source-col", render: (row) => analysisExitSourceText(row) },
       { id: "entry_px", title: "开仓价", colClass: "analysis-entry-px-col", render: (row) => analysisPriceText(row, row.entry_px) },
       { id: "exit_px", title: "平仓价", colClass: "analysis-exit-px-col", render: (row) => analysisPriceText(row, row.exit_px) },
       { id: "qty", title: "数量", colClass: "analysis-qty-col", render: (row) => analysisAmountText(row.qty) },
@@ -7047,6 +7049,7 @@ const tvbotHTML = `<!doctype html>
       const side = analysisTradeUniformField(members, "side", (value) => value.toLowerCase());
       const gamma = analysisTradeUniformField(members, "gamma_direction", (value) => value.toLowerCase());
       const strategy = analysisTradeUniformField(members, "strategy", (value) => value.toLowerCase());
+      const exitSource = analysisTradeUniformField(members, "exit_source", (value) => value.toLowerCase());
       const feeCcy = analysisTradeUniformField(members, "fee_ccy", (value) => value.toUpperCase());
       return Object.assign({}, first, {
         aggregate_count: members.length,
@@ -7059,6 +7062,8 @@ const tvbotHTML = `<!doctype html>
         side: side,
         gamma_direction: gamma,
         strategy: strategy,
+        exit_source: exitSource,
+        min_holding_violation: members.some((row) => !!(row && row.min_holding_violation)),
         entry_px: analysisTradeWeightedAverage(members, "entry_px"),
         exit_px: analysisTradeWeightedAverage(members, "exit_px"),
         qty: analysisTradeSum(members, "qty"),
@@ -7133,6 +7138,12 @@ const tvbotHTML = `<!doctype html>
         if (strategyIndex >= 0) next.splice(strategyIndex, 1);
         const gammaIndex = next.indexOf("gamma");
         next.splice(gammaIndex >= 0 ? gammaIndex + 1 : 0, 0, "strategy");
+      }
+      if (!source.some((id) => String(id || "").trim() === "exit_source")) {
+        const exitSourceIndex = next.indexOf("exit_source");
+        if (exitSourceIndex >= 0) next.splice(exitSourceIndex, 1);
+        const strategyIndex = next.indexOf("strategy");
+        next.splice(strategyIndex >= 0 ? strategyIndex + 1 : 0, 0, "exit_source");
       }
       if (!hadEntryTime) {
         const entryIndex = next.indexOf("entry_time");
@@ -7508,6 +7519,17 @@ const tvbotHTML = `<!doctype html>
       if (value === "analysis_manual") return "分析手动策略";
       if (value === "mixed") return "多种";
       return "-";
+    }
+
+    function analysisExitSourceText(row) {
+      const source = String(row && row.exit_source || "").trim().toLowerCase();
+      let label = "未识别";
+      if (source === "auto") label = "TVBot自动";
+      else if (source === "manual") label = "手动";
+      else if (source === "exchange") label = "交易所/外部";
+      else if (source === "mixed") label = "多种";
+      const violation = !!(row && row.min_holding_violation);
+      return violation ? label + " · <15分钟" : label;
     }
 
     function analysisPnLRatioValue(row) {

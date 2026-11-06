@@ -994,6 +994,59 @@ func TestBuildAnalysisPositionTradesCapturesStrategy(t *testing.T) {
 	}
 }
 
+func TestBuildAnalysisPositionTradesSeparatesExternalShortExit(t *testing.T) {
+	base := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	trades := []analysisTrade{
+		{
+			Exchange:       trading.ExchangeBinance,
+			APIID:          "default",
+			InstID:         "TESTUSDT",
+			TradeID:        "external-open",
+			OrdID:          "external-entry",
+			Side:           "sell",
+			PosSide:        trading.PositionSideShort,
+			PositionEffect: trading.PositionEffectOpen,
+			Strategy:       "value_area",
+			FillPx:         "100",
+			FillSz:         "1",
+			FillTime:       base,
+			FillTS:         base.UnixMilli(),
+			FillCount:      1,
+		},
+		{
+			Exchange:       trading.ExchangeBinance,
+			APIID:          "default",
+			InstID:         "TESTUSDT",
+			TradeID:        "external-close",
+			OrdID:          "external-exit",
+			Side:           "buy",
+			PosSide:        trading.PositionSideShort,
+			PositionEffect: trading.PositionEffectClose,
+			FillPx:         "101",
+			FillSz:         "1",
+			FillPnl:        "-1",
+			FillTime:       base.Add(2 * time.Minute),
+			FillTS:         base.Add(2 * time.Minute).UnixMilli(),
+			FillCount:      1,
+		},
+	}
+
+	positions := buildAnalysisPositionTrades(config.Config{}, trades, base.Add(-time.Minute))
+	if len(positions) != 1 {
+		t.Fatalf("positions len=%d positions=%#v", len(positions), positions)
+	}
+	position := positions[0]
+	if position.Strategy != "value_area" {
+		t.Fatalf("entry strategy should remain value_area: %#v", position)
+	}
+	if position.ExitSource != "exchange" {
+		t.Fatalf("unmatched local exit should be marked as exchange: %#v", position)
+	}
+	if !position.MinHoldingViolation {
+		t.Fatalf("two-minute exit should be marked below the minimum holding period: %#v", position)
+	}
+}
+
 func TestBuildAnalysisPositionTradesEmptyIsJSONArray(t *testing.T) {
 	rows := buildAnalysisPositionTrades(config.Config{}, nil, time.Time{})
 	if rows == nil {
