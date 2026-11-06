@@ -454,10 +454,13 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte(`title: "杠杆"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`title: "开仓价"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`title: "平仓价"`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`title: "盈亏"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`title: "盈亏比"`)) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte(`title: "手续费"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`title: "成交额"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`title: "净盈亏"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("analysisAmountText")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("analysisFixed2Text")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte(`ccy.toUpperCase() !== "USDT"`)) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("analysisInstIDText")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("analysisPnLRatioText")) ||
@@ -467,6 +470,9 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("loadPositionExchange(activeExchange()")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("loadPendingOrdersExchange(activeExchange()")) {
 		t.Fatalf("tvbot ui should include exchange balance analysis")
+	}
+	if bytes.Contains(ui.Body.Bytes(), []byte(`title: "成交笔数"`)) || bytes.Contains(ui.Body.Bytes(), []byte("analysis-fill-count-col")) {
+		t.Fatalf("tvbot analysis trade table should not include fill count")
 	}
 	for _, removed := range [][]byte{
 		[]byte("analysis-avail-eq"),

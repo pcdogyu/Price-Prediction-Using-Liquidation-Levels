@@ -1761,7 +1761,6 @@ const tvbotHTML = `<!doctype html>
     .analysis-trade-table .analysis-fee-col { width: 8.2%; }
     .analysis-trade-table .analysis-net-pnl-col { width: 7.6%; }
     .analysis-trade-table .analysis-turnover-col { width: 8.6%; }
-    .analysis-trade-table .analysis-fill-count-col { width: 6%; }
     .analysis-symbol-link {
       appearance: none;
       border: 0;
@@ -3003,14 +3002,13 @@ const tvbotHTML = `<!doctype html>
       { id: "entry_px", title: "开仓价", colClass: "analysis-entry-px-col", render: (row) => analysisPriceText(row, row.entry_px) },
       { id: "exit_px", title: "平仓价", colClass: "analysis-exit-px-col", render: (row) => analysisPriceText(row, row.exit_px) },
       { id: "qty", title: "数量", colClass: "analysis-qty-col", render: (row) => analysisAmountText(row.qty) },
-      { id: "margin", title: "保证金", colClass: "analysis-margin-col", render: (row) => analysisAmountText(row.margin) },
+      { id: "margin", title: "保证金", colClass: "analysis-margin-col", render: (row) => analysisFixed2Text(row.margin) },
       { id: "leverage", title: "杠杆", colClass: "analysis-leverage-col", render: (row) => analysisTradeLeverageText(row) },
-      { id: "realized_pnl", title: "盈亏", colClass: "analysis-realized-pnl-col", signedField: "realized_pnl", render: (row) => analysisAmountText(row.realized_pnl) },
+      { id: "realized_pnl", title: "盈亏", colClass: "analysis-realized-pnl-col", signedField: "realized_pnl", render: (row) => analysisFixed2Text(row.realized_pnl) },
       { id: "pnl_ratio", title: "盈亏比", colClass: "analysis-pnl-ratio-col", toneClass: (row) => signedToneClass(analysisPnLRatioValue(row)), render: (row) => analysisPnLRatioText(row) },
       { id: "fee", title: "手续费", colClass: "analysis-fee-col", render: (row) => tradeFeeText(row) },
-      { id: "net_pnl", title: "净盈亏", colClass: "analysis-net-pnl-col", signedField: "net_pnl", render: (row) => analysisAmountText(row.net_pnl) },
-      { id: "turnover", title: "成交额", colClass: "analysis-turnover-col", render: (row) => analysisAmountText(row.turnover) },
-      { id: "fill_count", title: "成交笔数", colClass: "analysis-fill-count-col", render: (row) => asText(row.fill_count || 1) }
+      { id: "net_pnl", title: "净盈亏", colClass: "analysis-net-pnl-col", signedField: "net_pnl", render: (row) => analysisFixed2Text(row.net_pnl) },
+      { id: "turnover", title: "成交额", colClass: "analysis-turnover-col", render: (row) => analysisFixed2Text(row.turnover) }
     ];
     const balanceWindowOptions = [
       { minutes: 0, label: "当前" },
@@ -7197,6 +7195,13 @@ const tvbotHTML = `<!doctype html>
       return formatted;
     }
 
+    function analysisFixed2Text(value) {
+      if (value === null || value === undefined || String(value).trim() === "") return "-";
+      const formatted = formatFixed2(value);
+      if (formatted === "-") return asText(value);
+      return formatted;
+    }
+
     function analysisPriceText(row, value) {
       if (value === null || value === undefined || String(value).trim() === "") return "-";
       return formatFixedPrecision(value, row && row.price_precision, formatNumber);
@@ -7237,7 +7242,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function tradeFeeText(row) {
-      const fee = analysisAmountText(row && row.fee);
+      const fee = analysisFixed2Text(row && row.fee);
       const ccy = row && row.fee_ccy ? String(row.fee_ccy).trim() : "";
       if (fee === "-") return "-";
       return ccy && ccy.toUpperCase() !== "USDT" ? fee + " " + ccy : fee;

@@ -126,10 +126,13 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`title: "杠杆"`,
 		`title: "开仓价"`,
 		`title: "平仓价"`,
+		`title: "盈亏"`,
 		`title: "盈亏比"`,
+		`title: "手续费"`,
 		`title: "成交额"`,
 		`title: "净盈亏"`,
 		`function analysisAmountText(value)`,
+		`function analysisFixed2Text(value)`,
 		`function analysisPriceText(row, value)`,
 		`render: (row) => analysisPriceText(row, row.entry_px)`,
 		`render: (row) => analysisPriceText(row, row.exit_px)`,
@@ -152,6 +155,9 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		if !strings.Contains(tvbotHTML, marker) {
 			t.Fatalf("tvbot ui missing %s", marker)
 		}
+	}
+	if strings.Contains(tvbotHTML, `title: "成交笔数"`) || strings.Contains(tvbotHTML, `analysis-fill-count-col`) {
+		t.Fatal("analysis trade table should not include fill count")
 	}
 	for _, old := range []string{
 		`analysisCooldownCellHTML`,
