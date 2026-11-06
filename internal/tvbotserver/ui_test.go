@@ -434,6 +434,7 @@ func TestRenderTVBotAnalysisAddsTradeTimeColumns(t *testing.T) {
 		`if (value === "trend") return "趋势策略"`,
 		`if (value === "value_area") return "价值区策略"`,
 		`function analysisExitSourceText(row)`,
+		`else if (source === "monitor") label = "成交监听"`,
 		`if (source === "exchange") label = "交易所/外部"`,
 		`return violation ? label + " · <15分钟" : label`,
 		`sideIndex >= 0 ? sideIndex + 1 : 0`,

@@ -90,7 +90,7 @@ func TestAnalysisTradeOperationMetadataClassifiesOrderAndMonitorActions(t *testi
 		RawJSON:   string(raw),
 	}}
 	meta, ok = analysisTradeMonitorEventIndex(events)[analysisOrderKey(trading.ExchangeBinance, "binance-main", "ETHUSDT", "exit-1")]
-	if !ok || meta.Operation != "take_profit" || meta.OperationSource != "auto" {
+	if !ok || meta.Operation != "take_profit" || meta.OperationSource != "monitor" {
 		t.Fatalf("unexpected monitor metadata: %#v found=%v", meta, ok)
 	}
 }

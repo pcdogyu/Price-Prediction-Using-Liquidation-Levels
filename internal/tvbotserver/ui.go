@@ -7526,6 +7526,7 @@ const tvbotHTML = `<!doctype html>
       let label = "未识别";
       if (source === "auto") label = "TVBot自动";
       else if (source === "manual") label = "手动";
+      else if (source === "monitor") label = "成交监听";
       else if (source === "exchange") label = "交易所/外部";
       else if (source === "mixed") label = "多种";
       const violation = !!(row && row.min_holding_violation);

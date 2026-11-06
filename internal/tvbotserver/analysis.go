@@ -1730,10 +1730,10 @@ func enrichAnalysisTradesWithEvents(cfg config.Config, trades []analysisTrade, r
 			}
 		}
 		if meta, ok := eventIndex[analysisOrderKey(trade.Exchange, trade.APIID, trade.InstID, trade.OrdID)]; ok {
-			if meta.Operation != "" {
+			if trade.Operation == "" && meta.Operation != "" {
 				trade.Operation = meta.Operation
 			}
-			if meta.OperationSource != "" {
+			if trade.OperationSource == "" && meta.OperationSource != "" {
 				trade.OperationSource = meta.OperationSource
 			}
 		}
@@ -1910,6 +1910,8 @@ func normalizeAnalysisTradeSource(raw string) string {
 	switch {
 	case strings.Contains(text, "manual"), strings.Contains(text, "手动"), strings.Contains(text, "手動"):
 		return "manual"
+	case strings.Contains(text, "trade_monitor"), strings.Contains(text, "lifecycle"), strings.Contains(text, "成交监听"):
+		return "monitor"
 	case strings.Contains(text, "auto"), strings.Contains(text, "automated"), strings.Contains(text, "自动"), strings.Contains(text, "自動"), strings.Contains(text, "tradingview"), strings.Contains(text, "liquidation_alert"), strings.Contains(text, "position_monitor"), strings.Contains(text, "reentry"):
 		return "auto"
 	case text != "":
@@ -1949,7 +1951,7 @@ func analysisTradeMonitorEventIndex(events []storage.TradeMonitorEvent) map[stri
 		if _, exists := out[key]; exists {
 			continue
 		}
-		out[key] = analysisOrderMeta{Operation: operation, OperationSource: "auto"}
+		out[key] = analysisOrderMeta{Operation: operation, OperationSource: "monitor"}
 	}
 	return out
 }
