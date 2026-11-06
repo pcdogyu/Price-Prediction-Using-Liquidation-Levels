@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	tvbotbinance "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
@@ -20,6 +21,13 @@ import (
 )
 
 const valueAreaOrderTimezone = "Asia/Shanghai"
+
+// A local accepted/submitted record protects the short interval in which an
+// exchange order may not be visible yet. Once that interval has elapsed, the
+// exchange-side position and open-order state is authoritative; otherwise a
+// historical record could permanently prevent a new value-area entry after
+// the position was closed or the order was cancelled.
+const valueAreaLocalConflictFreshness = 15 * time.Minute
 
 var valueAreaOrderLocks = newKeyedMutexRegistry()
 
@@ -98,25 +106,11 @@ func (s *Server) defaultValueAreaOpenConflict(ctx context.Context, signal tvbott
 	if s.Orders == nil {
 		return false, errors.New("order store is not configured")
 	}
-	symbols := valueAreaSymbolVariants(signal.Coinpair, signal.Ticker)
-	records, err := s.Orders.ListActiveOpeningOrders(tvbotstorage.ActiveOpeningOrderFilter{
-		TargetExchange: signal.TargetExchange,
-		TradeEnv:       signal.TradeEnv,
-		APIIDs:         []string{signal.APIID},
-		Symbols:        symbols,
-	})
-	if err != nil {
-		return false, err
-	}
-	for _, record := range records {
-		if orderRecordSignalKind(record) != "value_area" {
-			return true, nil
-		}
-	}
 
 	var (
 		apiID string
 		state valueAreaExchangeState
+		err   error
 	)
 	switch tvbottrading.NormalizeExchange(signal.TargetExchange) {
 	case tvbottrading.ExchangeOKX:
@@ -147,11 +141,12 @@ func (s *Server) defaultValueAreaOpenConflict(ctx context.Context, signal tvbott
 		return false, err
 	}
 
+	symbols := valueAreaSymbolVariants(signal.Coinpair, signal.Ticker)
 	apiIDs := []string{signal.APIID}
 	if apiID != "" {
 		apiIDs = append(apiIDs, apiID)
 	}
-	records, err = s.Orders.ListActiveOpeningOrders(tvbotstorage.ActiveOpeningOrderFilter{
+	records, err := s.Orders.ListActiveOpeningOrders(tvbotstorage.ActiveOpeningOrderFilter{
 		TargetExchange: signal.TargetExchange,
 		TradeEnv:       signal.TradeEnv,
 		APIIDs:         apiIDs,
@@ -160,20 +155,38 @@ func (s *Server) defaultValueAreaOpenConflict(ctx context.Context, signal tvbott
 	if err != nil {
 		return false, err
 	}
+	return valueAreaLocalOpeningConflict(records, state, s.now()), nil
+}
+
+func valueAreaLocalOpeningConflict(records []tvbotstorage.OrderRecord, state valueAreaExchangeState, now time.Time) bool {
+	freshRecord := false
 	for _, record := range records {
+		if !valueAreaLocalOpeningRecordFresh(record, now) {
+			continue
+		}
+		freshRecord = true
 		if orderRecordSignalKind(record) != "value_area" {
-			return true, nil
+			return true
 		}
 	}
 
-	// A live position or exchange-side entry order without a matching local
-	// value-area record is intentionally treated as unknown ownership. This is
-	// safer than allowing a new order to collide with a manually placed or
-	// externally created position.
-	if (state.OpenPosition || state.OpenEntryOrder) && len(records) == 0 {
-		return true, nil
+	// A live position or exchange-side entry order without a recent local
+	// value-area record is intentionally treated as unknown ownership. A stale
+	// local record is not proof that the live position belongs to value-area.
+	return (state.OpenPosition || state.OpenEntryOrder) && !freshRecord
+}
+
+func valueAreaLocalOpeningRecordFresh(record tvbotstorage.OrderRecord, now time.Time) bool {
+	updatedAt := record.UpdatedAt
+	if updatedAt.IsZero() || (!record.AcceptedAt.IsZero() && record.AcceptedAt.After(updatedAt)) {
+		updatedAt = record.AcceptedAt
 	}
-	return false, nil
+	if updatedAt.IsZero() {
+		// Legacy records without timestamps are unknown, so keep the guard
+		// fail-closed instead of silently allowing a duplicate entry.
+		return true
+	}
+	return !updatedAt.Before(now.Add(-valueAreaLocalConflictFreshness))
 }
 
 type valueAreaExchangeState struct {

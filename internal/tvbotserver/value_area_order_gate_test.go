@@ -274,6 +274,44 @@ func TestTVOrderValueAreaGateSerializesConflictCheckAndAcceptance(t *testing.T) 
 	}
 }
 
+func TestValueAreaLocalOpeningConflictUsesLiveStateAndFreshness(t *testing.T) {
+	now := time.Date(2026, time.November, 6, 1, 30, 0, 0, time.UTC)
+	other := func(updatedAt time.Time) tvbotstorage.OrderRecord {
+		return tvbotstorage.OrderRecord{
+			AcceptedAt: updatedAt,
+			UpdatedAt:  updatedAt,
+			RawJSON:    `{"condition":"aggressive_liquidation_signal","source":"liquidation_alert"}`,
+		}
+	}
+	valueArea := func(updatedAt time.Time) tvbotstorage.OrderRecord {
+		return tvbotstorage.OrderRecord{
+			AcceptedAt: updatedAt,
+			UpdatedAt:  updatedAt,
+			RawJSON:    `{"condition":"value_area_signal","source":"value_area_signal"}`,
+		}
+	}
+	cases := []struct {
+		name    string
+		records []tvbotstorage.OrderRecord
+		state   valueAreaExchangeState
+		want    bool
+	}{
+		{name: "stale other strategy with empty exchange", records: []tvbotstorage.OrderRecord{other(now.Add(-16 * time.Minute))}},
+		{name: "fresh other strategy with empty exchange", records: []tvbotstorage.OrderRecord{other(now.Add(-5 * time.Minute))}, want: true},
+		{name: "stale local record with live exchange state", records: []tvbotstorage.OrderRecord{other(now.Add(-16 * time.Minute))}, state: valueAreaExchangeState{OpenPosition: true}, want: true},
+		{name: "fresh value area record owns live state", records: []tvbotstorage.OrderRecord{valueArea(now.Add(-5 * time.Minute))}, state: valueAreaExchangeState{OpenEntryOrder: true}},
+		{name: "live exchange state with no local record", state: valueAreaExchangeState{OpenPosition: true}, want: true},
+		{name: "stale value area record with empty exchange", records: []tvbotstorage.OrderRecord{valueArea(now.Add(-16 * time.Minute))}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := valueAreaLocalOpeningConflict(tc.records, tc.state, now); got != tc.want {
+				t.Fatalf("conflict=%v want=%v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestValueAreaOrderRecordSourceClassification(t *testing.T) {
 	cases := []struct {
 		name string
