@@ -67,7 +67,8 @@
           : (row.trade_id || row.exit_trade_id);
         const orderID = String(rawOrderID || '').trim();
         const tradeID = String(rawTradeID || '').trim();
-        const rowOperation = String(row.operation || '').trim().toLowerCase();
+        const rowOperation = String((isEntry ? row.entry_operation : row.exit_operation) || row.operation || '').trim().toLowerCase();
+        const rowSource = String((isEntry ? row.entry_operation_source : row.exit_operation_source) || row.operation_source || '').trim().toLowerCase();
         const operation = isEntry ? 'open' : (rowOperation || 'close');
         markers.push({
           id: rowKey + ':' + phase,
@@ -78,7 +79,8 @@
           phase,
           action,
           operation,
-          operation_source: String(row.operation_source || '').trim().toLowerCase(),
+          operation_source: rowSource,
+          open_position: isEntry && row.open_position === true,
           time,
           time_iso: new Date(time).toISOString(),
           price,
@@ -125,10 +127,21 @@
       }
       existing.collapsed_count += 1;
       existing.selected = existing.selected || marker.selected === true;
-      if (existing.operation_source !== marker.operation_source) existing.operation_source = '';
-      if (existing.phase === 'exit' && existing.operation !== marker.operation) existing.operation = 'close';
+      if (existing.operation_source !== marker.operation_source) existing.operation_source = 'mixed';
+      if (existing.phase === 'exit' && existing.operation !== marker.operation) existing.operation = 'mixed';
+      if (existing.phase === 'entry' && existing.open_position !== marker.open_position) existing.open_position = false;
     }
     return result.sort((a, b) => a.time - b.time || String(a.id || '').localeCompare(String(b.id || '')));
+  }
+
+  function tradeMarkerLabel(marker) {
+    const side = marker && marker.side === 'short' ? '空' : '多';
+    if (!marker || marker.phase !== 'exit') return '开' + side;
+    switch (String(marker.operation || 'close').toLowerCase()) {
+      case 'take_profit': return '止盈' + side;
+      case 'stop_loss': return '止损' + side;
+      default: return '平' + side;
+    }
   }
 
   function tradeMarkerPlacements(markers, range, scale, y, bounds) {
@@ -145,12 +158,8 @@
       const priceY = clamp(y(marker.price), bounds.top + 9, bounds.bottom - 9);
       const long = marker.side === 'long';
       const closing = marker.phase === 'exit';
-      // Opening markers use the compact trading-chart convention requested by
-      // the position view: B for long below the candle, S for short above it.
-      // Closing markers use the compact direction labels requested by the
-      // position view; detailed operation/source data remains in the tooltip.
-      const collapsedLabel = closing && marker.collapsed_count > 1 ? '×' + marker.collapsed_count : '';
-      const labelText = closing ? (long ? '平多' : '平空') + collapsedLabel : (long ? 'B' : 'S');
+      const collapsedLabel = marker.collapsed_count > 1 ? '×' + marker.collapsed_count : '';
+      const labelText = tradeMarkerLabel(marker) + collapsedLabel;
       const labelWidth = labelText.length * 11 + 12;
       const labelBelow = closing ? !long : long;
       const direction = labelBelow ? 1 : -1;
@@ -362,7 +371,7 @@
     }
   }
 
-  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, collapseTradeMarkers, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
+  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, collapseTradeMarkers, tradeMarkerLabel, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.BubbleChart = exported;
 })(typeof window === 'object' ? window : globalThis);

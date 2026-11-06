@@ -74,9 +74,12 @@ with sync_playwright() as playwright:
     history_base = context.request.get(base + "/api/v1/liquidations?symbol=ETHUSDT&limit=1").json()
     state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "market_fail_once": set(), "market_history_fail_once": set(), "history_active": 0, "history_max_active": 0, "market_active": 0, "market_max_active": 0, "history_delay_once": True, "backfill_delay_once": True, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
     history_rows = [
-        {"row_key": "history-eth-long", "exchange": "binance", "inst_id": "ETHUSDT", "side": "long", "entry_time": iso(state["anchor"] - 20 * intervals["1m"]), "entry_px": "2490", "exit_time": iso(state["anchor"] - 10 * intervals["1m"]), "exit_px": "2498", "entry_ord_id": "binance-open-1", "exit_ord_id": "binance-close-1"},
-        {"row_key": "history-eth-short", "exchange": "gate", "inst_id": "ETH_USDT", "side": "short", "entry_time": iso(state["anchor"] - 18 * intervals["1m"]), "entry_px": "2498", "exit_time": iso(state["anchor"] - 8 * intervals["1m"]), "exit_px": "2492", "entry_ord_id": "gate-open-1", "exit_ord_id": "gate-close-1"},
+        {"row_key": "history-eth-long", "exchange": "binance", "inst_id": "ETHUSDT", "side": "long", "entry_time": iso(state["anchor"] - 20 * intervals["1m"]), "entry_px": "2490", "exit_time": iso(state["anchor"] - 10 * intervals["1m"]), "exit_px": "2498", "entry_operation": "open", "entry_operation_source": "auto", "exit_operation": "take_profit", "exit_operation_source": "monitor", "entry_ord_id": "binance-open-1", "exit_ord_id": "binance-close-1"},
+        {"row_key": "history-eth-short", "exchange": "gate", "inst_id": "ETH_USDT", "side": "short", "entry_time": iso(state["anchor"] - 18 * intervals["1m"]), "entry_px": "2498", "exit_time": iso(state["anchor"] - 8 * intervals["1m"]), "exit_px": "2492", "entry_operation": "open", "entry_operation_source": "manual", "exit_operation": "stop_loss", "exit_operation_source": "exchange", "entry_ord_id": "gate-open-1", "exit_ord_id": "gate-close-1"},
         {"row_key": "history-btc-long", "exchange": "okx", "inst_id": "BTC-USDT-SWAP", "side": "long", "entry_time": iso(state["anchor"] - 60 * intervals["1m"]), "entry_px": "2490", "exit_time": iso(state["anchor"] - 50 * intervals["1m"]), "exit_px": "2498", "entry_ord_id": "okx-open-1", "exit_ord_id": "okx-close-1"},
+    ]
+    open_history_rows = [
+        {"row_key": "open-eth-long", "exchange": "binance", "inst_id": "ETHUSDT", "side": "long", "entry_time": iso(state["anchor"] - 5 * intervals["1m"]), "entry_px": "2494", "entry_operation": "open", "entry_operation_source": "exchange", "entry_ord_id": "binance-open-live"},
     ]
 
     def dataset(symbol, interval, before=None):
@@ -182,7 +185,7 @@ with sync_playwright() as playwright:
             if state["history_fail"]:
                 route.fulfill(status=503, json={"detail": "fixture TVBot history unavailable"})
             else:
-                route.fulfill(json={"ok": True, "pnl_days": 30, "position_trades": copy.deepcopy(history_rows)})
+                route.fulfill(json={"ok": True, "pnl_days": 30, "position_trades": copy.deepcopy(history_rows), "open_position_trades": copy.deepcopy(open_history_rows)})
         else:
             route.continue_()
 
@@ -306,7 +309,7 @@ with sync_playwright() as playwright:
       legendHidden: document.getElementById('trade-marker-legend').classList.contains('hidden'),
       error: document.getElementById('api-errors').textContent
     })""")
-    assert set(trade_view_status["labels"]).issubset({"B", "S", "平多", "平空"}), trade_view_status
+    assert set(trade_view_status["labels"]).issubset({"开多", "开空", "平多", "平空", "止盈多", "止盈空", "止损多", "止损空"}), trade_view_status
     assert "历史开平点" in trade_view_status["context"] or "历史交易点" in trade_view_status["error"], trade_view_status
     if trade_view_status["count"]:
         assert not trade_view_status["legendHidden"], trade_view_status
@@ -318,9 +321,11 @@ with sync_playwright() as playwright:
           tips: Array.from(document.querySelectorAll('[data-trade-marker]'), e => e.dataset.tip),
           legendHidden: document.getElementById('trade-marker-legend').classList.contains('hidden')
         })""")
-        assert default_trade_view["count"] == 4 and "历史开平点" in default_trade_view["context"], default_trade_view
-        assert set(default_trade_view["labels"]) == {"B", "S", "平多", "平空"}, default_trade_view
+        assert default_trade_view["count"] == 5 and "历史开平点" in default_trade_view["context"], default_trade_view
+        assert set(default_trade_view["labels"]) == {"开多", "开空", "止盈多", "止损空"}, default_trade_view
         assert any("Binance 下单信息" in tip for tip in default_trade_view["tips"]) and any("Gate 下单信息" in tip for tip in default_trade_view["tips"]), default_trade_view
+        assert any("状态 持仓中" in tip for tip in default_trade_view["tips"]), default_trade_view
+        assert any("成交监听" in tip for tip in default_trade_view["tips"]), default_trade_view
         assert not default_trade_view["legendHidden"], default_trade_view
         assert len(initial["ids"]) == 6002 and "窗口已加载 6003笔" in initial["context"] and "价格视野外 1笔" in initial["context"], initial["context"]
         all_rows = dataset("ETHUSDT", "1m")[1]

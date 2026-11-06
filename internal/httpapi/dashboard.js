@@ -79,6 +79,7 @@ const tradeView = {
   markers: [],
   referenceMarkers: [],
   historyRows: [],
+  openHistoryCount: 0,
   historyLoaded: false,
   historyLoading: false,
   historyError: '',
@@ -212,7 +213,13 @@ function mergeTradeMarkers(...groups) {
       merged.set(key, marker);
       return;
     }
-    merged.set(key, Object.assign({}, previous, marker, { selected: previous.selected || marker.selected === true }));
+    const combined = Object.assign({}, previous, marker, { selected: previous.selected || marker.selected === true });
+    if (previous.actual_order === true && marker.actual_order !== true) {
+      combined.operation = previous.operation;
+      combined.operation_source = previous.operation_source;
+    }
+    combined.open_position = previous.open_position === true || marker.open_position === true;
+    merged.set(key, combined);
   });
   return Array.from(merged.values()).sort((a, b) => a.time - b.time || String(a.id || '').localeCompare(String(b.id || '')));
 }
@@ -297,7 +304,18 @@ async function loadHistoricalTradeView() {
     // An account with no closed trades is valid: older TVBot responses and
     // cached payloads may encode the empty list as null. Treat both forms as
     // an empty history so the bubble chart remains usable.
-    tradeView.historyRows = Array.isArray(packet?.position_trades) ? packet.position_trades : [];
+    const closedRows = Array.isArray(packet?.position_trades) ? packet.position_trades : [];
+    const openRows = Array.isArray(packet?.open_position_trades) ? packet.open_position_trades : [];
+    const exchangeMatches = row => !tradeView.exchange || normalizeTradeExchange(row?.exchange) === tradeView.exchange;
+    const withMarkerKey = (row, kind, index) => Object.assign({}, row, {
+      row_key: String(row?.row_key || row?.key || kind + ':' + index),
+      open_position: kind === 'open'
+    });
+    tradeView.historyRows = [
+      ...closedRows.map((row, index) => withMarkerKey(row, 'closed', index)),
+      ...openRows.map((row, index) => withMarkerKey(row, 'open', index))
+    ].filter(exchangeMatches);
+    tradeView.openHistoryCount = openRows.filter(exchangeMatches).length;
     tradeView.historyLoaded = true;
     refreshTradeMarkers();
   } catch (error) {
@@ -1063,9 +1081,11 @@ function drawLiquidationBubbles(plot, events, range, scale, y, left, candleRight
 
 function tradeMarkerTip(marker) {
   const operation = String(marker.operation || (marker.phase === 'entry' ? 'open' : 'close')).toLowerCase();
-  const operationLabel = operation === 'take_profit' ? '止盈' : operation === 'stop_loss' ? '止损' : operation === 'close' ? '平仓' : '开仓';
+  const markerLabel = typeof window.BubbleChart.tradeMarkerLabel === 'function'
+    ? window.BubbleChart.tradeMarkerLabel(marker)
+    : (marker.phase === 'entry' ? '开' : operation === 'take_profit' ? '止盈' : operation === 'stop_loss' ? '止损' : '平') + (marker.side === 'short' ? '空' : '多');
   const source = String(marker.operation_source || '').toLowerCase();
-  const sourceLabel = source === 'manual' ? '手动' : source === 'auto' ? '自动' : source === 'exchange' ? '成交' : '';
+  const sourceLabel = source === 'manual' ? '手动' : source === 'auto' ? '自动' : source === 'monitor' ? '成交监听' : source === 'exchange' ? '成交' : source === 'mixed' ? '多种' : '';
   const action = marker.action === 'buy' ? '买入' : '卖出';
   const side = marker.side === 'long' ? '多单' : '空单';
   const details = [];
@@ -1078,7 +1098,8 @@ function tradeMarkerTip(marker) {
   if (marker.fill_pnl) details.push('成交盈亏 ' + marker.fill_pnl);
   if (marker.net_pnl) details.push('净盈亏 ' + marker.net_pnl);
   if (marker.fee) details.push('手续费 ' + marker.fee + (marker.fee_ccy ? ' ' + marker.fee_ccy : ''));
-  return tradeExchangeLabel(marker.exchange || tradeView.exchange) + ' 下单信息 · ' + (sourceLabel ? sourceLabel + ' ' : '') + operationLabel + ' ' + action + '\n时间 ' + when(marker.time_iso) + '\n价格 ' + money(marker.price) + '\n方向 ' + side + (details.length ? '\n' + details.join('\n') : '') + (marker.selected ? '\n当前点击记录' : '');
+  if (marker.open_position && marker.phase === 'entry') details.push('状态 持仓中');
+  return tradeExchangeLabel(marker.exchange || tradeView.exchange) + ' 下单信息 · ' + (sourceLabel ? sourceLabel + ' ' : '') + markerLabel + ' ' + action + '\n时间 ' + when(marker.time_iso) + '\n价格 ' + money(marker.price) + '\n方向 ' + side + (details.length ? '\n' + details.join('\n') : '') + (marker.selected ? '\n当前点击记录' : '');
 }
 
 function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top, plotBottom) {

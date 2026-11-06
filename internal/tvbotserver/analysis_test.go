@@ -898,6 +898,90 @@ func TestBuildAnalysisPositionTradesCountsClosedPositionsOnly(t *testing.T) {
 	}
 }
 
+func TestBuildAnalysisPositionTradesPropagatesOperationMetadata(t *testing.T) {
+	base := time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)
+	trade := func(id, ordID, side, positionSide, effect, operation, source string, at time.Time) analysisTrade {
+		return analysisTrade{
+			Exchange:        trading.ExchangeBinance,
+			APIID:           "default",
+			InstID:          "TESTUSDT",
+			TradeID:         id,
+			OrdID:           ordID,
+			Side:            side,
+			PosSide:         positionSide,
+			PositionEffect:  effect,
+			Operation:       operation,
+			OperationSource: source,
+			FillPx:          "100",
+			FillSz:          "1",
+			FillTime:        at,
+			FillTS:          at.UnixMilli(),
+			FillCount:       1,
+		}
+	}
+	trades := []analysisTrade{
+		trade("long-open", "long-entry", "buy", trading.PositionSideLong, trading.PositionEffectOpen, "open", "auto", base),
+		trade("long-close", "long-exit", "sell", trading.PositionSideLong, trading.PositionEffectClose, "take_profit", "monitor", base.Add(time.Hour)),
+		trade("short-open", "short-entry", "sell", trading.PositionSideShort, trading.PositionEffectOpen, "open", "manual", base.Add(2*time.Hour)),
+		trade("short-close", "short-exit", "buy", trading.PositionSideShort, trading.PositionEffectClose, "stop_loss", "exchange", base.Add(3*time.Hour)),
+	}
+
+	positions := buildAnalysisPositionTrades(config.Config{}, trades, base.Add(-time.Minute))
+	if len(positions) != 2 {
+		t.Fatalf("positions len=%d positions=%#v", len(positions), positions)
+	}
+	bySide := map[string]analysisPositionTrade{}
+	for _, position := range positions {
+		bySide[position.Side] = position
+	}
+	long := bySide[trading.PositionSideLong]
+	if long.EntryOperation != "open" || long.EntryOperationSource != "auto" || long.ExitOperation != "take_profit" || long.ExitOperationSource != "monitor" {
+		t.Fatalf("long operation metadata=%#v", long)
+	}
+	short := bySide[trading.PositionSideShort]
+	if short.EntryOperation != "open" || short.EntryOperationSource != "manual" || short.ExitOperation != "stop_loss" || short.ExitOperationSource != "exchange" {
+		t.Fatalf("short operation metadata=%#v", short)
+	}
+}
+
+func TestBuildAnalysisPositionTradesMergesMixedOperationMetadata(t *testing.T) {
+	base := time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)
+	fill := func(id, ordID, side, effect, operation, source string, at time.Time) analysisTrade {
+		return analysisTrade{
+			Exchange:        trading.ExchangeOKX,
+			APIID:           "default",
+			InstID:          "TEST-USDT-SWAP",
+			TradeID:         id,
+			OrdID:           ordID,
+			Side:            side,
+			PosSide:         trading.PositionSideLong,
+			PositionEffect:  effect,
+			Operation:       operation,
+			OperationSource: source,
+			FillPx:          "100",
+			FillSz:          "1",
+			FillTime:        at,
+			FillTS:          at.UnixMilli(),
+			FillCount:       1,
+		}
+	}
+	trades := []analysisTrade{
+		fill("open-a", "entry", "buy", trading.PositionEffectOpen, "open", "auto", base),
+		fill("open-b", "entry", "buy", trading.PositionEffectOpen, "open", "auto", base.Add(time.Minute)),
+		fill("close-a", "exit-a", "sell", trading.PositionEffectClose, "take_profit", "monitor", base.Add(time.Hour)),
+		fill("close-b", "exit-b", "sell", trading.PositionEffectClose, "close", "exchange", base.Add(2*time.Hour)),
+	}
+
+	positions := buildAnalysisPositionTrades(config.Config{}, trades, base.Add(-time.Minute))
+	if len(positions) != 1 {
+		t.Fatalf("positions len=%d positions=%#v", len(positions), positions)
+	}
+	position := positions[0]
+	if position.EntryOperation != "open" || position.EntryOperationSource != "auto" || position.ExitOperation != "mixed" || position.ExitOperationSource != "mixed" {
+		t.Fatalf("mixed operation metadata=%#v", position)
+	}
+}
+
 func TestBuildAnalysisPositionTradesCapturesGammaDirection(t *testing.T) {
 	cfg := config.Config{Symbols: map[string]config.SymbolConfig{
 		"TEST": {InstID: "TEST-USDT-SWAP", CtVal: 1},

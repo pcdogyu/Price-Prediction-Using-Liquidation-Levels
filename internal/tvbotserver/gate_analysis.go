@@ -76,7 +76,7 @@ func (s *Server) fetchGateAnalysisData(ctx context.Context, cfg tvbotconfig.Conf
 func applyGatePositionStrategies(positions []analysisPositionTrade, trades []analysisTrade) {
 	for i := range positions {
 		position := &positions[i]
-		if strings.TrimSpace(position.Strategy) != "" || position.EntryTime.IsZero() {
+		if position.EntryTime.IsZero() {
 			continue
 		}
 		for _, trade := range trades {
@@ -92,6 +92,12 @@ func applyGatePositionStrategies(positions []analysisPositionTrade, trades []ana
 				continue
 			}
 			mergeAnalysisStrategy(&position.Strategy, trade.Strategy)
+			if position.EntryOperation == "" {
+				position.EntryOperation = analysisPositionOperation(trade, tvbottrading.PositionEffectOpen)
+			}
+			if position.EntryOperationSource == "" {
+				position.EntryOperationSource = analysisPositionOperationSource(trade)
+			}
 		}
 	}
 }
@@ -235,25 +241,29 @@ func analysisPositionTradeFromGateClose(cfg tvbotconfig.Config, apiID string, cl
 		entryTS = entryTime.UnixMilli()
 	}
 	return analysisPositionTrade{
-		Exchange:            tvbottrading.ExchangeGate,
-		APIID:               strings.TrimSpace(apiID),
-		InstID:              instID,
-		Side:                side,
-		EntryTime:           entryTime,
-		EntryTS:             entryTS,
-		ExitTime:            exitTime,
-		ExitTS:              exitTime.UnixMilli(),
-		EntryPx:             entryPx,
-		ExitPx:              exitPx,
-		Qty:                 qty,
-		RealizedPnL:         strings.TrimSpace(close.PnlPnl),
-		Fee:                 strings.TrimSpace(close.PnlFee),
-		FeeCcy:              "USDT",
-		NetPnL:              strings.TrimSpace(close.Pnl),
-		Turnover:            turnover,
-		ExitSource:          "exchange",
-		MinHoldingViolation: analysisMinHoldingViolation(cfg, entryTime, exitTime),
-		FillCount:           1,
+		Exchange:             tvbottrading.ExchangeGate,
+		APIID:                strings.TrimSpace(apiID),
+		InstID:               instID,
+		Side:                 side,
+		EntryTime:            entryTime,
+		EntryTS:              entryTS,
+		ExitTime:             exitTime,
+		ExitTS:               exitTime.UnixMilli(),
+		EntryPx:              entryPx,
+		ExitPx:               exitPx,
+		Qty:                  qty,
+		RealizedPnL:          strings.TrimSpace(close.PnlPnl),
+		Fee:                  strings.TrimSpace(close.PnlFee),
+		FeeCcy:               "USDT",
+		NetPnL:               strings.TrimSpace(close.Pnl),
+		Turnover:             turnover,
+		EntryOperation:       "open",
+		EntryOperationSource: "exchange",
+		ExitOperation:        "close",
+		ExitOperationSource:  "exchange",
+		ExitSource:           "exchange",
+		MinHoldingViolation:  analysisMinHoldingViolation(cfg, entryTime, exitTime),
+		FillCount:            1,
 	}, true
 }
 
