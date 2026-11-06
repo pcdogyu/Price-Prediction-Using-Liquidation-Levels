@@ -854,11 +854,15 @@ func TestRenderTVBotSharesLivePositionSnapshotAcrossTabs(t *testing.T) {
 		`function positionSnapshot(results)`,
 		`const snapshot = positionSnapshot(results);`,
 		`const positionSnapshotStorageKey = "tvbot.positionSnapshot.v1";`,
+		`const positionSnapshotMaxAgeMs = positionSyncStaleAfterMs;`,
 		`function readLocalPositionSnapshot(exchange)`,
 		`function saveLocalPositionSnapshot(result)`,
-		`if (!state.positions) loadLocalPositionSnapshot();`,
+		`if (!forceRefresh && loadLocalPositionSnapshot()) return;`,
+		`window.localStorage.removeItem(storageKey);`,
 		`local_snapshot: true`,
-		`持仓本地快照，等待远端同步`,
+		`持仓本地快照（未满1分钟）`,
+		`持仓信息超过1分钟，正在重新同步`,
+		`持仓远端同步失败，显示已过期数据`,
 		`syncActivePositionSnapshot(snapshot);`,
 		`syncAnalysisPositionSnapshot(snapshot);`,
 		`state.positions = positionSnapshot([result]);`,
@@ -867,6 +871,31 @@ func TestRenderTVBotSharesLivePositionSnapshotAcrossTabs(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Fatalf("positions and order analysis should share one live snapshot, missing %q", want)
 		}
+	}
+}
+
+func TestRenderTVBotUsesSnapshotForManualRefreshAndRemoteRefreshAfterTrades(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=positions", nil))
+	refreshStart := strings.Index(page, "async function refreshPositionView()")
+	if refreshStart < 0 {
+		t.Fatal("manual position refresh function is missing")
+	}
+	refreshEnd := strings.Index(page[refreshStart:], "\n    async function ")
+	if refreshEnd < 0 {
+		t.Fatal("manual position refresh function boundary is missing")
+	}
+	refreshFunction := page[refreshStart : refreshStart+refreshEnd]
+	if !strings.Contains(refreshFunction, "await loadPositionView(false);") {
+		t.Fatal("manual refresh should use the one-minute snapshot")
+	}
+	if strings.Contains(refreshFunction, "await loadPositionView(true);") {
+		t.Fatal("manual refresh should not force a remote position read")
+	}
+	if !strings.Contains(page, "await Promise.all([loadPositionView(true), loadOrders()]);") {
+		t.Fatal("opening a position should force a remote position refresh")
+	}
+	if !strings.Contains(page, "await loadPositionView(true);\n        window.setTimeout(() => loadPositionView(true)") {
+		t.Fatal("closing a position should force remote position refreshes")
 	}
 }
 

@@ -1136,6 +1136,11 @@ const tvbotHTML = `<!doctype html>
       background: var(--green);
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 14%, transparent);
     }
+    .position-sync-indicator[data-status="cached"] {
+      border-color: var(--blue);
+      background: var(--blue);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 14%, transparent);
+    }
     .position-sync-indicator[data-status="syncing"] {
       border-color: var(--blue);
       background: var(--blue);
@@ -2947,6 +2952,7 @@ const tvbotHTML = `<!doctype html>
       positionSync: { status: "syncing", message: "持仓同步中" },
       positionSyncFailureCount: 0,
       positionSyncStableStatus: "syncing",
+      positionSnapshotExpired: false,
       pendingOrders: null,
       pendingOrderGroup: "normal",
       localPendingLimitCloses: [],
@@ -2978,6 +2984,7 @@ const tvbotHTML = `<!doctype html>
     let templateTitleGeneratedAt = new Date();
     const positionViewPollIntervalMs = 15 * 1000;
     const positionSyncStaleAfterMs = 60 * 1000;
+    const positionSnapshotMaxAgeMs = positionSyncStaleAfterMs;
     const positionSyncFailureThreshold = 3;
     const pendingLimitCloseOrderCacheMs = 90000;
     const missingPositionEntrySyncIntervalMs = 180000;
@@ -3595,7 +3602,7 @@ const tvbotHTML = `<!doctype html>
         loadAnalysis(false).catch((err) => toast(err.message));
       }
       if (sectionActive("positions")) {
-        loadPositionView(true).catch((err) => toast(err.message));
+        loadPositionView(false).catch((err) => toast(err.message));
       } else {
         renderPositions();
         renderPendingOrders();
@@ -4885,15 +4892,35 @@ const tvbotHTML = `<!doctype html>
 
     async function loadAnalysisPositions(forceRefresh) {
       const exchanges = configuredExchangesForCurrentEnvironment();
+      if (!forceRefresh && exchanges.length === 1) {
+        const cached = readLocalPositionSnapshot(exchanges[0]);
+        if (cached) {
+          const snapshot = positionSnapshot([cached]);
+          state.analysisPositions = snapshot;
+          state.analysisPositionsError = "";
+          syncActivePositionSnapshot(snapshot);
+          return;
+        }
+      }
       const results = await Promise.all(exchanges.map((exchange) => loadPositionExchange(exchange, !!forceRefresh)));
+      results.forEach((result) => {
+        if (result && result.ok) saveLocalPositionSnapshot(result);
+      });
       const snapshot = positionSnapshot(results);
-      state.analysisPositions = snapshot;
-      syncActivePositionSnapshot(snapshot);
+      if (results.some((result) => result && result.ok) || !state.analysisPositions) {
+        state.analysisPositions = snapshot;
+        syncActivePositionSnapshot(snapshot);
+      }
       state.analysisPositionsError = combinedErrors(results);
     }
 
     async function loadPositions(forceRefresh) {
-      setPositionSyncStatus("syncing");
+      if (!forceRefresh && loadLocalPositionSnapshot()) return;
+      const syncMessage = !forceRefresh && state.positionSnapshotExpired
+        ? "持仓信息超过1分钟，正在重新同步"
+        : "持仓同步中";
+      state.positionSnapshotExpired = false;
+      setPositionSyncStatus("syncing", syncMessage);
       try {
         const results = await Promise.all([loadPositionExchange(activeExchange(), !!forceRefresh)]);
         const status = positionSyncStatusForResult(results[0]);
@@ -4928,19 +4955,31 @@ const tvbotHTML = `<!doctype html>
     }
 
     function readLocalPositionSnapshot(exchange) {
+      const storageKey = positionSnapshotStorageKey + ":" + positionSnapshotStorageID(exchange);
+      state.positionSnapshotExpired = false;
       try {
-        const raw = window.localStorage.getItem(positionSnapshotStorageKey + ":" + positionSnapshotStorageID(exchange));
+        const raw = window.localStorage.getItem(storageKey);
         if (!raw) return null;
         const payload = JSON.parse(raw);
         const cachedAt = new Date(payload && payload.cached_at ? payload.cached_at : "").getTime();
         const result = payload && payload.result;
-        if (!result || !Array.isArray(result.positions) || !Number.isFinite(cachedAt) || Date.now() - cachedAt > 24 * 60 * 60 * 1000) return null;
+        const age = Date.now() - cachedAt;
+        if (!result || !Array.isArray(result.positions) || !Number.isFinite(cachedAt) || age < 0 || age > positionSnapshotMaxAgeMs) {
+          window.localStorage.removeItem(storageKey);
+          state.positionSnapshotExpired = !!raw;
+          return null;
+        }
         return Object.assign({}, result, {
           exchange: normalizeExchange(result.exchange || exchange),
           local_snapshot: true,
-          stale: true
+          local_snapshot_at: new Date(cachedAt).toISOString(),
+          stale: false
         });
       } catch (_) {
+        try {
+          window.localStorage.removeItem(storageKey);
+          state.positionSnapshotExpired = true;
+        } catch (_) {}
         return null;
       }
     }
@@ -4952,6 +4991,7 @@ const tvbotHTML = `<!doctype html>
           positionSnapshotStorageKey + ":" + positionSnapshotStorageID(result.exchange || activeExchange()),
           JSON.stringify({ version: 1, cached_at: new Date().toISOString(), result: result })
         );
+        state.positionSnapshotExpired = false;
       } catch (_) {}
     }
 
@@ -4961,7 +5001,9 @@ const tvbotHTML = `<!doctype html>
       const snapshot = positionSnapshot([result]);
       state.positions = snapshot;
       state.positionsError = "";
-      setPositionSyncStatus("stale", "持仓本地快照，等待远端同步");
+      state.positionSyncFailureCount = 0;
+      state.positionSyncStableStatus = "cached";
+      setPositionSyncStatus("cached", "持仓本地快照（未满1分钟）");
       syncAnalysisPositionSnapshot(snapshot);
       renderPositions();
       return true;
@@ -5186,7 +5228,6 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadPositionView(forceRefresh) {
-      if (!state.positions) loadLocalPositionSnapshot();
       const tasks = [loadPositions(!!forceRefresh), loadPendingOrders(!!forceRefresh)];
       if (forceRefresh || !state.balanceOverview) tasks.push(loadBalanceOverview(!!forceRefresh, 0));
       await Promise.all(tasks);
@@ -5200,7 +5241,7 @@ const tvbotHTML = `<!doctype html>
         button.disabled = true;
       }
       try {
-        await loadPositionView(true);
+        await loadPositionView(false);
         toast("持仓、余额和挂单已刷新");
       } finally {
         if (button) {
@@ -6272,12 +6313,13 @@ const tvbotHTML = `<!doctype html>
     }
 
     function setPositionSyncStatus(status, message) {
-      const allowed = ["synced", "syncing", "stale", "failed"];
+      const allowed = ["synced", "cached", "syncing", "stale", "failed"];
       const normalized = allowed.includes(status) ? status : "failed";
       const messages = {
         synced: "持仓已同步",
+        cached: "持仓本地快照（未满1分钟）",
         syncing: "持仓同步中",
-        stale: "持仓信息超过 1 分钟",
+        stale: "持仓信息超过1分钟，正在重新同步",
         failed: "持仓同步失败"
       };
       state.positionSync = { status: normalized, message: message || messages[normalized] };
@@ -6300,12 +6342,13 @@ const tvbotHTML = `<!doctype html>
         if (failureCount > positionSyncFailureThreshold) {
           return { status: "failed", message: "持仓同步失败（连续" + failureCount + "次）" };
         }
-        const stableStatus = ["synced", "stale", "syncing"].includes(state.positionSyncStableStatus)
+        const stableStatus = ["synced", "cached", "stale", "syncing"].includes(state.positionSyncStableStatus)
           ? state.positionSyncStableStatus
           : "syncing";
+        const displayStatus = ["synced", "cached"].includes(stableStatus) ? "stale" : stableStatus;
         return {
-          status: stableStatus,
-          message: "持仓同步失败（连续" + failureCount + "次，超过" + positionSyncFailureThreshold + "次后标红）"
+          status: displayStatus,
+          message: "持仓远端同步失败，显示已过期数据（连续" + failureCount + "次，超过" + positionSyncFailureThreshold + "次后标红）"
         };
       }
       const refreshedAt = new Date(result.refreshed_at || "").getTime();
