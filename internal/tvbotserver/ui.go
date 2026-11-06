@@ -4902,7 +4902,9 @@ const tvbotHTML = `<!doctype html>
           return;
         }
       }
-      const results = await Promise.all(exchanges.map((exchange) => loadPositionExchange(exchange, !!forceRefresh)));
+      const refreshRemote = !!forceRefresh || state.positionSnapshotExpired;
+      state.positionSnapshotExpired = false;
+      const results = await Promise.all(exchanges.map((exchange) => loadPositionExchange(exchange, refreshRemote)));
       results.forEach((result) => {
         if (result && result.ok) saveLocalPositionSnapshot(result);
       });
@@ -4916,13 +4918,14 @@ const tvbotHTML = `<!doctype html>
 
     async function loadPositions(forceRefresh) {
       if (!forceRefresh && loadLocalPositionSnapshot()) return;
+      const refreshRemote = !!forceRefresh || state.positionSnapshotExpired;
       const syncMessage = !forceRefresh && state.positionSnapshotExpired
         ? "持仓信息超过1分钟，正在重新同步"
         : "持仓同步中";
       state.positionSnapshotExpired = false;
       setPositionSyncStatus("syncing", syncMessage);
       try {
-        const results = await Promise.all([loadPositionExchange(activeExchange(), !!forceRefresh)]);
+        const results = await Promise.all([loadPositionExchange(activeExchange(), refreshRemote)]);
         const status = positionSyncStatusForResult(results[0]);
         setPositionSyncStatus(status.status, status.message);
         const remoteResult = results[0];

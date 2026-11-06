@@ -858,6 +858,8 @@ func TestRenderTVBotSharesLivePositionSnapshotAcrossTabs(t *testing.T) {
 		`function readLocalPositionSnapshot(exchange)`,
 		`function saveLocalPositionSnapshot(result)`,
 		`if (!forceRefresh && loadLocalPositionSnapshot()) return;`,
+		`const refreshRemote = !!forceRefresh || state.positionSnapshotExpired;`,
+		`loadPositionExchange(activeExchange(), refreshRemote)`,
 		`window.localStorage.removeItem(storageKey);`,
 		`local_snapshot: true`,
 		`持仓本地快照（未满1分钟）`,
