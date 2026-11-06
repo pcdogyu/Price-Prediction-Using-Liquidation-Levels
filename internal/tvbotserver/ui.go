@@ -1069,6 +1069,18 @@ const tvbotHTML = `<!doctype html>
       flex-wrap: wrap;
     }
     .analysis-controls label { min-width: 260px; }
+    .analysis-controls .position-environment-control {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .position-environment-control select {
+      width: auto;
+      min-width: 92px;
+    }
     .analysis-period-row {
       display: flex;
       align-items: stretch;
@@ -1450,7 +1462,7 @@ const tvbotHTML = `<!doctype html>
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
     .position-metrics {
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(7, minmax(0, 1fr));
     }
     .analysis-card {
       border: 1px solid var(--line);
@@ -2228,6 +2240,10 @@ const tvbotHTML = `<!doctype html>
       <div class="section-head">
         <h2>当前持仓</h2>
         <div class="analysis-controls">
+          <label class="position-environment-control">交易环境<select id="position-environment" aria-label="持仓交易环境">
+            <option value="demo">模拟盘</option>
+            <option value="live">实盘</option>
+          </select></label>
           <span class="exchange-summary" id="position-exchange-summary">OKX / Binance USDⓈ-M</span>
           <span class="position-sync-indicator" id="position-sync-indicator" data-status="syncing" role="status" aria-label="持仓同步中" title="持仓同步中"></span>
           <button class="btn danger" type="button" id="close-all-positions" disabled>一键平仓</button>
@@ -2239,6 +2255,8 @@ const tvbotHTML = `<!doctype html>
         <div class="analysis-card"><div class="label">名义价值</div><div class="value" id="positions-notional">-</div></div>
         <div class="analysis-card"><div class="label">未实现盈亏</div><div class="value" id="positions-upl">-</div></div>
         <div class="analysis-card"><div class="label">收益率</div><div class="value" id="positions-return">-</div></div>
+        <div class="analysis-card"><div class="label">USDT权益</div><div class="value" id="positions-balance">-</div></div>
+        <div class="analysis-card"><div class="label">可用USDT</div><div class="value" id="positions-available">-</div></div>
         <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="positions-updated">-</div></div>
       </div>
       <div class="symbol-table-wrap">
@@ -3544,6 +3562,20 @@ const tvbotHTML = `<!doctype html>
       }
     }
 
+    async function setPositionEnvironment(value) {
+      const env = normalizeTradeEnvironment(value);
+      const current = positionEnvironment();
+      if (env === current && state.apiKeyEnv === env) {
+        renderPositionAPIs();
+        return;
+      }
+      const url = new URL(window.location.href);
+      if (env === "demo") url.searchParams.delete("env");
+      else url.searchParams.set("env", env);
+      url.search = url.searchParams.toString();
+      window.location.href = url.toString();
+    }
+
     function formatNumber(v) {
       const n = Number(v);
       if (!Number.isFinite(n)) return "-";
@@ -3824,6 +3856,7 @@ const tvbotHTML = `<!doctype html>
     function balanceOverviewPath(forceRefresh, minutes) {
       const selectedMinutes = minutes === undefined ? state.dashboardBalanceWindowMinutes : minutes;
       const qs = new URLSearchParams({ minutes: String(Math.max(0, Number(selectedMinutes || 0))) });
+      qs.set("env", positionEnvironment());
       if (forceRefresh) qs.set("refresh", "true");
       return "/tvbot/balances/overview?" + qs.toString();
     }
@@ -4475,10 +4508,15 @@ const tvbotHTML = `<!doctype html>
 
     async function loadInitialAPIKeys() {
       const target = configuredAPIKeyTarget();
+      const env = requestedPositionEnvironment() || target.env;
       state.apiKeyExchange = target.exchange;
-      state.apiKeyEnv = target.env;
-      await Promise.all(positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, target.env)));
-      return loadAPIKeys(target.exchange, target.env);
+      state.apiKeyEnv = env;
+      if (env === target.env) {
+        await Promise.all(positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, target.env)));
+      } else {
+        await Promise.all(positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, env)));
+      }
+      return loadAPIKeys(target.exchange, env);
     }
 
     async function loadBalanceOverview(forceRefresh, minutes) {
@@ -5111,7 +5149,27 @@ const tvbotHTML = `<!doctype html>
 
     async function loadPositionView(forceRefresh) {
       if (!state.positions) loadLocalPositionSnapshot();
-      await Promise.all([loadPositions(!!forceRefresh), loadPendingOrders(!!forceRefresh)]);
+      const tasks = [loadPositions(!!forceRefresh), loadPendingOrders(!!forceRefresh)];
+      if (forceRefresh || !state.balanceOverview) tasks.push(loadBalanceOverview(!!forceRefresh, 0));
+      await Promise.all(tasks);
+      renderPositions();
+    }
+
+    async function refreshPositionView() {
+      const button = $("refresh-positions");
+      if (button) {
+        button.setAttribute("aria-busy", "true");
+        button.disabled = true;
+      }
+      try {
+        await loadPositionView(true);
+        toast("持仓、余额和挂单已刷新");
+      } finally {
+        if (button) {
+          button.removeAttribute("aria-busy");
+          button.disabled = false;
+        }
+      }
     }
 
     async function loadSymbols(showLoading) {
@@ -5329,6 +5387,7 @@ const tvbotHTML = `<!doctype html>
         const points = usdtBalancePoints(item.balance_points || [], balance);
         drawUSDTChart(points, prefix + "-usdt-chart", configured ? "暂无 " + label + " USDT 估值数据" : label + " 未配置", exchange === "binance" ? "#138a55" : (exchange === "gate" ? "#1a9b8a" : "#1f6feb"));
       });
+      renderPositionBalance();
       renderAnalysisExchangeBalances();
     }
 
@@ -6125,13 +6184,34 @@ const tvbotHTML = `<!doctype html>
       const summary = $("position-exchange-summary");
       if (!summary) return;
       const exchange = activeExchange();
-      const status = apiKeyStatus(exchange);
+      const env = positionEnvironment();
+      const environmentSelect = $("position-environment");
+      if (environmentSelect) environmentSelect.value = env;
+      const status = apiKeyStatusForEnv(exchange, env);
+      const envLabel = env === "live" ? "实盘" : "模拟盘";
       if (!status || !status.configured) {
-        summary.textContent = exchangeLabel(exchange) + " 未配置";
+        summary.textContent = exchangeLabel(exchange) + " 未配置" + envLabel + " API";
         return;
       }
       const apiID = status && status.active_id ? status.active_id : "default";
-      summary.textContent = exchangeLabel(exchange) + " " + apiDisplayName(apiID, exchange);
+      summary.textContent = exchangeLabel(exchange) + " " + apiDisplayName(apiID, exchange, env) + " · " + envLabel;
+    }
+
+    function renderPositionBalance() {
+      const exchange = activeExchange();
+      const item = balanceOverviewExchange(exchange);
+      const balance = item && item.balance ? item.balance : null;
+      const usdt = usdtBalanceDetail(balance);
+      const configured = !!(item && item.configured);
+      $("positions-balance").textContent = usdt ? balanceAmount(usdt.eq_usd || usdt.eq) : "-";
+      $("positions-available").textContent = usdt ? balanceAmount(usdt.avail_bal || usdt.avail_eq) : "-";
+      if (item && !configured && !usdt) {
+        $("positions-balance").title = exchangeLabel(exchange) + " 当前环境未配置 API";
+        $("positions-available").title = $("positions-balance").title;
+      } else {
+        $("positions-balance").removeAttribute("title");
+        $("positions-available").removeAttribute("title");
+      }
     }
 
     function setPositionSyncStatus(status, message) {
@@ -9626,7 +9706,13 @@ const tvbotHTML = `<!doctype html>
       state.exchangeOrderSearch = $("exchange-order-search").value.trim();
       loadExchangeOrders(true).catch((err) => { state.exchangeOrdersError = err.message; renderExchangeOrders(); });
     });
-    $("refresh-positions").addEventListener("click", () => loadPositionView(true).then(() => toast("持仓和挂单已刷新")).catch((err) => toast(err.message)));
+    const positionEnvironmentSelect = $("position-environment");
+    if (positionEnvironmentSelect) {
+      positionEnvironmentSelect.addEventListener("change", (event) => {
+        setPositionEnvironment(event.target.value).catch((err) => toast(err.message));
+      });
+    }
+    $("refresh-positions").addEventListener("click", () => refreshPositionView().catch((err) => toast(err.message)));
     document.querySelectorAll("[data-pending-order-group]").forEach((button) => {
       button.addEventListener("click", () => {
         state.pendingOrderGroup = button.dataset.pendingOrderGroup === "algo" ? "algo" : "normal";

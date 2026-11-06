@@ -4094,6 +4094,34 @@ func TestTVBotBinancePositionsPendingOrdersAndBalanceOverview(t *testing.T) {
 	}
 }
 
+func TestTVBotBalanceOverviewUsesRequestedEnvironment(t *testing.T) {
+	srv := newTestServer(t)
+	request := func(target string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.SetBasicAuth("admin", "Admin123")
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+
+	live := request("/tvbot/balances/overview?env=live&minutes=0")
+	if live.Code != http.StatusOK {
+		t.Fatalf("live balance overview status=%d body=%s", live.Code, live.Body.String())
+	}
+	var overview balanceOverviewResponse
+	if err := json.Unmarshal(live.Body.Bytes(), &overview); err != nil {
+		t.Fatal(err)
+	}
+	if overview.Env != "live" {
+		t.Fatalf("balance overview should use requested live environment: %#v", overview)
+	}
+
+	invalid := request("/tvbot/balances/overview?env=sandbox")
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid balance overview environment status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
 func TestTVBotBinancePositionsServesLastSnapshotWhenRESTTimesOut(t *testing.T) {
 	srv := newTestServer(t)
 	servePositions := true

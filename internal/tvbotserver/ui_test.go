@@ -45,7 +45,14 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`method="post" action="/liquidation/auth/logout"><button type="submit">退出</button></form>`,
 		`data-global-exchange="okx" aria-selected="true"`,
 		`data-global-exchange="binance"`,
+		`id="position-environment" aria-label="持仓交易环境"`,
+		`<option value="demo">模拟盘</option>`,
+		`<option value="live">实盘</option>`,
+		`id="positions-balance"`,
+		`id="positions-available"`,
 		`id="close-all-positions"`,
+		`button.setAttribute("aria-busy", "true")`,
+		`button.removeAttribute("aria-busy")`,
 		`async function closeAllPositions()`,
 		`await submitPositionClose(body);`,
 		`throw new Error(localizeErrorMessage(msg));`,
@@ -632,7 +639,7 @@ func TestRenderTVBotPositionsShowsOverallReturn(t *testing.T) {
 		t.Fatalf("position summary metrics are missing: start=%d end=%d", metricsStart, metricsEnd)
 	}
 	metrics := page[metricsStart : metricsStart+metricsEnd]
-	labels := []string{"持仓数", "名义价值", "未实现盈亏", "收益率", "更新时间"}
+	labels := []string{"持仓数", "名义价值", "未实现盈亏", "收益率", "USDT权益", "可用USDT", "更新时间"}
 	previous := -1
 	for _, label := range labels {
 		index := strings.Index(metrics, `<div class="label">`+label+`</div>`)
@@ -643,8 +650,10 @@ func TestRenderTVBotPositionsShowsOverallReturn(t *testing.T) {
 	}
 	for _, want := range []string{
 		".position-metrics {",
-		"grid-template-columns: repeat(5, minmax(0, 1fr));",
+		"grid-template-columns: repeat(7, minmax(0, 1fr));",
 		`id="positions-return"`,
+		`id="positions-balance"`,
+		`id="positions-available"`,
 		`function positionOverallReturnRatio(rows)`,
 		`return totalUpl / totalNotional;`,
 		`$("positions-return").className = ["value", signedToneClass(overallReturn)]`,
@@ -810,6 +819,9 @@ func TestRenderTVBotDashboardUsesFundingPeriods(t *testing.T) {
 		`function startDashboardBalanceAutoRefresh()`,
 		`function refreshDashboardBalanceOverviewAuto()`,
 		`function setDashboardBalanceWindow(minutes)`,
+		`qs.set("env", positionEnvironment());`,
+		`function setPositionEnvironment(value)`,
+		`await loadPositionView(true);`,
 		`loadBalanceOverview(false, parsed)`,
 		`loadDashboardOrderAnalysis(false)`,
 		`.dashboard-balance-grid .mini-usdt-chart`,

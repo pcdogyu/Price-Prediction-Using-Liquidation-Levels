@@ -424,7 +424,11 @@ func (s *Server) handleBalanceOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "order database is not configured")
 		return
 	}
-	cfg := s.ConfigStore.Get()
+	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), r.URL.Query().Get("env"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
+		return
+	}
 	minutes, days := balanceWindowQuery(r)
 	now := s.now()
 	envName := analysisEnvName(cfg)
