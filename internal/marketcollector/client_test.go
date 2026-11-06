@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -29,6 +30,9 @@ func TestSubscriptionNormalizesAndDeduplicatesSymbols(t *testing.T) {
 }
 
 func TestClientReceivesEventsFromCollectorSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-domain socket integration test requires Linux socket path semantics")
+	}
 	socket := filepath.Join(os.TempDir(), "mc-test-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {

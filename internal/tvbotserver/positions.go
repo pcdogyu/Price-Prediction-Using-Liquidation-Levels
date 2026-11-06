@@ -38,6 +38,7 @@ var (
 	binanceReduceOnlyRetryDelay       = 250 * time.Millisecond
 	binanceOrderCleanupAttempts       = 4
 	binanceOrderCleanupRetryDelay     = 250 * time.Millisecond
+	positionClosePriceRetryDelay      = 15 * time.Second
 	lowMarginPositionChaseInterval    = 30 * time.Second
 	autoProfitPositionCheckInterval   = 5 * time.Minute
 	autoProfitPositionReturnThreshold = 0.05
@@ -74,6 +75,7 @@ const (
 	positionProtectionTP        = "tp"
 	positionProtectionSL        = "sl"
 	positionProtectionTrailing  = "trailing"
+	positionClosePriceDeviation = 0.5
 )
 
 type positionsResponse struct {
@@ -248,6 +250,14 @@ type positionCloseOrder struct {
 	MarketFallback        bool
 	NonReduceOnlyFallback bool
 }
+
+type positionClosePriceQuote struct {
+	Price string
+	Value float64
+}
+
+type positionClosePriceSampler func(context.Context, okx.Position) (positionClosePriceQuote, error)
+type positionClosePositionRefresher func(context.Context, okx.Position) (okx.Position, error)
 
 type gatePositionCloseOrder struct {
 	Position       okx.Position
@@ -2617,10 +2627,11 @@ func gateMarketableClosePrice(ctx context.Context, client gate.Client, position 
 }
 
 func placeGateLimitPositionClose(ctx context.Context, cfg config.Config, client gate.Client, position okx.Position, closeSz string) (gatePositionCloseOrder, error) {
-	px, err := gateLimitClosePrice(ctx, client, position)
+	position, quote, err := waitForGatePositionClosePrice(ctx, client, position, "limit")
 	if err != nil {
 		return gatePositionCloseOrder{}, err
 	}
+	px := quote.Price
 	marginMode := strings.ToLower(strings.TrimSpace(position.MgnMode))
 	if marginMode != "cross" && marginMode != "isolated" {
 		marginMode = cfg.MarginMode()
@@ -2850,10 +2861,11 @@ func refreshGateLimitPositionClose(cfg config.Config, client gate.Client, active
 			return active, true, nil
 		}
 	}
-	nextPx, err := gateLimitClosePrice(ctx, client, position)
+	position, quote, err := waitForGatePositionClosePrice(ctx, client, position, "limit")
 	if err != nil {
 		return active, false, err
 	}
+	nextPx := quote.Price
 	if found && nextPx == active.Px {
 		active.Position = position
 		active.CloseSz = remaining
@@ -2929,6 +2941,13 @@ func placeGatePositionClose(ctx context.Context, cfg config.Config, client gate.
 }
 
 func placeGatePositionCloseAtPrice(ctx context.Context, cfg config.Config, client gate.Client, position okx.Position, price, closeSz string) (gate.Order, error) {
+	position, quote, err := waitForGatePositionClosePrice(ctx, client, position, "market")
+	if err != nil {
+		return gate.Order{}, err
+	}
+	if strings.TrimSpace(price) != "" && strings.TrimSpace(price) != "0" {
+		price = quote.Price
+	}
 	marginMode := strings.ToLower(strings.TrimSpace(position.MgnMode))
 	if marginMode != "cross" && marginMode != "isolated" {
 		marginMode = cfg.MarginMode()
@@ -6638,6 +6657,11 @@ func currentOpenPosition(ctx context.Context, client okx.Client, instID, posSide
 }
 
 func placeMarketPositionClose(ctx context.Context, cfg config.Config, client okx.Client, position okx.Position, closeSz string) (positionCloseOrder, error) {
+	var err error
+	position, _, err = waitForOKXPositionClosePrice(ctx, client, position, "market")
+	if err != nil {
+		return positionCloseOrder{}, err
+	}
 	if strings.TrimSpace(closeSz) == "" {
 		return closeEntireOKXPosition(ctx, cfg, client, position)
 	}
@@ -6652,6 +6676,20 @@ func placeMarketPositionClose(ctx context.Context, cfg config.Config, client okx
 	fallbackReq, ok := protectedPositionCloseRetryRequest(ctx, client, position, req, err)
 	if !ok {
 		return positionCloseOrder{}, err
+	}
+	fallbackQuote, quoteErr := positionClosePriceQuoteFromRaw(fallbackReq.Px)
+	if quoteErr != nil {
+		return positionCloseOrder{}, fmt.Errorf("OKX market close fallback price validation failed: %w", quoteErr)
+	}
+	if guardErr := validatePositionClosePrice(position, fallbackQuote); guardErr != nil {
+		if waitErr := waitPositionClosePriceRetry(ctx); waitErr != nil {
+			return positionCloseOrder{}, fmt.Errorf("OKX market close fallback price remained abnormal: %w (last check: %v)", waitErr, guardErr)
+		}
+		refreshed, refreshErr := currentOpenPosition(ctx, client, position.InstID, position.PosSide)
+		if refreshErr != nil {
+			return positionCloseOrder{}, fmt.Errorf("refresh OKX position after abnormal market fallback price failed: %w", refreshErr)
+		}
+		return placeLimitPositionClose(ctx, cfg, client, refreshed, closeSz)
 	}
 	fallbackAck, _, fallbackErr := client.PlaceOrder(ctx, fallbackReq)
 	if fallbackErr != nil {
@@ -6755,10 +6793,11 @@ func waitForUnfilledMarketPositionClose(ctx context.Context, client okx.Client, 
 }
 
 func placeLimitPositionClose(ctx context.Context, cfg config.Config, client okx.Client, position okx.Position, closeSz string) (positionCloseOrder, error) {
-	px, err := limitClosePrice(ctx, client, position)
+	position, quote, err := waitForOKXPositionClosePrice(ctx, client, position, "limit")
 	if err != nil {
 		return positionCloseOrder{}, err
 	}
+	px := quote.Price
 	req, partial, err := positionCloseOrderRequest(cfg, position, "limit", px, closeSz)
 	if err != nil {
 		return positionCloseOrder{}, err
@@ -6770,6 +6809,20 @@ func placeLimitPositionClose(ctx context.Context, cfg config.Config, client okx.
 	fallbackReq, ok := protectedPositionCloseRetryRequest(ctx, client, position, req, err)
 	if !ok {
 		return positionCloseOrder{}, err
+	}
+	fallbackQuote, quoteErr := positionClosePriceQuoteFromRaw(fallbackReq.Px)
+	if quoteErr != nil {
+		return positionCloseOrder{}, fmt.Errorf("OKX limit close fallback price validation failed: %w", quoteErr)
+	}
+	if guardErr := validatePositionClosePrice(position, fallbackQuote); guardErr != nil {
+		if waitErr := waitPositionClosePriceRetry(ctx); waitErr != nil {
+			return positionCloseOrder{}, fmt.Errorf("OKX limit close fallback price remained abnormal: %w (last check: %v)", waitErr, guardErr)
+		}
+		refreshed, refreshErr := currentOpenPosition(ctx, client, position.InstID, position.PosSide)
+		if refreshErr != nil {
+			return positionCloseOrder{}, fmt.Errorf("refresh OKX position after abnormal limit fallback price failed: %w", refreshErr)
+		}
+		return placeLimitPositionClose(ctx, cfg, client, refreshed, closeSz)
 	}
 	fallbackAck, _, fallbackErr := client.PlaceOrder(ctx, fallbackReq)
 	if fallbackErr != nil {
@@ -7095,13 +7148,13 @@ func floorRatToStep(value, step *big.Rat) *big.Rat {
 }
 
 func placeBinancePositionClose(ctx context.Context, client binance.Client, position okx.Position, mode, closeSz string) (positionCloseOrder, error) {
+	position, quote, err := waitForBinancePositionClosePrice(ctx, client, position, mode)
+	if err != nil {
+		return positionCloseOrder{}, err
+	}
 	px := ""
 	if mode == "limit" {
-		var err error
-		px, err = binanceLimitClosePrice(ctx, client, position)
-		if err != nil {
-			return positionCloseOrder{}, err
-		}
+		px = quote.Price
 	}
 	req, partial, err := binancePositionCloseOrderRequest(position, mode, px, closeSz)
 	if err != nil {
@@ -7146,6 +7199,10 @@ func placeBinanceNonReduceOnlyMarketFallback(ctx context.Context, client binance
 	if err != nil {
 		return positionCloseOrder{}, fmt.Errorf("refresh Binance position before non-reduce-only fallback failed: %w", err)
 	}
+	position, _, err = waitForBinancePositionClosePrice(ctx, client, position, "market")
+	if err != nil {
+		return positionCloseOrder{}, fmt.Errorf("validate Binance non-reduce-only fallback price failed: %w", err)
+	}
 	ratio := 1.0
 	originalSize, originalErr := positiveRatFromDecimal(originalPosition.Pos)
 	requestedSize, requestedErr := positiveRatFromDecimal(originalReq.Quantity)
@@ -7186,6 +7243,10 @@ func placeBinanceReduceOnlyMarketFallback(ctx context.Context, client binance.Cl
 	position, err := currentBinanceOpenPosition(ctx, client, originalPosition.InstID, originalPosition.PosSide)
 	if err != nil {
 		return positionCloseOrder{}, fmt.Errorf("refresh Binance position before market fallback failed: %w", err)
+	}
+	position, _, err = waitForBinancePositionClosePrice(ctx, client, position, "market")
+	if err != nil {
+		return positionCloseOrder{}, fmt.Errorf("validate Binance market fallback price failed: %w", err)
 	}
 	size := capCloseSizeToPosition(position.Pos, originalReq.Quantity)
 	if size == "" || size == "0" {
@@ -7860,10 +7921,11 @@ func refreshLimitPositionClose(cfg config.Config, client okx.Client, active posi
 		}
 		return active, false, err
 	}
-	nextPx, err := limitClosePrice(ctx, client, position)
+	position, quote, err := waitForOKXPositionClosePrice(ctx, client, position, "limit")
 	if err != nil {
 		return active, false, err
 	}
+	nextPx := quote.Price
 	if nextPx == active.Px {
 		active.Position = position
 		return active, false, nil
@@ -7910,10 +7972,11 @@ func refreshPartialLimitPositionClose(cfg config.Config, client okx.Client, acti
 	if remaining == "" || remaining == "0" {
 		return active, true, nil
 	}
-	nextPx, err := limitClosePrice(ctx, client, position)
+	position, quote, err := waitForOKXPositionClosePrice(ctx, client, position, "limit")
 	if err != nil {
 		return active, false, err
 	}
+	nextPx := quote.Price
 	if nextPx == active.Px {
 		active.Position = position
 		active.CloseSz = remaining
@@ -8104,10 +8167,11 @@ func refreshBinanceLimitPositionClose(client binance.Client, active positionClos
 	if remaining == "" || remaining == "0" {
 		return active, true, nil
 	}
-	nextPx, err := binanceLimitClosePrice(ctx, client, position)
+	position, quote, err := waitForBinancePositionClosePrice(ctx, client, position, "limit")
 	if err != nil {
 		return active, false, err
 	}
+	nextPx := quote.Price
 	if nextPx == active.Px {
 		active.Position = position
 		active.CloseSz = remaining
@@ -8230,6 +8294,175 @@ func positionCloseOrderRequest(cfg config.Config, position okx.Position, ordType
 		req.PosSide = posSide
 	}
 	return req, partial, nil
+}
+
+func waitForPositionClosePrice(ctx context.Context, position okx.Position, sample positionClosePriceSampler, refresh positionClosePositionRefresher) (okx.Position, positionClosePriceQuote, error) {
+	var lastErr error
+	for {
+		quote, err := sample(ctx, position)
+		if err == nil {
+			err = validatePositionClosePrice(position, quote)
+		}
+		if err == nil {
+			return position, quote, nil
+		}
+		lastErr = err
+		if err := waitPositionClosePriceRetry(ctx); err != nil {
+			return position, positionClosePriceQuote{}, fmt.Errorf("position close price validation stopped after %v: %w (last check: %v)", positionClosePriceRetryDelay, err, lastErr)
+		}
+		position, err = refresh(ctx, position)
+		if err != nil {
+			return position, positionClosePriceQuote{}, fmt.Errorf("refresh position after abnormal close price failed: %w (last check: %v)", err, lastErr)
+		}
+	}
+}
+
+func waitPositionClosePriceRetry(ctx context.Context) error {
+	delay := positionClosePriceRetryDelay
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func validatePositionClosePrice(position okx.Position, quote positionClosePriceQuote) error {
+	entry, err := strconv.ParseFloat(strings.TrimSpace(position.AvgPx), 64)
+	if err != nil || entry <= 0 || math.IsNaN(entry) || math.IsInf(entry, 0) {
+		return fmt.Errorf("invalid position entry price %q", position.AvgPx)
+	}
+	if quote.Value <= 0 || math.IsNaN(quote.Value) || math.IsInf(quote.Value, 0) {
+		return fmt.Errorf("invalid position close price %q", quote.Price)
+	}
+	deviation := math.Abs(quote.Value-entry) / entry
+	if deviation < positionClosePriceDeviation {
+		return nil
+	}
+	return fmt.Errorf("abnormal position close price: entry=%s close=%s deviation=%.2f%%", trading.NormalizeFloat(entry), trading.NormalizeFloat(quote.Value), deviation*100)
+}
+
+func positionClosePriceQuoteFromRaw(raw string) (positionClosePriceQuote, error) {
+	text := strings.TrimSpace(raw)
+	value, err := strconv.ParseFloat(text, 64)
+	if err != nil || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return positionClosePriceQuote{}, fmt.Errorf("invalid position close price %q", raw)
+	}
+	return positionClosePriceQuote{Price: text, Value: value}, nil
+}
+
+func waitForOKXPositionClosePrice(ctx context.Context, client okx.Client, position okx.Position, mode string) (okx.Position, positionClosePriceQuote, error) {
+	var sample positionClosePriceSampler
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "market":
+		sample = func(ctx context.Context, position okx.Position) (positionClosePriceQuote, error) {
+			return okxMarketClosePrice(ctx, client, position)
+		}
+	case "limit":
+		sample = func(ctx context.Context, position okx.Position) (positionClosePriceQuote, error) {
+			price, err := limitClosePrice(ctx, client, position)
+			if err != nil {
+				return positionClosePriceQuote{}, err
+			}
+			return positionClosePriceQuoteFromRaw(price)
+		}
+	default:
+		return position, positionClosePriceQuote{}, fmt.Errorf("unsupported OKX position close mode %q", mode)
+	}
+	return waitForPositionClosePrice(ctx, position, sample, func(ctx context.Context, position okx.Position) (okx.Position, error) {
+		return currentOpenPosition(ctx, client, position.InstID, position.PosSide)
+	})
+}
+
+func okxMarketClosePrice(ctx context.Context, client okx.Client, position okx.Position) (positionClosePriceQuote, error) {
+	ticker, _, err := client.MarketTicker(ctx, position.InstID)
+	if err != nil {
+		return positionClosePriceQuote{}, err
+	}
+	side, err := closeOrderSide(position)
+	if err != nil {
+		return positionClosePriceQuote{}, err
+	}
+	price := ticker.BidPx
+	if side == "buy" {
+		price = ticker.AskPx
+	}
+	if _, err := positionClosePriceQuoteFromRaw(price); err != nil {
+		price = ticker.Last
+	}
+	return positionClosePriceQuoteFromRaw(price)
+}
+
+func waitForBinancePositionClosePrice(ctx context.Context, client binance.Client, position okx.Position, mode string) (okx.Position, positionClosePriceQuote, error) {
+	var sample positionClosePriceSampler
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "market":
+		sample = func(ctx context.Context, position okx.Position) (positionClosePriceQuote, error) {
+			return binanceMarketClosePrice(ctx, client, position)
+		}
+	case "limit":
+		sample = func(ctx context.Context, position okx.Position) (positionClosePriceQuote, error) {
+			price, err := binanceLimitClosePrice(ctx, client, position)
+			if err != nil {
+				return positionClosePriceQuote{}, err
+			}
+			return positionClosePriceQuoteFromRaw(price)
+		}
+	default:
+		return position, positionClosePriceQuote{}, fmt.Errorf("unsupported Binance position close mode %q", mode)
+	}
+	return waitForPositionClosePrice(ctx, position, sample, func(ctx context.Context, position okx.Position) (okx.Position, error) {
+		return currentBinanceOpenPosition(ctx, client, position.InstID, position.PosSide)
+	})
+}
+
+func binanceMarketClosePrice(ctx context.Context, client binance.Client, position okx.Position) (positionClosePriceQuote, error) {
+	ticker, err := client.BookTicker(ctx, position.InstID)
+	if err != nil {
+		return positionClosePriceQuote{}, err
+	}
+	side, err := closeOrderSide(position)
+	if err != nil {
+		return positionClosePriceQuote{}, err
+	}
+	price := ticker.BidPrice
+	if side == "buy" {
+		price = ticker.AskPrice
+	}
+	return positionClosePriceQuoteFromRaw(price)
+}
+
+func waitForGatePositionClosePrice(ctx context.Context, client gate.Client, position okx.Position, mode string) (okx.Position, positionClosePriceQuote, error) {
+	var sample positionClosePriceSampler
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "market":
+		sample = func(ctx context.Context, position okx.Position) (positionClosePriceQuote, error) {
+			price, err := gateMarketableClosePrice(ctx, client, position)
+			if err != nil {
+				return positionClosePriceQuote{}, err
+			}
+			return positionClosePriceQuoteFromRaw(price)
+		}
+	case "limit":
+		sample = func(ctx context.Context, position okx.Position) (positionClosePriceQuote, error) {
+			price, err := gateLimitClosePrice(ctx, client, position)
+			if err != nil {
+				return positionClosePriceQuote{}, err
+			}
+			return positionClosePriceQuoteFromRaw(price)
+		}
+	default:
+		return position, positionClosePriceQuote{}, fmt.Errorf("unsupported Gate position close mode %q", mode)
+	}
+	return waitForPositionClosePrice(ctx, position, sample, func(ctx context.Context, position okx.Position) (okx.Position, error) {
+		_, refreshed, err := currentGateOpenPosition(ctx, client, position.InstID, position.PosSide)
+		return refreshed, err
+	})
 }
 
 func limitClosePrice(ctx context.Context, client okx.Client, position okx.Position) (string, error) {

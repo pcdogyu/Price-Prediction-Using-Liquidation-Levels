@@ -48,9 +48,19 @@ func TestPositionMonitorOKXStartsLimitCloseAtThresholds(t *testing.T) {
 				{"instId":"ALGO-USDT-SWAP","tradeId":"entry-algo","ordId":"entry-algo","posSide":"net","side":"sell","fillSz":"1098","fillTime":%q}
 			]}`, fillTime, fillTime, fillTime, fillTime)))
 		case "/api/v5/public/instruments":
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":%q,"tickSz":"0.1","ctVal":"1","lotSz":"1","minSz":"1"}]}`, r.URL.Query().Get("instId"))))
+			instID := r.URL.Query().Get("instId")
+			tick := "0.1"
+			if instID == "ALGO-USDT-SWAP" {
+				tick = "0.0001"
+			}
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":%q,"tickSz":%q,"ctVal":"1","lotSz":"1","minSz":"1"}]}`, instID, tick)))
 		case "/api/v5/market/ticker":
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":%q,"bidPx":"99.9","askPx":"100.1","last":"100","ts":"1784880000000"}]}`, r.URL.Query().Get("instId"))))
+			instID := r.URL.Query().Get("instId")
+			bid, ask, last := "99.9", "100.1", "100"
+			if instID == "ALGO-USDT-SWAP" {
+				bid, ask, last = "0.0799", "0.0801", "0.08"
+			}
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":%q,"bidPx":%q,"askPx":%q,"last":%q,"ts":"1784880000000"}]}`, instID, bid, ask, last)))
 		case "/api/v5/trade/orders-pending", "/api/v5/trade/orders-algo-pending":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		case "/api/v5/trade/order":
@@ -274,7 +284,7 @@ func TestPositionMonitorGateSubmitsFullMarketCloseAtThresholds(t *testing.T) {
 	var canceledContracts []string
 	cancelDone := make(chan string, 2)
 	gateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("KEY") != "gate-key" {
+		if !strings.HasPrefix(r.URL.Path, "/api/v4/futures/usdt/contracts/") && r.URL.Path != "/api/v4/futures/usdt/tickers" && r.Header.Get("KEY") != "gate-key" {
 			t.Fatalf("missing Gate API key for %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -301,6 +311,14 @@ func TestPositionMonitorGateSubmitsFullMarketCloseAtThresholds(t *testing.T) {
 			} else {
 				_, _ = w.Write([]byte(`[]`))
 			}
+		case strings.HasPrefix(r.URL.Path, "/api/v4/futures/usdt/contracts/"):
+			_, _ = w.Write([]byte(`{"name":"BTC_USDT","order_size_min":"1","order_price_round":"0.1","mark_price":"100","enable_decimal":false}`))
+		case r.URL.Path == "/api/v4/futures/usdt/tickers":
+			contract := r.URL.Query().Get("contract")
+			if contract == "" {
+				contract = "BTC_USDT"
+			}
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"contract":%q,"last":"100","highest_bid":"99.9","lowest_ask":"100.1"}]`, contract)))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/futures/usdt/orders":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

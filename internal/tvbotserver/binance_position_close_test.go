@@ -186,6 +186,8 @@ func TestTVBotBinanceMarketCloseCleansOrdersVisibleAfterClose(t *testing.T) {
 			} else {
 				_, _ = w.Write([]byte(`[]`))
 			}
+		case "/fapi/v1/ticker/bookTicker":
+			_, _ = w.Write([]byte(`{"symbol":"BTCUSDT","bidPrice":"99.9","bidQty":"1","askPrice":"100.1","askQty":"1","time":1784880000000}`))
 		case "/fapi/v1/openOrders":
 			mu.Lock()
 			open := lateOrderOpen
@@ -455,7 +457,7 @@ func TestTVBotBinanceMarketCloseRecoversUnknownStatusByClientOrderID(t *testing.
 	closeClientID := ""
 	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Header.Get("X-MBX-APIKEY") != "binance-key" {
+		if r.URL.Path != "/fapi/v1/ticker/bookTicker" && r.Header.Get("X-MBX-APIKEY") != "binance-key" {
 			t.Fatalf("missing Binance API key for %s", r.URL.Path)
 		}
 		switch r.URL.Path {
@@ -464,6 +466,8 @@ func TestTVBotBinanceMarketCloseRecoversUnknownStatusByClientOrderID(t *testing.
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`))
+		case "/fapi/v1/ticker/bookTicker":
+			_, _ = w.Write([]byte(`{"symbol":"BTCUSDT","bidPrice":"99.9","bidQty":"1","askPrice":"100.1","askQty":"1","time":1784880000000}`))
 		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/userTrades":
@@ -539,12 +543,14 @@ func TestTVBotBinanceMarketCloseReturnsUnknownWhenTimeoutCannotBeResolved(t *tes
 	closeClientID := ""
 	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Header.Get("X-MBX-APIKEY") != "binance-key" {
+		if r.URL.Path != "/fapi/v1/ticker/bookTicker" && r.Header.Get("X-MBX-APIKEY") != "binance-key" {
 			t.Fatalf("missing Binance API key for %s", r.URL.Path)
 		}
 		switch r.URL.Path {
 		case "/fapi/v3/positionRisk":
 			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`))
+		case "/fapi/v1/ticker/bookTicker":
+			_, _ = w.Write([]byte(`{"symbol":"BTCUSDT","bidPrice":"99.9","bidQty":"1","askPrice":"100.1","askQty":"1","time":1784880000000}`))
 		case "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/userTrades":
@@ -947,7 +953,7 @@ func TestBinanceLimitCloseUsesMarketReduceOnlyFallbackAfterPersistentConflict(t 
 	defer binanceServer.Close()
 
 	client := binance.Client{BaseURL: binanceServer.URL, Credentials: binance.Credentials{APIKey: strings.Repeat("k", 4), SecretKey: strings.Repeat("s", 8)}, HTTPClient: binanceServer.Client()}
-	position := okx.Position{InstID: "ZECUSDT", Pos: "4.327", PosSide: "net"}
+	position := okx.Position{InstID: "ZECUSDT", Pos: "4.327", PosSide: "net", AvgPx: "1073.1994"}
 	order, err := placeBinancePositionClose(context.Background(), client, position, "limit", "0.432")
 	if err != nil {
 		t.Fatalf("expected market fallback to close, got %v", err)

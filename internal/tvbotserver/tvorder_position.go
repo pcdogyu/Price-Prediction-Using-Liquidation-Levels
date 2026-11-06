@@ -420,6 +420,10 @@ func (s *Server) closeGatePositionFromSignal(ctx context.Context, signal trading
 	if err := enforceMinProfitSpread(signal, found.EntryPrice); err != nil {
 		return trading.OrderResult{}, err
 	}
+	position, _, err = waitForGatePositionClosePrice(ctx, client, position, "market")
+	if err != nil {
+		return trading.OrderResult{}, err
+	}
 	marginMode := strings.ToLower(strings.TrimSpace(cfg.MarginMode()))
 	if marginMode != "cross" {
 		marginMode = "isolated"

@@ -109,6 +109,10 @@ func TestTVBotGateMarketPositionCloseUsesRequiredTextPrefix(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v4/futures/usdt/positions":
 			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"100","pos_margin_mode":"isolated","mode":"single","open_time":"1784800000"}]`))
+		case "/api/v4/futures/usdt/contracts/BTC_USDT":
+			_, _ = w.Write([]byte(`{"name":"BTC_USDT","order_size_min":"1","order_price_round":"0.1","mark_price":"100","enable_decimal":false}`))
+		case "/api/v4/futures/usdt/tickers":
+			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","last":"100","highest_bid":"99.9","lowest_ask":"100.1"}]`))
 		case "/api/v4/futures/usdt/orders":
 			switch r.Method {
 			case http.MethodGet:

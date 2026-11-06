@@ -6933,6 +6933,9 @@ const tvbotHTML = `<!doctype html>
       const opening = !!state.positionOpening[key];
       const modeSaving = !!state.positionOpenModeSaving[key];
       const busy = closing || opening || state.positionClosingAll;
+      const closeBusy = closing || state.positionClosingAll;
+      const closeBusyClass = closeBusy ? " is-saving" : "";
+      const closeBusyAttr = closeBusy ? ' aria-busy="true"' : "";
       const openMode = positionOpenMode(row);
       const instID = escapeHTML(asText(row.instId));
       const posSide = escapeHTML(String(row.posSide || ""));
@@ -6952,14 +6955,14 @@ const tvbotHTML = `<!doctype html>
         { label: "25%", ratio: "0.25" },
         { label: "50%", ratio: "0.5" },
         { label: "75%", ratio: "0.75" }
-      ].map((item) => '<button class="btn small position-percent-close-btn" type="button" data-position-close="limit" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="限价平仓 ' + item.label + '，60秒后市价兜底"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
+      ].map((item) => '<button class="btn small position-percent-close-btn' + closeBusyClass + '" type="button" data-position-close="limit" data-position-ratio="' + item.ratio + '"' + baseAttrs + closeBusyAttr + ' title="限价平仓 ' + item.label + '，60秒后市价兜底"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
       return '<td><div class="position-action-groups">' +
         '<div class="position-actions position-action-group position-open-actions">' +
         '<span class="position-action-label">增仓</span>' + openPercentButtons + openModeToggle + '</div>' +
         '<div class="position-actions position-action-group position-close-actions">' +
         '<span class="position-action-label">平仓</span>' + closePercentButtons +
-        '<button class="btn small danger" type="button" data-position-close="market"' + baseAttrs + (busy ? " disabled" : "") + '>市价平仓</button>' +
-        '<button class="btn small" type="button" data-position-close="limit"' + baseAttrs + (busy ? " disabled" : "") + '>限价平仓</button>' +
+        '<button class="btn small danger' + closeBusyClass + '" type="button" data-position-close="market"' + baseAttrs + closeBusyAttr + (busy ? " disabled" : "") + '>市价平仓</button>' +
+        '<button class="btn small' + closeBusyClass + '" type="button" data-position-close="limit"' + baseAttrs + closeBusyAttr + (busy ? " disabled" : "") + '>限价平仓</button>' +
         '</div>' +
         '</div></td>';
     }
@@ -6996,8 +6999,12 @@ const tvbotHTML = `<!doctype html>
       const overallReturn = positionsReady ? positionOverallReturnRatio(rows) : null;
       const closeAllButton = $("close-all-positions");
       if (closeAllButton) {
-        closeAllButton.disabled = !positionsReady || rows.length === 0 || state.positionClosingAll;
-        closeAllButton.textContent = state.positionClosingAll ? "平仓中..." : "一键平仓";
+        const closeAllBusy = !!state.positionClosingAll;
+        closeAllButton.disabled = !positionsReady || rows.length === 0 || closeAllBusy;
+        closeAllButton.classList.toggle("is-saving", closeAllBusy);
+        if (closeAllBusy) closeAllButton.setAttribute("aria-busy", "true");
+        else closeAllButton.removeAttribute("aria-busy");
+        closeAllButton.textContent = closeAllBusy ? "平仓中..." : "一键平仓";
       }
       $("positions-count").textContent = positionsReady ? asText(state.positions.count || rows.length) : "-";
       $("positions-upl").textContent = positionsReady ? formatNumber(totalUpl) + " USDT" : "-";
