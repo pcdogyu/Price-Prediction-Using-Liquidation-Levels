@@ -2260,8 +2260,8 @@ const tvbotHTML = `<!doctype html>
         <div class="position-monitor-grid position-monitor-primary-grid">
           <label class="check"><input id="position-monitor-enabled" type="checkbox">启用自动扫描/平仓</label>
           <label>扫描间隔秒<input id="position-monitor-interval" type="number" min="1" step="1"></label>
-          <label>止盈 %<input id="position-monitor-tp" type="number" min="0.01" step="0.01" disabled></label>
-          <label>止损 %<input id="position-monitor-sl" type="number" min="0.01" step="0.01" disabled></label>
+          <label>止盈 %<input id="position-monitor-tp" type="number" min="0.01" step="0.01"></label>
+          <label>止损 %<input id="position-monitor-sl" type="number" min="0.01" step="0.01"></label>
           <label>自动平仓最短持仓（分钟）<input id="position-monitor-min-minutes" type="number" min="15" step="1"></label>
           <input id="position-monitor-sl-minutes" type="hidden" value="30">
           </div>
@@ -2271,7 +2271,7 @@ const tvbotHTML = `<!doctype html>
           <label>低保证金持仓小时数<input id="position-monitor-low-margin-hours" type="number" min="1" step="1"></label>
           <label class="check"><input id="position-monitor-daily-enabled" type="checkbox">每日定时平仓</label>
           <label>平仓时间（中国时间）<input id="position-monitor-daily-time" type="time" min="00:00" max="23:59" step="60"></label>
-          <div class="muted position-monitor-daily-note">自动平仓最短持仓15分钟；SL/TP已禁用。低保证金和每日定时平仓覆盖所有已配置交易所；限价追价。</div>
+          <div class="muted position-monitor-daily-note">自动扫描止盈/止损只处理持仓超过15分钟的币对；交易所原生保护单仍禁用。低保证金和每日定时平仓覆盖所有已配置交易所；限价追价。</div>
         </div>
       </div>
       <div class="section-head" style="margin:18px 0 10px">
@@ -5197,7 +5197,7 @@ const tvbotHTML = `<!doctype html>
       $("position-monitor-status").textContent = (monitor.enabled ? "已启用" : "已关闭") +
         " / " + asText(monitor.poll_interval_seconds || 300) + "s" +
         " / 自动平仓最短" + asText(monitor.min_holding_minutes || 15) + "分钟" +
-        " / SL/TP已禁用" +
+        " / 自动止盈" + asText(monitor.take_profit_pct || 5) + "% / 自动止损" + asText(monitor.stop_loss_pct || 8) + "% / 原生保护单禁用" +
         " / 低保证金" + (monitor.low_margin_close_enabled ? " <" + asText(monitor.low_margin_threshold_usdt || 50) + " USDT / " + asText(monitor.low_margin_holding_hours || 1) + "h" : "关闭") + dailyLabel;
     }
 

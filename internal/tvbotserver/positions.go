@@ -1137,7 +1137,7 @@ func positionMonitorHoldingLocked(position okx.Position, monitor config.Position
 	if heldFor < 0 {
 		return true, "开仓时间晚于当前时间"
 	}
-	if heldFor < time.Duration(maxAutomaticHoldingMinutes(monitor))*time.Minute {
+	if heldFor <= time.Duration(maxAutomaticHoldingMinutes(monitor))*time.Minute {
 		return true, ""
 	}
 	return false, ""
@@ -1924,7 +1924,7 @@ func positionMonitorTriggerForPosition(position okx.Position, monitor config.Pos
 		if entryErr == "" {
 			heldFor := now.UTC().Sub(entryAt.UTC())
 			_, low := lowMarginPosition(position, monitor.LowMarginThresholdUSDT)
-			if heldFor >= time.Duration(maxAutomaticHoldingMinutes(monitor))*time.Minute && heldFor >= time.Duration(monitor.LowMarginHoldingHours)*time.Hour && low && positionReductionRecordCount(position, fills, entryAt, now) > 0 {
+			if heldFor > time.Duration(maxAutomaticHoldingMinutes(monitor))*time.Minute && heldFor >= time.Duration(monitor.LowMarginHoldingHours)*time.Hour && low && positionReductionRecordCount(position, fills, entryAt, now) > 0 {
 				return "low_margin", true, entryAt, heldFor, ""
 			}
 		} else {
@@ -1962,7 +1962,7 @@ func automaticPositionMonitorTrigger(position okx.Position, monitor config.Posit
 	if heldFor < 0 {
 		return "", false, entryAt, heldFor, "开仓时间晚于当前时间"
 	}
-	if heldFor < time.Duration(maxAutomaticHoldingMinutes(monitor))*time.Minute {
+	if heldFor <= time.Duration(maxAutomaticHoldingMinutes(monitor))*time.Minute {
 		return "", false, entryAt, heldFor, "持仓未达到自动平仓最短持仓时间"
 	}
 	return trigger, true, entryAt, heldFor, ""

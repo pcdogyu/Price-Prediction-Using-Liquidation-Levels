@@ -533,16 +533,17 @@ func TestPositionMonitorAllPriceClosesWaitAtLeast15Minutes(t *testing.T) {
 			trigger, hit, _, heldFor, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
 				InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Side: tc.entrySide, Size: 1, FillTime: entry,
 			}}, nil, false)
-			if !hit || trigger != "stop_loss" || heldFor != 15*time.Minute || entryErr != "" {
-				t.Fatalf("stop-loss should trigger after minimum hold: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
+			if hit || trigger != "" || heldFor != 15*time.Minute || entryErr == "" {
+				t.Fatalf("stop-loss at exactly 15 minutes should be deferred: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
 			}
 
 			position.UplRatio = "0.06"
+			entry = now.Add(-(15*time.Minute + time.Second))
 			trigger, hit, _, heldFor, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
 				InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Side: tc.entrySide, Size: 1, FillTime: entry,
 			}}, nil, false)
-			if !hit || trigger != "take_profit" || heldFor != 15*time.Minute || entryErr != "" {
-				t.Fatalf("take-profit should trigger after minimum hold: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
+			if !hit || trigger != "take_profit" || heldFor != 15*time.Minute+time.Second || entryErr != "" {
+				t.Fatalf("take-profit should trigger after 15 minutes: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
 			}
 		})
 	}

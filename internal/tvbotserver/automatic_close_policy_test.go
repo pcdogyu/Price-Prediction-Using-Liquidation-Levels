@@ -15,17 +15,21 @@ import (
 	tvbottrading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
-func TestAutomaticPositionCloseRequiresAtLeast15Minutes(t *testing.T) {
+func TestAutomaticPositionCloseRequiresMoreThan15Minutes(t *testing.T) {
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
-	monitor := tvbotconfig.PositionMonitorConfig{MinHoldingMinutes: 15, TakeProfitPct: 5}
+	monitor := tvbotconfig.PositionMonitorConfig{MinHoldingMinutes: 1, TakeProfitPct: 5}
 	position := tvbotokx.Position{InstID: "BTC-USDT-SWAP", PosSide: "long", Pos: "1", UplRatio: "0.10"}
 	entry := positionEntryFill{InstID: position.InstID, PosSide: "long", Side: "buy", Size: 1, FillTime: now.Add(-(15*time.Minute - time.Second))}
 	if trigger, hit, _, _, _ := positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{entry}, nil, false); hit || trigger != "" {
 		t.Fatal("14:59 automatic close must be skipped")
 	}
 	entry.FillTime = now.Add(-15 * time.Minute)
-	if trigger, hit, _, held, err := positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{entry}, nil, false); !hit || trigger != "take_profit" || held != 15*time.Minute || err != "" {
-		t.Fatalf("15:00 automatic close should be allowed: trigger=%q hit=%v held=%s err=%q", trigger, hit, held, err)
+	if trigger, hit, _, held, err := positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{entry}, nil, false); hit || trigger != "" || held != 15*time.Minute || err == "" {
+		t.Fatalf("15:00 automatic close must still be skipped: trigger=%q hit=%v held=%s err=%q", trigger, hit, held, err)
+	}
+	entry.FillTime = now.Add(-(15*time.Minute + time.Second))
+	if trigger, hit, _, held, err := positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{entry}, nil, false); !hit || trigger != "take_profit" || held != 15*time.Minute+time.Second || err != "" {
+		t.Fatalf("automatic close should be allowed after 15 minutes: trigger=%q hit=%v held=%s err=%q", trigger, hit, held, err)
 	}
 }
 
