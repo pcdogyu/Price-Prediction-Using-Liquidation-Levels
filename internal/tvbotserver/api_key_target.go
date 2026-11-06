@@ -30,16 +30,16 @@ func (s *Server) syncAPIKeyTradeTarget(exchange, env, apiID string, active bool)
 				return fmt.Errorf("save trading target: %w", err)
 			}
 		}
-		return s.clearOtherCredentialActives(exchange, env)
+		return s.clearOtherCredentialActives(exchange)
 	}
-	if err := s.clearCredentialActive(exchange, env); err != nil {
+	if err := s.clearCredentialActives(exchange); err != nil {
 		return err
 	}
 	if s.ConfigStore == nil {
 		return nil
 	}
 	current := s.ConfigStore.Get().Trading
-	if tvbottrading.NormalizeExchange(current.TargetExchange) != exchange || strings.TrimSpace(current.TargetTradeEnv) != env {
+	if tvbottrading.NormalizeExchange(current.TargetExchange) != exchange {
 		return nil
 	}
 	_, err := s.ConfigStore.UpdateSettings(func(cfg *tvbotconfig.Config) error {
@@ -51,11 +51,20 @@ func (s *Server) syncAPIKeyTradeTarget(exchange, env, apiID string, active bool)
 	return err
 }
 
-func (s *Server) clearOtherCredentialActives(selected, env string) error {
+func (s *Server) clearOtherCredentialActives(selected string) error {
 	for _, exchange := range []string{tvbottrading.ExchangeOKX, tvbottrading.ExchangeBinance, tvbottrading.ExchangeGate} {
 		if exchange == selected {
 			continue
 		}
+		if err := s.clearCredentialActives(exchange); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) clearCredentialActives(exchange string) error {
+	for _, env := range []string{tvbotconfig.EnvDemo, tvbotconfig.EnvLive} {
 		if err := s.clearCredentialActive(exchange, env); err != nil {
 			return err
 		}

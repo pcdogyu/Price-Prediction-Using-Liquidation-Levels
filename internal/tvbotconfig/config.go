@@ -58,10 +58,10 @@ type ServerConfig struct {
 
 type TradingConfig struct {
 	Env string `json:"env"`
-	// Target* is the per-tenant destination used by liquidation alert
-	// webhooks. It is intentionally independent from the process-wide default
-	// webhook environment so one user's API-key selection cannot route another
-	// user's orders.
+	// Target* is the per-tenant primary trading destination used by liquidation
+	// alert webhooks and all tenant trading/monitoring paths. It is intentionally
+	// independent from the process-wide default webhook environment so one
+	// user's API-key selection cannot route another user's orders.
 	TargetExchange      string   `json:"target_exchange,omitempty"`
 	TargetAPIID         string   `json:"target_api_id,omitempty"`
 	TargetTradeEnv      string   `json:"target_trade_env,omitempty"`
@@ -444,7 +444,11 @@ func (c *Config) Normalize() {
 	if c.Trading.Env == "" {
 		c.Trading.Env = EnvDemo
 	}
-	c.Trading.TargetExchange = trading.NormalizeExchange(c.Trading.TargetExchange)
+	if strings.TrimSpace(c.Trading.TargetExchange) == "" {
+		c.Trading.TargetExchange = ""
+	} else {
+		c.Trading.TargetExchange = trading.NormalizeExchange(c.Trading.TargetExchange)
+	}
 	c.Trading.TargetAPIID = strings.TrimSpace(c.Trading.TargetAPIID)
 	c.Trading.TargetTradeEnv = strings.ToLower(strings.TrimSpace(c.Trading.TargetTradeEnv))
 	if c.Trading.TargetTradeEnv != EnvDemo && c.Trading.TargetTradeEnv != EnvLive {

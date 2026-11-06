@@ -11,6 +11,7 @@ import (
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	tvbotgate "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
 	tvbotokx "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
+	tvbottrading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
 const protectionCleanupInterval = 30 * time.Second
@@ -49,33 +50,41 @@ func (s *Server) cleanupProtectionOrders(ctx context.Context, cfg tvbotconfig.Co
 }
 
 func (s *Server) cleanupProtectionOrdersForEnv(ctx context.Context, cfg tvbotconfig.Config) {
-	if store := s.okxCredentialStore(cfg.Trading.Env); store != nil {
-		for _, apiID := range configuredAPIIDs(store.Status()) {
-			cleanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
-			if err := s.cleanupOKXProtectionOrders(cleanCtx, cfg, apiID); err != nil && s.Logger != nil {
-				s.Logger.Warn("failed to clean OKX protection orders", "api_id", apiID, "error", err)
+	primary := s.primaryExchangeForConfig(cfg)
+	if primary == tvbottrading.ExchangeOKX {
+		if store := s.okxCredentialStore(cfg.Trading.Env); store != nil {
+			for _, apiID := range configuredAPIIDs(store.Status()) {
+				cleanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
+				if err := s.cleanupOKXProtectionOrders(cleanCtx, cfg, apiID); err != nil && s.Logger != nil {
+					s.Logger.Warn("failed to clean OKX protection orders", "api_id", apiID, "error", err)
+				}
+				cancel()
 			}
-			cancel()
 		}
 	}
-	if store := s.binanceCredentialStore(cfg.Trading.Env); store != nil {
-		for _, apiID := range configuredBinanceAPIIDs(store.Status()) {
-			cleanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
-			if err := s.cleanupBinanceProtectionOrders(cleanCtx, cfg, apiID); err != nil && s.Logger != nil {
-				s.Logger.Warn("failed to clean Binance protection orders", "api_id", apiID, "error", err)
+	if primary == tvbottrading.ExchangeBinance {
+		if store := s.binanceCredentialStore(cfg.Trading.Env); store != nil {
+			for _, apiID := range configuredBinanceAPIIDs(store.Status()) {
+				cleanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
+				if err := s.cleanupBinanceProtectionOrders(cleanCtx, cfg, apiID); err != nil && s.Logger != nil {
+					s.Logger.Warn("failed to clean Binance protection orders", "api_id", apiID, "error", err)
+				}
+				cancel()
 			}
-			cancel()
 		}
 	}
-	if store := s.gateCredentialStore(cfg.Trading.Env); store != nil {
-		for _, apiID := range configuredGateAPIIDs(store.Status()) {
-			cleanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
-			if err := s.cleanupGateProtectionOrders(cleanCtx, cfg, apiID); err != nil && s.Logger != nil {
-				s.Logger.Warn("failed to clean Gate protection orders", "api_id", apiID, "error", err)
+	if primary == tvbottrading.ExchangeGate {
+		if store := s.gateCredentialStore(cfg.Trading.Env); store != nil {
+			for _, apiID := range configuredGateAPIIDs(store.Status()) {
+				cleanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
+				if err := s.cleanupGateProtectionOrders(cleanCtx, cfg, apiID); err != nil && s.Logger != nil {
+					s.Logger.Warn("failed to clean Gate protection orders", "api_id", apiID, "error", err)
+				}
+				cancel()
 			}
-			cancel()
 		}
 	}
+
 }
 
 func (s *Server) cleanupOKXProtectionOrders(ctx context.Context, cfg tvbotconfig.Config, requestedAPIID string) error {

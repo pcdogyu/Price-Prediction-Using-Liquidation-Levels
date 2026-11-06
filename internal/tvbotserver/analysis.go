@@ -270,36 +270,38 @@ func (s *Server) sampleConfiguredUSDTBalances(ctx context.Context) {
 	cfg := s.ConfigStore.Get()
 	envName := analysisEnvName(cfg)
 	now := s.now()
-	okxStore := s.okxCredentialStore(cfg.Trading.Env)
-	if okxStore != nil {
-		for _, requestedAPIID := range configuredAPIIDs(okxStore.Status()) {
-			sampleCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			err := s.sampleUSDTBalance(sampleCtx, cfg, requestedAPIID, envName, now)
-			cancel()
-			if err != nil && s.Logger != nil {
-				s.Logger.Warn("failed to sample USDT balance", "exchange", trading.ExchangeOKX, "api_id", requestedAPIID, "env", envName, "error", err)
+	switch s.primaryExchangeForConfig(cfg) {
+	case trading.ExchangeOKX:
+		if store := s.okxCredentialStore(cfg.Trading.Env); store != nil {
+			for _, requestedAPIID := range configuredAPIIDs(store.Status()) {
+				sampleCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				err := s.sampleUSDTBalance(sampleCtx, cfg, requestedAPIID, envName, now)
+				cancel()
+				if err != nil && s.Logger != nil {
+					s.Logger.Warn("failed to sample USDT balance", "exchange", trading.ExchangeOKX, "api_id", requestedAPIID, "env", envName, "error", err)
+				}
 			}
 		}
-	}
-	binanceStore := s.binanceCredentialStore(cfg.Trading.Env)
-	if binanceStore != nil {
-		for _, requestedAPIID := range configuredBinanceAPIIDs(binanceStore.Status()) {
-			sampleCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			err := s.sampleBinanceUSDTBalance(sampleCtx, cfg, requestedAPIID, envName, now)
-			cancel()
-			if err != nil && s.Logger != nil {
-				s.Logger.Warn("failed to sample USDT balance", "exchange", trading.ExchangeBinance, "api_id", requestedAPIID, "env", envName, "error", err)
+	case trading.ExchangeBinance:
+		if store := s.binanceCredentialStore(cfg.Trading.Env); store != nil {
+			for _, requestedAPIID := range configuredBinanceAPIIDs(store.Status()) {
+				sampleCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				err := s.sampleBinanceUSDTBalance(sampleCtx, cfg, requestedAPIID, envName, now)
+				cancel()
+				if err != nil && s.Logger != nil {
+					s.Logger.Warn("failed to sample USDT balance", "exchange", trading.ExchangeBinance, "api_id", requestedAPIID, "env", envName, "error", err)
+				}
 			}
 		}
-	}
-	gateStore := s.gateCredentialStore(cfg.Trading.Env)
-	if gateStore != nil {
-		for _, requestedAPIID := range configuredGateAPIIDs(gateStore.Status()) {
-			sampleCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			err := s.sampleGateUSDTBalance(sampleCtx, cfg, requestedAPIID, envName, now)
-			cancel()
-			if err != nil && s.Logger != nil {
-				s.Logger.Warn("failed to sample USDT balance", "exchange", trading.ExchangeGate, "api_id", requestedAPIID, "env", envName, "error", err)
+	case trading.ExchangeGate:
+		if store := s.gateCredentialStore(cfg.Trading.Env); store != nil {
+			for _, requestedAPIID := range configuredGateAPIIDs(store.Status()) {
+				sampleCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				err := s.sampleGateUSDTBalance(sampleCtx, cfg, requestedAPIID, envName, now)
+				cancel()
+				if err != nil && s.Logger != nil {
+					s.Logger.Warn("failed to sample USDT balance", "exchange", trading.ExchangeGate, "api_id", requestedAPIID, "env", envName, "error", err)
+				}
 			}
 		}
 	}
@@ -434,6 +436,7 @@ func (s *Server) handleBalanceOverview(w http.ResponseWriter, r *http.Request) {
 	envName := analysisEnvName(cfg)
 	okxAPIID := strings.TrimSpace(r.URL.Query().Get("api_id"))
 	binanceAPIID := strings.TrimSpace(r.URL.Query().Get("binance_api_id"))
+	primary := s.primaryExchangeForConfig(cfg)
 	writeJSON(w, http.StatusOK, balanceOverviewResponse{
 		OK:          true,
 		Env:         envName,
@@ -441,11 +444,35 @@ func (s *Server) handleBalanceOverview(w http.ResponseWriter, r *http.Request) {
 		Minutes:     minutes,
 		RefreshedAt: now.UTC(),
 		Exchanges: []exchangeBalanceOverview{
-			s.balanceOverviewForOKX(r.Context(), cfg, envName, okxAPIID, minutes, now),
-			s.balanceOverviewForBinance(r.Context(), cfg, envName, binanceAPIID, minutes, now),
-			s.balanceOverviewForGate(r.Context(), cfg, envName, strings.TrimSpace(r.URL.Query().Get("gate_api_id")), minutes, now),
+			balanceOverviewForExchange(r.Context(), s, cfg, primary, trading.ExchangeOKX, envName, okxAPIID, minutes, now),
+			balanceOverviewForExchange(r.Context(), s, cfg, primary, trading.ExchangeBinance, envName, binanceAPIID, minutes, now),
+			balanceOverviewForExchange(r.Context(), s, cfg, primary, trading.ExchangeGate, envName, strings.TrimSpace(r.URL.Query().Get("gate_api_id")), minutes, now),
 		},
 	})
+}
+
+func balanceOverviewForExchange(ctx context.Context, s *Server, cfg config.Config, primary, exchange, envName, requestedAPIID string, minutes int, now time.Time) exchangeBalanceOverview {
+	if exchange != primary {
+		message := "当前未选择主交易所，所有交易所均为只读"
+		if primary != "" {
+			message = primaryExchangeLabel(primary) + "为主交易所，" + primaryExchangeLabel(exchange) + "已停用交易功能"
+		}
+		return exchangeBalanceOverview{
+			Exchange:    exchange,
+			Label:       primaryExchangeLabel(exchange),
+			Status:      "non_trading",
+			Error:       message,
+			RefreshedAt: now.UTC(),
+		}
+	}
+	switch exchange {
+	case trading.ExchangeOKX:
+		return s.balanceOverviewForOKX(ctx, cfg, envName, requestedAPIID, minutes, now)
+	case trading.ExchangeBinance:
+		return s.balanceOverviewForBinance(ctx, cfg, envName, requestedAPIID, minutes, now)
+	default:
+		return s.balanceOverviewForGate(ctx, cfg, envName, requestedAPIID, minutes, now)
+	}
 }
 
 func balanceWindowQuery(r *http.Request) (int, int) {
@@ -505,11 +532,24 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 	}
 	now := s.now()
 	envName := analysisEnvName(cfg)
+	primary := s.primaryExchangeForConfig(cfg)
+	if primary == "" {
+		return analysisResponse{}, errors.New("no primary trading exchange is selected")
+	}
 	okxCreds, apiID, okxConfigured := s.analysisOKXCredentials(cfg, requestedAPIID)
 	binanceCreds, binanceAPIID, binanceConfigured := s.analysisBinanceCredentials(cfg, requestedBinanceAPIID)
 	gateCreds, gateAPIID, gateConfigured := s.analysisGateCredentials(cfg, requestedGateAPIID)
+	if primary != trading.ExchangeOKX {
+		okxCreds, apiID, okxConfigured = okx.Credentials{}, "", false
+	}
+	if primary != trading.ExchangeBinance {
+		binanceCreds, binanceAPIID, binanceConfigured = binance.Credentials{}, "", false
+	}
+	if primary != trading.ExchangeGate {
+		gateCreds, gateAPIID, gateConfigured = gate.Credentials{}, "", false
+	}
 	if !okxConfigured && !binanceConfigured && !gateConfigured {
-		return analysisResponse{}, errors.New("no exchange API credentials are configured")
+		return analysisResponse{}, fmt.Errorf("primary exchange %s has no credentials configured for %s", primaryExchangeLabel(primary), envName)
 	}
 	cacheKey := analysisCacheKey(apiID, binanceAPIID, envName, priceDays, pnlMinutes, gateAPIID)
 	if !refresh {

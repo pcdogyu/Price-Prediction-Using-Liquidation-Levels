@@ -3426,16 +3426,40 @@ const tvbotHTML = `<!doctype html>
       return !!(section && section.classList.contains("active"));
     }
 
+    function primaryExchangeForUI() {
+      const trading = state.config && state.config.trading ? state.config.trading : {};
+      const rawTarget = String(trading.target_exchange || "").trim();
+      if (rawTarget) {
+        const explicit = normalizeExchange(rawTarget);
+        if (positionExchanges.includes(explicit)) return explicit;
+      }
+      const configured = positionExchanges.filter((exchange) => {
+        return ["demo", "live"].some((env) => {
+          if (!apiKeyStatusLoaded(exchange, env)) return false;
+          const status = apiKeyStatusForEnv(exchange, env);
+          return !!(status && status.configured);
+        });
+      });
+      return configured.length === 1 ? configured[0] : "";
+    }
+
     function renderGlobalExchangeSwitch() {
       const selected = ensureSelectedExchangeAvailable();
       const allowUnconfigured = allExchangesUnconfiguredForCurrentEnvironment();
+      const primary = primaryExchangeForUI();
       document.querySelectorAll("[data-global-exchange]").forEach((button) => {
         const exchange = normalizeExchange(button.dataset.globalExchange);
         const configured = exchangeConfiguredForCurrentEnvironment(exchange);
+        const nonPrimary = !!primary && exchange !== primary;
         const disabled = state.exchangeAvailabilityReady && !configured && !allowUnconfigured;
-        button.disabled = disabled;
+        const disabledByPrimary = nonPrimary;
+        button.hidden = nonPrimary;
+        button.disabled = disabled || disabledByPrimary;
         button.setAttribute("aria-disabled", disabled ? "true" : "false");
-        if (disabled) {
+        if (disabledByPrimary) button.setAttribute("aria-disabled", "true");
+        if (nonPrimary) {
+          button.title = exchangeLabel(exchange) + " 非交易交易所，已停用";
+        } else if (disabled) {
           button.title = exchangeLabel(exchange) + " 未配置当前交易环境 API";
         } else {
           button.removeAttribute("title");
@@ -3447,7 +3471,8 @@ const tvbotHTML = `<!doctype html>
       syncSymbolExchangeSelector(selected);
       if (symbolExchange && symbolExchangeBefore !== normalizeExchange(symbolExchange.value)) renderSymbols();
       document.querySelectorAll("[data-exchange-view]").forEach((panel) => {
-        panel.hidden = normalizeExchange(panel.dataset.exchangeView) !== selected;
+        const exchange = normalizeExchange(panel.dataset.exchangeView);
+        panel.hidden = primary ? exchange !== primary : exchange !== selected;
       });
       renderPositionAPIs();
     }
@@ -3468,11 +3493,15 @@ const tvbotHTML = `<!doctype html>
 
     function configuredExchangesForCurrentEnvironment() {
       const env = positionEnvironment();
-      return positionExchanges.filter((exchange) => apiKeyStatusLoaded(exchange, env) && exchangeConfiguredForCurrentEnvironment(exchange));
+      const primary = primaryExchangeForUI();
+      if (!primary || !apiKeyStatusLoaded(primary, env) || !exchangeConfiguredForCurrentEnvironment(primary)) return [];
+      return [primary];
     }
 
     function exchangeSelectionAllowed(exchange) {
-      return !state.exchangeAvailabilityReady || exchangeConfiguredForCurrentEnvironment(exchange) || allExchangesUnconfiguredForCurrentEnvironment();
+      if (!state.exchangeAvailabilityReady) return true;
+      const primary = primaryExchangeForUI();
+      return !!primary && normalizeExchange(exchange) === primary && exchangeConfiguredForCurrentEnvironment(primary);
     }
 
     function syncSymbolExchangeSelector(selected) {
@@ -3483,7 +3512,10 @@ const tvbotHTML = `<!doctype html>
         const allowed = exchangeSelectionAllowed(exchange);
         option.disabled = !allowed;
         if (!allowed) {
-          option.title = exchangeLabel(exchange) + " 未配置当前交易环境 API";
+          const primary = primaryExchangeForUI();
+          option.title = primary && exchange !== primary
+            ? exchangeLabel(exchange) + " 非交易交易所，已停用"
+            : exchangeLabel(exchange) + " 未配置当前交易环境 API";
         } else {
           option.removeAttribute("title");
         }
@@ -3493,6 +3525,14 @@ const tvbotHTML = `<!doctype html>
 
     function ensureSelectedExchangeAvailable() {
       const selected = activeExchange();
+      const primary = primaryExchangeForUI();
+      if (primary && selected !== primary) {
+        state.selectedExchange = primary;
+        try {
+          window.localStorage.setItem(globalExchangeStorageKey, primary);
+        } catch (_) {}
+        return primary;
+      }
       const env = positionEnvironment();
       if (!state.exchangeAvailabilityReady || !apiKeyStatusLoaded(selected, env) || exchangeConfiguredForCurrentEnvironment(selected)) return selected;
       const fallback = ["okx", "binance", "gate"].find((exchange) => apiKeyStatusLoaded(exchange, env) && exchangeConfiguredForCurrentEnvironment(exchange));
@@ -4423,8 +4463,9 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadAll() {
-      // Start the visible order history before the API-key request. All exchange
-      // statuses for the configured environment are loaded after config.
+      // Start the visible order history before the API-key request. Both
+      // environments are loaded after config so the tenant-wide primary
+      // exchange fallback is resolved consistently.
       const ordersPromise = loadOrders();
       const configPromise = loadConfig();
       const apiKeysPromise = configPromise.then(() => loadInitialAPIKeys(), () => loadAPIKeys(activeExchange(), "demo"));
@@ -4511,11 +4552,8 @@ const tvbotHTML = `<!doctype html>
       const env = requestedPositionEnvironment() || target.env;
       state.apiKeyExchange = target.exchange;
       state.apiKeyEnv = env;
-      if (env === target.env) {
-        await Promise.all(positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, target.env)));
-      } else {
-        await Promise.all(positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, env)));
-      }
+      await Promise.all(positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, target.env)));
+      await Promise.all(["demo", "live"].flatMap((statusEnv) => positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, statusEnv))));
       return loadAPIKeys(target.exchange, env);
     }
 
@@ -5250,7 +5288,7 @@ const tvbotHTML = `<!doctype html>
         : "读取中";
       $("position-monitor-active-exchanges").textContent = "当前租户启用交易所：" + (activeExchanges || "无");
       const dailyLabel = monitor.daily_close_enabled
-        ? " / 每日 " + (monitor.daily_close_time || "06:00") + " 中国时间全交易所平仓"
+        ? " / 每日 " + (monitor.daily_close_time || "06:00") + " 中国时间主交易所平仓"
         : " / 每日定时平仓关闭";
       $("position-monitor-status").textContent = (monitor.enabled ? "已启用" : "已关闭") +
         " / " + asText(monitor.poll_interval_seconds || 60) + "s" +
@@ -5378,14 +5416,16 @@ const tvbotHTML = `<!doctype html>
         const balance = item.balance || {};
         const usdt = usdtBalanceDetail(balance);
         const configured = !!item.configured;
-        const statusText = configured ? (item.status === "ok" ? "已更新" : (item.error || item.status || "错误")) : "未配置";
+        const statusText = item.status === "non_trading"
+          ? (item.error || "非交易交易所，已停用")
+          : (configured ? (item.status === "ok" ? "已更新" : (item.error || item.status || "错误")) : "未配置");
         $(prefix + "-status").textContent = statusText;
         $(prefix + "-eq").textContent = usdt ? formatUSD(usdt.eq_usd || usdt.eq) : "-";
         $(prefix + "-avail").textContent = usdt ? formatUSDTBalance(usdt.avail_bal || usdt.avail_eq) + " USDT" : "-";
         $(prefix + "-api").textContent = item.api_id ? apiDisplayName(item.api_id, exchange, item.env) : "-";
         $(prefix + "-updated").textContent = balance.updated_at ? shanghaiTime(balance.updated_at) : (item.refreshed_at ? shanghaiTime(item.refreshed_at) : "-");
         const points = usdtBalancePoints(item.balance_points || [], balance);
-        drawUSDTChart(points, prefix + "-usdt-chart", configured ? "暂无 " + label + " USDT 估值数据" : label + " 未配置", exchange === "binance" ? "#138a55" : (exchange === "gate" ? "#1a9b8a" : "#1f6feb"));
+        drawUSDTChart(points, prefix + "-usdt-chart", item.status === "non_trading" ? "非交易交易所，已停用" : (configured ? "暂无 " + label + " USDT 估值数据" : label + " 未配置"), exchange === "binance" ? "#138a55" : (exchange === "gate" ? "#1a9b8a" : "#1f6feb"));
       });
       renderPositionBalance();
       renderAnalysisExchangeBalances();
@@ -5916,10 +5956,9 @@ const tvbotHTML = `<!doctype html>
       const previous = state.selectedAPIIDs[exchange] || status.active_id || "";
       document.querySelectorAll("[data-api-key-exchange]").forEach((button) => {
         button.setAttribute("aria-selected", normalizeExchange(button.dataset.apiKeyExchange) === exchange ? "true" : "false");
-        const target = configuredTradeTarget();
-        const isTarget = target.exchange === normalizeExchange(button.dataset.apiKeyExchange) && target.env === env;
+        const isTarget = primaryExchangeForUI() === normalizeExchange(button.dataset.apiKeyExchange);
         button.classList.toggle("trade-target", isTarget);
-        button.title = isTarget ? "当前报警交易目标" : "";
+        button.title = isTarget ? "当前主交易所" : "非交易交易所，凭据仍可维护";
       });
       const environmentSelect = $("api-key-environment");
       if (environmentSelect) environmentSelect.value = env;
@@ -5979,9 +6018,11 @@ const tvbotHTML = `<!doctype html>
       const exchange = normalizeExchange(state.apiKeyExchange);
       const env = state.apiKeyEnv === "live" ? "live" : "demo";
       const status = apiKeyStatus(exchange);
+      const primary = primaryExchangeForUI();
       const rows = [
         ["交易所", exchangeLabel(exchange)],
         ["交易环境", state.apiKeyEnv === "live" ? "实盘" : "模拟盘"],
+        ["交易角色", primary === exchange ? "主交易所" : "非交易交易所，已停用"],
         ["报警交易目标", configuredTradeTarget().exchange === exchange && configuredTradeTarget().env === env ? "是" : "否"],
         ["配置状态", status.configured ? "已配置" : "未配置"],
         ["交易 API", activeAPIIDStatusHTML(status.active_id), true],
@@ -6029,7 +6070,8 @@ const tvbotHTML = `<!doctype html>
 
     function configuredTradeTarget() {
       const trading = state.config && state.config.trading ? state.config.trading : {};
-      const exchange = normalizeExchange(trading.target_exchange || "");
+      const rawExchange = String(trading.target_exchange || "").trim();
+      const exchange = rawExchange ? normalizeExchange(rawExchange) : "";
       const env = trading.target_trade_env === "live" ? "live" : (trading.target_trade_env === "demo" ? "demo" : "");
       return { exchange: exchange, apiID: String(trading.target_api_id || "").trim(), env: env };
     }
@@ -6085,6 +6127,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function renderTemplateAPIs() {
+      syncTemplateTargetExchange();
       const exchange = $("tpl-target-exchange") ? normalizeExchange($("tpl-target-exchange").value) : "okx";
       const env = templateTradeEnv();
       const status = apiKeyStatusForEnv(exchange, env);
@@ -6093,6 +6136,20 @@ const tvbotHTML = `<!doctype html>
       if (status && status.active_id) {
         $("tpl-api-id").value = status.active_id;
       }
+    }
+
+    function syncTemplateTargetExchange() {
+      const select = $("tpl-target-exchange");
+      if (!select) return;
+      const primary = primaryExchangeForUI();
+      Array.from(select.options).forEach((option) => {
+        const exchange = normalizeExchange(option.value);
+        const nonPrimary = !!primary && exchange !== primary;
+        option.hidden = nonPrimary;
+        option.disabled = nonPrimary;
+        option.title = nonPrimary ? exchangeLabel(exchange) + " 非交易交易所，已停用" : "";
+      });
+      if (primary) select.value = primary;
     }
 
     function renderTemplateCoinpairs() {
@@ -7849,6 +7906,7 @@ const tvbotHTML = `<!doctype html>
         if (state.balanceOverviewError) return state.balanceOverviewError;
         return balance ? "已更新" : "-";
       }
+      if (item.status === "non_trading") return item.error || label + " 非交易交易所，已停用";
       if (!item.configured) return label + " 未配置";
       if (item.status === "ok") return "已更新";
       if (item.status === "stale") return "缓存数据（上游暂不可用）";
@@ -9020,7 +9078,7 @@ const tvbotHTML = `<!doctype html>
         state.config.trading.target_exchange = exchange;
         state.config.trading.target_api_id = state.apiKeys.active_id || body.id || "";
         state.config.trading.target_trade_env = env;
-      } else if (configuredTradeTarget().exchange === exchange && configuredTradeTarget().env === env) {
+      } else if (configuredTradeTarget().exchange === exchange) {
         state.config.trading.target_exchange = "";
         state.config.trading.target_api_id = "";
         state.config.trading.target_trade_env = "";

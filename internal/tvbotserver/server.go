@@ -199,6 +199,11 @@ func (s *Server) handleTVOrder(w http.ResponseWriter, r *http.Request) {
 	applySignalSourceExchangeRouting(&signal, targetExchangeProvided)
 	cfg := configForTradeEnv(s.ConfigStore.Get(), signal.TradeEnv)
 	cfg.OrderSettings().ApplyToSignal(&signal)
+	if err := s.requirePrimaryExchange(cfg, signal.TargetExchange); err != nil {
+		s.recordTVOrderRejected(r, signal, nonPrimaryExchangeCode, err, now)
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
+		return
+	}
 	if err := signal.Validate(now, time.Duration(cfg.Trading.SignalTTLSeconds)*time.Second, cfg); err != nil {
 		s.recordTVOrderRejected(r, signal, "invalid_signal", err, now)
 		writeError(w, http.StatusBadRequest, "invalid_signal", err.Error())
@@ -2217,9 +2222,21 @@ func (s *Server) handleOrders(w http.ResponseWriter, r *http.Request) {
 	coinpair := strings.TrimSpace(r.URL.Query().Get("coinpair"))
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	status := storage.OrderStatus(strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status"))))
+	primary := s.primaryExchangeForConfig(s.ConfigStore.Get())
+	if primary != "" {
+		if exchange == "" {
+			exchange = primary
+		} else if err := s.requirePrimaryExchange(s.ConfigStore.Get(), exchange); err != nil {
+			writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
+			return
+		}
+	} else if s.anyExchangeConfigured() {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, "no primary trading exchange is selected")
+		return
+	}
 	if exchange != "" {
 		if !trading.ValidTargetExchange(exchange) {
-			writeError(w, http.StatusBadRequest, "invalid_exchange", "exchange must be okx or binance")
+			writeError(w, http.StatusBadRequest, "invalid_exchange", "exchange must be okx, binance, or gate")
 			return
 		}
 	}
@@ -2261,6 +2278,18 @@ func (s *Server) handleOrderFilters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exchange := strings.TrimSpace(r.URL.Query().Get("exchange"))
+	primary := s.primaryExchangeForConfig(s.ConfigStore.Get())
+	if primary != "" {
+		if exchange == "" {
+			exchange = primary
+		} else if err := s.requirePrimaryExchange(s.ConfigStore.Get(), exchange); err != nil {
+			writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
+			return
+		}
+	} else if s.anyExchangeConfigured() {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, "no primary trading exchange is selected")
+		return
+	}
 	if exchange != "" {
 		if !trading.ValidTargetExchange(exchange) {
 			writeError(w, http.StatusBadRequest, "invalid_exchange", "exchange must be okx, binance, or gate")
@@ -2311,6 +2340,10 @@ func (s *Server) handleOrderRetry(w http.ResponseWriter, r *http.Request, path s
 		return
 	}
 	cfg := configForTradeEnv(s.ConfigStore.Get(), source.TradeEnv)
+	if err := s.requirePrimaryExchange(cfg, source.TargetExchange); err != nil {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
+		return
+	}
 	now := s.now()
 	probe := trading.Signal{
 		TargetExchange: source.TargetExchange,

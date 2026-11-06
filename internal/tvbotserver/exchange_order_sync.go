@@ -172,6 +172,10 @@ func (s *Server) handleExchangeOrders(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "order database is not configured")
 		return
 	}
+	if primary := s.primaryExchangeForConfig(s.ConfigStore.Get()); primary == "" {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, "no primary trading exchange is selected")
+		return
+	}
 	target, targetErr := s.exchangeOrderTarget()
 	filter := tvbotstorage.ExchangeOrderFilter{
 		Exchange: target.Exchange,
@@ -241,6 +245,10 @@ func (s *Server) handleExchangeOrderSync(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "order database is not configured")
 		return
 	}
+	if primary := s.primaryExchangeForConfig(s.ConfigStore.Get()); primary == "" {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, "no primary trading exchange is selected")
+		return
+	}
 	if _, err := s.exchangeOrderTarget(); err != nil {
 		writeError(w, http.StatusBadRequest, "exchange_order_target_unavailable", err.Error())
 		return
@@ -260,7 +268,7 @@ func (s *Server) exchangeOrderTarget() (exchangeOrderTarget, error) {
 		return exchangeOrderTarget{}, errors.New("TVBot configuration is not available")
 	}
 	cfg := s.ConfigStore.Get()
-	exchange := tvbottrading.NormalizeExchange(cfg.Trading.TargetExchange)
+	exchange := s.primaryExchangeForConfig(cfg)
 	if !tvbottrading.ValidTargetExchange(exchange) {
 		return exchangeOrderTarget{}, errors.New("target exchange is not configured")
 	}

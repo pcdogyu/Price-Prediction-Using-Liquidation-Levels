@@ -31,14 +31,19 @@ func (s *Server) RunScheduledPositionClose(ctx context.Context) error {
 	}
 
 	var errs []error
-	if err := s.runScheduledOKXClose(ctx, cfg); err != nil {
-		errs = append(errs, err)
-	}
-	if err := s.runScheduledBinanceClose(ctx, cfg); err != nil {
-		errs = append(errs, err)
-	}
-	if err := s.runScheduledGateClose(ctx, cfg); err != nil {
-		errs = append(errs, err)
+	switch s.primaryExchangeForConfig(cfg) {
+	case tvbottrading.ExchangeOKX:
+		if err := s.runScheduledOKXClose(ctx, cfg); err != nil {
+			errs = append(errs, err)
+		}
+	case tvbottrading.ExchangeBinance:
+		if err := s.runScheduledBinanceClose(ctx, cfg); err != nil {
+			errs = append(errs, err)
+		}
+	case tvbottrading.ExchangeGate:
+		if err := s.runScheduledGateClose(ctx, cfg); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }

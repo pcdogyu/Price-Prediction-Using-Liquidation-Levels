@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	trading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
 // ProtectedBinanceSymbols returns Binance USDT-M symbols with a live position
@@ -18,6 +20,9 @@ func (s *Server) ProtectedBinanceSymbols(ctx context.Context) ([]string, error) 
 		return nil, errors.New("Binance tenant configuration is unavailable")
 	}
 	cfg := s.ConfigStore.Get()
+	if s.primaryExchangeForConfig(cfg) != trading.ExchangeBinance {
+		return nil, nil
+	}
 	credentials := s.binanceCredentialStore(cfg.Trading.Env)
 	if credentials == nil {
 		return nil, nil

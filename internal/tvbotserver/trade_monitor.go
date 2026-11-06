@@ -60,7 +60,13 @@ func (s *Server) runTradeFillMonitor(ctx context.Context) {
 func (s *Server) runTradeFillMonitorOnce(ctx context.Context) {
 	cfg := s.ConfigStore.Get()
 	now := s.now()
-	s.scanOKXCoinpairCooldownFills(ctx, cfg, now)
+	primary := s.primaryExchangeForConfig(cfg)
+	if primary == trading.ExchangeOKX {
+		s.scanOKXCoinpairCooldownFills(ctx, cfg, now)
+	}
+	if primary != trading.ExchangeBinance {
+		return
+	}
 	binanceStore := s.binanceCredentialStore(cfg.Trading.Env)
 	if binanceStore == nil {
 		return

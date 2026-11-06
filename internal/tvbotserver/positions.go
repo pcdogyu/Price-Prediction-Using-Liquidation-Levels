@@ -360,6 +360,10 @@ func (s *Server) handlePositions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
 		return
 	}
+	if err := s.requirePrimaryExchange(cfg, exchange); err != nil {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
+		return
+	}
 	okxStore := s.okxCredentialStore(cfg.Trading.Env)
 	binanceStore := s.binanceCredentialStore(cfg.Trading.Env)
 	gateStore := s.gateCredentialStore(cfg.Trading.Env)
@@ -409,6 +413,10 @@ func (s *Server) handlePendingOrders(w http.ResponseWriter, r *http.Request) {
 	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), r.URL.Query().Get("env"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
+		return
+	}
+	if err := s.requirePrimaryExchange(cfg, exchange); err != nil {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
 		return
 	}
 	okxStore := s.okxCredentialStore(cfg.Trading.Env)
@@ -486,6 +494,10 @@ func (s *Server) handlePendingOrderRisk(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_pending_order_risk", err.Error())
 		return
 	}
+	if err := s.requirePrimaryExchange(cfg, req.Exchange); err != nil {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
+		return
+	}
 	if !cfg.Trading.ProtectionOrdersEnabled {
 		writeError(w, http.StatusForbidden, "protection_disabled", "TP/SL and trailing protection orders are disabled")
 		return
@@ -553,6 +565,10 @@ func (s *Server) handlePendingOrderCancel(w http.ResponseWriter, r *http.Request
 	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pending_order_cancel", err.Error())
+		return
+	}
+	if err := s.requirePrimaryExchange(cfg, req.Exchange); err != nil {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
 		return
 	}
 	if req.Exchange == trading.ExchangeGate {
@@ -786,6 +802,10 @@ func (s *Server) handlePendingOrderChaseAction(w http.ResponseWriter, r *http.Re
 	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pending_order_chase", err.Error())
+		return
+	}
+	if err := s.requirePrimaryExchange(cfg, req.Exchange); err != nil {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
 		return
 	}
 	if req.Exchange == trading.ExchangeGate {
@@ -1101,9 +1121,14 @@ func (s *Server) scanPositionMonitor(ctx context.Context) {
 	if !monitor.Enabled || !positionMonitorHasRule(monitor) {
 		return
 	}
-	s.scanOKXPositionMonitor(ctx, cfg, monitor)
-	s.scanBinancePositionMonitor(ctx, cfg, monitor)
-	s.scanGatePositionMonitor(ctx, cfg, monitor)
+	switch s.primaryExchangeForConfig(cfg) {
+	case trading.ExchangeOKX:
+		s.scanOKXPositionMonitor(ctx, cfg, monitor)
+	case trading.ExchangeBinance:
+		s.scanBinancePositionMonitor(ctx, cfg, monitor)
+	case trading.ExchangeGate:
+		s.scanGatePositionMonitor(ctx, cfg, monitor)
+	}
 }
 
 func positionMonitorHasRule(monitor config.PositionMonitorConfig) bool {
@@ -1716,8 +1741,12 @@ func (s *Server) runStalePendingOrderCancelMonitor(ctx context.Context, interval
 func (s *Server) cancelStalePendingOrders(ctx context.Context) {
 	cfg := s.ConfigStore.Get()
 	now := s.now()
-	s.scanStaleOKXPendingOrders(ctx, cfg, now)
-	s.scanStaleBinancePendingOrders(ctx, cfg, now)
+	switch s.primaryExchangeForConfig(cfg) {
+	case trading.ExchangeOKX:
+		s.scanStaleOKXPendingOrders(ctx, cfg, now)
+	case trading.ExchangeBinance:
+		s.scanStaleBinancePendingOrders(ctx, cfg, now)
+	}
 }
 
 func (s *Server) scanStaleOKXPendingOrders(ctx context.Context, cfg config.Config, now time.Time) {
@@ -2076,6 +2105,9 @@ func (s *Server) runAutoProfitPositionCloseMonitor(ctx context.Context, interval
 
 func (s *Server) closeProfitablePositions(ctx context.Context) {
 	cfg := s.ConfigStore.Get()
+	if s.primaryExchangeForConfig(cfg) != trading.ExchangeOKX {
+		return
+	}
 	store := s.okxCredentialStore(cfg.Trading.Env)
 	if store == nil {
 		return
@@ -2191,6 +2223,10 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_position_close", err.Error())
+		return
+	}
+	if err := s.requirePrimaryExchange(cfg, req.Exchange); err != nil {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
 		return
 	}
 	if req.Exchange == trading.ExchangeGate {
@@ -2947,6 +2983,10 @@ func (s *Server) handlePositionProtection(w http.ResponseWriter, r *http.Request
 	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), req.Env)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_position_protection", err.Error())
+		return
+	}
+	if err := s.requirePrimaryExchange(cfg, req.Exchange); err != nil {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
 		return
 	}
 	if !cfg.Trading.ProtectionOrdersEnabled {

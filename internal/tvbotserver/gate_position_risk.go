@@ -127,6 +127,9 @@ func (s *Server) reconcileGatePositionRisk(ctx context.Context) {
 	if s == nil || s.ConfigStore == nil || s.Orders == nil {
 		return
 	}
+	if s.primaryExchangeForConfig(s.ConfigStore.Get()) != tvbottrading.ExchangeGate {
+		return
+	}
 	// Do not select only the newest order for a contract. Net-mode Gate
 	// positions can contain several independently priced entry layers, and each
 	// submitted layer owns its own protection pair.

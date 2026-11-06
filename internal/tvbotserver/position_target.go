@@ -52,39 +52,21 @@ func hasConfiguredGate(store *tvbotgate.CredentialStore) bool {
 }
 
 func (s *Server) configuredPositionExchanges(env string) []string {
-	var exchanges []string
-	if env == tvbotconfig.EnvLive {
-		if hasConfiguredOKX(s.OKXLiveCredentials) {
-			exchanges = append(exchanges, "okx")
-		}
-		if hasConfiguredBinance(s.BinanceLiveCredentials) {
-			exchanges = append(exchanges, "binance")
-		}
-		if hasConfiguredGate(s.GateLiveCredentials) {
-			exchanges = append(exchanges, "gate")
-		}
-		return exchanges
+	primary := s.primaryExchangeForConfig(s.ConfigStore.Get())
+	if primary == "" || !s.exchangeConfiguredInEnvironment(primary, env) {
+		return nil
 	}
-	if hasConfiguredOKX(s.OKXCredentials) {
-		exchanges = append(exchanges, "okx")
-	}
-	if hasConfiguredBinance(s.BinanceCredentials) {
-		exchanges = append(exchanges, "binance")
-	}
-	if hasConfiguredGate(s.GateCredentials) {
-		exchanges = append(exchanges, "gate")
-	}
-	return exchanges
+	return []string{primary}
 }
 
 func (s *Server) positionTarget() positionTargetResponse {
+	primary := s.primaryExchangeForConfig(s.ConfigStore.Get())
+	if primary == "" {
+		return positionTargetResponse{}
+	}
 	for _, env := range []string{tvbotconfig.EnvLive, tvbotconfig.EnvDemo} {
-		exchanges := s.configuredPositionExchanges(env)
-		if len(exchanges) == 1 {
-			return positionTargetResponse{Unique: true, Exchange: exchanges[0], Env: env}
-		}
-		if len(exchanges) > 0 {
-			return positionTargetResponse{}
+		if s.exchangeConfiguredInEnvironment(primary, env) {
+			return positionTargetResponse{Unique: true, Exchange: primary, Env: env}
 		}
 	}
 	return positionTargetResponse{}

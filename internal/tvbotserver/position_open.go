@@ -139,6 +139,10 @@ func (s *Server) handlePositionOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Env = cfg.Trading.Env
+	if err := s.requirePrimaryExchange(cfg, req.Exchange); err != nil {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	position, apiID, err := s.currentPositionForOpen(ctx, cfg, req)

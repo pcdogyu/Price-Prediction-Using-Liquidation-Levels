@@ -47,6 +47,9 @@ func (s *Server) startBinanceUserDataStreams(ctx context.Context) {
 		return
 	}
 	cfg := s.ConfigStore.Get()
+	if s.primaryExchangeForConfig(cfg) != trading.ExchangeBinance {
+		return
+	}
 	store := s.binanceCredentialStore(cfg.Trading.Env)
 	if store == nil {
 		return
@@ -61,6 +64,9 @@ func (s *Server) runBinanceUserDataStream(ctx context.Context, requestedAPIID st
 	backoff := 5 * time.Second
 	for ctx.Err() == nil {
 		cfg := s.ConfigStore.Get()
+		if s.primaryExchangeForConfig(cfg) != trading.ExchangeBinance {
+			return
+		}
 		client, apiID, err := s.binanceClientForCredentials(cfg, requestedAPIID)
 		if err == nil {
 			streamID := binanceUserStreamID(client, apiID)

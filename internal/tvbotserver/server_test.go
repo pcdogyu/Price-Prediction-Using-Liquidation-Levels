@@ -3549,6 +3549,7 @@ func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T
 	cfg := srv.ConfigStore.Get()
 	cfg.Trading.BaseURL = okxServer.URL
 	cfg.Trading.BinanceDemoBaseURL = binanceServer.URL
+	cfg.Trading.TargetExchange = trading.ExchangeOKX
 	cfg.Symbols["BAD"] = config.SymbolConfig{Coinpair: "BADUSDT"}
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.OKXHTTPClient = okxServer.Client()
@@ -3597,21 +3598,21 @@ func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T
 	if rr.Code != http.StatusOK {
 		t.Fatalf("analysis code=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if !sawBalance || !sawCandles || !sawFills || !sawOKXFunding || !sawBinanceFunding || !sawInstruments {
-		t.Fatalf("expected analysis calls balance=%v candles=%v fills=%v okxFunding=%v binanceFunding=%v instruments=%v", sawBalance, sawCandles, sawFills, sawOKXFunding, sawBinanceFunding, sawInstruments)
+	if !sawBalance || !sawCandles || !sawFills || !sawOKXFunding || sawBinanceFunding || !sawInstruments {
+		t.Fatalf("expected primary-only analysis calls balance=%v candles=%v fills=%v okxFunding=%v binanceFunding=%v instruments=%v", sawBalance, sawCandles, sawFills, sawOKXFunding, sawBinanceFunding, sawInstruments)
 	}
-	if !sawBinanceSymbols["BADUSDT"] || !sawBinanceSymbols["BTCUSDT"] || !sawBinanceSymbols["ETHUSDT"] {
-		t.Fatalf("expected Binance configured symbols to be queried, seen=%#v", sawBinanceSymbols)
+	if len(sawBinanceSymbols) != 0 {
+		t.Fatalf("non-primary Binance symbols should not be queried, seen=%#v", sawBinanceSymbols)
 	}
 	var resp analysisResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.PNLMinutes != 1440 || resp.PNLDays != 1 || resp.BinanceAPIID != "binance-alt" || !strings.Contains(resp.Cache.CacheKey, "binance:binance-alt") {
+	if resp.PNLMinutes != 1440 || resp.PNLDays != 1 || resp.BinanceAPIID != "" || strings.Contains(resp.Cache.CacheKey, "binance:binance-alt") {
 		t.Fatalf("bad analysis API/window metadata: %#v", resp)
 	}
-	if resp.Source.Fills != "okx+binance_error" {
-		t.Fatalf("expected partial Binance fill status, source=%#v", resp.Source)
+	if resp.Source.Fills != "okx" {
+		t.Fatalf("expected primary-only fill status, source=%#v", resp.Source)
 	}
 	if resp.Balance.TotalEq != "80078.07" || len(resp.Balance.Details) != 2 || resp.Balance.Details[0].Ccy != "BTC" {
 		t.Fatalf("bad balance data: %#v", resp.Balance)
@@ -3629,17 +3630,17 @@ func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T
 	if len(snapshots) != 1 || snapshots[0].EqUsd != "4996.65" || snapshots[0].BucketTS != time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC).UnixMilli() {
 		t.Fatalf("analysis did not write USDT balance snapshot: %#v", snapshots)
 	}
-	if resp.Summary.TradeCount != 3 || resp.Summary.Wins != 2 || resp.Summary.Losses != 1 {
+	if resp.Summary.TradeCount != 2 || resp.Summary.Wins != 1 || resp.Summary.Losses != 1 {
 		t.Fatalf("bad summary counts: %#v", resp.Summary)
 	}
-	if math.Abs(resp.Summary.NetPnL-6.33) > 0.0000001 || math.Abs(resp.Summary.WinRate-(2.0/3.0)) > 0.0000001 {
+	if math.Abs(resp.Summary.NetPnL-1.68) > 0.0000001 || math.Abs(resp.Summary.WinRate-0.5) > 0.0000001 {
 		t.Fatalf("bad summary metrics: %#v", resp.Summary)
 	}
-	if math.Abs(resp.Summary.Fees-(-0.67)) > 0.0000001 || math.Abs(resp.Summary.Turnover-6342.2) > 0.0000001 {
+	if math.Abs(resp.Summary.Fees-(-0.32)) > 0.0000001 || math.Abs(resp.Summary.Turnover-2502) > 0.0000001 {
 		t.Fatalf("bad summary period fill metrics: %#v", resp.Summary)
 	}
-	if len(resp.ExchangeSummaries) != 2 {
-		t.Fatalf("expected exchange summaries: %#v", resp.ExchangeSummaries)
+	if len(resp.ExchangeSummaries) != 1 {
+		t.Fatalf("expected only primary exchange summary: %#v", resp.ExchangeSummaries)
 	}
 	byExchange := map[string]analysisSymbolStats{}
 	for _, stats := range resp.ExchangeSummaries {
@@ -3648,33 +3649,31 @@ func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T
 	if byExchange["okx"].TradeCount != 2 || math.Abs(byExchange["okx"].NetPnL-1.68) > 0.0000001 {
 		t.Fatalf("bad OKX exchange summary: %#v", resp.ExchangeSummaries)
 	}
-	if byExchange["binance"].TradeCount != 1 || math.Abs(byExchange["binance"].NetPnL-4.65) > 0.0000001 {
-		t.Fatalf("bad Binance exchange summary: %#v", resp.ExchangeSummaries)
-	}
-	if len(resp.Symbols) != 3 {
+	if len(resp.Symbols) != 2 {
 		t.Fatalf("expected symbol stats: %#v", resp.Symbols)
 	}
 	byExchangeSymbol := map[string]analysisSymbolStats{}
 	for _, stats := range resp.Symbols {
 		byExchangeSymbol[stats.Exchange+"|"+stats.InstID] = stats
 	}
-	if byExchangeSymbol["okx|BTC-USDT-SWAP"].TradeCount != 1 || byExchangeSymbol["binance|BTCUSDT"].TradeCount != 1 {
-		t.Fatalf("expected exchange-separated symbol stats: %#v", resp.Symbols)
+	if byExchangeSymbol["okx|BTC-USDT-SWAP"].TradeCount != 1 || byExchangeSymbol["okx|ETH-USDT-SWAP"].TradeCount != 1 || len(byExchangeSymbol) != len(resp.Symbols) {
+		t.Fatalf("expected primary-only symbol stats: %#v", resp.Symbols)
 	}
-	if len(resp.PositionTrades) != 3 {
+	if len(resp.PositionTrades) != 2 {
 		t.Fatalf("bad position trades: %#v", resp.PositionTrades)
 	}
-	if resp.PositionTrades[0].Exchange != trading.ExchangeBinance || resp.PositionTrades[0].InstID != "BTCUSDT" || resp.PositionTrades[0].Side != "long" || resp.PositionTrades[0].NetPnL != "4.65" {
-		t.Fatalf("bad Binance position trade: %#v", resp.PositionTrades)
+	for _, positionTrade := range resp.PositionTrades {
+		if positionTrade.Exchange != trading.ExchangeOKX {
+			t.Fatalf("non-primary position trade leaked into analysis: %#v", resp.PositionTrades)
+		}
 	}
-	if resp.PositionTrades[1].Exchange != trading.ExchangeOKX || resp.PositionTrades[1].InstID != "ETH-USDT-SWAP" || resp.PositionTrades[1].Side != "short" || resp.PositionTrades[1].NetPnL != "-1.1" {
-		t.Fatalf("bad OKX short position trade: %#v", resp.PositionTrades)
+	if len(resp.Trades) == 0 {
+		t.Fatalf("primary trade history is empty")
 	}
-	if resp.PositionTrades[2].Exchange != trading.ExchangeOKX || resp.PositionTrades[2].InstID != "BTC-USDT-SWAP" || resp.PositionTrades[2].Side != "long" || resp.PositionTrades[2].NetPnL != "2.78" {
-		t.Fatalf("bad OKX long position trade: %#v", resp.PositionTrades)
-	}
-	if len(resp.Trades) == 0 || resp.Trades[0].Exchange != trading.ExchangeBinance || resp.Trades[0].InstID != "BTCUSDT" || resp.Trades[0].Fee != "-0.25" || resp.Trades[0].FillCount != 2 || resp.Trades[0].FillSz != "0.03" {
-		t.Fatalf("bad trade history: %#v", resp.Trades)
+	for _, trade := range resp.Trades {
+		if trade.Exchange != trading.ExchangeOKX {
+			t.Fatalf("non-primary trade leaked into analysis: %#v", resp.Trades)
+		}
 	}
 
 	expectedBinanceStart = 0

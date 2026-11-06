@@ -79,6 +79,15 @@ func (s *Server) handlePositionOpenMode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_position_open_mode", "unsupported exchange")
 		return
 	}
+	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_position_open_mode", err.Error())
+		return
+	}
+	if err := s.requirePrimaryExchange(cfg, req.Exchange); err != nil {
+		writeError(w, http.StatusConflict, nonPrimaryExchangeCode, err.Error())
+		return
+	}
 	key := positionOpenModeKey(req.Exchange, req.APIID, req.InstID, req.PosSide)
 	if _, err := s.ConfigStore.UpdateSettings(func(cfg *tvbotconfig.Config) error {
 		if cfg.UI.PositionOpenModes == nil {
