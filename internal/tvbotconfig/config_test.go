@@ -476,7 +476,7 @@ func TestNormalizePositionMonitorDefaultsAndValidation(t *testing.T) {
 	if cfg.Trading.PositionMonitor.Enabled {
 		t.Fatalf("zero-value position monitor should preserve disabled master switch: %#v", cfg.Trading.PositionMonitor)
 	}
-	if cfg.Trading.PositionMonitor.OKXEnabled || cfg.Trading.PositionMonitor.BinanceEnabled || cfg.Trading.PositionMonitor.GateEnabled || cfg.Trading.PositionMonitor.PollIntervalSeconds != 300 || cfg.Trading.PositionMonitor.TakeProfitPct != 5 || cfg.Trading.PositionMonitor.StopLossPct != 8 || cfg.Trading.PositionMonitor.MinHoldingMinutes != MinimumAutomaticHoldingMinutes || cfg.Trading.PositionMonitor.StopLossMinHoldingMinutes != MinimumStopLossHoldingMinutes || cfg.Trading.PositionMonitor.LowMarginThresholdUSDT != 50 || cfg.Trading.PositionMonitor.LowMarginHoldingHours != 1 || cfg.Trading.PositionMonitor.LowMarginCloseEnabled {
+	if cfg.Trading.PositionMonitor.OKXEnabled || cfg.Trading.PositionMonitor.BinanceEnabled || cfg.Trading.PositionMonitor.GateEnabled || cfg.Trading.PositionMonitor.PollIntervalSeconds != 60 || cfg.Trading.PositionMonitor.TakeProfitPct != 5 || cfg.Trading.PositionMonitor.StopLossPct != 8 || cfg.Trading.PositionMonitor.MinHoldingMinutes != MinimumAutomaticHoldingMinutes || cfg.Trading.PositionMonitor.StopLossMinHoldingMinutes != MinimumStopLossHoldingMinutes || cfg.Trading.PositionMonitor.LowMarginThresholdUSDT != 50 || cfg.Trading.PositionMonitor.LowMarginHoldingHours != 1 || cfg.Trading.PositionMonitor.LowMarginCloseEnabled {
 		t.Fatalf("bad position monitor defaults: %#v", cfg.Trading.PositionMonitor)
 	}
 	if !Default().Trading.PositionMonitor.DailyCloseEnabled || Default().Trading.PositionMonitor.DailyCloseTime != DefaultDailyCloseTime {
@@ -490,7 +490,7 @@ func TestNormalizePositionMonitorDefaultsAndValidation(t *testing.T) {
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("zero position monitor interval should be rejected")
 	}
-	cfg.Trading.PositionMonitor.PollIntervalSeconds = 300
+	cfg.Trading.PositionMonitor.PollIntervalSeconds = 60
 	cfg.Trading.PositionMonitor.TakeProfitPct = -1
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("negative position monitor take profit should be rejected")

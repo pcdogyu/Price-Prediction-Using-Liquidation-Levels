@@ -358,7 +358,7 @@ func Default() Config {
 				OKXEnabled:                false,
 				BinanceEnabled:            false,
 				GateEnabled:               false,
-				PollIntervalSeconds:       300,
+				PollIntervalSeconds:       60,
 				TakeProfitPct:             5,
 				StopLossPct:               8,
 				MinHoldingMinutes:         MinimumAutomaticHoldingMinutes,
@@ -569,7 +569,7 @@ func (c *Config) Normalize() {
 		c.Trading.AutoReentry.OnlyBotOrders = true
 	}
 	if c.Trading.PositionMonitor.PollIntervalSeconds <= 0 {
-		c.Trading.PositionMonitor.PollIntervalSeconds = 300
+		c.Trading.PositionMonitor.PollIntervalSeconds = 60
 	}
 	if c.Trading.PositionMonitor.TakeProfitPct <= 0 {
 		c.Trading.PositionMonitor.TakeProfitPct = 5

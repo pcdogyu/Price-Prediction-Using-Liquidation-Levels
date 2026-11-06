@@ -43,7 +43,7 @@ var (
 	autoProfitPositionReturnThreshold = 0.05
 	autoProfitClosePollInterval       = 10 * time.Second
 	autoProfitCloseLimitTimeout       = 5 * time.Minute
-	positionMonitorDefaultInterval    = 300 * time.Second
+	positionMonitorDefaultInterval    = 60 * time.Second
 	positionMonitorScanTimeout        = 20 * time.Second
 	stalePendingOrderCancelInterval   = 5 * time.Minute
 	stalePendingOrderCancelAfter      = 2 * time.Hour

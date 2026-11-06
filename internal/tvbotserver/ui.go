@@ -5161,7 +5161,7 @@ const tvbotHTML = `<!doctype html>
       const monitor = trading.position_monitor || {};
       return {
         enabled: monitor.enabled !== false,
-        poll_interval_seconds: Number(monitor.poll_interval_seconds || 300),
+        poll_interval_seconds: Number(monitor.poll_interval_seconds || 60),
         take_profit_pct: Number(monitor.take_profit_pct || 5),
         stop_loss_pct: Number(monitor.stop_loss_pct || 8),
         min_holding_minutes: Math.max(15, Number(monitor.min_holding_minutes || 15)),
@@ -5178,7 +5178,7 @@ const tvbotHTML = `<!doctype html>
       if (!$("position-monitor-interval")) return;
       const monitor = positionMonitorConfig();
       $("position-monitor-enabled").checked = !!monitor.enabled;
-      $("position-monitor-interval").value = monitor.poll_interval_seconds || 300;
+      $("position-monitor-interval").value = monitor.poll_interval_seconds || 60;
       $("position-monitor-tp").value = monitor.take_profit_pct || 5;
       $("position-monitor-sl").value = monitor.stop_loss_pct || 8;
       $("position-monitor-min-minutes").value = monitor.min_holding_minutes || 15;
@@ -5195,7 +5195,7 @@ const tvbotHTML = `<!doctype html>
         ? " / 每日 " + (monitor.daily_close_time || "06:00") + " 中国时间全交易所平仓"
         : " / 每日定时平仓关闭";
       $("position-monitor-status").textContent = (monitor.enabled ? "已启用" : "已关闭") +
-        " / " + asText(monitor.poll_interval_seconds || 300) + "s" +
+        " / " + asText(monitor.poll_interval_seconds || 60) + "s" +
         " / 自动平仓最短" + asText(monitor.min_holding_minutes || 15) + "分钟" +
         " / 自动止盈" + asText(monitor.take_profit_pct || 5) + "% / 自动止损" + asText(monitor.stop_loss_pct || 8) + "% / 原生保护单禁用" +
         " / 低保证金" + (monitor.low_margin_close_enabled ? " <" + asText(monitor.low_margin_threshold_usdt || 50) + " USDT / " + asText(monitor.low_margin_holding_hours || 1) + "h" : "关闭") + dailyLabel;
