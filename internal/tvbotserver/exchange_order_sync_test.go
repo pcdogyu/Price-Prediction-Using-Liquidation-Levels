@@ -139,6 +139,69 @@ func TestFetchBinanceExchangeOrdersSplitsWindowsAtBinanceLimit(t *testing.T) {
 	}
 }
 
+func TestFetchBinanceExchangeOrdersDiscoversRecentLocalSymbols(t *testing.T) {
+	srv := newTestServer(t)
+	if _, err := srv.BinanceCredentials.SaveSingleAccount(binance.CredentialAccountUpdate{
+		ID: "binance-main", Name: "test", Active: true,
+		Credentials: binance.Credentials{APIKey: "fake-key", SecretKey: "fake-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 11, 9, 14, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	if _, err := srv.Orders.UpsertExchangeOrders([]storage.ExchangeOrder{{
+		Exchange: "binance", APIID: "binance-main", TradeEnv: "demo", RemoteOrderID: "known-1",
+		InstID: "USDCUSDT", Status: "FILLED", CreatedAt: from,
+	}}, from); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.Orders.UpsertBinanceFills([]storage.BinanceFill{{
+		APIID: "binance-main", Symbol: "ADAUSDT", TradeID: "trade-1", OrderID: "order-1", FillTime: from.Add(30 * time.Minute).UnixMilli(),
+	}}, to); err != nil {
+		t.Fatal(err)
+	}
+
+	var starts = map[string][]time.Time{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v1/exchangeInfo":
+			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"USDCUSDT","status":"TRADING","quoteAsset":"USDT"},{"symbol":"ADAUSDT","status":"TRADING","quoteAsset":"USDT"}]}`))
+		case "/fapi/v1/allOrders":
+			startMS, err := strconv.ParseInt(r.URL.Query().Get("startTime"), 10, 64)
+			if err != nil {
+				t.Fatalf("invalid Binance startTime: %q", r.URL.Query().Get("startTime"))
+			}
+			symbol := r.URL.Query().Get("symbol")
+			starts[symbol] = append(starts[symbol], time.UnixMilli(startMS).UTC())
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = ts.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = ts.Client()
+	target := exchangeOrderTarget{
+		Exchange: trading.ExchangeBinance,
+		APIID:    "binance-main",
+		TradeEnv: trading.TradeEnvDemo,
+		Config:   cfg,
+	}
+	if _, _, err := srv.fetchBinanceExchangeOrders(context.Background(), target, from, to); err != nil {
+		t.Fatal(err)
+	}
+	if got := starts["USDCUSDT"]; len(got) == 0 || !got[0].Equal(from) {
+		t.Fatalf("known symbol should use incremental window from=%s, got %#v", from, got)
+	}
+	wantBackfill := to.Add(-exchangeOrderInitialWindow)
+	if got := starts["ADAUSDT"]; len(got) == 0 || !got[0].Equal(wantBackfill) {
+		t.Fatalf("recent local symbol should use backfill window from=%s, got %#v", wantBackfill, got)
+	}
+}
+
 func TestExchangeOrderSyncStateDueHonorsFreshAndInFlightStates(t *testing.T) {
 	now := time.Date(2026, 11, 4, 15, 0, 0, 0, time.UTC)
 	tests := []struct {

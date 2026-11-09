@@ -416,14 +416,25 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 	if len(symbols) == 0 {
 		return result, cursor, errors.New("Binance exchangeInfo returned no active USDT symbols")
 	}
+	// Incremental syncs are normally bounded to symbols already present in
+	// exchange_orders. That optimization can hide a newly traded symbol when
+	// its local fill arrived after the exchange-order cursor was last saved.
+	// Discover recent local symbols and backfill them from the initial window;
+	// this keeps the scan bounded while allowing history to catch up.
+	discovered := s.discoverBinanceOrderSymbols(apiID, target, to)
+	knownSet := map[string]struct{}{}
 	if known, err := s.Orders.ListExchangeOrderInstIDs(target.Exchange, apiID, target.TradeEnv); err == nil && len(known) > 0 {
-		knownSet := make(map[string]struct{}, len(known))
 		for _, symbol := range known {
 			knownSet[strings.ToUpper(strings.TrimSpace(symbol))] = struct{}{}
 		}
 		filtered := symbols[:0]
 		for _, symbol := range symbols {
-			if _, ok := knownSet[strings.ToUpper(symbol)]; ok {
+			normalized := strings.ToUpper(strings.TrimSpace(symbol))
+			if _, ok := knownSet[normalized]; ok {
+				filtered = append(filtered, symbol)
+				continue
+			}
+			if _, ok := discovered[normalized]; ok {
 				filtered = append(filtered, symbol)
 			}
 		}
@@ -432,7 +443,13 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 		}
 	}
 	for _, symbol := range symbols {
-		for windowStart := from; ; {
+		windowStart := from
+		if _, known := knownSet[strings.ToUpper(strings.TrimSpace(symbol))]; !known {
+			if _, ok := discovered[strings.ToUpper(strings.TrimSpace(symbol))]; ok {
+				windowStart = to.Add(-exchangeOrderInitialWindow)
+			}
+		}
+		for {
 			windowEnd := windowStart.Add(exchangeOrderBinanceWindow)
 			if windowEnd.After(to) {
 				windowEnd = to
@@ -471,6 +488,37 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 		}
 	}
 	return result, cursor, nil
+}
+
+func (s *Server) discoverBinanceOrderSymbols(apiID string, target exchangeOrderTarget, to time.Time) map[string]struct{} {
+	discovered := make(map[string]struct{})
+	add := func(symbol string) {
+		symbol = strings.ToUpper(strings.TrimSpace(symbol))
+		if symbol != "" {
+			discovered[symbol] = struct{}{}
+		}
+	}
+
+	if fills, err := s.Orders.ListBinanceFills(apiID, to.Add(-exchangeOrderInitialWindow)); err == nil {
+		for _, fill := range fills {
+			add(fill.Symbol)
+		}
+	}
+	for _, record := range s.Orders.List(200) {
+		if tvbottrading.NormalizeExchange(record.TargetExchange) != target.Exchange {
+			continue
+		}
+		if strings.TrimSpace(record.APIID) != "" && strings.TrimSpace(record.APIID) != apiID {
+			continue
+		}
+		if env := tvbottrading.NormalizeTradeEnv(record.TradeEnv); env != "" && env != target.TradeEnv {
+			continue
+		}
+		add(record.Result.InstID)
+		add(record.Coinpair)
+		add(record.Ticker)
+	}
+	return discovered
 }
 
 func (s *Server) fetchOKXExchangeOrders(ctx context.Context, target exchangeOrderTarget, from, to time.Time) ([]tvbotstorage.ExchangeOrder, exchangeOrderSyncCursor, error) {
