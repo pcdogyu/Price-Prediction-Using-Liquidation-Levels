@@ -150,16 +150,22 @@ type Signal struct {
 	ADX                  *float64      `json:"-"`
 	MarketStrategy       string        `json:"-"`
 	RawJSON              string        `json:"-"`
+	PyramidLevel         int           `json:"-"`
+	PyramidEnabled       bool          `json:"-"`
 }
 
 type OrderSettings struct {
 	Amount                    FlexibleFloat
+	AmountMode                string
+	AmountPct                 float64
+	MaxOpenCoinpairs          int
 	Leverage                  int
 	OrderType                 OrderType
 	Risk                      Risk
 	LongLimitPriceMultiplier  float64
 	ShortLimitPriceMultiplier float64
 	Layered                   LayeredOrderSettings
+	Pyramid                   PyramidOrderSettings
 }
 
 type TemplateRequest struct {
@@ -439,6 +445,16 @@ func (o OrderSettings) Normalize() OrderSettings {
 	if !o.Amount.Set || o.Amount.Value <= 0 {
 		o.Amount = NewFlexibleFloat(100)
 	}
+	o.AmountMode = strings.ToLower(strings.TrimSpace(o.AmountMode))
+	if !ValidOrderAmountMode(o.AmountMode) {
+		o.AmountMode = OrderAmountModeFixedUSDT
+	}
+	if o.AmountPct <= 0 {
+		o.AmountPct = 10
+	}
+	if o.MaxOpenCoinpairs < 0 {
+		o.MaxOpenCoinpairs = 0
+	}
 	if o.Leverage <= 0 {
 		o.Leverage = 5
 	}
@@ -464,6 +480,7 @@ func (o OrderSettings) Normalize() OrderSettings {
 		o.ShortLimitPriceMultiplier = 1.003
 	}
 	o.Layered = o.Layered.Normalize()
+	o.Pyramid = o.Pyramid.Normalize()
 	return o
 }
 

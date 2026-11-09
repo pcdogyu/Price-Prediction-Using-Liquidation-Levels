@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	trading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
 func TestNormalizeDefaultTab(t *testing.T) {
@@ -296,6 +298,61 @@ func TestLayeredOrderDefaultsPersistAndValidate(t *testing.T) {
 	cfg.Trading.LayeredOrder.MarketAmountPct = 11
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("invalid layered amount total should be rejected")
+	}
+}
+
+func TestOrderAmountAndPyramidDefaultsPersistAndValidate(t *testing.T) {
+	cfg := Default()
+	if cfg.Trading.OrderAmountMode != "fixed_usdt" || cfg.Trading.OrderAmountPct != 10 || cfg.Trading.MaxOpenCoinpairs != 0 {
+		t.Fatalf("unexpected order amount defaults: %#v", cfg.Trading)
+	}
+	if cfg.Trading.PyramidOrder.Enabled || cfg.Trading.PyramidOrder.MaxAdditionalEntries != 3 || len(cfg.Trading.PyramidOrder.AddAmountPcts) != 3 || cfg.Trading.PyramidOrder.MinFavorableMovePct != 1 {
+		t.Fatalf("unexpected pyramid defaults: %#v", cfg.Trading.PyramidOrder)
+	}
+	legacyPath := filepath.Join(t.TempDir(), "legacy-order-settings.json")
+	if err := os.WriteFile(legacyPath, []byte(`{"trading":{"order_amount_usdt":100}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := Load(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Trading.OrderAmountMode != "fixed_usdt" || legacy.Trading.OrderAmountPct != 10 || legacy.Trading.MaxOpenCoinpairs != 0 || legacy.Trading.PyramidOrder.Enabled {
+		t.Fatalf("legacy config compatibility failed: %#v", legacy.Trading)
+	}
+
+	cfg.Trading.OrderAmountMode = "equity_pct"
+	cfg.Trading.OrderAmountPct = 20
+	cfg.Trading.MaxOpenCoinpairs = 4
+	cfg.Trading.PyramidOrder = trading.PyramidOrderSettings{
+		Enabled:              true,
+		MaxAdditionalEntries: 2,
+		AddAmountPcts:        []float64{5, 10},
+		MinFavorableMovePct:  1.5,
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "order-settings.json")
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Trading.OrderAmountMode != "equity_pct" || loaded.Trading.OrderAmountPct != 20 || loaded.Trading.MaxOpenCoinpairs != 4 || !reflect.DeepEqual(loaded.Trading.PyramidOrder.AddAmountPcts, []float64{5, 10}) {
+		t.Fatalf("new order settings did not persist: %#v", loaded.Trading)
+	}
+
+	cfg.Trading.OrderAmountMode = "invalid"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid order amount mode should be rejected")
+	}
+	cfg = Default()
+	cfg.Trading.MaxOpenCoinpairs = -1
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("negative max open coinpairs should be rejected")
 	}
 }
 

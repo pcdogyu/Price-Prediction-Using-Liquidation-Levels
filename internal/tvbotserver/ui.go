@@ -2615,7 +2615,10 @@ const tvbotHTML = `<!doctype html>
         <button class="btn primary" type="button" id="save-order-settings">保存下单设置</button>
       </div>
       <div class="grid order-settings-grid">
-        <label>USDT 下单金额<input id="order-amount" type="number" min="0" step="0.01"></label>
+        <label>下单金额模式<select id="order-amount-mode"><option value="fixed_usdt">固定 USDT</option><option value="equity_pct">总权益百分比</option></select></label>
+        <label id="order-fixed-amount-field">固定/余额失败回退 USDT 金额<input id="order-amount" type="number" min="0" step="0.01"></label>
+        <label id="order-equity-pct-field">单笔总权益百分比 %<input id="order-amount-pct" type="number" min="0.01" max="100" step="0.01"></label>
+        <label>最多持仓币对数（0=不限）<input id="order-max-open-coinpairs" type="number" min="0" step="1"></label>
         <label>杠杆<input id="order-leverage" type="number" min="1" step="1"></label>
         <label>订单类型<select id="order-type"><option value="market">市价单</option><option value="limit">限价单</option><option value="layered">多层订单</option></select></label>
         <label>风控模式<select id="order-risk-type" disabled><option value="none">不设置（SL/TP已禁用）</option></select></label>
@@ -2650,6 +2653,17 @@ const tvbotHTML = `<!doctype html>
             <tr><th>第 4 层</th><td><input id="order-layered-layer-3-amount" type="number" min="0" step="0.01"></td><td><input id="order-layered-layer-3-offset" type="number" min="0" step="0.01"></td></tr>
           </tbody>
         </table>
+      </div>
+      <div id="pyramid-order-fields" style="margin-top:14px">
+        <label class="check"><input id="order-pyramid-enabled" type="checkbox">启用信号型金字塔加仓</label>
+        <div id="pyramid-order-details" style="display:none;margin-top:10px">
+          <div class="muted">首单沿用上方金额；同方向信号满足有利价格门槛后，按下方各级总权益百分比加仓。一次多层订单只计作一个金字塔级别。</div>
+          <div class="grid two" style="margin-top:10px">
+            <label>最多加仓次数<input id="order-pyramid-max-additional" type="number" min="0" max="20" step="1"></label>
+            <label>统一有利价格门槛 %<input id="order-pyramid-threshold" type="number" min="0" max="100" step="0.01"></label>
+          </div>
+          <div id="order-pyramid-levels" class="grid two" style="margin-top:10px"></div>
+        </div>
       </div>
       <div class="muted" style="margin-top:10px">按各交易所、各交易环境的 24 小时交易额排名过滤新开仓，适用于 OKX 和 Binance；平仓不受影响。点击“保存下单设置”后生效。</div>
       <table style="margin-top:14px">
@@ -5889,7 +5903,12 @@ const tvbotHTML = `<!doctype html>
     function renderOrderSettings() {
       const trading = state.config && state.config.trading ? state.config.trading : {};
       const layered = layeredOrderConfig(trading);
+      const amountMode = orderAmountMode(trading);
+      const pyramid = pyramidOrderConfig(trading);
+      $("order-amount-mode").value = amountMode;
       $("order-amount").value = trading.order_amount_usdt || 100;
+      $("order-amount-pct").value = trading.order_amount_pct || 10;
+      $("order-max-open-coinpairs").value = Math.max(0, Number(trading.max_open_coinpairs || 0));
       $("order-leverage").value = trading.leverage || 5;
       $("order-type").value = trading.order_type || "layered";
       $("order-turnover-scope").value = marketTurnoverScope();
@@ -5911,8 +5930,57 @@ const tvbotHTML = `<!doctype html>
         $("order-layered-layer-" + index + "-amount").value = layer.amount_pct;
         $("order-layered-layer-" + index + "-offset").value = layer.offset_pct;
       });
+      $("order-pyramid-enabled").checked = pyramid.enabled;
+      $("order-pyramid-max-additional").value = pyramid.max_additional_entries;
+      $("order-pyramid-threshold").value = pyramid.min_favorable_move_pct;
+      updateOrderAmountFields();
       updateLayeredOrderFields();
+      updatePyramidOrderFields(pyramid.add_amount_pcts);
       renderOrderSettingsPreview();
+    }
+
+    function orderAmountMode(trading) {
+      const value = String(trading && trading.order_amount_mode || "fixed_usdt").toLowerCase();
+      return value === "equity_pct" ? "equity_pct" : "fixed_usdt";
+    }
+
+    function pyramidOrderConfig(trading) {
+      const raw = trading && trading.pyramid_order ? trading.pyramid_order : {};
+      const maxRaw = raw.max_additional_entries === undefined ? 3 : Number(raw.max_additional_entries);
+      const max = Math.max(0, Math.min(20, Number.isFinite(maxRaw) ? Math.floor(maxRaw) : 3));
+      const rawPcts = Array.isArray(raw.add_amount_pcts) ? raw.add_amount_pcts : [];
+      const pcts = Array.from({ length: max }, (_, index) => {
+        const value = Number(rawPcts[index]);
+        return Number.isFinite(value) && value > 0 ? value : 5;
+      });
+      const threshold = Number(raw.min_favorable_move_pct);
+      return {
+        enabled: !!raw.enabled,
+        max_additional_entries: max,
+        add_amount_pcts: pcts,
+        min_favorable_move_pct: Number.isFinite(threshold) && threshold >= 0 ? threshold : 1
+      };
+    }
+
+    function updateOrderAmountFields() {
+      const mode = $("order-amount-mode").value === "equity_pct" ? "equity_pct" : "fixed_usdt";
+      $("order-fixed-amount-field").style.display = mode === "fixed_usdt" ? "" : "none";
+      $("order-equity-pct-field").style.display = mode === "equity_pct" ? "" : "none";
+    }
+
+    function updatePyramidOrderFields(existingPcts) {
+      const enabled = $("order-pyramid-enabled").checked;
+      $("pyramid-order-details").style.display = enabled ? "block" : "none";
+      const rawMax = Number($("order-pyramid-max-additional").value);
+      const max = Math.max(0, Math.min(20, Number.isFinite(rawMax) ? Math.floor(rawMax) : 0));
+      const currentPcts = Array.from(document.querySelectorAll("[data-pyramid-level]"))
+        .map((input) => Number(input.value));
+      const source = Array.isArray(existingPcts) ? existingPcts : currentPcts;
+      $("order-pyramid-levels").innerHTML = Array.from({ length: max }, (_, index) => {
+        const value = Number(source[index]);
+        const pct = Number.isFinite(value) && value > 0 ? value : 5;
+        return '<label>第 ' + (index + 1) + ' 次加仓总权益 %<input data-pyramid-level="' + index + '" id="order-pyramid-level-' + index + '" type="number" min="0.01" max="100" step="0.01" value="' + escapeHTML(String(pct)) + '"></label>';
+      }).join("");
     }
 
     function layeredOrderConfig(trading) {
@@ -5942,6 +6010,19 @@ const tvbotHTML = `<!doctype html>
           amount_pct: Number($("order-layered-layer-" + index + "-amount").value),
           offset_pct: Number($("order-layered-layer-" + index + "-offset").value)
         }))
+      };
+    }
+
+    function readPyramidOrderConfig() {
+      const maxRaw = Number($("order-pyramid-max-additional").value);
+      const max = Math.max(0, Math.min(20, Number.isFinite(maxRaw) ? Math.floor(maxRaw) : 0));
+      return {
+        enabled: $("order-pyramid-enabled").checked,
+        max_additional_entries: max,
+        add_amount_pcts: Array.from(document.querySelectorAll("[data-pyramid-level]"))
+          .slice(0, max)
+          .map((input) => Number(input.value)),
+        min_favorable_move_pct: Number($("order-pyramid-threshold").value)
       };
     }
 
@@ -5980,10 +6061,14 @@ const tvbotHTML = `<!doctype html>
 
     function renderOrderSettingsPreview() {
       const orderType = $("order-type").value || "layered";
+      const amountMode = $("order-amount-mode").value === "equity_pct" ? "equity_pct" : "fixed_usdt";
+      const pyramid = readPyramidOrderConfig();
       const layered = readLayeredOrderConfig();
       const layeredTotal = layered.market_amount_pct + layered.signal_limit_amount_pct + layered.price_layers.reduce((total, layer) => total + layer.amount_pct, 0);
       const rows = [
         ["订单类型", orderTypeText(orderType)],
+        ["下单金额", amountMode === "equity_pct" ? asText($("order-amount-pct").value) + "% 总权益（余额失败回退 " + asText($("order-amount").value) + " USDT）" : asText($("order-amount").value) + " USDT"],
+        ["最多持仓币对数", asText($("order-max-open-coinpairs").value || 0) + (Number($("order-max-open-coinpairs").value || 0) === 0 ? "（不限）" : "")],
         ["24h 交易额排名限制", orderTurnoverScopeLabel($("order-turnover-scope").value)],
         ["ETH Gamma<0", gammaNegativePolicyLabel(selectedGammaNegativePolicy())],
         [orderType === "limit" ? "多单限价单价格" : "市价单估算价格", orderType === "limit" ? "TradingView 当前价格 x " + asText($("order-long-multiplier").value) : "TradingView 当前价格"],
@@ -5995,6 +6080,7 @@ const tvbotHTML = `<!doctype html>
         rows.splice(1, 0, ["分层比例合计", asText(layeredTotal) + "%" + (Math.abs(layeredTotal - 100) < 0.000001 ? "" : "（必须为 100%）")]);
         rows.splice(2, 0, ["分层价格", "市价 + 信号价 + 实时价方向偏移 " + layered.price_layers.map((layer) => asText(layer.offset_pct) + "%").join(" / ")]);
       }
+      rows.splice(3, 0, ["金字塔加仓", pyramid.enabled ? ("最多 " + pyramid.max_additional_entries + " 次，" + pyramid.add_amount_pcts.join("% / ") + "%，门槛 " + asText(pyramid.min_favorable_move_pct) + "%") : "关闭"]);
       $("order-settings-preview").innerHTML = rows.map((row) => "<tr><th>" + escapeHTML(row[0]) + "</th><td>" + escapeHTML(row[1]) + "</td></tr>").join("");
     }
 
@@ -8960,6 +9046,9 @@ const tvbotHTML = `<!doctype html>
         const patch = {
           trading: {
             order_amount_usdt: Number($("order-amount").value),
+            order_amount_mode: $("order-amount-mode").value,
+            order_amount_pct: Number($("order-amount-pct").value),
+            max_open_coinpairs: Number($("order-max-open-coinpairs").value),
             leverage: Number($("order-leverage").value),
             order_type: $("order-type").value,
             market_turnover_scope: $("order-turnover-scope").value,
@@ -8971,7 +9060,8 @@ const tvbotHTML = `<!doctype html>
             trailing_pct: Number($("order-trailing").value),
             long_limit_price_multiplier: Number($("order-long-multiplier").value),
             short_limit_price_multiplier: Number($("order-short-multiplier").value),
-            layered_order: readLayeredOrderConfig()
+            layered_order: readLayeredOrderConfig(),
+            pyramid_order: readPyramidOrderConfig()
           }
         };
         state.config = await api("/tvbot/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
@@ -9695,12 +9785,16 @@ const tvbotHTML = `<!doctype html>
     document.querySelectorAll('input[name="gamma-negative-policy"]').forEach((input) => {
       input.addEventListener("change", () => renderOrderSettingsPreview());
     });
-    ["order-amount", "order-leverage", "order-type", "order-turnover-scope", "order-risk-type", "order-tp", "order-sl", "order-trailing", "order-long-multiplier", "order-short-multiplier", "order-layered-market-pct", "order-layered-signal-pct", "order-layered-layer-0-amount", "order-layered-layer-0-offset", "order-layered-layer-1-amount", "order-layered-layer-1-offset", "order-layered-layer-2-amount", "order-layered-layer-2-offset", "order-layered-layer-3-amount", "order-layered-layer-3-offset"].forEach((id) => {
+    ["order-amount", "order-amount-mode", "order-amount-pct", "order-max-open-coinpairs", "order-leverage", "order-type", "order-turnover-scope", "order-risk-type", "order-tp", "order-sl", "order-trailing", "order-long-multiplier", "order-short-multiplier", "order-layered-market-pct", "order-layered-signal-pct", "order-layered-layer-0-amount", "order-layered-layer-0-offset", "order-layered-layer-1-amount", "order-layered-layer-1-offset", "order-layered-layer-2-amount", "order-layered-layer-2-offset", "order-layered-layer-3-amount", "order-layered-layer-3-offset", "order-pyramid-threshold"].forEach((id) => {
       $(id).addEventListener("input", () => renderOrderSettingsPreview());
       $(id).addEventListener("change", () => renderOrderSettingsPreview());
     });
+    $("order-amount-mode").addEventListener("change", () => { updateOrderAmountFields(); renderOrderSettingsPreview(); });
     $("order-type").addEventListener("change", () => { updateLayeredOrderFields(); renderOrderSettingsPreview(); });
     $("order-risk-type").addEventListener("change", () => { updateOrderRiskFields(); renderOrderSettingsPreview(); });
+    $("order-pyramid-enabled").addEventListener("change", () => { updatePyramidOrderFields(); renderOrderSettingsPreview(); });
+    $("order-pyramid-max-additional").addEventListener("change", () => { updatePyramidOrderFields(); renderOrderSettingsPreview(); });
+    $("order-pyramid-levels").addEventListener("input", () => renderOrderSettingsPreview());
     $("save-position-monitor").addEventListener("click", () => savePositionMonitor().catch((err) => toast(err.message)));
     $("save-menu-settings").addEventListener("click", () => saveMenuSettings().catch((err) => toast(err.message)));
     $("menu-settings-rows").addEventListener("input", (event) => {

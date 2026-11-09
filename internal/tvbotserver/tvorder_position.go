@@ -313,6 +313,7 @@ func (s *Server) executePositionCloseSignal(signalID string, signal trading.Sign
 		}
 		return
 	}
+	s.resetPyramidStateAfterClose(ctx, signal, result, cfg)
 	cooldownSource, shouldCreateCooldown := webhookCloseCooldownSource(signal)
 	if !shouldCreateCooldown {
 		return

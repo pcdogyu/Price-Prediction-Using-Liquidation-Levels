@@ -61,6 +61,25 @@ type OrderRecord struct {
 	RawJSON        string              `json:"raw_json,omitempty"`
 }
 
+type PyramidState struct {
+	TargetExchange string    `json:"target_exchange"`
+	TradeEnv       string    `json:"trade_env"`
+	APIID          string    `json:"api_id"`
+	Coinpair       string    `json:"coinpair"`
+	PositionSide   string    `json:"position_side"`
+	Level          int       `json:"level"`
+	LastEntryPrice float64   `json:"last_entry_price"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type PyramidStateKey struct {
+	TargetExchange string
+	TradeEnv       string
+	APIID          string
+	Coinpair       string
+	PositionSide   string
+}
+
 // ActiveOpeningOrderFilter identifies the account scope used by the
 // execution-side strategy conflict guard. Symbols are matched against both
 // the stored coinpair and ticker columns so legacy records and exchange-native
@@ -87,6 +106,7 @@ type orderState struct {
 	CoinpairBlocks      []CoinpairBlock   `json:"coinpair_blocks,omitempty"`
 	CoinpairBlockEvents map[string]bool   `json:"coinpair_block_events,omitempty"`
 	ScheduledRuns       map[string]bool   `json:"scheduled_runs,omitempty"`
+	PyramidStates       []PyramidState    `json:"pyramid_states,omitempty"`
 }
 
 func NewOrderStore(path string) (*OrderStore, error) {
@@ -98,6 +118,7 @@ func NewOrderStore(path string) (*OrderStore, error) {
 			CoinpairBlocks:      []CoinpairBlock{},
 			CoinpairBlockEvents: map[string]bool{},
 			ScheduledRuns:       map[string]bool{},
+			PyramidStates:       []PyramidState{},
 		},
 	}
 	if path == "" {
@@ -730,6 +751,123 @@ func (s *OrderStore) Get(signalID string) (OrderRecord, bool) {
 	return s.findLocked(signalID)
 }
 
+func (s *OrderStore) GetPyramidState(key PyramidStateKey) (PyramidState, bool, error) {
+	key = normalizePyramidStateKey(key)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		var state PyramidState
+		err := s.db.QueryRow(`SELECT target_exchange, trade_env, api_id, coinpair, position_side, level, last_entry_price, updated_at
+			FROM pyramid_states WHERE target_exchange=? AND trade_env=? AND api_id=? AND coinpair=? AND position_side=?`,
+			key.TargetExchange, key.TradeEnv, key.APIID, key.Coinpair, key.PositionSide).Scan(
+			&state.TargetExchange, &state.TradeEnv, &state.APIID, &state.Coinpair, &state.PositionSide,
+			&state.Level, &state.LastEntryPrice, &state.UpdatedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return PyramidState{}, false, nil
+		}
+		if err != nil {
+			return PyramidState{}, false, err
+		}
+		return state, true, nil
+	}
+	for _, state := range s.state.PyramidStates {
+		if pyramidStateMatches(state, key) {
+			return state, true, nil
+		}
+	}
+	return PyramidState{}, false, nil
+}
+
+func (s *OrderStore) UpsertPyramidState(state PyramidState) error {
+	state = normalizePyramidState(state)
+	if state.UpdatedAt.IsZero() {
+		state.UpdatedAt = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		_, err := s.db.Exec(`INSERT INTO pyramid_states
+			(target_exchange, trade_env, api_id, coinpair, position_side, level, last_entry_price, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(target_exchange, trade_env, api_id, coinpair, position_side) DO UPDATE SET
+			level=excluded.level, last_entry_price=excluded.last_entry_price, updated_at=excluded.updated_at`,
+			state.TargetExchange, state.TradeEnv, state.APIID, state.Coinpair, state.PositionSide,
+			state.Level, state.LastEntryPrice, state.UpdatedAt.UTC().Format(time.RFC3339Nano))
+		return err
+	}
+	for i := range s.state.PyramidStates {
+		if pyramidStateMatches(s.state.PyramidStates[i], PyramidStateKey{
+			TargetExchange: state.TargetExchange,
+			TradeEnv:       state.TradeEnv,
+			APIID:          state.APIID,
+			Coinpair:       state.Coinpair,
+			PositionSide:   state.PositionSide,
+		}) {
+			s.state.PyramidStates[i] = state
+			return s.saveLocked()
+		}
+	}
+	s.state.PyramidStates = append(s.state.PyramidStates, state)
+	return s.saveLocked()
+}
+
+func (s *OrderStore) DeletePyramidState(key PyramidStateKey) error {
+	key = normalizePyramidStateKey(key)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		_, err := s.db.Exec(`DELETE FROM pyramid_states WHERE target_exchange=? AND trade_env=? AND api_id=? AND coinpair=? AND position_side=?`,
+			key.TargetExchange, key.TradeEnv, key.APIID, key.Coinpair, key.PositionSide)
+		return err
+	}
+	filtered := s.state.PyramidStates[:0]
+	changed := false
+	for _, state := range s.state.PyramidStates {
+		if pyramidStateMatches(state, key) {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, state)
+	}
+	if !changed {
+		return nil
+	}
+	s.state.PyramidStates = filtered
+	return s.saveLocked()
+}
+
+func normalizePyramidStateKey(key PyramidStateKey) PyramidStateKey {
+	key.TargetExchange = trading.NormalizeExchange(key.TargetExchange)
+	key.TradeEnv = trading.NormalizeTradeEnv(key.TradeEnv)
+	key.APIID = strings.TrimSpace(key.APIID)
+	key.Coinpair = strings.ToUpper(strings.TrimSpace(key.Coinpair))
+	key.PositionSide = strings.ToLower(strings.TrimSpace(key.PositionSide))
+	return key
+}
+
+func normalizePyramidState(state PyramidState) PyramidState {
+	key := normalizePyramidStateKey(PyramidStateKey{
+		TargetExchange: state.TargetExchange,
+		TradeEnv:       state.TradeEnv,
+		APIID:          state.APIID,
+		Coinpair:       state.Coinpair,
+		PositionSide:   state.PositionSide,
+	})
+	state.TargetExchange = key.TargetExchange
+	state.TradeEnv = key.TradeEnv
+	state.APIID = key.APIID
+	state.Coinpair = key.Coinpair
+	state.PositionSide = key.PositionSide
+	return state
+}
+
+func pyramidStateMatches(state PyramidState, key PyramidStateKey) bool {
+	state = normalizePyramidState(state)
+	key = normalizePyramidStateKey(key)
+	return state.TargetExchange == key.TargetExchange && state.TradeEnv == key.TradeEnv &&
+		state.APIID == key.APIID && state.Coinpair == key.Coinpair && state.PositionSide == key.PositionSide
+}
+
 // ListActiveOpeningOrders returns accepted or submitted opening orders in one
 // account scope. The caller remains responsible for classifying the source
 // strategy from RawJSON because the storage layer deliberately does not know
@@ -911,6 +1049,17 @@ func (s *OrderStore) migrateSQLite() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_orders_dedupe ON orders(dedupe_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_orders_accepted_at ON orders(accepted_at)`,
+		`CREATE TABLE IF NOT EXISTS pyramid_states (
+			target_exchange TEXT NOT NULL,
+			trade_env TEXT NOT NULL,
+			api_id TEXT NOT NULL,
+			coinpair TEXT NOT NULL,
+			position_side TEXT NOT NULL,
+			level INTEGER NOT NULL,
+			last_entry_price REAL NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(target_exchange, trade_env, api_id, coinpair, position_side)
+		)`,
 		`CREATE TABLE IF NOT EXISTS exchange_orders (
 			order_key TEXT PRIMARY KEY,
 			exchange TEXT NOT NULL,

@@ -1074,6 +1074,17 @@ func TestTVBotConfigSavesOrderType(t *testing.T) {
 	if layered.Code != http.StatusOK || srv.ConfigStore.Get().Trading.OrderType != string(trading.OrderTypeLayered) || srv.ConfigStore.Get().Trading.LayeredOrder.PriceLayers[0].OffsetPct != 0.5 {
 		t.Fatalf("layered order type not saved: status=%d body=%s cfg=%#v", layered.Code, layered.Body.String(), srv.ConfigStore.Get().Trading)
 	}
+	amountReq := httptest.NewRequest(http.MethodPatch, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"order_amount_mode":"equity_pct","order_amount_pct":20,"max_open_coinpairs":2,"pyramid_order":{"enabled":true,"max_additional_entries":2,"add_amount_pcts":[5,10],"min_favorable_move_pct":1}}}`)))
+	amountReq.SetBasicAuth("admin", "Admin123")
+	amount := httptest.NewRecorder()
+	srv.ServeHTTP(amount, amountReq)
+	if amount.Code != http.StatusOK {
+		t.Fatalf("amount and pyramid settings status=%d body=%s", amount.Code, amount.Body.String())
+	}
+	saved := srv.ConfigStore.Get().Trading
+	if saved.OrderAmountMode != trading.OrderAmountModeEquityPct || saved.OrderAmountPct != 20 || saved.MaxOpenCoinpairs != 2 || !saved.PyramidOrder.Enabled || saved.PyramidOrder.MaxAdditionalEntries != 2 {
+		t.Fatalf("amount and pyramid settings not saved: %#v", saved)
+	}
 
 	badReq := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"order_type":"post_only"}}`)))
 	badReq.SetBasicAuth("admin", "Admin123")

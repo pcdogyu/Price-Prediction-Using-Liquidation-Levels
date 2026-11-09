@@ -24,6 +24,7 @@ func (s *Store) Get() Config {
 	cfg.Trading.IgnoredCoinpairs = cloneStringList(s.cfg.Trading.IgnoredCoinpairs)
 	cfg.Trading.CoinpairWhitelist = cloneStringList(s.cfg.Trading.CoinpairWhitelist)
 	cfg.Trading.LayeredOrder.PriceLayers = cloneLayeredOrderLayers(s.cfg.Trading.LayeredOrder.PriceLayers)
+	cfg.Trading.PyramidOrder.AddAmountPcts = cloneFloat64List(s.cfg.Trading.PyramidOrder.AddAmountPcts)
 	cfg.Symbols = cloneSymbols(s.cfg.Symbols)
 	cfg.UI.MenuItems = cloneMenuItems(s.cfg.UI.MenuItems)
 	cfg.UI.TableColumns = cloneTableColumns(s.cfg.UI.TableColumns)
@@ -49,6 +50,7 @@ func (s *Store) update(fn func(*Config) error, validateSymbols bool) (Config, er
 	next.Trading.IgnoredCoinpairs = cloneStringList(s.cfg.Trading.IgnoredCoinpairs)
 	next.Trading.CoinpairWhitelist = cloneStringList(s.cfg.Trading.CoinpairWhitelist)
 	next.Trading.LayeredOrder.PriceLayers = cloneLayeredOrderLayers(s.cfg.Trading.LayeredOrder.PriceLayers)
+	next.Trading.PyramidOrder.AddAmountPcts = cloneFloat64List(s.cfg.Trading.PyramidOrder.AddAmountPcts)
 	next.Symbols = cloneSymbols(s.cfg.Symbols)
 	next.UI.MenuItems = cloneMenuItems(s.cfg.UI.MenuItems)
 	next.UI.TableColumns = cloneTableColumns(s.cfg.UI.TableColumns)
@@ -88,6 +90,15 @@ func cloneLayeredOrderLayers(in []trading.LayeredOrderLayer) []trading.LayeredOr
 		return nil
 	}
 	out := make([]trading.LayeredOrderLayer, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneFloat64List(in []float64) []float64 {
+	if in == nil {
+		return nil
+	}
+	out := make([]float64, len(in))
 	copy(out, in)
 	return out
 }

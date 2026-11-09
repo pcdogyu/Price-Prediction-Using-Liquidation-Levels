@@ -355,8 +355,53 @@ func (s *Server) handleTVOrder(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var releaseAdmissionLock func()
+	if classErr == nil && signal.PositionEffect != trading.PositionEffectClose {
+		admissionKey := strings.Join([]string{
+			s.TenantID,
+			signal.TargetExchange,
+			signal.TradeEnv,
+			signal.APIID,
+		}, "|")
+		releaseAdmissionLock = acquireOrderAdmissionLock(admissionKey)
+		admission, admissionErr := s.prepareEntryAdmission(r.Context(), signal, cfg)
+		if admissionErr != nil {
+			releaseAdmissionLock()
+			releaseAdmissionLock = nil
+			if releaseValueAreaLock != nil {
+				releaseValueAreaLock()
+				releaseValueAreaLock = nil
+			}
+			s.recordTVOrderRejected(r, signal, "entry_admission_failed", admissionErr, now)
+			writeError(w, http.StatusServiceUnavailable, "entry_admission_failed", admissionErr.Error())
+			return
+		}
+		signal = admission.Signal
+		if admission.IgnoredCode != "" {
+			record, ignoredErr := s.Orders.RecordIgnoredReason(signal, admission.IgnoredCode, admission.IgnoredMessage, now)
+			releaseAdmissionLock()
+			releaseAdmissionLock = nil
+			if releaseValueAreaLock != nil {
+				releaseValueAreaLock()
+				releaseValueAreaLock = nil
+			}
+			if ignoredErr != nil {
+				writeError(w, http.StatusInternalServerError, "store_error", ignoredErr.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"status":    "ignored",
+				"signal_id": record.SignalID,
+				"reason":    admission.IgnoredCode,
+			})
+			return
+		}
+	}
 	dedupeKey := storage.DedupeKey(signal)
 	record, duplicate, err := s.Orders.RecordAccepted(signal, dedupeKey, now)
+	if releaseAdmissionLock != nil {
+		releaseAdmissionLock()
+	}
 	if releaseValueAreaLock != nil {
 		releaseValueAreaLock()
 	}
@@ -667,7 +712,10 @@ func (s *Server) execute(signalID string, signal trading.Signal, cfg config.Conf
 		}
 		return
 	}
-	_ = s.Orders.MarkSubmitted(signalID, result, s.now())
+	markErr := s.Orders.MarkSubmitted(signalID, result, s.now())
+	if markErr == nil && result.HasSubmittedOrders() {
+		s.recordPyramidEntry(signal, result, s.now)
+	}
 	s.reconcileGatePositionRiskForSignal(signalID)
 }
 
@@ -3073,6 +3121,9 @@ type tradingPatch struct {
 	IgnoredCoinpairs          *[]string                     `json:"ignored_coinpairs"`
 	CoinpairWhitelist         *[]string                     `json:"coinpair_whitelist"`
 	OrderAmountUSDT           *float64                      `json:"order_amount_usdt"`
+	OrderAmountMode           *string                       `json:"order_amount_mode"`
+	OrderAmountPct            *float64                      `json:"order_amount_pct"`
+	MaxOpenCoinpairs          *int                          `json:"max_open_coinpairs"`
 	Leverage                  *int                          `json:"leverage"`
 	OrderType                 *string                       `json:"order_type"`
 	RiskType                  *string                       `json:"risk_type"`
@@ -3083,6 +3134,7 @@ type tradingPatch struct {
 	LongLimitPriceMultiplier  *float64                      `json:"long_limit_price_multiplier"`
 	ShortLimitPriceMultiplier *float64                      `json:"short_limit_price_multiplier"`
 	LayeredOrder              *trading.LayeredOrderSettings `json:"layered_order"`
+	PyramidOrder              *trading.PyramidOrderSettings `json:"pyramid_order"`
 	LossCooldown              *lossCooldownPatch            `json:"loss_cooldown"`
 	FillMonitor               *config.FillMonitorConfig     `json:"fill_monitor"`
 	AutoReentry               *config.AutoReentryConfig     `json:"auto_reentry"`
@@ -3187,6 +3239,15 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 	if patch.Trading.OrderAmountUSDT != nil {
 		c.Trading.OrderAmountUSDT = *patch.Trading.OrderAmountUSDT
 	}
+	if patch.Trading.OrderAmountMode != nil {
+		c.Trading.OrderAmountMode = *patch.Trading.OrderAmountMode
+	}
+	if patch.Trading.OrderAmountPct != nil {
+		c.Trading.OrderAmountPct = *patch.Trading.OrderAmountPct
+	}
+	if patch.Trading.MaxOpenCoinpairs != nil {
+		c.Trading.MaxOpenCoinpairs = *patch.Trading.MaxOpenCoinpairs
+	}
 	if patch.Trading.Leverage != nil {
 		c.Trading.Leverage = *patch.Trading.Leverage
 	}
@@ -3216,6 +3277,9 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 	}
 	if patch.Trading.LayeredOrder != nil {
 		c.Trading.LayeredOrder = *patch.Trading.LayeredOrder
+	}
+	if patch.Trading.PyramidOrder != nil {
+		c.Trading.PyramidOrder = *patch.Trading.PyramidOrder
 	}
 	if patch.Trading.LossCooldown != nil {
 		cooldownPatch := patch.Trading.LossCooldown

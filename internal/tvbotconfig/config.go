@@ -80,6 +80,9 @@ type TradingConfig struct {
 	IgnoredCoinpairs    []string `json:"ignored_coinpairs"`
 	CoinpairWhitelist   []string `json:"coinpair_whitelist"`
 	OrderAmountUSDT     float64  `json:"order_amount_usdt"`
+	OrderAmountMode     string   `json:"order_amount_mode"`
+	OrderAmountPct      float64  `json:"order_amount_pct"`
+	MaxOpenCoinpairs    int      `json:"max_open_coinpairs"`
 	Leverage            int      `json:"leverage"`
 	OrderType           string   `json:"order_type"`
 	RiskType            string   `json:"risk_type"`
@@ -93,6 +96,7 @@ type TradingConfig struct {
 	LongLimitPriceMultiplier  float64                      `json:"long_limit_price_multiplier"`
 	ShortLimitPriceMultiplier float64                      `json:"short_limit_price_multiplier"`
 	LayeredOrder              trading.LayeredOrderSettings `json:"layered_order"`
+	PyramidOrder              trading.PyramidOrderSettings `json:"pyramid_order"`
 	LossCooldown              LossCooldownConfig           `json:"loss_cooldown"`
 	FillMonitor               FillMonitorConfig            `json:"fill_monitor"`
 	AutoReentry               AutoReentryConfig            `json:"auto_reentry"`
@@ -324,6 +328,9 @@ func Default() Config {
 			GammaNegativePolicy:       GammaNegativePolicyIgnore,
 			SignalTTLSeconds:          300,
 			OrderAmountUSDT:           100,
+			OrderAmountMode:           trading.OrderAmountModeFixedUSDT,
+			OrderAmountPct:            10,
+			MaxOpenCoinpairs:          0,
 			Leverage:                  5,
 			OrderType:                 string(trading.OrderTypeMarket),
 			RiskType:                  string(trading.RiskTPSL),
@@ -334,6 +341,7 @@ func Default() Config {
 			LongLimitPriceMultiplier:  0.997,
 			ShortLimitPriceMultiplier: 1.003,
 			LayeredOrder:              trading.DefaultLayeredOrderSettings(),
+			PyramidOrder:              trading.DefaultPyramidOrderSettings(),
 			LossCooldown: LossCooldownConfig{
 				Enabled:       true,
 				GlobalEnabled: false,
@@ -506,6 +514,16 @@ func (c *Config) Normalize() {
 	if c.Trading.OrderAmountUSDT <= 0 {
 		c.Trading.OrderAmountUSDT = 100
 	}
+	c.Trading.OrderAmountMode = strings.ToLower(strings.TrimSpace(c.Trading.OrderAmountMode))
+	if !trading.ValidOrderAmountMode(c.Trading.OrderAmountMode) {
+		c.Trading.OrderAmountMode = trading.OrderAmountModeFixedUSDT
+	}
+	if c.Trading.OrderAmountPct <= 0 {
+		c.Trading.OrderAmountPct = 10
+	}
+	if c.Trading.MaxOpenCoinpairs < 0 {
+		c.Trading.MaxOpenCoinpairs = 0
+	}
 	if c.Trading.Leverage <= 0 {
 		c.Trading.Leverage = 5
 	}
@@ -536,6 +554,7 @@ func (c *Config) Normalize() {
 		c.Trading.ShortLimitPriceMultiplier = 1.003
 	}
 	c.Trading.LayeredOrder = c.Trading.LayeredOrder.Normalize()
+	c.Trading.PyramidOrder = c.Trading.PyramidOrder.Normalize()
 	if c.Trading.LossCooldown.CoinpairHours <= 0 {
 		if c.Trading.LossCooldown.Hours > 0 {
 			c.Trading.LossCooldown.CoinpairHours = c.Trading.LossCooldown.Hours
@@ -680,6 +699,15 @@ func (c Config) validate(validateSymbols bool) error {
 	if c.Trading.OrderAmountUSDT <= 0 {
 		return errors.New("order_amount_usdt must be positive")
 	}
+	if !trading.ValidOrderAmountMode(c.Trading.OrderAmountMode) {
+		return fmt.Errorf("unsupported order_amount_mode %q", c.Trading.OrderAmountMode)
+	}
+	if c.Trading.OrderAmountPct <= 0 || c.Trading.OrderAmountPct > 100 {
+		return errors.New("order_amount_pct must be between 0 and 100")
+	}
+	if c.Trading.MaxOpenCoinpairs < 0 {
+		return errors.New("max_open_coinpairs must be non-negative")
+	}
 	if c.Trading.Leverage <= 0 {
 		return errors.New("leverage must be positive")
 	}
@@ -698,6 +726,9 @@ func (c Config) validate(validateSymbols bool) error {
 		return errors.New("limit price multipliers must be positive")
 	}
 	if err := c.Trading.LayeredOrder.Validate(); err != nil {
+		return err
+	}
+	if err := c.Trading.PyramidOrder.Validate(); err != nil {
 		return err
 	}
 	if c.Trading.LossCooldown.CoinpairHours < 1 || c.Trading.LossCooldown.CoinpairHours > 8760 {
@@ -1188,12 +1219,16 @@ func (c Config) OrderSettings() trading.OrderSettings {
 	}
 	return trading.OrderSettings{
 		Amount:                    trading.NewFlexibleFloat(c.Trading.OrderAmountUSDT),
+		AmountMode:                c.Trading.OrderAmountMode,
+		AmountPct:                 c.Trading.OrderAmountPct,
+		MaxOpenCoinpairs:          c.Trading.MaxOpenCoinpairs,
 		Leverage:                  c.Trading.Leverage,
 		OrderType:                 trading.OrderType(c.Trading.OrderType),
 		Risk:                      risk,
 		LongLimitPriceMultiplier:  c.Trading.LongLimitPriceMultiplier,
 		ShortLimitPriceMultiplier: c.Trading.ShortLimitPriceMultiplier,
 		Layered:                   c.Trading.LayeredOrder,
+		Pyramid:                   c.Trading.PyramidOrder,
 	}.Normalize()
 }
 
