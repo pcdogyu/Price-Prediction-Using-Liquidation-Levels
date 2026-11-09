@@ -1128,14 +1128,18 @@ func positionMonitorInterval(cfg config.Config) time.Duration {
 func (s *Server) scanPositionMonitor(ctx context.Context) {
 	cfg := s.ConfigStore.Get()
 	monitor := cfg.Trading.PositionMonitor
+	negativeGammaClose := s.negativeGammaCloseActive(ctx, cfg)
 	if !monitor.Enabled || !positionMonitorHasRule(monitor) {
+		if negativeGammaClose && s.primaryExchangeForConfig(cfg) == trading.ExchangeBinance {
+			s.scanBinancePositionMonitor(ctx, cfg, monitor, true)
+		}
 		return
 	}
 	switch s.primaryExchangeForConfig(cfg) {
 	case trading.ExchangeOKX:
 		s.scanOKXPositionMonitor(ctx, cfg, monitor)
 	case trading.ExchangeBinance:
-		s.scanBinancePositionMonitor(ctx, cfg, monitor)
+		s.scanBinancePositionMonitor(ctx, cfg, monitor, negativeGammaClose)
 	case trading.ExchangeGate:
 		s.scanGatePositionMonitor(ctx, cfg, monitor)
 	}
@@ -1303,7 +1307,7 @@ func (s *Server) scanOKXPositionMonitorForAPI(ctx context.Context, cfg config.Co
 	return nil
 }
 
-func (s *Server) scanBinancePositionMonitor(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig) {
+func (s *Server) scanBinancePositionMonitor(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig, negativeGammaClose bool) {
 	if s.binanceCredentialStore(cfg.Trading.Env) == nil {
 		if s.Logger != nil {
 			s.Logger.Warn("Binance position monitor skipped: credential store is not configured")
@@ -1320,7 +1324,7 @@ func (s *Server) scanBinancePositionMonitor(ctx context.Context, cfg config.Conf
 	status := store.Status()
 	for _, requestedAPIID := range activeAPIIDs(status.Configured, status.ActiveID) {
 		scanCtx, cancel := context.WithTimeout(ctx, positionMonitorScanTimeout)
-		err := s.scanBinancePositionMonitorForAPI(scanCtx, cfg, monitor, requestedAPIID)
+		err := s.scanBinancePositionMonitorForAPI(scanCtx, cfg, monitor, requestedAPIID, negativeGammaClose)
 		cancel()
 		if err != nil && s.Logger != nil {
 			s.Logger.Warn("failed to scan Binance positions for auto close", "api_id", requestedAPIID, "error", err)
@@ -1328,7 +1332,7 @@ func (s *Server) scanBinancePositionMonitor(ctx context.Context, cfg config.Conf
 	}
 }
 
-func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig, requestedAPIID string) error {
+func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg config.Config, monitor config.PositionMonitorConfig, requestedAPIID string, negativeGammaClose bool) error {
 	client, apiID, err := s.binanceClientForCredentials(cfg, requestedAPIID)
 	if err != nil {
 		return err
@@ -1359,7 +1363,7 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 	for symbol, symbolPositions := range positionsBySymbol {
 		filtered := symbolPositions[:0]
 		for _, position := range symbolPositions {
-			if positionMonitorNeedsEntryTimeForPosition(position, monitor) {
+			if negativeGammaClose || positionMonitorNeedsEntryTimeForPosition(position, monitor) {
 				filtered = append(filtered, position)
 			}
 		}
@@ -1398,9 +1402,14 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 				s.Logger.Info("Binance position protection orders deferred during minimum holding time", "api_id", apiID, "symbol", symbol, "reason", lockReason)
 			}
 		}
-		trigger, hit, entryAt, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, fillsBySymbol[symbol], errorsBySymbol[symbol], true)
+		trigger, hit, entryAt, heldFor, entryErr := "", false, time.Time{}, time.Duration(0), ""
+		if negativeGammaClose {
+			trigger, hit, entryAt, heldFor, entryErr = automaticPositionMonitorTrigger(position, monitor, "gamma_negative", now, fillsBySymbol[symbol], errorsBySymbol[symbol], true)
+		} else {
+			trigger, hit, entryAt, heldFor, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, fillsBySymbol[symbol], errorsBySymbol[symbol], true)
+		}
 		if !hit {
-			if positionMonitorNeedsEntryTimeForPosition(position, monitor) && entryErr != "" && s.Logger != nil {
+			if (negativeGammaClose || positionMonitorNeedsEntryTimeForPosition(position, monitor)) && entryErr != "" && s.Logger != nil {
 				s.Logger.Warn("Binance position auto close skipped: entry time unavailable", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", entryErr)
 			}
 			continue

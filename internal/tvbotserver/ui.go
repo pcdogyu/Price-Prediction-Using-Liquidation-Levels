@@ -2631,7 +2631,7 @@ const tvbotHTML = `<!doctype html>
         <div class="gamma-policy-field" id="gamma-negative-policy-field">
           <div>ETH Gamma&lt;0 开仓策略</div>
           <div class="gamma-policy-options" role="radiogroup" aria-label="ETH Gamma 负值开仓策略">
-            <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="ignore"><span><strong>选项 1：忽略</strong>负 Gamma 时忽略开仓，平仓照常。</span></label>
+            <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="ignore"><span><strong>选项 1：忽略</strong>负 Gamma 时禁止自动开仓，并自动平掉已有持仓。</span></label>
             <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="passthrough"><span><strong>选项 2：不动</strong>负 Gamma 时保持现有下单逻辑。</span></label>
             <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="adaptive"><span><strong>选项 3：自适应 Gamma</strong>仅 VAL/VAH 刷单按 Gamma 选择均值回归或突破顺势，普通信号保持原方向。</span></label>
           </div>

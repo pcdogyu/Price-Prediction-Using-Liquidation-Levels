@@ -139,19 +139,25 @@ type Signal struct {
 	PositionSide   string        `json:"position_side,omitempty"`
 	// MinProfitSpread is enforced only for close signals. It is carried from
 	// the liquidation radar and checked against the live position average price.
-	MinProfitSpread      float64       `json:"min_profit_spread,omitempty"`
-	ValueAreaStartMinute *int          `json:"value_area_start_minute,omitempty"`
-	ValueAreaEndMinute   *int          `json:"value_area_end_minute,omitempty"`
-	Leverage             int           `json:"leverage"`
-	Amount               FlexibleFloat `json:"amount"`
-	Risk                 Risk          `json:"risk,omitempty"`
-	TokenNonce           string        `json:"token_nonce,omitempty"`
-	Token                string        `json:"token"`
-	ADX                  *float64      `json:"-"`
-	MarketStrategy       string        `json:"-"`
-	RawJSON              string        `json:"-"`
-	PyramidLevel         int           `json:"-"`
-	PyramidEnabled       bool          `json:"-"`
+	MinProfitSpread      float64 `json:"min_profit_spread,omitempty"`
+	ValueAreaStartMinute *int    `json:"value_area_start_minute,omitempty"`
+	ValueAreaEndMinute   *int    `json:"value_area_end_minute,omitempty"`
+	// GammaValue/GammaState are captured when an alert is created. They let
+	// TVBot apply the negative-Gamma opening gate to the signal's decision
+	// time instead of silently changing the decision while a webhook waits in
+	// the delivery queue.
+	GammaValue     *float64      `json:"gamma_value,omitempty"`
+	GammaState     string        `json:"gamma_state,omitempty"`
+	Leverage       int           `json:"leverage"`
+	Amount         FlexibleFloat `json:"amount"`
+	Risk           Risk          `json:"risk,omitempty"`
+	TokenNonce     string        `json:"token_nonce,omitempty"`
+	Token          string        `json:"token"`
+	ADX            *float64      `json:"-"`
+	MarketStrategy string        `json:"-"`
+	RawJSON        string        `json:"-"`
+	PyramidLevel   int           `json:"-"`
+	PyramidEnabled bool          `json:"-"`
 }
 
 type OrderSettings struct {

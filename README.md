@@ -75,7 +75,7 @@ GET|POST /api/v1/alerts/settings
 GET|POST /api/v1/alerts/order-settings
 GET|POST /api/v1/alerts/strategy-settings
 
-报警参数中的 `value_area_start_minute` / `value_area_end_minute` 控制交易所刷单 VAL/VAH 策略的自动通知、下单和回测时间，页面在“策略开关”表格的“交易所刷单”行编辑，按北京时间的每日分钟数保存；默认 `1200`–`1440`（20:00–24:00），结束时间 `1440` 即 `24:00`，开始晚于结束时支持跨午夜区间。Gamma 小于 0 时遵循 TVBot“下单设置”的 Gamma 开仓策略；选择 `ignore` 会跳过刷单开仓，并通过 close-only 关闭该策略原本要替换的持仓。参数按登录租户隔离。
+报警参数中的 `value_area_start_minute` / `value_area_end_minute` 控制交易所刷单 VAL/VAH 策略的自动通知、下单和回测时间，页面在“策略开关”表格的“交易所刷单”行编辑，按北京时间的每日分钟数保存；默认 `1200`–`1440`（20:00–24:00），结束时间 `1440` 即 `24:00`，开始晚于结束时支持跨午夜区间。Gamma 小于 0 时遵循 TVBot“下单设置”的 Gamma 开仓策略；选择 `ignore` 会禁止自动开仓，并由持仓监控在满足最短持仓时间后自动平掉已有仓位。参数按登录租户隔离。
 POST /api/v1/alerts/settings/test
 ```
 

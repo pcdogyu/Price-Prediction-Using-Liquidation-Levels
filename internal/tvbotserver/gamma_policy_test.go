@@ -55,6 +55,51 @@ func TestTVOrderGammaPolicyAdaptivePassesThroughOrdinaryNegativeGamma(t *testing
 	}
 }
 
+func TestTVOrderGammaPolicyUsesSignalTimeGammaBeforeLiveSnapshot(t *testing.T) {
+	negative := -0.25
+	positive := 0.25
+	cfg := tvbotconfig.Default()
+	cfg.Trading.GammaNegativePolicy = tvbotconfig.GammaNegativePolicyIgnore
+	signal := tvbottrading.Signal{
+		Action:         tvbottrading.ActionLong,
+		PositionEffect: tvbottrading.PositionEffectOpen,
+		PositionSide:   tvbottrading.PositionSideLong,
+		GammaValue:     &negative,
+		GammaState:     "ok",
+	}
+	srv := &Server{GammaProvider: func(context.Context) GammaSnapshot {
+		return GammaSnapshot{State: "ok", Value: &positive}
+	}}
+	if !srv.applyTVOrderGammaPolicy(context.Background(), &signal, cfg) {
+		t.Fatal("negative Gamma at signal time must still block an opening after live Gamma recovers")
+	}
+}
+
+func TestNegativeGammaCloseActiveRequiresHealthyNegativeGammaAndIgnorePolicy(t *testing.T) {
+	negative := -0.25
+	positive := 0.25
+	for _, tc := range []struct {
+		name     string
+		policy   string
+		snapshot GammaSnapshot
+		want     bool
+	}{
+		{name: "negative ignore", policy: tvbotconfig.GammaNegativePolicyIgnore, snapshot: GammaSnapshot{State: "ok", Value: &negative}, want: true},
+		{name: "positive ignore", policy: tvbotconfig.GammaNegativePolicyIgnore, snapshot: GammaSnapshot{State: "ok", Value: &positive}},
+		{name: "negative passthrough", policy: tvbotconfig.GammaNegativePolicyPassthrough, snapshot: GammaSnapshot{State: "ok", Value: &negative}},
+		{name: "negative stale", policy: tvbotconfig.GammaNegativePolicyIgnore, snapshot: GammaSnapshot{State: "stale", Value: &negative}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tvbotconfig.Default()
+			cfg.Trading.GammaNegativePolicy = tc.policy
+			srv := &Server{GammaProvider: func(context.Context) GammaSnapshot { return tc.snapshot }}
+			if got := srv.negativeGammaCloseActive(context.Background(), cfg); got != tc.want {
+				t.Fatalf("negative Gamma close active=%v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTVOrderGammaPolicyNeverChangesCloseSignals(t *testing.T) {
 	negative := -0.25
 	cfg := tvbotconfig.Default()

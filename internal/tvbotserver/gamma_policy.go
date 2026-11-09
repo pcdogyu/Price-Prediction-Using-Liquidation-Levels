@@ -26,10 +26,21 @@ func (s *Server) SetGammaProvider(provider GammaProvider) {
 }
 
 func (s *Server) applyTVOrderGammaPolicy(ctx context.Context, signal *tvbottrading.Signal, cfg tvbotconfig.Config) bool {
-	if signal == nil || signal.PositionEffect != tvbottrading.PositionEffectOpen || s == nil || s.GammaProvider == nil {
+	if signal == nil || signal.PositionEffect != tvbottrading.PositionEffectOpen || s == nil || (signal.GammaValue == nil && s.GammaProvider == nil) {
 		return false
 	}
-	snapshot := s.GammaProvider(ctx)
+	snapshot := GammaSnapshot{}
+	// Prefer the immutable Gamma decision carried by the alert. A webhook can
+	// be queued for several seconds; consulting only the latest snapshot here
+	// could turn a negative-Gamma opening into an allowed opening after Gamma
+	// briefly recovers. Older/manual payloads without these fields retain the
+	// live-provider fallback below.
+	if signal.GammaValue != nil {
+		snapshot.State = signal.GammaState
+		snapshot.Value = signal.GammaValue
+	} else {
+		snapshot = s.GammaProvider(ctx)
+	}
 	state := strings.ToLower(strings.TrimSpace(snapshot.State))
 	if state != "ok" && state != "partial" || snapshot.Value == nil || math.IsNaN(*snapshot.Value) || math.IsInf(*snapshot.Value, 0) || *snapshot.Value >= 0 {
 		return false
@@ -40,6 +51,19 @@ func (s *Server) applyTVOrderGammaPolicy(ctx context.Context, signal *tvbottradi
 		return true
 	}
 	return false
+}
+
+// negativeGammaCloseActive makes the configured "ignore" policy a hard-flat
+// mode for existing positions as well as a gate for new openings. It is
+// deliberately fail-closed for the trigger: an unavailable or stale Gamma
+// snapshot must never create an automatic close storm.
+func (s *Server) negativeGammaCloseActive(ctx context.Context, cfg tvbotconfig.Config) bool {
+	if s == nil || s.GammaProvider == nil || cfg.Trading.GammaNegativePolicy != tvbotconfig.GammaNegativePolicyIgnore {
+		return false
+	}
+	snapshot := s.GammaProvider(ctx)
+	state := strings.ToLower(strings.TrimSpace(snapshot.State))
+	return (state == "ok" || state == "partial") && snapshot.Value != nil && !math.IsNaN(*snapshot.Value) && !math.IsInf(*snapshot.Value, 0) && *snapshot.Value < 0
 }
 
 // manualAlertOrderBypassesGamma identifies order requests created by the
