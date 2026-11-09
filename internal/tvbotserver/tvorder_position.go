@@ -517,7 +517,11 @@ func (s *Server) closeBinancePositionFromSignal(ctx context.Context, signal trad
 		return trading.OrderResult{}, err
 	}
 	fills, fillErr := fetchBinancePositionEntryFills(ctx, client, symbol, []okx.Position{position}, s.now())
-	if err := enforceAutomaticCloseMinimumHolding(signal, cfg, position, fills, fillErr, false, s.now()); err != nil {
+	// Binance userTrades is capped at 1,000 rows. When that history is
+	// incomplete, use the exchange position timestamp as the conservative
+	// fallback already shown on the positions page instead of rejecting every
+	// automatic close forever.
+	if err := enforceAutomaticCloseMinimumHolding(signal, cfg, position, fills, fillErr, true, s.now()); err != nil {
 		return trading.OrderResult{}, err
 	}
 	if err := enforceMinProfitSpread(signal, position.AvgPx); err != nil {

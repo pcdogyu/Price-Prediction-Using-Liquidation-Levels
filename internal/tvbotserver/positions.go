@@ -3523,7 +3523,7 @@ func (s *Server) fetchPositions(ctx context.Context, cfg config.Config, requeste
 		},
 	)
 	views := positionViewsWithEntryTimes(positions, fills, now, entryTimeSourceOKXFills, fillErr)
-	s.enrichPositionViewsWithOrderMetadata(views, trading.ExchangeOKX, apiID)
+	s.enrichPositionViewsWithOrderMetadataForEnv(views, trading.ExchangeOKX, apiID, cfg.Trading.Env)
 	applyPositionViewPrecisions(views, precisions)
 	return positionsResponse{
 		OK:          true,
@@ -3647,7 +3647,7 @@ func (s *Server) fetchBinancePositions(ctx context.Context, cfg config.Config, r
 		}
 	}
 	views := binancePositionViewsWithEntryTimes(out, fillsBySymbol, errorsBySymbol, now)
-	s.enrichPositionViewsWithOrderMetadata(views, trading.ExchangeBinance, apiID)
+	s.enrichPositionViewsWithOrderMetadataForEnv(views, trading.ExchangeBinance, apiID, cfg.Trading.Env)
 	applyPositionViewPrecisions(views, precisions)
 	return positionsResponse{
 		OK:          true,
@@ -3772,7 +3772,7 @@ func (s *Server) fetchGatePositions(ctx context.Context, cfg config.Config, requ
 			errorsByContract[contract],
 		))
 	}
-	s.enrichPositionViewsWithOrderMetadata(views, trading.ExchangeGate, apiID)
+	s.enrichPositionViewsWithOrderMetadataForEnv(views, trading.ExchangeGate, apiID, cfg.Trading.Env)
 	return positionsResponse{
 		OK: true, Exchange: trading.ExchangeGate, APIID: apiID, InstType: "USDT-M",
 		Count: len(positions), RefreshedAt: now, Positions: views,
@@ -4118,14 +4118,24 @@ func positionEntryFillForPosition(position okx.Position, fills []positionEntryFi
 }
 
 func (s *Server) enrichPositionViewsWithOrderMetadata(views []positionView, exchange, apiID string) {
+	s.enrichPositionViewsWithOrderMetadataForEnv(views, exchange, apiID, "")
+}
+
+// enrichPositionViewsWithOrderMetadataForEnv attaches the strategy that
+// created a live position. Exchange fill history is the strongest signal when
+// it is available, but Binance userTrades can be capped at 1,000 rows. In
+// that case the position view still has no entry order id, so use the newest
+// submitted/partial local opening record from the same account and environment
+// as a controlled fallback. This keeps strategy attribution useful without
+// allowing demo orders to label live positions (or another API account).
+func (s *Server) enrichPositionViewsWithOrderMetadataForEnv(views []positionView, exchange, apiID, tradeEnv string) {
 	if s.Orders == nil || len(views) == 0 {
 		return
 	}
 	records := s.Orders.ListByTargetExchange(exchange, 5000)
 	for i := range views {
-		if views[i].entryOrdID == "" && views[i].entryClOrdID == "" {
-			continue
-		}
+		hasEntryOrderID := strings.TrimSpace(views[i].entryOrdID) != "" || strings.TrimSpace(views[i].entryClOrdID) != ""
+		var fallback *storage.OrderRecord
 		for _, rec := range records {
 			signalKind := orderRecordSignalKind(rec)
 			if (rec.Status != storage.StatusSubmitted && rec.Status != storage.StatusPartial) || (rec.MarketStrategy == "" && rec.ADX == nil && signalKind == "") {
@@ -4136,24 +4146,93 @@ func (s *Server) enrichPositionViewsWithOrderMetadata(views []positionView, exch
 			}
 			resolvedAPIID := firstNonEmptyString(rec.Result.APIID, rec.APIID)
 			if !strings.EqualFold(strings.TrimSpace(resolvedAPIID), strings.TrimSpace(apiID)) ||
-				!strings.EqualFold(strings.TrimSpace(rec.Result.InstID), strings.TrimSpace(views[i].InstID)) {
+				!orderRecordMatchesPositionInstrument(rec, views[i].InstID) {
+				continue
+			}
+			if strings.TrimSpace(tradeEnv) != "" && trading.NormalizeTradeEnv(rec.TradeEnv) != trading.NormalizeTradeEnv(tradeEnv) {
 				continue
 			}
 			if rec.PositionSide != "" && rec.PositionSide != positionDirectionKind(views[i].Position) {
 				continue
 			}
-			if !positionEntryOrderMatches(rec.Result, views[i].entryOrdID, views[i].entryClOrdID) {
+			if hasEntryOrderID && !positionEntryOrderMatches(rec.Result, views[i].entryOrdID, views[i].entryClOrdID) {
 				continue
 			}
-			views[i].MarketStrategy = rec.MarketStrategy
-			if rec.ADX != nil {
-				entryADX := *rec.ADX
-				views[i].EntryADX = &entryADX
+			if hasEntryOrderID {
+				applyPositionOrderMetadata(&views[i], rec, signalKind)
+				fallback = nil
+				break
 			}
-			views[i].SignalKind = signalKind
-			break
+			if fallback == nil || orderRecordTime(rec).After(orderRecordTime(*fallback)) {
+				candidate := rec
+				fallback = &candidate
+			}
+		}
+		if !hasEntryOrderID && fallback != nil {
+			applyPositionOrderMetadata(&views[i], *fallback, orderRecordSignalKind(*fallback))
 		}
 	}
+}
+
+func applyPositionOrderMetadata(view *positionView, rec storage.OrderRecord, signalKind string) {
+	if view == nil {
+		return
+	}
+	view.MarketStrategy = rec.MarketStrategy
+	if rec.ADX != nil {
+		entryADX := *rec.ADX
+		view.EntryADX = &entryADX
+	}
+	view.SignalKind = signalKind
+}
+
+func orderRecordTime(rec storage.OrderRecord) time.Time {
+	if !rec.UpdatedAt.IsZero() {
+		return rec.UpdatedAt
+	}
+	return rec.AcceptedAt
+}
+
+func orderRecordMatchesPositionInstrument(rec storage.OrderRecord, instID string) bool {
+	wanted := positionInstrumentVariants(instID)
+	if len(wanted) == 0 {
+		return false
+	}
+	for _, value := range []string{rec.Result.InstID, rec.Ticker, rec.Coinpair} {
+		for candidate := range positionInstrumentVariants(value) {
+			if _, ok := wanted[candidate]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func positionInstrumentVariants(value string) map[string]struct{} {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if index := strings.LastIndex(value, ":"); index >= 0 {
+		value = value[index+1:]
+	}
+	normalized := strings.ToUpper(strings.NewReplacer("-", "", "_", "", "/", "", " ", "").Replace(value))
+	normalized = strings.TrimSuffix(normalized, ".P")
+	if normalized == "" {
+		return nil
+	}
+	variants := map[string]struct{}{normalized: {}}
+	for _, suffix := range []string{"SWAP", "PERP"} {
+		if strings.HasSuffix(normalized, suffix) && len(normalized) > len(suffix) {
+			variants[strings.TrimSuffix(normalized, suffix)] = struct{}{}
+		}
+	}
+	for _, quote := range []string{"USDT", "USDC", "BUSD", "USD"} {
+		if strings.HasSuffix(normalized, quote) && len(normalized) > len(quote) {
+			variants[strings.TrimSuffix(normalized, quote)] = struct{}{}
+		}
+	}
+	return variants
 }
 
 func orderRecordSignalKind(rec storage.OrderRecord) string {

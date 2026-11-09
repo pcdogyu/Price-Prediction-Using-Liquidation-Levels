@@ -186,6 +186,66 @@ func TestPositionViewADXMetadataMatchesExactEntryOrder(t *testing.T) {
 	}
 }
 
+func TestPositionViewMetadataFallsBackToNewestLocalOpeningOrder(t *testing.T) {
+	store, err := storage.NewOrderStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 9, 3, 0, 0, 0, time.UTC)
+	oldSignal := trading.Signal{
+		Action:         trading.ActionLong,
+		APIID:          "binance_bot",
+		TargetExchange: trading.ExchangeBinance,
+		TradeEnv:       trading.TradeEnvDemo,
+		Coinpair:       "ADA",
+		Ticker:         "ADAUSDT",
+		PositionEffect: trading.PositionEffectOpen,
+		PositionSide:   trading.PositionSideLong,
+		Condition:      "liquidation_alert",
+		RawJSON:        `{"condition":"liquidation_alert","source":"liquidation_alert"}`,
+	}
+	newSignal := oldSignal
+	newSignal.Condition = "value_area_signal"
+	newSignal.RawJSON = `{"condition":"value_area_signal","source":"value_area_signal"}`
+	for _, tc := range []struct {
+		name   string
+		signal trading.Signal
+		at     time.Time
+		ordID  string
+	}{
+		{name: "old", signal: oldSignal, at: now.Add(-time.Hour), ordID: "old-entry"},
+		{name: "new", signal: newSignal, at: now.Add(-30 * time.Minute), ordID: "new-entry"},
+	} {
+		record, duplicate, recordErr := store.RecordAccepted(tc.signal, tc.name, tc.at)
+		if recordErr != nil || duplicate {
+			t.Fatalf("record accepted duplicate=%v err=%v", duplicate, recordErr)
+		}
+		if recordErr = store.MarkSubmitted(record.SignalID, trading.OrderResult{
+			APIID:          "binance_bot",
+			TargetExchange: trading.ExchangeBinance,
+			InstID:         "ADAUSDT",
+			OrdID:          tc.ordID,
+			PositionEffect: trading.PositionEffectOpen,
+			PositionSide:   trading.PositionSideLong,
+		}, tc.at); recordErr != nil {
+			t.Fatal(recordErr)
+		}
+	}
+
+	views := []positionView{{Position: okx.Position{InstID: "ADAUSDT", PosSide: "long", Pos: "1"}}}
+	srv := &Server{Orders: store}
+	srv.enrichPositionViewsWithOrderMetadataForEnv(views, trading.ExchangeBinance, "binance_bot", trading.TradeEnvDemo)
+	if views[0].SignalKind != "value_area" || views[0].MarketStrategy != "" {
+		t.Fatalf("newest local opening strategy was not used: %#v", views[0])
+	}
+
+	views[0].SignalKind = ""
+	srv.enrichPositionViewsWithOrderMetadataForEnv(views, trading.ExchangeBinance, "binance_bot", trading.TradeEnvLive)
+	if views[0].SignalKind != "" {
+		t.Fatalf("opening metadata crossed trade environments: %#v", views[0])
+	}
+}
+
 func TestPositionSignalKindFromTextDistinguishesStrategies(t *testing.T) {
 	for _, test := range []struct {
 		name, want string

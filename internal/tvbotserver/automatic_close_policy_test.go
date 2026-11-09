@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,19 @@ func TestAutomaticPositionCloseSkipsWhenEntryTimeIsUnavailable(t *testing.T) {
 	position := tvbotokx.Position{InstID: "BTC-USDT-SWAP", PosSide: "long", Pos: "1", UplRatio: "0.10"}
 	if trigger, hit, _, _, err := positionMonitorTriggerForPosition(position, monitor, true, now, nil, nil, false); hit || trigger != "" || !strings.Contains(err, "无法") {
 		t.Fatalf("missing entry time must fail closed: trigger=%q hit=%v err=%q", trigger, hit, err)
+	}
+}
+
+func TestAutomaticPositionCloseUsesExchangeTimeWhenBinanceHistoryIsIncomplete(t *testing.T) {
+	now := time.Date(2026, 11, 9, 3, 0, 0, 0, time.UTC)
+	monitor := tvbotconfig.PositionMonitorConfig{MinHoldingMinutes: 15, TakeProfitPct: 5}
+	position := tvbotokx.Position{
+		InstID: "ADAUSDT", PosSide: "long", Pos: "1", UplRatio: "0.10",
+		CTime: strconv.FormatInt(now.Add(-time.Hour).UnixMilli(), 10),
+	}
+	fillErr := errors.New("Binance ADAUSDT 7天成交超过 1000 条，成交历史可能不足")
+	if err := automaticPositionHoldingError(position, monitor, nil, fillErr, true, now); err != nil {
+		t.Fatalf("exchange position time should satisfy the automatic hold gate: %v", err)
 	}
 }
 

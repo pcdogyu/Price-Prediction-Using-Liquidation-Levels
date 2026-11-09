@@ -131,7 +131,7 @@ func (s *Server) runScheduledBinanceCloseForAPI(ctx context.Context, cfg tvbotco
 			continue
 		}
 		fills, fillErr := fetchBinancePositionEntryFills(ctx, client, position.InstID, []tvbotokx.Position{position}, now)
-		if err := automaticPositionHoldingError(position, cfg.Trading.PositionMonitor, fills, fillErr, false, now); err != nil {
+		if err := automaticPositionHoldingError(position, cfg.Trading.PositionMonitor, fills, fillErr, true, now); err != nil {
 			if s.Logger != nil {
 				s.Logger.Warn("scheduled Binance position close skipped", "api_id", apiID, "inst_id", position.InstID, "pos_side", position.PosSide, "reason", err)
 			}
