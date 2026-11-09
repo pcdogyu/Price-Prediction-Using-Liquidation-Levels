@@ -143,6 +143,22 @@ type analysisSummaryResponse struct {
 	Symbols           []analysisSymbolStats  `json:"symbols"`
 }
 
+type analysisTradeProjectionCache struct {
+	OK                 bool                    `json:"ok"`
+	APIID              string                  `json:"api_id"`
+	BinanceAPIID       string                  `json:"binance_api_id,omitempty"`
+	GateAPIID          string                  `json:"gate_api_id,omitempty"`
+	Env                string                  `json:"env"`
+	PriceDays          int                     `json:"price_days"`
+	PNLDays            int                     `json:"pnl_days"`
+	PNLMinutes         int                     `json:"pnl_minutes"`
+	RefreshedAt        time.Time               `json:"refreshed_at"`
+	Cache              analysisCacheStatus     `json:"cache"`
+	Source             analysisSourceStatus    `json:"source"`
+	PositionTrades     []analysisPositionTrade `json:"position_trades"`
+	OpenPositionTrades []analysisPositionTrade `json:"open_position_trades"`
+}
+
 type analysisTradesPageResponse struct {
 	OK           bool                    `json:"ok"`
 	APIID        string                  `json:"api_id"`
@@ -664,7 +680,7 @@ func (s *Server) handleAnalysisSummary(w http.ResponseWriter, r *http.Request) {
 		writeError(metricWriter, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
 		return
 	}
-	resp, err := s.loadAnalysisSnapshot(r.Context(), r)
+	resp, err := s.loadAnalysisSummarySnapshot(r.Context(), r)
 	if err != nil {
 		writeError(metricWriter, http.StatusBadGateway, "analysis_failed", err.Error())
 		return
@@ -682,7 +698,7 @@ func (s *Server) handleAnalysisTrades(w http.ResponseWriter, r *http.Request) {
 		writeError(metricWriter, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
 		return
 	}
-	resp, err := s.loadAnalysisSnapshot(r.Context(), r)
+	resp, err := s.loadAnalysisTradeSnapshot(r.Context(), r)
 	if err != nil {
 		writeError(metricWriter, http.StatusBadGateway, "analysis_failed", err.Error())
 		return
@@ -737,7 +753,7 @@ func (s *Server) handleAnalysisOpenPositions(w http.ResponseWriter, r *http.Requ
 		writeError(metricWriter, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
 		return
 	}
-	resp, err := s.loadAnalysisSnapshot(r.Context(), r)
+	resp, err := s.loadAnalysisTradeSnapshot(r.Context(), r)
 	if err != nil {
 		writeError(metricWriter, http.StatusBadGateway, "analysis_failed", err.Error())
 		return
@@ -829,6 +845,188 @@ func (s *Server) logAnalysisMetric(r *http.Request, endpoint string, startedAt t
 	)
 }
 
+type analysisProjectionRequest struct {
+	cfg                   config.Config
+	priceDays             int
+	pnlMinutes            int
+	requestedAPIID        string
+	requestedBinanceAPIID string
+	requestedGateAPIID    string
+	cacheKey              string
+	refresh               bool
+}
+
+func (s *Server) analysisProjectionRequest(r *http.Request) (analysisProjectionRequest, error) {
+	if s.Orders == nil || s.ConfigStore == nil {
+		return analysisProjectionRequest{}, errors.New("order database is not configured")
+	}
+	cfg := s.ConfigStore.Get()
+	priceDays := positiveIntQuery(r, "price_days", defaultPriceDays)
+	pnlDays := positiveIntQuery(r, "pnl_days", defaultPNLDays)
+	pnlMinutes := analysisPNLMinutesFromQuery(r, pnlDays)
+	requestedAPIID := strings.TrimSpace(r.URL.Query().Get("api_id"))
+	requestedBinanceAPIID := strings.TrimSpace(r.URL.Query().Get("binance_api_id"))
+	requestedGateAPIID := strings.TrimSpace(r.URL.Query().Get("gate_api_id"))
+	cacheKey, err := s.analysisCacheKeyForRequest(cfg, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID, priceDays, pnlMinutes)
+	if err != nil {
+		return analysisProjectionRequest{}, err
+	}
+	return analysisProjectionRequest{
+		cfg:                   cfg,
+		priceDays:             priceDays,
+		pnlMinutes:            pnlMinutes,
+		requestedAPIID:        requestedAPIID,
+		requestedBinanceAPIID: requestedBinanceAPIID,
+		requestedGateAPIID:    requestedGateAPIID,
+		cacheKey:              cacheKey,
+		refresh:               strings.EqualFold(r.URL.Query().Get("refresh"), "true"),
+	}, nil
+}
+
+func analysisSummaryProjectionKey(cacheKey string) string { return cacheKey + "|summary" }
+
+func analysisTradeProjectionKey(cacheKey string) string { return cacheKey + "|trade-projection" }
+
+func (s *Server) loadAnalysisSummarySnapshot(ctx context.Context, r *http.Request) (analysisResponse, error) {
+	request, err := s.analysisProjectionRequest(r)
+	if err != nil {
+		return analysisResponse{}, err
+	}
+	if cached, ok, cacheErr := s.Orders.CachedPayload(analysisSummaryProjectionKey(request.cacheKey)); cacheErr != nil {
+		return analysisResponse{}, cacheErr
+	} else if ok {
+		var projection analysisSummaryResponse
+		if json.Unmarshal([]byte(cached.PayloadJSON), &projection) == nil && projection.OK {
+			fresh := s.now().Sub(cached.RefreshedAt) < analysisCacheTTL
+			if fresh && !request.refresh {
+				return analysisResponseFromSummaryProjection(projection, request.cacheKey, cached.RefreshedAt, false), nil
+			}
+			stale := analysisResponseFromSummaryProjection(projection, request.cacheKey, cached.RefreshedAt, true)
+			refreshKey := fmt.Sprintf("%p|%s", s.Orders, request.cacheKey)
+			s.startAnalysisRefresh(refreshKey, request.cacheKey, request.cfg, request.requestedAPIID, request.requestedBinanceAPIID, request.requestedGateAPIID, request.priceDays, request.pnlMinutes)
+			return stale, nil
+		}
+	}
+	resp, err := s.loadAnalysisSnapshot(ctx, r)
+	if err == nil {
+		s.cacheAnalysisProjections(request.cacheKey, resp, analysisProjectionRefreshedAt(resp))
+	}
+	return resp, err
+}
+
+func (s *Server) loadAnalysisTradeSnapshot(ctx context.Context, r *http.Request) (analysisResponse, error) {
+	request, err := s.analysisProjectionRequest(r)
+	if err != nil {
+		return analysisResponse{}, err
+	}
+	if cached, ok, cacheErr := s.Orders.CachedPayload(analysisTradeProjectionKey(request.cacheKey)); cacheErr != nil {
+		return analysisResponse{}, cacheErr
+	} else if ok {
+		var projection analysisTradeProjectionCache
+		if json.Unmarshal([]byte(cached.PayloadJSON), &projection) == nil && projection.OK {
+			fresh := s.now().Sub(cached.RefreshedAt) < analysisCacheTTL
+			if fresh && !request.refresh {
+				return analysisResponseFromTradeProjection(projection, request.cacheKey, cached.RefreshedAt, false), nil
+			}
+			stale := analysisResponseFromTradeProjection(projection, request.cacheKey, cached.RefreshedAt, true)
+			refreshKey := fmt.Sprintf("%p|%s", s.Orders, request.cacheKey)
+			s.startAnalysisRefresh(refreshKey, request.cacheKey, request.cfg, request.requestedAPIID, request.requestedBinanceAPIID, request.requestedGateAPIID, request.priceDays, request.pnlMinutes)
+			return stale, nil
+		}
+	}
+	resp, err := s.loadAnalysisSnapshot(ctx, r)
+	if err == nil {
+		s.cacheAnalysisProjections(request.cacheKey, resp, analysisProjectionRefreshedAt(resp))
+	}
+	return resp, err
+}
+
+func analysisResponseFromSummaryProjection(projection analysisSummaryResponse, cacheKey string, cachedAt time.Time, stale bool) analysisResponse {
+	resp := analysisResponse{
+		OK:                projection.OK,
+		APIID:             projection.APIID,
+		BinanceAPIID:      projection.BinanceAPIID,
+		GateAPIID:         projection.GateAPIID,
+		Env:               projection.Env,
+		PriceDays:         projection.PriceDays,
+		PNLDays:           projection.PNLDays,
+		PNLMinutes:        projection.PNLMinutes,
+		PriceInstID:       projection.PriceInstID,
+		PriceBar:          projection.PriceBar,
+		RefreshedAt:       projection.RefreshedAt,
+		Source:            projection.Source,
+		Balance:           projection.Balance,
+		PricePoints:       projection.PricePoints,
+		BalancePoints:     projection.BalancePoints,
+		Summary:           projection.Summary,
+		ExchangeSummaries: projection.ExchangeSummaries,
+		Symbols:           projection.Symbols,
+	}
+	resp.Cache = analysisCacheStatus{Hit: true, Stale: stale, CachedAt: cachedAt, CacheKey: cacheKey}
+	if stale {
+		resp.Source = analysisSourceStatus{Balance: "cache", Price: "cache", Fills: "cache", Funding: "cache", Gate: "cache"}
+	}
+	return resp
+}
+
+func analysisResponseFromTradeProjection(projection analysisTradeProjectionCache, cacheKey string, cachedAt time.Time, stale bool) analysisResponse {
+	resp := analysisResponse{
+		OK:                 projection.OK,
+		APIID:              projection.APIID,
+		BinanceAPIID:       projection.BinanceAPIID,
+		GateAPIID:          projection.GateAPIID,
+		Env:                projection.Env,
+		PriceDays:          projection.PriceDays,
+		PNLDays:            projection.PNLDays,
+		PNLMinutes:         projection.PNLMinutes,
+		RefreshedAt:        projection.RefreshedAt,
+		Source:             projection.Source,
+		PositionTrades:     projection.PositionTrades,
+		OpenPositionTrades: projection.OpenPositionTrades,
+	}
+	resp.Cache = analysisCacheStatus{Hit: true, Stale: stale, CachedAt: cachedAt, CacheKey: cacheKey}
+	if stale {
+		resp.Source = analysisSourceStatus{Balance: "cache", Price: "cache", Fills: "cache", Funding: "cache", Gate: "cache"}
+	}
+	return resp
+}
+
+func analysisProjectionRefreshedAt(resp analysisResponse) time.Time {
+	if !resp.Cache.CachedAt.IsZero() {
+		return resp.Cache.CachedAt
+	}
+	return resp.RefreshedAt
+}
+
+func (s *Server) cacheAnalysisProjections(cacheKey string, resp analysisResponse, refreshedAt time.Time) {
+	if !analysisResponseCacheable(resp) || s.Orders == nil {
+		return
+	}
+	if refreshedAt.IsZero() {
+		refreshedAt = resp.RefreshedAt
+	}
+	if err := s.Orders.CachePayload(analysisSummaryProjectionKey(cacheKey), analysisSummaryResponseFrom(resp), refreshedAt); err != nil && s.Logger != nil {
+		s.Logger.Warn("failed to write analysis summary projection", "error", err)
+	}
+	if err := s.Orders.CachePayload(analysisTradeProjectionKey(cacheKey), analysisTradeProjectionCache{
+		OK:                 resp.OK,
+		APIID:              resp.APIID,
+		BinanceAPIID:       resp.BinanceAPIID,
+		GateAPIID:          resp.GateAPIID,
+		Env:                resp.Env,
+		PriceDays:          resp.PriceDays,
+		PNLDays:            resp.PNLDays,
+		PNLMinutes:         resp.PNLMinutes,
+		RefreshedAt:        resp.RefreshedAt,
+		Cache:              resp.Cache,
+		Source:             resp.Source,
+		PositionTrades:     resp.PositionTrades,
+		OpenPositionTrades: resp.OpenPositionTrades,
+	}, refreshedAt); err != nil && s.Logger != nil {
+		s.Logger.Warn("failed to write analysis trade projection", "error", err)
+	}
+}
+
 func analysisSummaryResponseFrom(resp analysisResponse) analysisSummaryResponse {
 	return analysisSummaryResponse{
 		OK:                resp.OK,
@@ -880,7 +1078,7 @@ func (s *Server) loadAnalysisSnapshot(ctx context.Context, r *http.Request) (ana
 			stale, staleValid := analysisResponseFromCachedPayload(cached, cacheKey, true)
 			if staleValid {
 				refreshKey := fmt.Sprintf("%p|%s", s.Orders, cacheKey)
-				s.startAnalysisRefresh(refreshKey, cfg, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID, priceDays, pnlMinutes)
+				s.startAnalysisRefresh(refreshKey, cacheKey, cfg, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID, priceDays, pnlMinutes)
 				return stale, nil
 			}
 		}
@@ -891,11 +1089,14 @@ func (s *Server) loadAnalysisSnapshot(ctx context.Context, r *http.Request) (ana
 	})
 }
 
-func (s *Server) startAnalysisRefresh(key string, cfg config.Config, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID string, priceDays, pnlMinutes int) {
+func (s *Server) startAnalysisRefresh(key, cacheKey string, cfg config.Config, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID string, priceDays, pnlMinutes int) {
 	globalAnalysisRefreshManager.start(key, func() (analysisResponse, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), analysisRefreshTimeout)
 		defer cancel()
 		resp, err := s.buildAnalysis(ctx, cfg, requestedAPIID, requestedBinanceAPIID, priceDays, pnlMinutes, true, requestedGateAPIID)
+		if err == nil {
+			s.cacheAnalysisProjections(cacheKey, resp, resp.RefreshedAt)
+		}
 		if err != nil && s.Logger != nil {
 			s.Logger.Warn("background analysis refresh failed", "error", err)
 		}
