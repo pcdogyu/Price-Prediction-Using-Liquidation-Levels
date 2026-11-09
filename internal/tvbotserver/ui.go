@@ -5312,7 +5312,7 @@ const tvbotHTML = `<!doctype html>
 
     function updateMetrics() {
       $("metric-env").textContent = state.config && state.config.trading ? state.config.trading.env : "-";
-      $("metric-api-keys").textContent = "OKX " + apiMetricText("okx") + " / Binance " + apiMetricText("binance") + " / Gate " + apiMetricText("gate");
+      $("metric-api-keys").textContent = configuredAPIExchangeSummary();
       $("metric-amount").textContent = state.config && state.config.trading ? formatUSDTLabel(state.config.trading.order_amount_usdt) : "-";
       $("metric-orders").textContent = Number.isFinite(Number(state.ordersTotal)) ? String(Number(state.ordersTotal || 0)) : (state.orders ? state.orders.length : "-");
     }
@@ -6223,6 +6223,14 @@ const tvbotHTML = `<!doctype html>
     function apiMetricText(exchange) {
       const status = apiKeyStatus(exchange);
       return status && status.configured ? (status.active_id || "已配置") : "未配置";
+    }
+
+    function configuredAPIExchangeSummary() {
+      const configured = ["okx", "binance", "gate"].filter((exchange) => {
+        const status = apiKeyStatus(exchange);
+        return !!(status && status.configured);
+      }).map((exchange) => exchangeLabel(exchange) + " " + apiMetricText(exchange));
+      return configured.join(" / ") || "无已配置交易所";
     }
 
     function activeAPIID(exchange, env) {
