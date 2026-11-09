@@ -4135,8 +4135,19 @@ func (s *Server) enrichPositionViewsWithOrderMetadataForEnv(views []positionView
 	records := s.Orders.ListByTargetExchange(exchange, 5000)
 	for i := range views {
 		hasEntryOrderID := strings.TrimSpace(views[i].entryOrdID) != "" || strings.TrimSpace(views[i].entryClOrdID) != ""
+		positionRecords := records
+		if candidates, err := s.Orders.ListActiveOpeningOrders(storage.ActiveOpeningOrderFilter{
+			TargetExchange: exchange,
+			TradeEnv:       tradeEnv,
+			APIID:          apiID,
+			Symbols:        positionOrderFilterSymbols(views[i].InstID),
+		}); err == nil {
+			// Keep the broad list for exact fill-id matching and add the indexed
+			// account/symbol query for positions whose exchange history was capped.
+			positionRecords = append(positionRecords, candidates...)
+		}
 		var fallback *storage.OrderRecord
-		for _, rec := range records {
+		for _, rec := range positionRecords {
 			signalKind := orderRecordSignalKind(rec)
 			if (rec.Status != storage.StatusSubmitted && rec.Status != storage.StatusPartial) || (rec.MarketStrategy == "" && rec.ADX == nil && signalKind == "") {
 				continue
@@ -4206,6 +4217,16 @@ func orderRecordMatchesPositionInstrument(rec storage.OrderRecord, instID string
 		}
 	}
 	return false
+}
+
+func positionOrderFilterSymbols(instID string) []string {
+	variants := positionInstrumentVariants(instID)
+	values := make([]string, 0, len(variants))
+	for value := range variants {
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return values
 }
 
 func positionInstrumentVariants(value string) map[string]struct{} {
