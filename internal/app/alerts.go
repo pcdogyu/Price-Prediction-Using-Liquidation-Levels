@@ -813,7 +813,11 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 	var err error
 	if signal.Kind == domain.SignalValueArea && signal.PositionEffect == "close" {
 		var payload []byte
-		payload, err = buildValueAreaCloseWebhookPayload(signal, rtm.serviceConfig())
+		// Manual triggers must retain the manual condition so tvbot can fall
+		// back to a same-direction opening order when no opposite position
+		// exists. Automatic value-area close signals keep value_area_close and
+		// never open.
+		payload, err = buildManualWebhookPayload(signal, rtm.serviceConfig())
 		payloads = append(payloads, payload)
 	} else if signal.Kind == domain.SignalValueArea {
 		var preclose, payload []byte

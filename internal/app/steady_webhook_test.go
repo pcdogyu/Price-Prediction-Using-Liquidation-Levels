@@ -616,6 +616,56 @@ func TestManualCloseOnlyAlertTriggerClosesOppositePosition(t *testing.T) {
 	}
 }
 
+func TestManualValueAreaCloseTriggerUsesManualFallbackCondition(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	svc, cfg, st := alertTestService(t, "manual-value-area-close.db")
+	cfg.SteadyWebhookURL = server.URL
+	cfg.SteadyWebhookAPIID = "okx_bot"
+	cfg.SteadyWebhookTargetExchange = "okx"
+	cfg.SteadyWebhookTradeEnv = "demo"
+	cfg.SteadyWebhookExchange = "binance"
+	cfg.SteadyWebhookInterval = "3m"
+	cfg.SteadyWebhookTokenNonce = "nonce-value"
+	cfg.SteadyWebhookToken = "token-value"
+	svc.alerts.webhookURL = cfg.SteadyWebhookURL
+	svc.alerts.webhookConfig = cfg
+	svc.alerts.webhookTokenNonce = cfg.SteadyWebhookTokenNonce
+	svc.alerts.webhookToken = cfg.SteadyWebhookToken
+	svc.alerts.tenantID = "pcdog"
+	created := time.Date(2026, 11, 9, 13, 3, 9, 0, time.UTC)
+	if _, err := st.SaveTradeSignal(context.Background(), domain.TradeSignal{
+		ID: "manual-value-area-close", Symbol: "ICNTUSDT", Kind: domain.SignalValueArea,
+		Side: "long", PositionEffect: "close", CreatedAt: created, ReferencePrice: 0.3376,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.TriggerAlert(context.Background(), domain.SignalValueArea, "manual-value-area-close"); err != nil {
+		t.Fatalf("manual value-area close trigger: %v", err)
+	}
+	select {
+	case raw := <-requests:
+		var got map[string]string
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("webhook body is not JSON: %v", err)
+		}
+		if got["action"] != "buy" || got["position_effect"] != "close" || got["position_side"] != "short" || got["order_intent"] != "close_short" {
+			t.Fatalf("manual value-area close must preserve the close direction: %s", raw)
+		}
+		if got["condition"] != "manual_liquidation_trigger" || got["source"] != "liquidation_alert_manual" {
+			t.Fatalf("manual value-area close must use the manual fallback condition: %s", raw)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("manual value-area close trigger was not delivered to webhook")
+	}
+}
+
 func TestManualCloseOnlySignalTriggerClosesOppositePosition(t *testing.T) {
 	signal := domain.TradeSignal{
 		Symbol: "BTCUSDT", Kind: domain.SignalAggressive, Side: "short", ReferencePrice: 77585.1,
