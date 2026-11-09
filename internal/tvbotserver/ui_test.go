@@ -533,7 +533,7 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 		`exit_time_end: exitBounds.end`,
 		`analysis-trade-aggregate-toggle").addEventListener("click"`,
 		`state.analysisTradePage = 1`,
-		`共 " + trades.length + " 组（原始 " + rawTrades.length + " 条）`,
+		`共 " + total + " 条（当前页 " + trades.length + " 组）`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("analysis trade aggregation marker is missing %q", want)
@@ -552,7 +552,7 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`K线 / 开平仓信息`,
 		`function positionSymbolTradeRows(row, includeAnalysis)`,
 		`includeAnalysis !== false`,
-		`state.analysis.trades`,
+		`state.analysisFills`,
 		`filter((item) => String(item && (item.trade_id || item.ord_id) || "").trim())`,
 		`tradeChartPayloadRow(item)`,
 		`operation_source: String(item && item.operation_source || "").trim().toLowerCase()`,
@@ -564,7 +564,7 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 		`window.open(initialURL.toString(), "_blank")`,
 		`chartWindow.location.href = chartURL.toString()`,
 		`exchange: String(item && item.exchange || "").trim() ? normalizeExchange(item && item.exchange) : ""`,
-		`async function loadPositionSymbolAnalysis()`,
+		`async function loadPositionSymbolAnalysis(row)`,
 		`async function openPositionSymbolDetails(row)`,
 	} {
 		if !strings.Contains(page, want) {

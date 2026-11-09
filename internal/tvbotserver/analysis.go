@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
@@ -37,7 +38,63 @@ const (
 	binanceAnalysisTradeWindow   = 7 * 24 * time.Hour
 	binanceAnalysisTradeLimit    = 1000
 	maxAnalysisConfiguredSymbols = 32
+	defaultAnalysisPageSize      = 20
+	maxAnalysisPageSize          = 100
+	analysisRefreshTimeout       = 3 * time.Minute
 )
+
+type analysisRefreshResult struct {
+	response analysisResponse
+	err      error
+}
+
+type analysisRefreshManager struct {
+	mu   sync.Mutex
+	jobs map[string]chan analysisRefreshResult
+}
+
+var globalAnalysisRefreshManager = &analysisRefreshManager{jobs: make(map[string]chan analysisRefreshResult)}
+
+func (m *analysisRefreshManager) start(key string, fn func() (analysisResponse, error)) bool {
+	m.mu.Lock()
+	if _, ok := m.jobs[key]; ok {
+		m.mu.Unlock()
+		return false
+	}
+	done := make(chan analysisRefreshResult, 1)
+	m.jobs[key] = done
+	m.mu.Unlock()
+	go func() {
+		result, err := fn()
+		done <- analysisRefreshResult{response: result, err: err}
+		m.mu.Lock()
+		delete(m.jobs, key)
+		m.mu.Unlock()
+	}()
+	return true
+}
+
+func (m *analysisRefreshManager) run(ctx context.Context, key string, fn func() (analysisResponse, error)) (analysisResponse, error) {
+	m.mu.Lock()
+	if done, ok := m.jobs[key]; ok {
+		m.mu.Unlock()
+		select {
+		case result := <-done:
+			return result.response, result.err
+		case <-ctx.Done():
+			return analysisResponse{}, ctx.Err()
+		}
+	}
+	done := make(chan analysisRefreshResult, 1)
+	m.jobs[key] = done
+	m.mu.Unlock()
+	result, err := fn()
+	done <- analysisRefreshResult{response: result, err: err}
+	m.mu.Lock()
+	delete(m.jobs, key)
+	m.mu.Unlock()
+	return result, err
+}
 
 type analysisResponse struct {
 	OK                 bool                    `json:"ok"`
@@ -62,6 +119,80 @@ type analysisResponse struct {
 	Trades             []analysisTrade         `json:"trades"`
 	PositionTrades     []analysisPositionTrade `json:"position_trades"`
 	OpenPositionTrades []analysisPositionTrade `json:"open_position_trades"`
+}
+
+type analysisSummaryResponse struct {
+	OK                bool                   `json:"ok"`
+	APIID             string                 `json:"api_id"`
+	BinanceAPIID      string                 `json:"binance_api_id,omitempty"`
+	GateAPIID         string                 `json:"gate_api_id,omitempty"`
+	Env               string                 `json:"env"`
+	PriceDays         int                    `json:"price_days"`
+	PNLDays           int                    `json:"pnl_days"`
+	PNLMinutes        int                    `json:"pnl_minutes"`
+	PriceInstID       string                 `json:"price_inst_id"`
+	PriceBar          string                 `json:"price_bar"`
+	RefreshedAt       time.Time              `json:"refreshed_at"`
+	Cache             analysisCacheStatus    `json:"cache"`
+	Source            analysisSourceStatus   `json:"source"`
+	Balance           analysisBalance        `json:"balance"`
+	PricePoints       []analysisPricePoint   `json:"price_points"`
+	BalancePoints     []analysisBalancePoint `json:"balance_points"`
+	Summary           analysisSymbolStats    `json:"summary"`
+	ExchangeSummaries []analysisSymbolStats  `json:"exchange_summaries"`
+	Symbols           []analysisSymbolStats  `json:"symbols"`
+}
+
+type analysisTradesPageResponse struct {
+	OK           bool                    `json:"ok"`
+	APIID        string                  `json:"api_id"`
+	BinanceAPIID string                  `json:"binance_api_id,omitempty"`
+	GateAPIID    string                  `json:"gate_api_id,omitempty"`
+	Env          string                  `json:"env"`
+	PriceDays    int                     `json:"price_days"`
+	PNLDays      int                     `json:"pnl_days"`
+	PNLMinutes   int                     `json:"pnl_minutes"`
+	RefreshedAt  time.Time               `json:"refreshed_at"`
+	Cache        analysisCacheStatus     `json:"cache"`
+	Source       analysisSourceStatus    `json:"source"`
+	Exchange     string                  `json:"exchange,omitempty"`
+	Page         int                     `json:"page"`
+	PageSize     int                     `json:"page_size"`
+	Total        int                     `json:"total"`
+	TotalPages   int                     `json:"total_pages"`
+	Trades       []analysisPositionTrade `json:"trades"`
+}
+
+type analysisOpenPositionsResponse struct {
+	OK           bool                    `json:"ok"`
+	APIID        string                  `json:"api_id"`
+	BinanceAPIID string                  `json:"binance_api_id,omitempty"`
+	GateAPIID    string                  `json:"gate_api_id,omitempty"`
+	Env          string                  `json:"env"`
+	PriceDays    int                     `json:"price_days"`
+	PNLDays      int                     `json:"pnl_days"`
+	PNLMinutes   int                     `json:"pnl_minutes"`
+	RefreshedAt  time.Time               `json:"refreshed_at"`
+	Cache        analysisCacheStatus     `json:"cache"`
+	Source       analysisSourceStatus    `json:"source"`
+	Total        int                     `json:"total"`
+	Positions    []analysisPositionTrade `json:"positions"`
+}
+
+type analysisFillsResponse struct {
+	OK           bool                 `json:"ok"`
+	APIID        string               `json:"api_id"`
+	BinanceAPIID string               `json:"binance_api_id,omitempty"`
+	GateAPIID    string               `json:"gate_api_id,omitempty"`
+	Env          string               `json:"env"`
+	PriceDays    int                  `json:"price_days"`
+	PNLDays      int                  `json:"pnl_days"`
+	PNLMinutes   int                  `json:"pnl_minutes"`
+	RefreshedAt  time.Time            `json:"refreshed_at"`
+	Cache        analysisCacheStatus  `json:"cache"`
+	Source       analysisSourceStatus `json:"source"`
+	Total        int                  `json:"total"`
+	Trades       []analysisTrade      `json:"trades"`
 }
 
 type analysisCacheStatus struct {
@@ -522,6 +653,362 @@ func (s *Server) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleAnalysisSummary(w http.ResponseWriter, r *http.Request) {
+	startedAt := time.Now()
+	metricWriter := &analysisMetricResponseWriter{ResponseWriter: w}
+	var cacheStatus analysisCacheStatus
+	defer func() { s.logAnalysisMetric(r, "summary", startedAt, metricWriter.bytes, cacheStatus) }()
+	if r.Method != http.MethodGet {
+		writeError(metricWriter, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	resp, err := s.loadAnalysisSnapshot(r.Context(), r)
+	if err != nil {
+		writeError(metricWriter, http.StatusBadGateway, "analysis_failed", err.Error())
+		return
+	}
+	cacheStatus = resp.Cache
+	writeJSON(metricWriter, http.StatusOK, analysisSummaryResponseFrom(resp))
+}
+
+func (s *Server) handleAnalysisTrades(w http.ResponseWriter, r *http.Request) {
+	startedAt := time.Now()
+	metricWriter := &analysisMetricResponseWriter{ResponseWriter: w}
+	var cacheStatus analysisCacheStatus
+	defer func() { s.logAnalysisMetric(r, "trades", startedAt, metricWriter.bytes, cacheStatus) }()
+	if r.Method != http.MethodGet {
+		writeError(metricWriter, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	resp, err := s.loadAnalysisSnapshot(r.Context(), r)
+	if err != nil {
+		writeError(metricWriter, http.StatusBadGateway, "analysis_failed", err.Error())
+		return
+	}
+	cacheStatus = resp.Cache
+	page, pageSize := analysisPageQuery(r)
+	rows := filterAnalysisPositionTrades(resp.PositionTrades, r)
+	total := len(rows)
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+	if totalPages > 0 && page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+	trades := append([]analysisPositionTrade(nil), rows[start:end]...)
+	writeJSON(metricWriter, http.StatusOK, analysisTradesPageResponse{
+		OK:           resp.OK,
+		APIID:        resp.APIID,
+		BinanceAPIID: resp.BinanceAPIID,
+		GateAPIID:    resp.GateAPIID,
+		Env:          resp.Env,
+		PriceDays:    resp.PriceDays,
+		PNLDays:      resp.PNLDays,
+		PNLMinutes:   resp.PNLMinutes,
+		RefreshedAt:  resp.RefreshedAt,
+		Cache:        resp.Cache,
+		Source:       resp.Source,
+		Exchange:     normalizeAnalysisExchange(r.URL.Query().Get("exchange")),
+		Page:         page,
+		PageSize:     pageSize,
+		Total:        total,
+		TotalPages:   totalPages,
+		Trades:       trades,
+	})
+}
+
+func (s *Server) handleAnalysisOpenPositions(w http.ResponseWriter, r *http.Request) {
+	startedAt := time.Now()
+	metricWriter := &analysisMetricResponseWriter{ResponseWriter: w}
+	var cacheStatus analysisCacheStatus
+	defer func() { s.logAnalysisMetric(r, "open-positions", startedAt, metricWriter.bytes, cacheStatus) }()
+	if r.Method != http.MethodGet {
+		writeError(metricWriter, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	resp, err := s.loadAnalysisSnapshot(r.Context(), r)
+	if err != nil {
+		writeError(metricWriter, http.StatusBadGateway, "analysis_failed", err.Error())
+		return
+	}
+	cacheStatus = resp.Cache
+	rows := filterAnalysisPositionTrades(resp.OpenPositionTrades, r)
+	writeJSON(metricWriter, http.StatusOK, analysisOpenPositionsResponse{
+		OK:           resp.OK,
+		APIID:        resp.APIID,
+		BinanceAPIID: resp.BinanceAPIID,
+		GateAPIID:    resp.GateAPIID,
+		Env:          resp.Env,
+		PriceDays:    resp.PriceDays,
+		PNLDays:      resp.PNLDays,
+		PNLMinutes:   resp.PNLMinutes,
+		RefreshedAt:  resp.RefreshedAt,
+		Cache:        resp.Cache,
+		Source:       resp.Source,
+		Total:        len(rows),
+		Positions:    rows,
+	})
+}
+
+func (s *Server) handleAnalysisFills(w http.ResponseWriter, r *http.Request) {
+	startedAt := time.Now()
+	metricWriter := &analysisMetricResponseWriter{ResponseWriter: w}
+	var cacheStatus analysisCacheStatus
+	defer func() { s.logAnalysisMetric(r, "fills", startedAt, metricWriter.bytes, cacheStatus) }()
+	if r.Method != http.MethodGet {
+		writeError(metricWriter, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	resp, err := s.loadAnalysisSnapshot(r.Context(), r)
+	if err != nil {
+		writeError(metricWriter, http.StatusBadGateway, "analysis_failed", err.Error())
+		return
+	}
+	cacheStatus = resp.Cache
+	rows := filterAnalysisFills(resp.Trades, r)
+	_, pageSize := analysisPageQuery(r)
+	if pageSize > 1000 {
+		pageSize = 1000
+	}
+	if pageSize < 1 {
+		pageSize = defaultAnalysisPageSize
+	}
+	if len(rows) > pageSize {
+		rows = rows[:pageSize]
+	}
+	writeJSON(metricWriter, http.StatusOK, analysisFillsResponse{
+		OK:           resp.OK,
+		APIID:        resp.APIID,
+		BinanceAPIID: resp.BinanceAPIID,
+		GateAPIID:    resp.GateAPIID,
+		Env:          resp.Env,
+		PriceDays:    resp.PriceDays,
+		PNLDays:      resp.PNLDays,
+		PNLMinutes:   resp.PNLMinutes,
+		RefreshedAt:  resp.RefreshedAt,
+		Cache:        resp.Cache,
+		Source:       resp.Source,
+		Total:        len(filterAnalysisFills(resp.Trades, r)),
+		Trades:       rows,
+	})
+}
+
+type analysisMetricResponseWriter struct {
+	http.ResponseWriter
+	bytes int
+}
+
+func (w *analysisMetricResponseWriter) Write(p []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += n
+	return n, err
+}
+
+func (s *Server) logAnalysisMetric(r *http.Request, endpoint string, startedAt time.Time, bytes int, cache analysisCacheStatus) {
+	if s.Logger == nil {
+		return
+	}
+	s.Logger.Info("analysis endpoint completed",
+		"endpoint", endpoint,
+		"duration_ms", time.Since(startedAt).Milliseconds(),
+		"response_bytes", bytes,
+		"cache_hit", cache.Hit,
+		"cache_stale", cache.Stale,
+		"refresh_requested", strings.EqualFold(r.URL.Query().Get("refresh"), "true"),
+	)
+}
+
+func analysisSummaryResponseFrom(resp analysisResponse) analysisSummaryResponse {
+	return analysisSummaryResponse{
+		OK:                resp.OK,
+		APIID:             resp.APIID,
+		BinanceAPIID:      resp.BinanceAPIID,
+		GateAPIID:         resp.GateAPIID,
+		Env:               resp.Env,
+		PriceDays:         resp.PriceDays,
+		PNLDays:           resp.PNLDays,
+		PNLMinutes:        resp.PNLMinutes,
+		PriceInstID:       resp.PriceInstID,
+		PriceBar:          resp.PriceBar,
+		RefreshedAt:       resp.RefreshedAt,
+		Cache:             resp.Cache,
+		Source:            resp.Source,
+		Balance:           resp.Balance,
+		PricePoints:       resp.PricePoints,
+		BalancePoints:     resp.BalancePoints,
+		Summary:           resp.Summary,
+		ExchangeSummaries: resp.ExchangeSummaries,
+		Symbols:           resp.Symbols,
+	}
+}
+
+func (s *Server) loadAnalysisSnapshot(ctx context.Context, r *http.Request) (analysisResponse, error) {
+	if s.Orders == nil || s.ConfigStore == nil {
+		return analysisResponse{}, errors.New("order database is not configured")
+	}
+	cfg := s.ConfigStore.Get()
+	priceDays := positiveIntQuery(r, "price_days", defaultPriceDays)
+	pnlDays := positiveIntQuery(r, "pnl_days", defaultPNLDays)
+	pnlMinutes := analysisPNLMinutesFromQuery(r, pnlDays)
+	requestedAPIID := strings.TrimSpace(r.URL.Query().Get("api_id"))
+	requestedBinanceAPIID := strings.TrimSpace(r.URL.Query().Get("binance_api_id"))
+	requestedGateAPIID := strings.TrimSpace(r.URL.Query().Get("gate_api_id"))
+	cacheKey, err := s.analysisCacheKeyForRequest(cfg, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID, priceDays, pnlMinutes)
+	if err != nil {
+		return analysisResponse{}, err
+	}
+	refresh := strings.EqualFold(r.URL.Query().Get("refresh"), "true")
+	if cached, ok, cacheErr := s.Orders.CachedPayload(cacheKey); cacheErr != nil {
+		return analysisResponse{}, cacheErr
+	} else if ok {
+		if resp, valid := analysisResponseFromCachedPayload(cached, cacheKey, false); valid {
+			fresh := s.now().Sub(cached.RefreshedAt) < analysisCacheTTL
+			if fresh && !refresh {
+				return resp, nil
+			}
+			stale, staleValid := analysisResponseFromCachedPayload(cached, cacheKey, true)
+			if staleValid {
+				refreshKey := fmt.Sprintf("%p|%s", s.Orders, cacheKey)
+				s.startAnalysisRefresh(refreshKey, cfg, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID, priceDays, pnlMinutes)
+				return stale, nil
+			}
+		}
+	}
+	refreshKey := fmt.Sprintf("%p|%s", s.Orders, cacheKey)
+	return globalAnalysisRefreshManager.run(ctx, refreshKey, func() (analysisResponse, error) {
+		return s.buildAnalysis(ctx, cfg, requestedAPIID, requestedBinanceAPIID, priceDays, pnlMinutes, false, requestedGateAPIID)
+	})
+}
+
+func (s *Server) startAnalysisRefresh(key string, cfg config.Config, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID string, priceDays, pnlMinutes int) {
+	globalAnalysisRefreshManager.start(key, func() (analysisResponse, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), analysisRefreshTimeout)
+		defer cancel()
+		resp, err := s.buildAnalysis(ctx, cfg, requestedAPIID, requestedBinanceAPIID, priceDays, pnlMinutes, true, requestedGateAPIID)
+		if err != nil && s.Logger != nil {
+			s.Logger.Warn("background analysis refresh failed", "error", err)
+		}
+		return resp, err
+	})
+}
+
+func (s *Server) analysisCacheKeyForRequest(cfg config.Config, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID string, priceDays, pnlMinutes int) (string, error) {
+	envName := analysisEnvName(cfg)
+	primary := s.primaryExchangeForConfig(cfg)
+	if primary == "" {
+		return "", errors.New("no primary trading exchange is selected")
+	}
+	_, apiID, okxConfigured := s.analysisOKXCredentials(cfg, requestedAPIID)
+	_, binanceAPIID, binanceConfigured := s.analysisBinanceCredentials(cfg, requestedBinanceAPIID)
+	_, gateAPIID, gateConfigured := s.analysisGateCredentials(cfg, requestedGateAPIID)
+	if primary != trading.ExchangeOKX {
+		apiID, okxConfigured = "", false
+	}
+	if primary != trading.ExchangeBinance {
+		binanceAPIID, binanceConfigured = "", false
+	}
+	if primary != trading.ExchangeGate {
+		gateAPIID, gateConfigured = "", false
+	}
+	if !okxConfigured && !binanceConfigured && !gateConfigured {
+		return "", fmt.Errorf("primary exchange %s has no credentials configured for %s", primaryExchangeLabel(primary), envName)
+	}
+	return analysisCacheKey(apiID, binanceAPIID, envName, priceDays, normalizeAnalysisPNLMinutes(pnlMinutes), gateAPIID), nil
+}
+
+func analysisResponseFromCachedPayload(cached storage.CachedPayload, cacheKey string, stale bool) (analysisResponse, bool) {
+	var resp analysisResponse
+	if err := json.Unmarshal([]byte(cached.PayloadJSON), &resp); err != nil || !analysisResponseCacheable(resp) {
+		return analysisResponse{}, false
+	}
+	resp.Cache.Hit = true
+	resp.Cache.Stale = stale
+	resp.Cache.CachedAt = cached.RefreshedAt
+	resp.Cache.CacheKey = cacheKey
+	if stale {
+		resp.Source = analysisSourceStatus{Balance: "cache", Price: "cache", Fills: "cache", Funding: "cache", Gate: "cache"}
+	}
+	return resp, true
+}
+
+func analysisPageQuery(r *http.Request) (int, int) {
+	page := positiveIntQuery(r, "page", 1)
+	pageSize := positiveIntQuery(r, "page_size", defaultAnalysisPageSize)
+	if pageSize > maxAnalysisPageSize {
+		pageSize = maxAnalysisPageSize
+	}
+	return page, pageSize
+}
+
+func normalizeAnalysisExchange(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case trading.ExchangeBinance:
+		return trading.ExchangeBinance
+	case trading.ExchangeGate:
+		return trading.ExchangeGate
+	case trading.ExchangeOKX:
+		return trading.ExchangeOKX
+	default:
+		return ""
+	}
+}
+
+func filterAnalysisPositionTrades(rows []analysisPositionTrade, r *http.Request) []analysisPositionTrade {
+	exchange := normalizeAnalysisExchange(r.URL.Query().Get("exchange"))
+	apiID := strings.TrimSpace(r.URL.Query().Get("api_id"))
+	instID := strings.TrimSpace(r.URL.Query().Get("inst_id"))
+	result := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("result")))
+	filtered := make([]analysisPositionTrade, 0, len(rows))
+	for _, row := range rows {
+		if exchange != "" && normalizeAnalysisExchange(row.Exchange) != exchange {
+			continue
+		}
+		if apiID != "" && row.APIID != "" && row.APIID != apiID {
+			continue
+		}
+		if instID != "" && !strings.EqualFold(row.InstID, instID) {
+			continue
+		}
+		pnl, err := strconv.ParseFloat(strings.TrimSpace(row.NetPnL), 64)
+		if result == "win" && (err != nil || pnl <= 0) || result == "loss" && (err != nil || pnl >= 0) || result == "flat" && (err != nil || pnl != 0) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool { return filtered[i].ExitTS > filtered[j].ExitTS })
+	return filtered
+}
+
+func filterAnalysisFills(rows []analysisTrade, r *http.Request) []analysisTrade {
+	exchange := normalizeAnalysisExchange(r.URL.Query().Get("exchange"))
+	apiID := strings.TrimSpace(r.URL.Query().Get("api_id"))
+	instID := strings.TrimSpace(r.URL.Query().Get("inst_id"))
+	filtered := make([]analysisTrade, 0, len(rows))
+	for _, row := range rows {
+		if exchange != "" && normalizeAnalysisExchange(row.Exchange) != exchange {
+			continue
+		}
+		if apiID != "" && row.APIID != "" && row.APIID != apiID {
+			continue
+		}
+		if instID != "" && !strings.EqualFold(row.InstID, instID) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool { return filtered[i].FillTS > filtered[j].FillTS })
+	return filtered
 }
 
 func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requestedAPIID, requestedBinanceAPIID string, priceDays, pnlMinutes int, refresh bool, requestedGateAPIIDs ...string) (analysisResponse, error) {

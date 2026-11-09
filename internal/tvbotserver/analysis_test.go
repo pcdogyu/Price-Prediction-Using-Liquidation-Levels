@@ -200,6 +200,99 @@ func TestStaleAnalysisCacheIgnoresUpstreamErrorPayload(t *testing.T) {
 	}
 }
 
+func TestAnalysisSplitEndpointsUseCachedSnapshotAndPaginate(t *testing.T) {
+	srv := newTestServer(t)
+	if _, err := srv.OKXCredentials.UpdateAccount(okx.CredentialAccountUpdate{
+		ID:     "default",
+		Active: true,
+		Credentials: okx.Credentials{
+			APIKey:     "analysis-key",
+			SecretKey:  "analysis-secret",
+			Passphrase: "analysis-pass",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := srv.now()
+	positions := make([]analysisPositionTrade, 45)
+	for i := range positions {
+		exit := now.Add(-time.Duration(i+1) * time.Minute)
+		positions[i] = analysisPositionTrade{
+			Exchange:  trading.ExchangeOKX,
+			APIID:     "default",
+			InstID:    "BTC-USDT-SWAP",
+			Side:      trading.PositionSideLong,
+			EntryTime: exit.Add(-time.Hour),
+			EntryTS:   exit.Add(-time.Hour).UnixMilli(),
+			ExitTime:  exit,
+			ExitTS:    exit.UnixMilli(),
+			NetPnL:    strconv.Itoa(i + 1),
+		}
+	}
+	full := analysisResponse{
+		OK:             true,
+		APIID:          "default",
+		Env:            config.EnvDemo,
+		PriceDays:      3,
+		PNLMinutes:     1440,
+		RefreshedAt:    now,
+		Source:         analysisSourceStatus{Balance: "okx", Price: "okx", Fills: "okx", Funding: "okx"},
+		Summary:        analysisSymbolStats{Exchange: trading.ExchangeOKX, TradeCount: len(positions)},
+		PositionTrades: positions,
+		Trades: []analysisTrade{{
+			Exchange:       trading.ExchangeOKX,
+			APIID:          "default",
+			InstID:         "BTC-USDT-SWAP",
+			TradeID:        "fill-1",
+			PositionEffect: trading.PositionEffectClose,
+			FillTime:       now,
+			FillTS:         now.UnixMilli(),
+		}},
+	}
+	cacheKey := analysisCacheKey("default", "", config.EnvDemo, 3, 1440)
+	if err := srv.Orders.CachePayload(cacheKey, full, now); err != nil {
+		t.Fatal(err)
+	}
+
+	summaryRR := httptest.NewRecorder()
+	srv.handleAnalysisSummary(summaryRR, httptest.NewRequest(http.MethodGet, "/tvbot/analysis/summary?price_days=3&pnl_minutes=1440", nil))
+	if summaryRR.Code != http.StatusOK {
+		t.Fatalf("summary status=%d body=%s", summaryRR.Code, summaryRR.Body.String())
+	}
+	if strings.Contains(summaryRR.Body.String(), `"position_trades"`) || strings.Contains(summaryRR.Body.String(), `"trades"`) {
+		t.Fatalf("summary should not contain raw trade arrays: %s", summaryRR.Body.String())
+	}
+
+	pageRR := httptest.NewRecorder()
+	srv.handleAnalysisTrades(pageRR, httptest.NewRequest(http.MethodGet, "/tvbot/analysis/trades?price_days=3&pnl_minutes=1440&exchange=okx&page=2&page_size=20", nil))
+	if pageRR.Code != http.StatusOK {
+		t.Fatalf("trades status=%d body=%s", pageRR.Code, pageRR.Body.String())
+	}
+	var page analysisTradesPageResponse
+	if err := json.NewDecoder(pageRR.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Page != 2 || page.PageSize != 20 || page.Total != 45 || page.TotalPages != 3 || len(page.Trades) != 20 {
+		t.Fatalf("unexpected page metadata: %#v", page)
+	}
+	if page.Trades[0].ExitTS != positions[20].ExitTS {
+		t.Fatalf("page ordering mismatch: got=%d want=%d", page.Trades[0].ExitTS, positions[20].ExitTS)
+	}
+
+	openRR := httptest.NewRecorder()
+	srv.handleAnalysisOpenPositions(openRR, httptest.NewRequest(http.MethodGet, "/tvbot/analysis/open-positions?price_days=3&pnl_minutes=1440", nil))
+	if openRR.Code != http.StatusOK {
+		t.Fatalf("open positions status=%d body=%s", openRR.Code, openRR.Body.String())
+	}
+	var open analysisOpenPositionsResponse
+	if err := json.NewDecoder(openRR.Body).Decode(&open); err != nil {
+		t.Fatal(err)
+	}
+	if open.Total != 0 || len(open.Positions) != 0 {
+		t.Fatalf("unexpected open positions: %#v", open)
+	}
+}
+
 func TestBuildAnalysisDoesNotCacheBinanceUpstreamError(t *testing.T) {
 	srv := newTestServer(t)
 	var userTradeCalls int

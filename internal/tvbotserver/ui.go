@@ -2939,6 +2939,8 @@ const tvbotHTML = `<!doctype html>
       positionClosingAll: false,
       pendingOrderActions: {},
       analysis: null,
+      analysisTrades: null,
+      analysisFills: [],
       analysisError: "",
       selectedExchange: "okx",
       analysisTradePage: 1,
@@ -2992,6 +2994,9 @@ const tvbotHTML = `<!doctype html>
     let coinpairBlockPollBusy = false;
     let coinpairBlockCountdownTimer = null;
     let positionSymbolDetailsSequence = 0;
+    let analysisLoadPromise = null;
+    let analysisLoadSequence = 0;
+    let analysisTradeLoadSequence = 0;
     let menuSettingsSynced = false;
     let tableColumnDrag = null;
     let tableColumnDropSuppressClick = false;
@@ -3581,6 +3586,9 @@ const tvbotHTML = `<!doctype html>
       }
       state.selectedExchange = selected;
       state.analysisTradePage = 1;
+      state.analysisTrades = null;
+      state.analysisFills = [];
+      analysisTradeLoadSequence++;
       state.orders = [];
       state.ordersTotal = 0;
       state.ordersPage = 1;
@@ -4602,7 +4610,7 @@ const tvbotHTML = `<!doctype html>
       const qs = new URLSearchParams({ price_days: "3", pnl_minutes: String(pnlMinutes) });
       if (refresh) qs.set("refresh", "true");
       const result = await Promise.allSettled([
-        api("/tvbot/analysis?" + qs.toString()),
+        api("/tvbot/analysis/summary?" + qs.toString()),
         loadAnalysisPositions(!!refresh)
       ]);
       if (result[0].status === "fulfilled") {
@@ -4719,19 +4727,64 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadAnalysis(refresh) {
-      const qs = new URLSearchParams({ price_days: "3", pnl_minutes: String(analysisPNLWindowMinutes()) });
-      if (refresh) qs.set("refresh", "true");
-      await Promise.all([loadBalanceOverview(!!refresh, state.balanceWindowMinutes), loadAnalysisPositions(!!refresh)]);
+      if (analysisLoadPromise && !refresh) return analysisLoadPromise;
+      const sequence = ++analysisLoadSequence;
+      const task = (async () => {
+        const qs = new URLSearchParams({ price_days: "3", pnl_minutes: String(analysisPNLWindowMinutes()) });
+        if (refresh) qs.set("refresh", "true");
+        const summaryPromise = api("/tvbot/analysis/summary?" + qs.toString());
+        try {
+          const [summary] = await Promise.all([
+            summaryPromise,
+            loadBalanceOverview(!!refresh, state.balanceWindowMinutes),
+            loadAnalysisPositions(!!refresh)
+          ]);
+          if (sequence !== analysisLoadSequence) return;
+          state.analysis = summary;
+          state.analysisError = "";
+          state.analysisTrades = null;
+          state.analysisFills = [];
+          state.analysisTradePage = 1;
+          renderAnalysis();
+          try {
+            await loadAnalysisTradesPage(1, sequence);
+          } catch (err) {
+            if (sequence !== analysisLoadSequence) return;
+            state.analysisError = err.message;
+            renderAnalysisTradeHistory(err.message);
+          }
+        } catch (err) {
+          if (sequence !== analysisLoadSequence) return;
+          state.analysis = null;
+          state.analysisTrades = null;
+          state.analysisError = err.message;
+          state.analysisTradePage = 1;
+          renderAnalysis();
+        }
+      })();
+      analysisLoadPromise = task;
       try {
-        state.analysis = await api("/tvbot/analysis?" + qs.toString());
-        state.analysisError = "";
-        state.analysisTradePage = 1;
-      } catch (err) {
-        state.analysis = null;
-        state.analysisError = err.message;
-        state.analysisTradePage = 1;
+        return await task;
+      } finally {
+        if (analysisLoadPromise === task) analysisLoadPromise = null;
       }
-      renderAnalysis();
+    }
+
+    async function loadAnalysisTradesPage(page, sequence) {
+      const requestedPage = Math.max(1, Number(page || 1));
+      const requestSequence = ++analysisTradeLoadSequence;
+      const qs = new URLSearchParams({
+        price_days: "3",
+        pnl_minutes: String(analysisPNLWindowMinutes()),
+        exchange: activeExchange(),
+        page: String(requestedPage),
+        page_size: String(analysisTradePageSize)
+      });
+      const result = await api("/tvbot/analysis/trades?" + qs.toString());
+      if ((sequence && sequence !== analysisLoadSequence) || requestSequence !== analysisTradeLoadSequence) return;
+      state.analysisTrades = result;
+      state.analysisTradePage = Number(result.page || requestedPage);
+      renderAnalysisTradeHistory("");
     }
 
     async function loadHistoryOrders(refresh) {
@@ -7226,7 +7279,7 @@ const tvbotHTML = `<!doctype html>
 
     function analysisTradesForActiveExchange() {
       const exchange = activeExchange();
-      const closedRows = state.analysis && Array.isArray(state.analysis.position_trades) ? state.analysis.position_trades : [];
+      const closedRows = state.analysisTrades && Array.isArray(state.analysisTrades.trades) ? state.analysisTrades.trades : [];
       return closedRows
         .filter((row) => normalizeExchange(row.exchange) === exchange)
         .filter((row) => !zeroTime(row && row.exit_time))
@@ -7704,7 +7757,9 @@ const tvbotHTML = `<!doctype html>
       // Position charts must be grounded in exchange fills returned by the
       // analysis endpoint. Do not synthesize an opening marker from the
       // current position snapshot: its average price is not an order fill.
-      const source = includeAnalysis !== false && state.analysis && Array.isArray(state.analysis.trades) ? state.analysis.trades : [];
+      const source = includeAnalysis !== false
+        ? (Array.isArray(state.analysisFills) && state.analysisFills.length ? state.analysisFills : (state.analysis && Array.isArray(state.analysis.trades) ? state.analysis.trades : []))
+        : [];
       const trades = source
         .filter((item) => normalizeExchange(item && item.exchange) === exchange)
         .filter((item) => analysisGateChartSymbol(item && item.inst_id) === symbol)
@@ -7727,10 +7782,17 @@ const tvbotHTML = `<!doctype html>
       return trades;
     }
 
-    async function loadPositionSymbolAnalysis() {
-      const qs = new URLSearchParams({ price_days: "3", pnl_minutes: String(analysisPNLWindowMinutes()), refresh: "true" });
-      state.analysis = await api("/tvbot/analysis?" + qs.toString());
-      state.analysisError = "";
+    async function loadPositionSymbolAnalysis(row) {
+      const qs = new URLSearchParams({
+        price_days: "3",
+        pnl_minutes: String(analysisPNLWindowMinutes()),
+        exchange: normalizeExchange(row && row._exchange || activeExchange()),
+        inst_id: String(row && row.instId || ""),
+        api_id: String(row && row._api_id || ""),
+        page_size: "1000"
+      });
+      const result = await api("/tvbot/analysis/fills?" + qs.toString());
+      state.analysisFills = Array.isArray(result.trades) ? result.trades : [];
     }
 
     async function openPositionSymbolDetails(row) {
@@ -7754,7 +7816,7 @@ const tvbotHTML = `<!doctype html>
         return;
       }
       try {
-        await loadPositionSymbolAnalysis();
+        await loadPositionSymbolAnalysis(row);
         const rows = positionSymbolTradeRows(row);
         const chartURL = buildPositionChartURL(symbol, exchange, rows, rows[0]);
         if (chartURL && !chartWindow.closed) {
@@ -7900,25 +7962,31 @@ const tvbotHTML = `<!doctype html>
       }
       const rawTrades = analysisTradesForActiveExchange();
       const trades = analysisTradesForDisplay();
-      const totalPages = Math.max(1, Math.ceil(trades.length / analysisTradePageSize));
+      const total = state.analysisTrades && Number.isFinite(Number(state.analysisTrades.total))
+        ? Number(state.analysisTrades.total)
+        : trades.length;
+      const totalPages = Math.max(1, Number(state.analysisTrades && state.analysisTrades.total_pages || (total ? Math.ceil(total / analysisTradePageSize) : 0)));
       state.analysisTradePage = Math.min(Math.max(1, Number(state.analysisTradePage || 1)), totalPages);
-      const start = (state.analysisTradePage - 1) * analysisTradePageSize;
-      const pageRows = trades.slice(start, start + analysisTradePageSize);
+      const pageRows = trades;
       const columns = currentAnalysisTradeColumns();
       rowsEl.innerHTML = pageRows.map((row) => {
         return "<tr>" + columns.map((col) => analysisTradeCellHTML(col, row)).join("") + "</tr>";
       }).join("") || '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">暂无 ' + escapeHTML(label) + ' 下单盈亏记录</td></tr>';
-      if (status) status.textContent = trades.length ? (state.analysisTradeAggregate ? ("共 " + trades.length + " 组（原始 " + rawTrades.length + " 条）") : ("共 " + trades.length + " 条")) : "-";
-      if (pageInfo) pageInfo.textContent = trades.length ? ("第 " + state.analysisTradePage + " / " + totalPages + " 页") : "-";
+      if (status) status.textContent = total ? (state.analysisTradeAggregate ? ("共 " + total + " 条（当前页 " + trades.length + " 组）") : ("共 " + total + " 条")) : "-";
+      if (pageInfo) pageInfo.textContent = total ? ("第 " + state.analysisTradePage + " / " + totalPages + " 页") : "-";
       if (prev) prev.disabled = state.analysisTradePage <= 1;
       if (next) next.disabled = state.analysisTradePage >= totalPages;
     }
 
     function changeAnalysisTradePage(delta) {
-      const trades = analysisTradesForDisplay();
-      const totalPages = Math.max(1, Math.ceil(trades.length / analysisTradePageSize));
-      state.analysisTradePage = Math.min(Math.max(1, Number(state.analysisTradePage || 1) + delta), totalPages);
-      renderAnalysisTradeHistory("");
+      const totalPages = Math.max(1, Number(state.analysisTrades && state.analysisTrades.total_pages || 1));
+      const nextPage = Math.min(Math.max(1, Number(state.analysisTradePage || 1) + delta), totalPages);
+      if (nextPage === Number(state.analysisTradePage || 1)) return;
+      state.analysisTradePage = nextPage;
+      loadAnalysisTradesPage(nextPage, analysisLoadSequence).catch((err) => {
+        state.analysisError = err.message;
+        renderAnalysisTradeHistory(err.message);
+      });
     }
 
     function handleAnalysisTradeColumnDragStart(event) {
