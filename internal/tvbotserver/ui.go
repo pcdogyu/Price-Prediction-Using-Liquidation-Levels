@@ -3065,7 +3065,7 @@ const tvbotHTML = `<!doctype html>
       { id: "leverage", title: "杠杆", colClass: "pos-leverage-col", cell: (row) => textTableCell(asText(row.lever)) },
       { id: "position_amount", title: "仓位金额", colClass: "pos-position-amount-col", cell: (row) => textTableCell(positionAmount(row)) },
       { id: "mark_price", title: "标记价", colClass: "pos-price-col", cell: (row) => textTableCell(formatPriceAmount(row, row.markPx)) },
-      { id: "upl", title: "未实现盈亏", colClass: "pos-pnl-col", cell: (row) => signedCell(row.upl, formatNumber(row.upl)) },
+      { id: "upl", title: "未实现盈亏", colClass: "pos-pnl-col", cell: (row) => signedCell(row.upl, formatUSDTAmount(row.upl)) },
       { id: "return_rate", title: "收益率", colClass: "pos-rate-col", cell: (row) => signedCell(positionReturnRatio(row), positionReturnPercent(row)) },
       { id: "entry_time", title: "下单时间", colClass: "pos-entry-time-col", cell: (row) => positionEntryTimeCell(row) },
       { id: "holding_time", title: "持仓时间", colClass: "pos-holding-time-col", cell: (row) => positionHoldingTimeCell(row) },
@@ -3630,22 +3630,28 @@ const tvbotHTML = `<!doctype html>
     }
 
     function formatFixed2(v) {
+      if (v === null || v === undefined || String(v).trim() === "") return "-";
       const n = Number(v);
       if (!Number.isFinite(n)) return "-";
       return n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
+    function formatUSDTAmount(v) {
+      return formatFixed2(v);
+    }
+
+    function formatUSDTLabel(v) {
+      const formatted = formatUSDTAmount(v);
+      return formatted === "-" ? "-" : formatted + " USDT";
+    }
+
     function formatUSD(v) {
-      const n = Number(v);
-      if (!Number.isFinite(n)) return "-";
-      return n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " USD";
+      const formatted = formatUSDTAmount(v);
+      return formatted === "-" ? "-" : formatted + " USD";
     }
 
     function formatSymbolTurnover(v) {
-      if (v === null || v === undefined || String(v).trim() === "") return "-";
-      const n = Number(v);
-      if (!Number.isFinite(n)) return "-";
-      return n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " USDT";
+      return formatUSDTLabel(v);
     }
 
     function formatAssetAmount(v) {
@@ -3756,10 +3762,13 @@ const tvbotHTML = `<!doctype html>
       return formatFixedPrecision(value, precision ? precision.price_precision : null, formatNumber);
     }
 
+    function formatCachedSymbolQuantity(exchange, instID, value) {
+      const precision = symbolPrecision(exchange, instID);
+      return formatFixedPrecision(value, precision ? precision.quantity_precision : null, formatAssetAmount);
+    }
+
     function formatUSDTBalance(v) {
-      const n = Number(v);
-      if (!Number.isFinite(n)) return "-";
-      return Math.round(n).toLocaleString("zh-CN", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+      return formatUSDTAmount(v);
     }
 
     function formatPct(v) {
@@ -3879,9 +3888,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function balanceAmount(v) {
-      if (v === null || v === undefined || v === "") return "-";
-      const formatted = formatNumber(v);
-      return (formatted === "-" ? asText(v) : formatted) + " USDT";
+      return formatUSDTLabel(v);
     }
 
     function balanceWindowLabel(minutes) {
@@ -4809,11 +4816,11 @@ const tvbotHTML = `<!doctype html>
           cell(row.side) +
           cell(exchangeOrderStatusText(status), statusClass) +
           cell(row.order_type) +
-          cell(row.price) +
-          cell(row.average_price) +
-          cell(row.original_qty) +
-          cell(row.executed_qty) +
-          cell(row.remaining_qty) +
+          cell(formatCachedSymbolPrice(row.exchange, row.inst_id, row.price)) +
+          cell(formatCachedSymbolPrice(row.exchange, row.inst_id, row.average_price)) +
+          cell(formatCachedSymbolQuantity(row.exchange, row.inst_id, row.original_qty)) +
+          cell(formatCachedSymbolQuantity(row.exchange, row.inst_id, row.executed_qty)) +
+          cell(formatCachedSymbolQuantity(row.exchange, row.inst_id, row.remaining_qty)) +
           "</tr>";
       }).join("") || '<tr><td colspan="14" class="muted">' + escapeHTML(state.exchangeOrdersError || "暂无交易所历史订单") + "</td></tr>";
       const totalPages = state.exchangeOrdersTotal ? Math.ceil(state.exchangeOrdersTotal / exchangeOrderPageSize) : 0;
@@ -5292,7 +5299,7 @@ const tvbotHTML = `<!doctype html>
     function updateMetrics() {
       $("metric-env").textContent = state.config && state.config.trading ? state.config.trading.env : "-";
       $("metric-api-keys").textContent = "OKX " + apiMetricText("okx") + " / Binance " + apiMetricText("binance") + " / Gate " + apiMetricText("gate");
-      $("metric-amount").textContent = state.config && state.config.trading ? asText(state.config.trading.order_amount_usdt) + " USDT" : "-";
+      $("metric-amount").textContent = state.config && state.config.trading ? formatUSDTLabel(state.config.trading.order_amount_usdt) : "-";
       $("metric-orders").textContent = Number.isFinite(Number(state.ordersTotal)) ? String(Number(state.ordersTotal || 0)) : (state.orders ? state.orders.length : "-");
     }
 
@@ -5338,7 +5345,7 @@ const tvbotHTML = `<!doctype html>
         " / " + asText(monitor.poll_interval_seconds || 60) + "s" +
         " / 自动平仓最短" + asText(monitor.min_holding_minutes || 15) + "分钟" +
         " / 自动止盈" + asText(monitor.take_profit_pct || 5) + "% / 自动止损" + asText(monitor.stop_loss_pct || 8) + "% / 原生保护单禁用" +
-        " / 低保证金" + (monitor.low_margin_close_enabled ? " <" + asText(monitor.low_margin_threshold_usdt || 50) + " USDT / " + asText(monitor.low_margin_holding_hours || 1) + "h" : "关闭") + dailyLabel;
+        " / 低保证金" + (monitor.low_margin_close_enabled ? " <" + formatUSDTLabel(monitor.low_margin_threshold_usdt || 50) + " / " + asText(monitor.low_margin_holding_hours || 1) + "h" : "关闭") + dailyLabel;
     }
 
     function renderDashboard() {
@@ -5369,7 +5376,7 @@ const tvbotHTML = `<!doctype html>
               if (field === "position-count") {
                 element.textContent = positionSummary.ready ? asText(positionSummary.count) : "-";
               } else if (field === "position-upl") {
-                element.textContent = positionSummary.ready ? analysisAmountText(positionSummary.upl) : "-";
+                element.textContent = positionSummary.ready ? formatUSDTAmount(positionSummary.upl) : "-";
               } else {
                 element.textContent = "-";
               }
@@ -5382,15 +5389,15 @@ const tvbotHTML = `<!doctype html>
         const summary = dashboardAnalysisExchangeSummary(exchange);
         const positionSummary = analysisPositionSummary(exchange);
         const values = {
-          "net-pnl": analysisAmountText(summary.net_pnl),
+          "net-pnl": formatUSDTAmount(summary.net_pnl),
           "win-rate": formatPct(summary.win_rate),
           "profit-factor": formatFactor(summary),
           "payoff-ratio": formatNumber(summary.payoff_ratio),
           trades: asText(summary.trade_count || 0),
-          turnover: analysisAmountText(summary.turnover),
-          fees: analysisAmountText(summary.fees),
+          turnover: formatUSDTAmount(summary.turnover),
+          fees: formatUSDTAmount(summary.fees),
           "position-count": positionSummary.ready ? asText(positionSummary.count) : "-",
-          "position-upl": positionSummary.ready ? analysisAmountText(positionSummary.upl) : "-"
+          "position-upl": positionSummary.ready ? formatUSDTAmount(positionSummary.upl) : "-"
         };
         Object.entries(values).forEach(([field, value]) => {
           const element = $(prefix + "-" + field);
@@ -5428,7 +5435,7 @@ const tvbotHTML = `<!doctype html>
         ["信号有效秒数", t.signal_ttl_seconds],
         ["忽略币对", configuredIgnoredCoinpairs().join(", ") || "未启用"],
         ["币对白名单", configuredCoinpairWhitelist().join(", ") || "未启用"],
-        ["USDT 下单金额", t.order_amount_usdt],
+        ["USDT 下单金额", formatUSDTAmount(t.order_amount_usdt)],
         ["杠杆", t.leverage],
         ["订单类型", orderTypeText(t.order_type || "market")],
         ["风控模式", riskText(t.risk_type)],
@@ -5465,7 +5472,7 @@ const tvbotHTML = `<!doctype html>
           : (configured ? (item.status === "ok" ? "已更新" : (item.error || item.status || "错误")) : "未配置");
         $(prefix + "-status").textContent = statusText;
         $(prefix + "-eq").textContent = usdt ? formatUSD(usdt.eq_usd || usdt.eq) : "-";
-        $(prefix + "-avail").textContent = usdt ? formatUSDTBalance(usdt.avail_bal || usdt.avail_eq) + " USDT" : "-";
+        $(prefix + "-avail").textContent = usdt ? formatUSDTLabel(usdt.avail_bal || usdt.avail_eq) : "-";
         $(prefix + "-api").textContent = item.api_id ? apiDisplayName(item.api_id, exchange, item.env) : "-";
         $(prefix + "-updated").textContent = balance.updated_at ? shanghaiTime(balance.updated_at) : (item.refreshed_at ? shanghaiTime(item.refreshed_at) : "-");
         const points = usdtBalancePoints(item.balance_points || [], balance);
@@ -7007,7 +7014,7 @@ const tvbotHTML = `<!doctype html>
         closeAllButton.textContent = closeAllBusy ? "平仓中..." : "一键平仓";
       }
       $("positions-count").textContent = positionsReady ? asText(state.positions.count || rows.length) : "-";
-      $("positions-upl").textContent = positionsReady ? formatNumber(totalUpl) + " USDT" : "-";
+      $("positions-upl").textContent = positionsReady ? formatUSDTLabel(totalUpl) : "-";
       $("positions-upl").className = ["value", positionsReady ? signedToneClass(totalUpl) : ""].filter(Boolean).join(" ");
       $("positions-notional").textContent = positionsReady ? formatUSD(positionSum(rows, "notionalUsd")) : "-";
       $("positions-return").textContent = overallReturn === null ? "-" : formatPct(overallReturn);
@@ -7080,20 +7087,20 @@ const tvbotHTML = `<!doctype html>
         $(prefix + "-turnover").textContent = "-";
         $(prefix + "-fees").textContent = "-";
         $(prefix + "-position-count").textContent = positionSummary.ready ? asText(positionSummary.count) : "-";
-        $(prefix + "-position-upl").textContent = positionSummary.ready ? analysisAmountText(positionSummary.upl) : "-";
+        $(prefix + "-position-upl").textContent = positionSummary.ready ? formatUSDTAmount(positionSummary.upl) : "-";
         $(prefix + "-position-upl").className = ["value", positionSummary.ready ? signedToneClass(positionSummary.upl) : ""].filter(Boolean).join(" ");
         return;
       }
       const summary = analysisExchangeSummary(normalized);
-      $(prefix + "-net-pnl").textContent = analysisAmountText(summary.net_pnl);
+      $(prefix + "-net-pnl").textContent = formatUSDTAmount(summary.net_pnl);
       $(prefix + "-win-rate").textContent = formatPct(summary.win_rate);
       $(prefix + "-profit-factor").textContent = formatFactor(summary);
       $(prefix + "-payoff-ratio").textContent = formatNumber(summary.payoff_ratio);
       $(prefix + "-trades").textContent = asText(summary.trade_count || 0);
-      $(prefix + "-turnover").textContent = analysisAmountText(summary.turnover);
-      $(prefix + "-fees").textContent = analysisAmountText(summary.fees);
+      $(prefix + "-turnover").textContent = formatUSDTAmount(summary.turnover);
+      $(prefix + "-fees").textContent = formatUSDTAmount(summary.fees);
       $(prefix + "-position-count").textContent = positionSummary.ready ? asText(positionSummary.count) : "-";
-      $(prefix + "-position-upl").textContent = positionSummary.ready ? analysisAmountText(positionSummary.upl) : "-";
+      $(prefix + "-position-upl").textContent = positionSummary.ready ? formatUSDTAmount(positionSummary.upl) : "-";
       $(prefix + "-position-upl").className = ["value", positionSummary.ready ? signedToneClass(positionSummary.upl) : ""].filter(Boolean).join(" ");
     }
 
@@ -7386,10 +7393,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function analysisFixed2Text(value) {
-      if (value === null || value === undefined || String(value).trim() === "") return "-";
-      const formatted = formatFixed2(value);
-      if (formatted === "-") return asText(value);
-      return formatted;
+      return formatUSDTAmount(value);
     }
 
     function analysisPriceText(row, value) {
@@ -7891,7 +7895,7 @@ const tvbotHTML = `<!doctype html>
     function renderAnalysisOKXBalance(item, balance) {
       const usdt = usdtBalanceDetail(balance);
       renderAnalysisBalanceWindow("analysis-okx", item);
-      $("analysis-usdt-eq").textContent = usdt ? analysisAmountText(usdt.eq) : "-";
+      $("analysis-usdt-eq").textContent = usdt ? formatUSDTAmount(usdt.eq) : "-";
       $("analysis-balance-updated").textContent = balance && balance.updated_at ? shanghaiTime(balance.updated_at) : "-";
       $("analysis-okx-balance-status").textContent = exchangeBalanceStatusText(item, balance, "OKX");
       $("analysis-okx-usdt-title").textContent = "USDT 权益图 " + balanceWindowLabel(state.balanceWindowMinutes);
@@ -7905,7 +7909,7 @@ const tvbotHTML = `<!doctype html>
       const balance = item && item.balance ? item.balance : null;
       const usdt = usdtBalanceDetail(balance);
       renderAnalysisBalanceWindow("analysis-binance", item);
-      $("analysis-binance-usdt-eq").textContent = usdt ? analysisAmountText(usdt.eq) : "-";
+      $("analysis-binance-usdt-eq").textContent = usdt ? formatUSDTAmount(usdt.eq) : "-";
       $("analysis-binance-balance-updated").textContent = balance && balance.updated_at ? shanghaiTime(balance.updated_at) : (item && item.refreshed_at ? shanghaiTime(item.refreshed_at) : "-");
       $("analysis-binance-balance-status").textContent = exchangeBalanceStatusText(item, balance, "Binance");
       $("analysis-binance-usdt-title").textContent = "USDT 权益图 " + balanceWindowLabel(state.balanceWindowMinutes);
@@ -7917,7 +7921,7 @@ const tvbotHTML = `<!doctype html>
       const balance = item && item.balance ? item.balance : null;
       const usdt = usdtBalanceDetail(balance);
       renderAnalysisBalanceWindow("analysis-gate", item);
-      $("analysis-gate-usdt-eq").textContent = usdt ? analysisAmountText(usdt.eq) : "-";
+      $("analysis-gate-usdt-eq").textContent = usdt ? formatUSDTAmount(usdt.eq) : "-";
       $("analysis-gate-balance-updated").textContent = balance && balance.updated_at ? shanghaiTime(balance.updated_at) : (item && item.refreshed_at ? shanghaiTime(item.refreshed_at) : "-");
       $("analysis-gate-balance-status").textContent = exchangeBalanceStatusText(item, balance, "Gate");
       $("analysis-gate-usdt-title").textContent = "USDT 权益图 " + balanceWindowLabel(state.balanceWindowMinutes);
@@ -7942,14 +7946,14 @@ const tvbotHTML = `<!doctype html>
         }
         return;
       }
-      if (startEl) startEl.textContent = analysisAmountText(windowStats.start_value);
+      if (startEl) startEl.textContent = formatUSDTAmount(windowStats.start_value);
       if (changeEl) {
-        changeEl.textContent = analysisAmountText(windowStats.change) + " / " + formatPct(windowStats.change_pct);
+        changeEl.textContent = formatUSDTAmount(windowStats.change) + " / " + formatPct(windowStats.change_pct);
         changeEl.className = ["value", signedToneClass(windowStats.change)].filter(Boolean).join(" ");
       }
       if (drawdownEl) {
         const dd = Number(windowStats.max_drawdown);
-        drawdownEl.textContent = analysisAmountText(dd) + " / " + formatPct(windowStats.max_drawdown_pct);
+        drawdownEl.textContent = formatUSDTAmount(dd) + " / " + formatPct(windowStats.max_drawdown_pct);
         drawdownEl.className = ["value", Number.isFinite(dd) && dd > 0 ? "signed-loss" : ""].filter(Boolean).join(" ");
       }
     }
@@ -8714,7 +8718,7 @@ const tvbotHTML = `<!doctype html>
           '<td class="order-market">' + escapeHTML(orderHistoryMarketText(order)) + "</td>" +
           "<td>" + escapeHTML(asText(order.coinpair)) + "</td>" +
           "<td>" + escapeHTML(formatCachedSymbolPrice(targetExchange, precisionInstID, order.price)) + "</td>" +
-          "<td>" + escapeHTML(asText(order.amount)) + "</td>" +
+          "<td>" + escapeHTML(formatUSDTAmount(order.amount)) + "</td>" +
           '<td class="order-okx"><div class="okx-cell"><span class="okx-text">' + escapeHTML(exchangeResult) + "</span>" + retryButton + "</div></td>" +
           "</tr>";
       });
@@ -8814,7 +8818,7 @@ const tvbotHTML = `<!doctype html>
       }).join("") || '<tr><td colspan="6" class="muted">暂无 checkpoint</td></tr>';
       $("trade-monitor-lifecycles").innerHTML = lifecycles.map((row) => {
         const entryIDs = tradeMonitorListText(row.entry_order_ids);
-        const exitID = row.exit_price ? (asText(row.exit_price) + " / " + asText(row.realized_pnl) + " USDT") : "-";
+        const exitID = row.exit_price ? (asText(row.exit_price) + " / " + formatUSDTLabel(row.realized_pnl)) : "-";
         const reentry = row.reentry_signal_id ? asText(row.reentry_signal_id) : ("次数 " + asText(row.reentry_count || 0));
         return "<tr>" +
           '<td class="time">' + escapeHTML(tradeMonitorTime(row.updated_at)) + "</td>" +
