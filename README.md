@@ -138,13 +138,12 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflag
 
 生产发布使用 `deploy/publish-linux.ps1`：发布机先执行本地 `go test` 和 `go vet` 作为门禁，再使用 `pem/server.pem` 通过 SSH 让目标服务器同步目标提交，并在服务器本机按实际架构执行 `go test`、`go vet` 和 `CGO_ENABLED=0 GOOS=linux GOARCH=... go build`。服务器会生成两个 Linux 原生二进制和不含数据库的 release tar 包，校验构建产物哈希后原子替换并重启；不再本地交叉编译或上传二进制，也不在部署前备份或复制 SQLite 数据库。构建包保存在 `/var/lib/liquidation-predictor/builds`，已存在的一次性迁移快照只保留并使用，不由发布流程重新生成。当前服务器未安装 Docker/Podman，因此该流程生成的是原生 Linux 包，不是容器镜像。
 
-TVBot 可以在维护窗口从统一数据库拆分到 `APP_TVBOT_DATABASE` 指定的独立 SQLite 文件。普通启动和发布不会自动复制数据库；目标文件不存在时会继续使用 `APP_DATABASE`，避免新版本启动后读取空的 TVBot 库。确认服务已停止后，加载与 systemd 相同的环境并执行一次：
+TVBot 可以在维护窗口从统一数据库拆分到 `APP_TVBOT_DATABASE` 指定的独立 SQLite 文件。普通启动和发布不会自动复制数据库；目标文件不存在时会继续使用 `APP_DATABASE`，避免新版本启动后读取空的 TVBot 库。确认两个路径与 systemd 环境一致后停止服务，并只传递这两个非敏感路径执行一次：
 
 ```bash
-set -a
-. /etc/liquidation-predictor.env
-set +a
 systemctl stop liquidation-predictor.service
+APP_DATABASE=/var/lib/liquidation-predictor/liquidation.db \
+APP_TVBOT_DATABASE=/var/lib/liquidation-predictor/tvbot.db \
 /opt/Price-Prediction-Using-Liquidation-Levels/liquidation-predictor split-databases
 systemctl start liquidation-predictor.service
 ```

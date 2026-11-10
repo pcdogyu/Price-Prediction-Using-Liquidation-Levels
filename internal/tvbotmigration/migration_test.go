@@ -56,6 +56,46 @@ func TestMigrateSQLiteIsTransactionalIdempotentAndMapsCollisions(t *testing.T) {
 	}
 }
 
+func TestMigrateSQLiteSkipsNonPrimaryUniqueConflict(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "legacy.db")
+	target := filepath.Join(dir, "target.db")
+	legacyDB, err := sql.Open("sqlite", legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = legacyDB.Exec(`CREATE TABLE orders(id TEXT PRIMARY KEY,dedupe TEXT UNIQUE); INSERT INTO orders(id,dedupe) VALUES('legacy-id','same-dedupe');`); err != nil {
+		_ = legacyDB.Close()
+		t.Fatal(err)
+	}
+	if err := legacyDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	targetDB, err := sql.Open("sqlite", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = targetDB.Exec(`CREATE TABLE orders(id TEXT PRIMARY KEY,dedupe TEXT UNIQUE); INSERT INTO orders(id,dedupe) VALUES('current-id','same-dedupe');`); err != nil {
+		_ = targetDB.Close()
+		t.Fatal(err)
+	}
+	if err := targetDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if migrated, err := MigrateSQLite(context.Background(), target, legacy); err != nil || !migrated {
+		t.Fatalf("migration migrated=%v err=%v", migrated, err)
+	}
+	check, err := sql.Open("sqlite", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer check.Close()
+	var count int
+	if err = check.QueryRow(`SELECT COUNT(*) FROM orders`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("non-primary unique conflict should be skipped, count=%d err=%v", count, err)
+	}
+}
+
 func TestMigrateUnifiedSQLiteCopiesOnlyTVBotTablesAndIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "liquidation.db")

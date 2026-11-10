@@ -339,8 +339,19 @@ func copyKeyedRow(ctx context.Context, tx *sql.Tx, insert *sql.Stmt, sourcePath,
 	if affected, _ := result.RowsAffected(); affected > 0 {
 		return nil
 	}
+	keyExists, err := targetKeyExists(ctx, tx, table, key, values[keyIndex])
+	if err != nil {
+		return err
+	}
+	// INSERT OR IGNORE can also be rejected by a different UNIQUE constraint.
+	// Only a real primary-key collision can be repaired by changing the text
+	// key; otherwise the source row is already represented by the target's
+	// unique business key and must be skipped instead of looping forever.
+	if !keyExists {
+		return nil
+	}
 	candidate := "legacy:" + original
-	for i := 1; ; i++ {
+	for i := 1; i <= 10000; i++ {
 		values[keyIndex] = candidate
 		result, err = insert.ExecContext(ctx, values...)
 		if err != nil {
@@ -350,8 +361,28 @@ func copyKeyedRow(ctx context.Context, tx *sql.Tx, insert *sql.Stmt, sourcePath,
 			_, err = tx.ExecContext(ctx, `INSERT INTO tvbot_legacy_id_map(source_path,table_name,source_key,target_key,created_ts) VALUES(?,?,?,?,?)`, sourcePath, table, original, candidate, time.Now().UTC().UnixMilli())
 			return err
 		}
+		keyExists, err = targetKeyExists(ctx, tx, table, key, candidate)
+		if err != nil {
+			return err
+		}
+		if !keyExists {
+			return nil
+		}
 		candidate = fmt.Sprintf("legacy:%s:%d", original, i)
 	}
+	return fmt.Errorf("could not map colliding key %q in table %q", original, table)
+}
+
+func targetKeyExists(ctx context.Context, tx *sql.Tx, table, key string, value any) (bool, error) {
+	var found int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM main.`+quoteIdent(table)+` WHERE `+quoteIdent(key)+`=? LIMIT 1`, value).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func tableColumns(ctx context.Context, tx *sql.Tx, table string) ([]string, []string, error) {
