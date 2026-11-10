@@ -1995,26 +1995,34 @@ func (s *Server) refreshFillsSince(ctx context.Context, client okx.Client, apiID
 
 func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.Client, apiID string, cfg config.Config, pnlMinutes int, now time.Time) ([]analysisTrade, error) {
 	since := analysisPositionSince(now, pnlMinutes)
-	if s.Orders != nil && binanceUserStreamIsActive(client, apiID) {
+	streamActive := binanceUserStreamIsActive(client, apiID)
+	out := []analysisTrade{}
+	localSymbols := map[string]struct{}{}
+	if s.Orders != nil && streamActive {
 		if fills, err := s.Orders.ListBinanceFills(apiID, since); err == nil && len(fills) > 0 {
-			out := make([]analysisTrade, 0, len(fills))
+			out = make([]analysisTrade, 0, len(fills))
 			for _, fill := range fills {
 				if row, ok := analysisTradeFromBinanceFill(fill); ok {
 					out = append(out, row)
+					localSymbols[strings.ToUpper(strings.TrimSpace(row.InstID))] = struct{}{}
 				}
-			}
-			if len(out) > 0 {
-				return aggregateAnalysisTrades(out), nil
 			}
 		}
 	}
-	symbols := s.analysisBinanceSymbols(cfg, since)
+	symbols := s.analysisBinanceSymbols(cfg, apiID, analysisEnvName(cfg), since, !streamActive || len(localSymbols) == 0)
 	if len(symbols) == 0 {
+		if len(out) > 0 {
+			return aggregateAnalysisTrades(out), nil
+		}
 		return nil, nil
 	}
-	out := []analysisTrade{}
 	symbolErrs := []error{}
 	for _, symbol := range symbols {
+		if streamActive {
+			if _, ok := localSymbols[strings.ToUpper(strings.TrimSpace(symbol))]; ok {
+				continue
+			}
+		}
 		if until, blocked := binance.RateLimitPauseUntil(now); blocked {
 			symbolErrs = append(symbolErrs, fmt.Errorf("Binance analysis trades paused until %s after REST rate limiting", until.Format(time.RFC3339)))
 			break
@@ -2069,11 +2077,11 @@ func (s *Server) fetchBinanceAnalysisSymbolTrades(ctx context.Context, client bi
 	return out, nil
 }
 
-func (s *Server) analysisBinanceSymbols(cfg config.Config, since time.Time) []string {
+func (s *Server) analysisBinanceSymbols(cfg config.Config, apiID, tradeEnv string, since time.Time, includeConfigured bool) []string {
 	seen := map[string]bool{}
 	add := func(symbol string) {
 		symbol = strings.ToUpper(strings.TrimSpace(symbol))
-		if symbol == "" || seen[symbol] {
+		if symbol == "" || seen[symbol] || !analysisBinanceSymbolSupported(symbol) {
 			return
 		}
 		seen[symbol] = true
@@ -2082,7 +2090,7 @@ func (s *Server) analysisBinanceSymbols(cfg config.Config, since time.Time) []st
 	// instruments. It is not evidence that this account has traded every one.
 	// Keep the config fallback for small/test installations, while production
 	// analysis uses durable order/lifecycle symbols below.
-	if len(cfg.Symbols) <= maxAnalysisConfiguredSymbols {
+	if includeConfigured && len(cfg.Symbols) <= maxAnalysisConfiguredSymbols {
 		for key, sym := range cfg.Symbols {
 			if symbol, ok := deriveBinanceAnalysisSymbol(sym.Coinpair, key, ""); ok {
 				add(symbol)
@@ -2090,6 +2098,20 @@ func (s *Server) analysisBinanceSymbols(cfg config.Config, since time.Time) []st
 		}
 	}
 	if s.Orders != nil {
+		if apiID != "" {
+			if fills, err := s.Orders.ListBinanceFills(apiID, since); err == nil {
+				for _, fill := range fills {
+					add(fill.Symbol)
+				}
+			}
+			if instIDs, err := s.Orders.ListExchangeOrderInstIDs(trading.ExchangeBinance, apiID, tradeEnv); err == nil {
+				for _, instID := range instIDs {
+					if symbol, ok := deriveBinanceAnalysisSymbol(instID); ok {
+						add(symbol)
+					}
+				}
+			}
+		}
 		for _, rec := range s.Orders.List(10000) {
 			if rec.AcceptedAt.Before(since) && rec.UpdatedAt.Before(since) {
 				continue

@@ -873,6 +873,82 @@ func TestDeriveBinanceAnalysisSymbolSupportsUSDCContracts(t *testing.T) {
 	}
 }
 
+func TestFetchBinanceAnalysisTradesBackfillsSymbolsMissingFromUserStream(t *testing.T) {
+	srv := newTestServer(t)
+	now := srv.now().UTC()
+	cfg := srv.ConfigStore.Get()
+	cfg.Symbols = nil
+	apiID := "binance-main"
+	tradeEnv := analysisEnvName(cfg)
+	if _, err := srv.Orders.UpsertExchangeOrders([]storage.ExchangeOrder{{
+		Exchange:      trading.ExchangeBinance,
+		APIID:         apiID,
+		TradeEnv:      tradeEnv,
+		RemoteOrderID: "ethusdc-order",
+		InstID:        "ETHUSDC",
+		Status:        "FILLED",
+		CreatedAt:     now.Add(-time.Hour),
+	}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.Orders.UpsertBinanceFills([]storage.BinanceFill{{
+		APIID: apiID, Symbol: "BTCUSDT", TradeID: "btc-fill", OrderID: "btc-order",
+		FillTime: now.Add(-time.Hour).UnixMilli(), Price: "60000", Qty: "0.01",
+	}}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	var requested []string
+	tradeTime := strconv.FormatInt(now.Add(-30*time.Minute).UnixMilli(), 10)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fapi/v1/userTrades" {
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+		symbol := r.URL.Query().Get("symbol")
+		requested = append(requested, symbol)
+		if symbol != "ETHUSDC" {
+			t.Fatalf("user stream-covered symbol should not be fetched from REST: %s", symbol)
+		}
+		_, _ = w.Write([]byte(`[{"symbol":"ETHUSDC","side":"SELL","positionSide":"BOTH","price":"2500","qty":"1","realizedPnl":"3","commission":"0.1","commissionAsset":"USDC","time":` + tradeTime + `,"id":99,"orderId":100}]`))
+	}))
+	defer upstream.Close()
+	client := binance.Client{BaseURL: upstream.URL, HTTPClient: upstream.Client(), Credentials: binance.Credentials{APIKey: "key", SecretKey: "secret"}}
+	streamID := binanceUserStreamID(client, apiID)
+	binanceUserStreamRegistry.Lock()
+	binanceUserStreamRegistry.active[streamID] = struct{}{}
+	binanceUserStreamRegistry.Unlock()
+	defer func() {
+		binanceUserStreamRegistry.Lock()
+		delete(binanceUserStreamRegistry.active, streamID)
+		binanceUserStreamRegistry.Unlock()
+	}()
+
+	trades, err := srv.fetchBinanceAnalysisTrades(context.Background(), client, apiID, cfg, 24*60, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requested) == 0 {
+		t.Fatal("missing-symbol REST backfill was not requested")
+	}
+	for _, symbol := range requested {
+		if symbol != "ETHUSDC" {
+			t.Fatalf("user stream-covered symbol should not be fetched from REST: %v", requested)
+		}
+	}
+	var foundBTC, foundETH bool
+	for _, trade := range trades {
+		switch trade.InstID {
+		case "BTCUSDT":
+			foundBTC = true
+		case "ETHUSDC":
+			foundETH = true
+		}
+	}
+	if !foundBTC || !foundETH {
+		t.Fatalf("analysis trades should merge local and USDC REST history: %#v", trades)
+	}
+}
+
 func TestBuildAnalysisPositionTradesCountsClosedPositionsOnly(t *testing.T) {
 	cfg := config.Config{Symbols: map[string]config.SymbolConfig{
 		"TEST": {InstID: "TEST-USDT-SWAP", CtVal: 0.01},
