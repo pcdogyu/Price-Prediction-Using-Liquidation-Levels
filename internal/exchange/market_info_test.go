@@ -90,6 +90,51 @@ func TestBinanceMarketMetricUsesBulkCaches(t *testing.T) {
 	}
 }
 
+func TestBinanceCurrentReusesBulkPremiumCache(t *testing.T) {
+	originalBase := binanceFuturesBase
+	resetBinanceMarketInfoCaches()
+	t.Cleanup(func() {
+		binanceFuturesBase = originalBase
+		resetBinanceMarketInfoCaches()
+	})
+	var premiumRequests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/fapi/v1/premiumIndex":
+			atomic.AddInt32(&premiumRequests, 1)
+			_ = json.NewEncoder(w).Encode([]map[string]string{
+				{"symbol": "BTCUSDT", "lastFundingRate": "0.001"},
+				{"symbol": "ETHUSDT", "lastFundingRate": "0.002"},
+			})
+		case "/fapi/v1/klines":
+			_ = json.NewEncoder(w).Encode([][]any{{float64(time.Now().UnixMilli()), "1", "2", "0.5", "1.5", "0", "0", "10", "0", "0", "5"}})
+		case "/fapi/v1/openInterest":
+			_ = json.NewEncoder(w).Encode(map[string]string{"openInterest": "10"})
+		case "/futures/data/globalLongShortAccountRatio":
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"longShortRatio": "1.1"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	binanceFuturesBase = server.URL
+	client := &Binance{newHTTP()}
+	var wg sync.WaitGroup
+	for _, symbol := range []string{"BTCUSDT", "ETHUSDT"} {
+		wg.Add(1)
+		go func(symbol string) {
+			defer wg.Done()
+			if _, err := client.Current(context.Background(), symbol); err != nil {
+				t.Errorf("%s current candle failed: %v", symbol, err)
+			}
+		}(symbol)
+	}
+	wg.Wait()
+	if got := atomic.LoadInt32(&premiumRequests); got != 1 {
+		t.Fatalf("premiumIndex requests = %d, want 1 bulk request", got)
+	}
+}
+
 func resetBinanceMarketInfoCaches() {
 	binanceLiveMarketCache.Lock()
 	binanceLiveMarketCache.premium = nil

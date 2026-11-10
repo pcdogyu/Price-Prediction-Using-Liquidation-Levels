@@ -285,7 +285,7 @@ func (b *Binance) History(ctx context.Context, symbol string, since, until time.
 }
 func (b *Binance) Current(ctx context.Context, symbol string) (domain.Candle, error) {
 	var k [][]any
-	if e := b.get(ctx, "https://fapi.binance.com/fapi/v1/klines?symbol="+symbol+"&interval=1m&limit=2", &k); e != nil || len(k) == 0 {
+	if e := b.get(ctx, binanceFuturesBase+"/fapi/v1/klines?symbol="+url.QueryEscape(symbol)+"&interval=1m&limit=2", &k); e != nil || len(k) == 0 {
 		return domain.Candle{}, firstErr(e, errors.New("empty Binance kline"))
 	}
 	r := k[len(k)-1]
@@ -293,19 +293,26 @@ func (b *Binance) Current(ctx context.Context, symbol string) (domain.Candle, er
 	var oi struct {
 		OpenInterest string `json:"openInterest"`
 	}
-	if e := b.get(ctx, "https://fapi.binance.com/fapi/v1/openInterest?symbol="+symbol, &oi); e == nil {
+	if e := b.get(ctx, binanceFuturesBase+"/fapi/v1/openInterest?symbol="+url.QueryEscape(symbol), &oi); e == nil {
 		c.OpenInterestUSD = f(oi.OpenInterest) * c.Close
 	}
-	var p struct {
-		Funding string `json:"lastFundingRate"`
-	}
-	if e := b.get(ctx, "https://fapi.binance.com/fapi/v1/premiumIndex?symbol="+symbol, &p); e == nil {
-		c.FundingRate = f(p.Funding)
+	premiumRows, premiumErr := cachedBinancePremiumIndex(ctx)
+	if premium, ok := premiumRows[strings.ToUpper(strings.TrimSpace(symbol))]; ok {
+		c.FundingRate = f(premium.Funding)
+	} else if premiumErr != nil {
+		// Preserve the old per-symbol fallback when the shared bulk request is
+		// unavailable, while keeping normal cycles on one bulk request.
+		var p struct {
+			Funding string `json:"lastFundingRate"`
+		}
+		if e := b.get(ctx, binanceFuturesBase+"/fapi/v1/premiumIndex?symbol="+url.QueryEscape(symbol), &p); e == nil {
+			c.FundingRate = f(p.Funding)
+		}
 	}
 	var ratio []struct {
 		R string `json:"longShortRatio"`
 	}
-	if e := b.get(ctx, "https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol="+symbol+"&period=5m&limit=1", &ratio); e == nil && len(ratio) > 0 {
+	if e := b.get(ctx, binanceFuturesBase+"/futures/data/globalLongShortAccountRatio?symbol="+url.QueryEscape(symbol)+"&period=5m&limit=1", &ratio); e == nil && len(ratio) > 0 {
 		c.LongShortRatio = f(ratio[0].R)
 	}
 	return c, nil
