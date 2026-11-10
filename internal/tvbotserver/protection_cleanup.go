@@ -14,7 +14,7 @@ import (
 	tvbottrading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
-const protectionCleanupInterval = 30 * time.Second
+const protectionCleanupInterval = 120 * time.Second
 
 // StartProtectionCleanupMonitor continuously removes exchange-side protective
 // orders. It deliberately targets only TP/SL/trailing orders and close/reduce

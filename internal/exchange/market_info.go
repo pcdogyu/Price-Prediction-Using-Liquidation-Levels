@@ -27,22 +27,192 @@ func EstimateNetPosition(oi, ratio *float64) *float64 {
 	v := *oi * (*ratio - 1) / (*ratio + 1)
 	return &v
 }
+
+const binanceLiveMarketCacheTTL = 30 * time.Second
+
+type binancePremiumIndexSnapshot struct {
+	Symbol  string `json:"symbol"`
+	Mark    string `json:"markPrice"`
+	Funding string `json:"lastFundingRate"`
+	Next    int64  `json:"nextFundingTime"`
+}
+
+type binanceBookTickerSnapshot struct {
+	Symbol string `json:"symbol"`
+	Bid    string `json:"bidPrice"`
+	Ask    string `json:"askPrice"`
+}
+
+var binanceLiveMarketCache struct {
+	sync.Mutex
+	premium      map[string]binancePremiumIndexSnapshot
+	premiumAt    time.Time
+	premiumLoad  chan struct{}
+	premiumRetry time.Time
+	premiumErr   error
+	book         map[string]binanceBookTickerSnapshot
+	bookAt       time.Time
+	bookLoad     chan struct{}
+	bookRetry    time.Time
+	bookErr      error
+}
+
+func cachedBinancePremiumIndex(ctx context.Context) (map[string]binancePremiumIndexSnapshot, error) {
+	for {
+		now := time.Now().UTC()
+		binanceLiveMarketCache.Lock()
+		if len(binanceLiveMarketCache.premium) > 0 && now.Sub(binanceLiveMarketCache.premiumAt) < binanceLiveMarketCacheTTL {
+			value := cloneBinancePremiumIndex(binanceLiveMarketCache.premium)
+			binanceLiveMarketCache.Unlock()
+			return value, nil
+		}
+		if binanceLiveMarketCache.premiumLoad != nil {
+			loading := binanceLiveMarketCache.premiumLoad
+			binanceLiveMarketCache.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-loading:
+				continue
+			}
+		}
+		if now.Before(binanceLiveMarketCache.premiumRetry) {
+			value := cloneBinancePremiumIndex(binanceLiveMarketCache.premium)
+			err := binanceLiveMarketCache.premiumErr
+			binanceLiveMarketCache.Unlock()
+			if len(value) > 0 {
+				return value, nil
+			}
+			return nil, err
+		}
+		binanceLiveMarketCache.premiumLoad = make(chan struct{})
+		loading := binanceLiveMarketCache.premiumLoad
+		binanceLiveMarketCache.Unlock()
+
+		var rows []binancePremiumIndexSnapshot
+		err := newHTTP().get(ctx, binanceFuturesBase+"/fapi/v1/premiumIndex", &rows)
+		if err == nil && len(rows) == 0 {
+			err = fmt.Errorf("Binance premiumIndex returned no rows")
+		}
+		binanceLiveMarketCache.Lock()
+		if err == nil {
+			value := make(map[string]binancePremiumIndexSnapshot, len(rows))
+			for _, row := range rows {
+				value[strings.ToUpper(strings.TrimSpace(row.Symbol))] = row
+			}
+			binanceLiveMarketCache.premium = value
+			binanceLiveMarketCache.premiumAt = time.Now().UTC()
+			binanceLiveMarketCache.premiumErr = nil
+			binanceLiveMarketCache.premiumRetry = time.Time{}
+		} else {
+			binanceLiveMarketCache.premiumErr = err
+			binanceLiveMarketCache.premiumRetry = time.Now().UTC().Add(5 * time.Second)
+		}
+		binanceLiveMarketCache.premiumLoad = nil
+		close(loading)
+		value := cloneBinancePremiumIndex(binanceLiveMarketCache.premium)
+		binanceLiveMarketCache.Unlock()
+		if len(value) > 0 {
+			return value, nil
+		}
+		return nil, err
+	}
+}
+
+func cachedBinanceBookTicker(ctx context.Context) (map[string]binanceBookTickerSnapshot, error) {
+	for {
+		now := time.Now().UTC()
+		binanceLiveMarketCache.Lock()
+		if len(binanceLiveMarketCache.book) > 0 && now.Sub(binanceLiveMarketCache.bookAt) < binanceLiveMarketCacheTTL {
+			value := cloneBinanceBookTicker(binanceLiveMarketCache.book)
+			binanceLiveMarketCache.Unlock()
+			return value, nil
+		}
+		if binanceLiveMarketCache.bookLoad != nil {
+			loading := binanceLiveMarketCache.bookLoad
+			binanceLiveMarketCache.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-loading:
+				continue
+			}
+		}
+		if now.Before(binanceLiveMarketCache.bookRetry) {
+			value := cloneBinanceBookTicker(binanceLiveMarketCache.book)
+			err := binanceLiveMarketCache.bookErr
+			binanceLiveMarketCache.Unlock()
+			if len(value) > 0 {
+				return value, nil
+			}
+			return nil, err
+		}
+		binanceLiveMarketCache.bookLoad = make(chan struct{})
+		loading := binanceLiveMarketCache.bookLoad
+		binanceLiveMarketCache.Unlock()
+
+		var rows []binanceBookTickerSnapshot
+		err := newHTTP().get(ctx, binanceFuturesBase+"/fapi/v1/ticker/bookTicker", &rows)
+		if err == nil && len(rows) == 0 {
+			err = fmt.Errorf("Binance bookTicker returned no rows")
+		}
+		binanceLiveMarketCache.Lock()
+		if err == nil {
+			value := make(map[string]binanceBookTickerSnapshot, len(rows))
+			for _, row := range rows {
+				value[strings.ToUpper(strings.TrimSpace(row.Symbol))] = row
+			}
+			binanceLiveMarketCache.book = value
+			binanceLiveMarketCache.bookAt = time.Now().UTC()
+			binanceLiveMarketCache.bookErr = nil
+			binanceLiveMarketCache.bookRetry = time.Time{}
+		} else {
+			binanceLiveMarketCache.bookErr = err
+			binanceLiveMarketCache.bookRetry = time.Now().UTC().Add(5 * time.Second)
+		}
+		binanceLiveMarketCache.bookLoad = nil
+		close(loading)
+		value := cloneBinanceBookTicker(binanceLiveMarketCache.book)
+		binanceLiveMarketCache.Unlock()
+		if len(value) > 0 {
+			return value, nil
+		}
+		return nil, err
+	}
+}
+
+func cloneBinancePremiumIndex(value map[string]binancePremiumIndexSnapshot) map[string]binancePremiumIndexSnapshot {
+	clone := make(map[string]binancePremiumIndexSnapshot, len(value))
+	for symbol, row := range value {
+		clone[symbol] = row
+	}
+	return clone
+}
+
+func cloneBinanceBookTicker(value map[string]binanceBookTickerSnapshot) map[string]binanceBookTickerSnapshot {
+	clone := make(map[string]binanceBookTickerSnapshot, len(value))
+	for symbol, row := range value {
+		clone[symbol] = row
+	}
+	return clone
+}
+
 func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric {
 	m := domain.MarketMetric{Symbol: symbol, Time: time.Now().UTC().Truncate(time.Minute), Warnings: []string{}}
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	h := newHTTP()
 	get := func(path string, target any) bool {
-		if err := h.get(ctx, "https://fapi.binance.com"+path, target); err != nil {
+		if err := h.get(ctx, binanceFuturesBase+path, target); err != nil {
 			m.Warnings = append(m.Warnings, err.Error())
 			return false
 		}
 		return true
 	}
-	var premium struct {
-		Mark    string `json:"markPrice"`
-		Funding string `json:"lastFundingRate"`
-		Next    int64  `json:"nextFundingTime"`
+	premiumRows, premiumErr := cachedBinancePremiumIndex(ctx)
+	if premiumErr != nil {
+		m.Warnings = append(m.Warnings, premiumErr.Error())
 	}
-	if get("/fapi/v1/premiumIndex?symbol="+symbol, &premium) {
+	if premium, ok := premiumRows[symbol]; ok {
 		m.MarkPrice = number(premium.Mark)
 		m.FundingRate = number(premium.Funding)
 		if premium.Next > 0 {
@@ -50,13 +220,18 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 			m.NextFunding = &t
 		}
 	}
-	var ticker struct {
-		Change string `json:"priceChangePercent"`
-		Volume string `json:"quoteVolume"`
-		High   string `json:"highPrice"`
-		Low    string `json:"lowPrice"`
+	tickerRows, tickerErr := cachedBinanceTickers(ctx)
+	if tickerErr != nil {
+		m.Warnings = append(m.Warnings, tickerErr.Error())
 	}
-	if get("/fapi/v1/ticker/24hr?symbol="+symbol, &ticker) {
+	var ticker topSymbolTicker
+	for _, row := range tickerRows {
+		if strings.EqualFold(row.Symbol, symbol) {
+			ticker = row
+			break
+		}
+	}
+	if ticker.Symbol != "" {
 		m.Change24h = number(ticker.Change)
 		if m.Change24h != nil {
 			*m.Change24h /= 100
@@ -65,11 +240,11 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 		m.High24h = number(ticker.High)
 		m.Low24h = number(ticker.Low)
 	}
-	var book struct {
-		Bid string `json:"bidPrice"`
-		Ask string `json:"askPrice"`
+	bookRows, bookErr := cachedBinanceBookTicker(ctx)
+	if bookErr != nil {
+		m.Warnings = append(m.Warnings, bookErr.Error())
 	}
-	if get("/fapi/v1/ticker/bookTicker?symbol="+symbol, &book) {
+	if book, ok := bookRows[symbol]; ok {
 		m.BestBid = number(book.Bid)
 		m.BestAsk = number(book.Ask)
 	}

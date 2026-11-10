@@ -35,6 +35,7 @@ const (
 	// account snapshot from the dashboard.
 	binanceUserStreamPositionCacheTTL = 10 * time.Minute
 	binanceStalePositionCacheTTL      = 30 * time.Minute
+	binanceUserStreamReadTimeout      = 10 * time.Minute
 )
 
 type binanceUserPositionSnapshot struct {
@@ -112,10 +113,7 @@ func (s *Server) runBinanceUserDataConnection(ctx context.Context, cfg tvbotconf
 		s.Logger.Info("Binance user data stream connected", "api_id", apiID)
 	}
 	conn.SetReadLimit(1 << 20)
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Minute))
-	conn.SetPongHandler(func(string) error {
-		return conn.SetReadDeadline(time.Now().Add(10 * time.Minute))
-	})
+	configureBinanceUserStreamConnection(conn)
 	keepaliveCtx, cancelKeepalive := context.WithCancel(ctx)
 	defer cancelKeepalive()
 	streamCtx, cancelStream := context.WithCancel(ctx)
@@ -128,6 +126,9 @@ func (s *Server) runBinanceUserDataConnection(ctx context.Context, cfg tvbotconf
 		messageType, payload, readErr := conn.ReadMessage()
 		if readErr != nil {
 			return fmt.Errorf("read Binance user data stream: %w", readErr)
+		}
+		if err := refreshBinanceUserStreamReadDeadline(conn); err != nil {
+			return fmt.Errorf("refresh Binance user data stream read deadline: %w", err)
 		}
 		if messageType != websocket.TextMessage && messageType != websocket.BinaryMessage {
 			continue
@@ -154,6 +155,23 @@ func (s *Server) runBinanceUserDataConnection(ctx context.Context, cfg tvbotconf
 		default:
 		}
 	}
+}
+
+func refreshBinanceUserStreamReadDeadline(conn *websocket.Conn) error {
+	return conn.SetReadDeadline(time.Now().Add(binanceUserStreamReadTimeout))
+}
+
+func configureBinanceUserStreamConnection(conn *websocket.Conn) {
+	_ = refreshBinanceUserStreamReadDeadline(conn)
+	conn.SetPingHandler(func(appData string) error {
+		if err := refreshBinanceUserStreamReadDeadline(conn); err != nil {
+			return err
+		}
+		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
+	})
+	conn.SetPongHandler(func(string) error {
+		return refreshBinanceUserStreamReadDeadline(conn)
+	})
 }
 
 func keepBinanceUserDataStreamAlive(ctx context.Context, client tvbotbinance.Client, listenKey string, errCh chan<- error) {
@@ -313,6 +331,15 @@ func cachedBinanceUserStreamPositionsAt(client tvbotbinance.Client, apiID string
 	}
 	positions := append([]tvbotbinance.Position(nil), snapshot.positions...)
 	return positions, snapshot.updatedAt, true
+}
+
+func binancePositionMonitorPositions(ctx context.Context, client tvbotbinance.Client, apiID string, now time.Time) ([]tvbotbinance.Position, error) {
+	if binanceUserStreamIsActive(client, apiID) {
+		if positions, _, ok := cachedBinanceUserStreamPositionsAt(client, apiID, now); ok {
+			return positions, nil
+		}
+	}
+	return client.Positions(ctx, "")
 }
 
 func staleBinanceUserStreamPositions(client tvbotbinance.Client, apiID string, now time.Time) ([]tvbotbinance.Position, time.Time, bool) {

@@ -76,6 +76,8 @@ type topSymbolTicker struct {
 	Volume      string `json:"volume"`
 	LastPrice   string `json:"lastPrice"`
 	Change      string `json:"priceChangePercent"`
+	High        string `json:"highPrice"`
+	Low         string `json:"lowPrice"`
 }
 
 // tradableUSDT returns the USDT quoted perpetual symbols Binance currently
@@ -340,7 +342,7 @@ func cachedBinanceTickers(ctx context.Context) ([]topSymbolTicker, error) {
 		binancePublicMetadataCache.Unlock()
 
 		var value []topSymbolTicker
-		err := newHTTP().get(ctx, "https://fapi.binance.com/fapi/v1/ticker/24hr", &value)
+		err := newHTTP().get(ctx, binanceFuturesBase+"/fapi/v1/ticker/24hr", &value)
 		binancePublicMetadataCache.Lock()
 		if err == nil {
 			binancePublicMetadataCache.tickers = append([]topSymbolTicker(nil), value...)

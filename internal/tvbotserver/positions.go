@@ -1337,7 +1337,7 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 	if err != nil {
 		return err
 	}
-	positions, err := client.Positions(ctx, "")
+	positions, err := binancePositionMonitorPositions(ctx, client, apiID, s.now())
 	if err != nil {
 		return err
 	}

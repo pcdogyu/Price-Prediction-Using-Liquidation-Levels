@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -26,8 +27,144 @@ const (
 	tradeMonitorHistoryLimit        = 1000
 	binanceTradeMonitorMaxWindow    = 7 * 24 * time.Hour
 	binanceTradeMonitorWindowMargin = time.Second
+	binanceTradeMonitorCatalogTTL   = 30 * time.Minute
 	coinpairCooldownOKXCheckpoint   = "__COINPAIR_COOLDOWN__"
 )
+
+type binanceTradeMonitorCatalogSnapshot struct {
+	symbols map[string]struct{}
+	invalid map[string]struct{}
+}
+
+type binanceTradeMonitorCatalogEntry struct {
+	symbols   map[string]struct{}
+	invalid   map[string]struct{}
+	fetchedAt time.Time
+	loading   chan struct{}
+	retryAt   time.Time
+	lastErr   error
+}
+
+var binanceTradeMonitorCatalogCache = struct {
+	sync.Mutex
+	entries map[string]*binanceTradeMonitorCatalogEntry
+}{entries: map[string]*binanceTradeMonitorCatalogEntry{}}
+
+func cachedBinanceTradeMonitorCatalog(ctx context.Context, client binance.Client) (binanceTradeMonitorCatalogSnapshot, error) {
+	key := strings.TrimRight(client.BaseURL, "/")
+	for {
+		now := time.Now().UTC()
+		binanceTradeMonitorCatalogCache.Lock()
+		entry := binanceTradeMonitorCatalogCache.entries[key]
+		if entry == nil {
+			entry = &binanceTradeMonitorCatalogEntry{}
+			binanceTradeMonitorCatalogCache.entries[key] = entry
+		}
+		if len(entry.symbols) > 0 && now.Sub(entry.fetchedAt) < binanceTradeMonitorCatalogTTL {
+			snapshot := cloneBinanceTradeMonitorCatalog(entry)
+			binanceTradeMonitorCatalogCache.Unlock()
+			return snapshot, nil
+		}
+		if entry.loading != nil {
+			loading := entry.loading
+			binanceTradeMonitorCatalogCache.Unlock()
+			select {
+			case <-loading:
+				continue
+			case <-ctx.Done():
+				return binanceTradeMonitorCatalogSnapshot{}, ctx.Err()
+			}
+		}
+		if now.Before(entry.retryAt) {
+			snapshot := cloneBinanceTradeMonitorCatalog(entry)
+			err := entry.lastErr
+			binanceTradeMonitorCatalogCache.Unlock()
+			if len(snapshot.symbols) > 0 {
+				return snapshot, nil
+			}
+			return snapshot, err
+		}
+		entry.loading = make(chan struct{})
+		loading := entry.loading
+		binanceTradeMonitorCatalogCache.Unlock()
+
+		info, err := client.ExchangeInfo(ctx)
+		var symbols map[string]struct{}
+		if err == nil {
+			symbols = make(map[string]struct{}, len(info.Symbols))
+			for _, item := range info.Symbols {
+				symbol := strings.ToUpper(strings.TrimSpace(item.Symbol))
+				if symbol == "" || !strings.EqualFold(strings.TrimSpace(item.QuoteAsset), "USDT") || !strings.EqualFold(strings.TrimSpace(item.ContractType), "PERPETUAL") || !strings.EqualFold(strings.TrimSpace(item.Status), "TRADING") {
+					continue
+				}
+				symbols[symbol] = struct{}{}
+			}
+			if len(symbols) == 0 {
+				err = fmt.Errorf("Binance exchangeInfo returned no tradable USDT perpetuals")
+			}
+		}
+		binanceTradeMonitorCatalogCache.Lock()
+		if err == nil {
+			entry.symbols = symbols
+			entry.invalid = map[string]struct{}{}
+			entry.fetchedAt = now
+			entry.lastErr = nil
+			entry.retryAt = time.Time{}
+		} else {
+			entry.lastErr = err
+			entry.retryAt = time.Now().UTC().Add(30 * time.Second)
+		}
+		entry.loading = nil
+		close(loading)
+		snapshot := cloneBinanceTradeMonitorCatalog(entry)
+		binanceTradeMonitorCatalogCache.Unlock()
+		if err == nil || len(snapshot.symbols) > 0 {
+			return snapshot, nil
+		}
+		return snapshot, err
+	}
+}
+
+func cloneBinanceTradeMonitorCatalog(entry *binanceTradeMonitorCatalogEntry) binanceTradeMonitorCatalogSnapshot {
+	snapshot := binanceTradeMonitorCatalogSnapshot{
+		symbols: make(map[string]struct{}, len(entry.symbols)),
+		invalid: make(map[string]struct{}, len(entry.invalid)),
+	}
+	for symbol := range entry.symbols {
+		snapshot.symbols[symbol] = struct{}{}
+	}
+	for symbol := range entry.invalid {
+		snapshot.invalid[symbol] = struct{}{}
+	}
+	return snapshot
+}
+
+func filterBinanceTradeMonitorSymbols(symbols []string, catalog binanceTradeMonitorCatalogSnapshot) []string {
+	filtered := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		symbol = strings.ToUpper(strings.TrimSpace(symbol))
+		if _, ok := catalog.symbols[symbol]; !ok {
+			continue
+		}
+		if _, invalid := catalog.invalid[symbol]; invalid {
+			continue
+		}
+		filtered = append(filtered, symbol)
+	}
+	return filtered
+}
+
+func markBinanceTradeMonitorSymbolInvalid(client binance.Client, symbol string) {
+	key := strings.TrimRight(client.BaseURL, "/")
+	binanceTradeMonitorCatalogCache.Lock()
+	defer binanceTradeMonitorCatalogCache.Unlock()
+	if entry := binanceTradeMonitorCatalogCache.entries[key]; entry != nil {
+		if entry.invalid == nil {
+			entry.invalid = map[string]struct{}{}
+		}
+		entry.invalid[strings.ToUpper(strings.TrimSpace(symbol))] = struct{}{}
+	}
+}
 
 func (s *Server) StartTradeFillMonitor(ctx context.Context) {
 	if s.ConfigStore == nil || s.Orders == nil || (s.BinanceCredentials == nil && s.BinanceLiveCredentials == nil && s.OKXCredentials == nil && s.OKXLiveCredentials == nil) {
@@ -99,7 +236,17 @@ func (s *Server) runTradeFillMonitorOnce(ctx context.Context) {
 			}
 			continue
 		}
-		for _, symbol := range symbols {
+		if binanceUserStreamIsActive(client, apiID) {
+			continue
+		}
+		catalog, catalogErr := cachedBinanceTradeMonitorCatalog(ctx, client)
+		if catalogErr != nil && s.Logger != nil {
+			s.Logger.Warn("Binance trade monitor symbol catalog unavailable; skipping REST fill fallback", "api_id", apiID, "error", catalogErr)
+		}
+		if len(catalog.symbols) == 0 {
+			continue
+		}
+		for _, symbol := range filterBinanceTradeMonitorSymbols(symbols, catalog) {
 			if binanceUserStreamIsActive(client, apiID) {
 				break
 			}
@@ -108,6 +255,9 @@ func (s *Server) runTradeFillMonitorOnce(ctx context.Context) {
 			cancel()
 			if err != nil && s.Logger != nil {
 				s.Logger.Warn("failed to poll Binance fills", "api_id", apiID, "symbol", symbol, "error", err)
+			}
+			if binance.IsAPIErrorCode(err, -1121) {
+				markBinanceTradeMonitorSymbolInvalid(client, symbol)
 			}
 		}
 	}
