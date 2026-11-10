@@ -308,6 +308,11 @@ func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
 		`setAttribute("aria-busy", "true")`,
 		`classList.add("is-saving")`,
 		`td.order-id`,
+		`min-width: 1720px;`,
+		`<col class="exchange-order-created-col">`,
+		`<col class="exchange-order-client-id-col">`,
+		`exchange-order-client-id-col`,
+		`width: 250px;`,
 		`grid-template-columns: minmax(140px, .28fr) minmax(240px, 1fr) auto minmax(240px, 1fr);`,
 		`grid-template-columns: 1fr;`,
 	} {
@@ -341,6 +346,11 @@ func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
 	}
 	if strings.Contains(page, `return openRows.concat(closedRows)`) || strings.Contains(page, `含未平仓开仓成交`) {
 		t.Fatal("analysis trade history should not expose open position trades")
+	}
+	if strings.Contains(page, `td.order-id {
+      max-width: 0;`) || strings.Contains(page, `td.order-id {
+      overflow: hidden;`) {
+		t.Fatal("exchange order IDs should not be visually truncated")
 	}
 	if !strings.Contains(page, `.filter((row) => !zeroTime(row && row.exit_time))`) {
 		t.Fatal("analysis trade history should only render closed trades")

@@ -1713,22 +1713,55 @@ const tvbotHTML = `<!doctype html>
       min-width: 0;
     }
     .exchange-order-history-table {
-      min-width: 1480px;
+      min-width: 1720px;
     }
     .exchange-order-history-table th,
     .exchange-order-history-table td {
       font-size: 12px;
       line-height: 1.35;
       white-space: nowrap;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .exchange-order-history-table .exchange-order-created-col {
+      width: 155px;
+    }
+    .exchange-order-history-table .exchange-order-exchange-col {
+      width: 85px;
+    }
+    .exchange-order-history-table .exchange-order-env-col {
+      width: 70px;
+    }
+    .exchange-order-history-table .exchange-order-inst-id-col {
+      width: 100px;
+    }
+    .exchange-order-history-table .exchange-order-remote-id-col {
+      width: 125px;
+    }
+    .exchange-order-history-table .exchange-order-client-id-col {
+      width: 250px;
+    }
+    .exchange-order-history-table .exchange-order-side-col {
+      width: 70px;
+    }
+    .exchange-order-history-table .exchange-order-status-col {
+      width: 90px;
+    }
+    .exchange-order-history-table .exchange-order-type-col {
+      width: 155px;
+    }
+    .exchange-order-history-table .exchange-order-price-col,
+    .exchange-order-history-table .exchange-order-average-price-col {
+      width: 105px;
+    }
+    .exchange-order-history-table .exchange-order-quantity-col {
+      width: 90px;
     }
     .exchange-order-history-table td.time {
-      overflow: hidden;
       text-overflow: clip;
     }
     .exchange-order-history-table td.order-id {
-      max-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      text-overflow: clip;
     }
     .exchange-order-history-table .status-filled,
     .exchange-order-history-table .status-closed { color: var(--positive); }
@@ -2498,6 +2531,13 @@ const tvbotHTML = `<!doctype html>
         </div>
         <div class="symbol-table-wrap">
           <table class="symbol-table exchange-order-history-table">
+            <colgroup>
+              <col class="exchange-order-created-col"><col class="exchange-order-exchange-col"><col class="exchange-order-env-col">
+              <col class="exchange-order-inst-id-col"><col class="exchange-order-remote-id-col"><col class="exchange-order-client-id-col">
+              <col class="exchange-order-side-col"><col class="exchange-order-status-col"><col class="exchange-order-type-col">
+              <col class="exchange-order-price-col"><col class="exchange-order-average-price-col">
+              <col class="exchange-order-quantity-col"><col class="exchange-order-quantity-col"><col class="exchange-order-quantity-col">
+            </colgroup>
             <thead>
               <tr>
                 <th>创建时间</th><th>交易所</th><th>环境</th><th>币对</th><th>远端订单 ID</th>
