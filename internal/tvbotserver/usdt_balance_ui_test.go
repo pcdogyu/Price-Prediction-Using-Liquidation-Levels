@@ -160,7 +160,7 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`function loadAnalysisPositions(forceRefresh)`,
 		`暂无 ' + escapeHTML(label) + ' 下单盈亏记录`,
 		`exchange: activeExchange()`,
-		`loadPositionExchange(activeExchange()`,
+		`loadPositionExchange(exchange, refreshRemote)`,
 		`loadPendingOrdersExchange(activeExchange()`,
 		`缓存数据（上游暂不可用）`,
 		`item.status === "stale"`,

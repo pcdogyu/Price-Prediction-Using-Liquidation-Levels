@@ -261,7 +261,7 @@ func TestRenderTVBotPositionSyncIndicator(t *testing.T) {
 		`positionSyncFailureCount: 0,`,
 		`positionSyncStableStatus: "syncing",`,
 		`setPositionSyncStatus("syncing");`,
-		`const status = positionSyncStatusForResult(results[0]);`,
+		`const status = positionSyncStatusForResult(remoteResult);`,
 		`setPositionSyncStatus(status.status, status.message);`,
 		`state.positionSyncFailureCount = Number(state.positionSyncFailureCount || 0) + 1;`,
 		`if (failureCount > positionSyncFailureThreshold)`,
@@ -275,7 +275,7 @@ func TestRenderTVBotPositionSyncIndicator(t *testing.T) {
 			t.Fatalf("position sync indicator is missing %q", want)
 		}
 	}
-	loadStart := strings.Index(page, "async function loadPositions(forceRefresh)")
+	loadStart := strings.Index(page, "async function loadPositions(forceRefresh, syncMessageOverride)")
 	if loadStart < 0 {
 		t.Fatalf("position load function start is missing: start=%d", loadStart)
 	}
@@ -284,7 +284,7 @@ func TestRenderTVBotPositionSyncIndicator(t *testing.T) {
 		t.Fatalf("position load function boundary is missing: start=%d end=%d", loadStart, loadEnd)
 	}
 	loadFunction := page[loadStart : loadStart+loadEnd]
-	if strings.Index(loadFunction, `setPositionSyncStatus("syncing")`) >= strings.Index(loadFunction, `const status = positionSyncStatusForResult(results[0]);`) {
+	if strings.Index(loadFunction, `setPositionSyncStatus("syncing", syncMessage);`) >= strings.Index(loadFunction, `const status = positionSyncStatusForResult(remoteResult);`) {
 		t.Fatal("position loading should enter syncing state before applying the response state")
 	}
 }
@@ -878,9 +878,9 @@ func TestRenderTVBotSharesLivePositionSnapshotAcrossTabs(t *testing.T) {
 		`const positionSnapshotMaxAgeMs = positionSyncStaleAfterMs;`,
 		`function readLocalPositionSnapshot(exchange)`,
 		`function saveLocalPositionSnapshot(result)`,
-		`if (!forceRefresh && loadLocalPositionSnapshot()) return;`,
+		`if (!forceRefresh && loadLocalPositionSnapshot()) return { source: "local" };`,
 		`const refreshRemote = !!forceRefresh || state.positionSnapshotExpired;`,
-		`loadPositionExchange(activeExchange(), refreshRemote)`,
+		`loadPositionExchange(exchange, refreshRemote)`,
 		`window.localStorage.removeItem(storageKey);`,
 		`local_snapshot: true`,
 		`持仓本地快照（未满1分钟）`,
@@ -908,17 +908,46 @@ func TestRenderTVBotUsesSnapshotForManualRefreshAndRemoteRefreshAfterTrades(t *t
 		t.Fatal("manual position refresh function boundary is missing")
 	}
 	refreshFunction := page[refreshStart : refreshStart+refreshEnd]
-	if !strings.Contains(refreshFunction, "await loadPositionView(false);") {
-		t.Fatal("manual refresh should use the one-minute snapshot")
+	if !strings.Contains(refreshFunction, "await loadPositionView(true);") {
+		t.Fatal("manual refresh should force a remote position read")
 	}
-	if strings.Contains(refreshFunction, "await loadPositionView(true);") {
-		t.Fatal("manual refresh should not force a remote position read")
+	if strings.Contains(refreshFunction, "await loadPositionView(false);") {
+		t.Fatal("manual refresh should not use the one-minute snapshot")
 	}
 	if !strings.Contains(page, "await Promise.all([loadPositionView(true), loadOrders()]);") {
 		t.Fatal("opening a position should force a remote position refresh")
 	}
 	if !strings.Contains(page, "await loadPositionView(true);\n        window.setTimeout(() => loadPositionView(true)") {
 		t.Fatal("closing a position should force remote position refreshes")
+	}
+}
+
+func TestRenderTVBotRevalidatesCachedPositionsImmediately(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=positions", nil))
+	for _, want := range []string{
+		`let positionRemoteLoadPromise = null;`,
+		`let positionRemoteLoadForce = false;`,
+		`let positionSnapshotRevalidationStarted = false;`,
+		`let positionLoadSequence = 0;`,
+		`if (!forceRefresh || positionRemoteLoadForce) return positionRemoteLoadPromise;`,
+		`return loadPositions(true, syncMessageOverride);`,
+		`return { source: "local" };`,
+		`const positionTask = loadPositions(!!forceRefresh);`,
+		`results[0].source === "local"`,
+		`revalidatePositionSnapshotInBackground();`,
+		`loadPositions(true, "本地快照，正在后台同步")`,
+		`positionRemoteLoadPromise = task;`,
+		`if (positionRemoteLoadPromise === task) {`,
+		`positionRemoteLoadPromise = null;`,
+		`positionRemoteLoadForce = false;`,
+		`本地快照为空，正在同步交易所`,
+		`正在后台同步`,
+		`positionLoadSequence++;`,
+		`positionSnapshotRevalidationStarted = false;`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("cached position revalidation marker is missing %q", want)
+		}
 	}
 }
 

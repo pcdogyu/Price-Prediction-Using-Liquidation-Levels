@@ -2983,6 +2983,10 @@ const tvbotHTML = `<!doctype html>
     };
     let positionViewPollTimer = null;
     let positionViewPollBusy = false;
+    let positionRemoteLoadPromise = null;
+    let positionRemoteLoadForce = false;
+    let positionSnapshotRevalidationStarted = false;
+    let positionLoadSequence = 0;
     let positionEntryTimeSyncTimer = null;
     let positionEntryTimeSyncBusy = false;
     let analysisBalanceRefreshTimer = null;
@@ -3585,6 +3589,10 @@ const tvbotHTML = `<!doctype html>
         return;
       }
       state.selectedExchange = selected;
+      positionLoadSequence++;
+      positionRemoteLoadPromise = null;
+      positionRemoteLoadForce = false;
+      positionSnapshotRevalidationStarted = false;
       state.analysisTradePage = 1;
       state.analysisTrades = null;
       state.analysisFills = [];
@@ -4990,38 +4998,68 @@ const tvbotHTML = `<!doctype html>
       state.analysisPositionsError = combinedErrors(results);
     }
 
-    async function loadPositions(forceRefresh) {
-      if (!forceRefresh && loadLocalPositionSnapshot()) return;
+    async function loadPositions(forceRefresh, syncMessageOverride) {
+      if (!forceRefresh && loadLocalPositionSnapshot()) return { source: "local" };
+      if (forceRefresh) positionSnapshotRevalidationStarted = true;
+      const requestSequence = positionLoadSequence;
+      if (positionRemoteLoadPromise) {
+        if (!forceRefresh || positionRemoteLoadForce) return positionRemoteLoadPromise;
+        try {
+          await positionRemoteLoadPromise;
+        } catch (_) {}
+        if (requestSequence !== positionLoadSequence) return { source: "remote", ignored: true };
+        return loadPositions(true, syncMessageOverride);
+      }
+      const exchange = activeExchange();
       const refreshRemote = !!forceRefresh || state.positionSnapshotExpired;
-      const syncMessage = !forceRefresh && state.positionSnapshotExpired
+      const syncMessage = syncMessageOverride || (!forceRefresh && state.positionSnapshotExpired
         ? "持仓信息超过1分钟，正在重新同步"
-        : "持仓同步中";
+        : "持仓同步中");
       state.positionSnapshotExpired = false;
       setPositionSyncStatus("syncing", syncMessage);
-      try {
-        const results = await Promise.all([loadPositionExchange(activeExchange(), refreshRemote)]);
-        const status = positionSyncStatusForResult(results[0]);
-        setPositionSyncStatus(status.status, status.message);
-        const remoteResult = results[0];
-        if (remoteResult && remoteResult.ok) {
-          saveLocalPositionSnapshot(remoteResult);
-          const snapshot = positionSnapshot(results);
-          state.positions = snapshot;
-          syncAnalysisPositionSnapshot(snapshot);
-          state.positionsError = combinedErrors(results);
-        } else {
-          state.positionsError = combinedErrors(results);
-          if (!state.positions) {
+      if (state.positions) renderPositions();
+      const task = (async () => {
+        try {
+          const results = await Promise.all([loadPositionExchange(exchange, refreshRemote)]);
+          const remoteResult = results[0];
+          if (requestSequence !== positionLoadSequence) {
+            return { source: "remote", ignored: true, result: remoteResult };
+          }
+          const status = positionSyncStatusForResult(remoteResult);
+          setPositionSyncStatus(status.status, status.message);
+          if (remoteResult && remoteResult.ok) {
+            saveLocalPositionSnapshot(remoteResult);
             const snapshot = positionSnapshot(results);
             state.positions = snapshot;
             syncAnalysisPositionSnapshot(snapshot);
+            state.positionsError = combinedErrors(results);
+          } else {
+            state.positionsError = combinedErrors(results);
+            if (!state.positions) {
+              const snapshot = positionSnapshot(results);
+              state.positions = snapshot;
+              syncAnalysisPositionSnapshot(snapshot);
+            }
           }
+          renderPositions();
+          return { source: "remote", ok: !!(remoteResult && remoteResult.ok), result: remoteResult };
+        } catch (err) {
+          if (requestSequence === positionLoadSequence) {
+            const status = positionSyncStatusForResult(null);
+            setPositionSyncStatus(status.status, status.message);
+          }
+          throw err;
         }
-        renderPositions();
-      } catch (err) {
-        const status = positionSyncStatusForResult(null);
-        setPositionSyncStatus(status.status, status.message);
-        throw err;
+      })();
+      positionRemoteLoadPromise = task;
+      positionRemoteLoadForce = !!refreshRemote;
+      try {
+        return await task;
+      } finally {
+        if (positionRemoteLoadPromise === task) {
+          positionRemoteLoadPromise = null;
+          positionRemoteLoadForce = false;
+        }
       }
     }
 
@@ -5244,7 +5282,9 @@ const tvbotHTML = `<!doctype html>
         const label = exchangeLabel(result.exchange);
         if (result && result.refreshed_at) {
           const source = result.local_snapshot ? "本地快照 " : "";
-          return label + " " + source + shanghaiTime(result.refreshed_at) + (result.stale ? "（最近成功快照）" : "");
+          const syncing = result.local_snapshot && state.positionSync && state.positionSync.status === "syncing";
+          const suffix = syncing ? "（正在后台同步）" : (result.stale ? "（最近成功快照）" : "");
+          return label + " " + source + shanghaiTime(result.refreshed_at) + suffix;
         }
         if (result && result.error) return label + " 失败";
         return label + " -";
@@ -5305,10 +5345,20 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadPositionView(forceRefresh) {
-      const tasks = [loadPositions(!!forceRefresh), loadPendingOrders(!!forceRefresh)];
+      const positionTask = loadPositions(!!forceRefresh);
+      const tasks = [positionTask, loadPendingOrders(!!forceRefresh)];
       if (forceRefresh || !state.balanceOverview) tasks.push(loadBalanceOverview(!!forceRefresh, 0));
-      await Promise.all(tasks);
+      const results = await Promise.all(tasks);
       renderPositions();
+      if (!forceRefresh && results[0] && results[0].source === "local") {
+        revalidatePositionSnapshotInBackground();
+      }
+    }
+
+    function revalidatePositionSnapshotInBackground() {
+      if (positionSnapshotRevalidationStarted) return;
+      positionSnapshotRevalidationStarted = true;
+      loadPositions(true, "本地快照，正在后台同步").catch((err) => toast(err.message));
     }
 
     async function refreshPositionView() {
@@ -5318,7 +5368,7 @@ const tvbotHTML = `<!doctype html>
         button.disabled = true;
       }
       try {
-        await loadPositionView(false);
+        await loadPositionView(true);
         toast("持仓、余额和挂单已刷新");
       } finally {
         if (button) {
@@ -7175,7 +7225,11 @@ const tvbotHTML = `<!doctype html>
         return "<tr>" + columnDefs.map((col) => col.cell(row)).join("") + "</tr>";
       }).join("");
       const warningRow = state.positionsError ? '<tr><td colspan="' + colspan + '" class="muted">' + escapeHTML(state.positionsError) + '</td></tr>' : "";
-      $("position-rows").innerHTML = positionRows + warningRow || '<tr><td colspan="' + colspan + '" class="muted">暂无当前持仓</td></tr>';
+      const emptyText = state.positionSync && state.positionSync.status === "syncing" &&
+        state.positions.exchanges && state.positions.exchanges.some((result) => result && result.local_snapshot)
+        ? "本地快照为空，正在同步交易所"
+        : "暂无当前持仓";
+      $("position-rows").innerHTML = positionRows + warningRow || '<tr><td colspan="' + colspan + '" class="muted">' + emptyText + '</td></tr>';
     }
 
     function renderPendingOrders() {

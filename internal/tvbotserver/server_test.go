@@ -467,7 +467,7 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("analysisPositionSideToneClass")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("renderAnalysisTradeHistory")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("exchange: activeExchange()")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("loadPositionExchange(activeExchange()")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("loadPositionExchange(exchange, refreshRemote)")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("loadPendingOrdersExchange(activeExchange()")) {
 		t.Fatalf("tvbot ui should include exchange balance analysis")
 	}
