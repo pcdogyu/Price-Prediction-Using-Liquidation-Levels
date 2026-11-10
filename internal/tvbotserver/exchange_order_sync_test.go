@@ -202,6 +202,74 @@ func TestFetchBinanceExchangeOrdersDiscoversRecentLocalSymbols(t *testing.T) {
 	}
 }
 
+func TestFetchBinanceExchangeOrdersIncludesUSDCQuoteSymbols(t *testing.T) {
+	srv := newTestServer(t)
+	if _, err := srv.BinanceCredentials.SaveSingleAccount(binance.CredentialAccountUpdate{
+		ID: "binance-main", Name: "test", Active: true,
+		Credentials: binance.Credentials{APIKey: "fake-key", SecretKey: "fake-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 11, 9, 14, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	requested := map[string]int{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v1/exchangeInfo":
+			_, _ = w.Write([]byte(`{"symbols":[
+				{"symbol":"ETHUSDC","status":"TRADING","quoteAsset":"USDC"},
+				{"symbol":"ETHUSDT","status":"TRADING","quoteAsset":"USDT"},
+				{"symbol":"ETHUSD","status":"TRADING","quoteAsset":"USD"},
+				{"symbol":"OLDUSDC","status":"BREAK","quoteAsset":"USDC"}
+			]}`))
+		case "/fapi/v1/allOrders":
+			symbol := r.URL.Query().Get("symbol")
+			requested[symbol]++
+			if symbol == "ETHUSDC" {
+				_, _ = w.Write([]byte(`[
+					{"symbol":"ETHUSDC","orderId":99,"status":"FILLED","time":1791554400000}
+				]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = ts.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = ts.Client()
+	target := exchangeOrderTarget{
+		Exchange: trading.ExchangeBinance,
+		APIID:    "binance-main",
+		TradeEnv: trading.TradeEnvDemo,
+		Config:   cfg,
+	}
+	orders, _, err := srv.fetchBinanceExchangeOrders(context.Background(), target, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested["ETHUSDC"] == 0 {
+		t.Fatal("active USDC-quoted Binance symbol was not queried")
+	}
+	if requested["ETHUSD"] != 0 || requested["OLDUSDC"] != 0 {
+		t.Fatalf("unsupported or inactive symbols were queried: %#v", requested)
+	}
+	found := false
+	for _, order := range orders {
+		if order.InstID == "ETHUSDC" && order.RemoteOrderID == "99" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("USDC-quoted Binance order was not converted: %#v", orders)
+	}
+}
+
 func TestExchangeOrderSyncStateDueHonorsFreshAndInFlightStates(t *testing.T) {
 	now := time.Date(2026, 11, 4, 15, 0, 0, 0, time.UTC)
 	tests := []struct {

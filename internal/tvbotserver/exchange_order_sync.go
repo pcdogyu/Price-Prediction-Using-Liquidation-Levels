@@ -409,12 +409,12 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 	}
 	symbols := make([]string, 0, len(info.Symbols))
 	for _, symbol := range info.Symbols {
-		if strings.EqualFold(strings.TrimSpace(symbol.Status), "trading") && strings.EqualFold(strings.TrimSpace(symbol.QuoteAsset), "USDT") {
+		if strings.EqualFold(strings.TrimSpace(symbol.Status), "trading") && supportedBinanceExchangeOrderQuoteAsset(symbol.QuoteAsset) {
 			symbols = append(symbols, symbol.Symbol)
 		}
 	}
 	if len(symbols) == 0 {
-		return result, cursor, errors.New("Binance exchangeInfo returned no active USDT symbols")
+		return result, cursor, errors.New("Binance exchangeInfo returned no active USDT/USDC symbols")
 	}
 	// Incremental syncs are normally bounded to symbols already present in
 	// exchange_orders. That optimization can hide a newly traded symbol when
@@ -488,6 +488,15 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 		}
 	}
 	return result, cursor, nil
+}
+
+func supportedBinanceExchangeOrderQuoteAsset(quoteAsset string) bool {
+	switch strings.ToUpper(strings.TrimSpace(quoteAsset)) {
+	case "USDT", "USDC":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) discoverBinanceOrderSymbols(apiID string, target exchangeOrderTarget, to time.Time) map[string]struct{} {
