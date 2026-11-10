@@ -11,7 +11,7 @@ import (
 const (
 	alertGammaBTCAnchor = "BTCUSDT"
 	alertGammaETHAnchor = "ETHUSDT"
-	// Deribit Gamma is collected every five minutes. Use the same stale window
+	// Deribit Gamma is collected every minute. Use the same stale window
 	// as the options page so the alert gate and the displayed value agree.
 	alertGammaMaxAge = domain.OptionGammaStaleAfter
 )

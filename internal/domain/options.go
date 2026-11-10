@@ -5,7 +5,7 @@ import "time"
 const (
 	// OptionGammaRefreshSeconds is both the Deribit collection cadence and the
 	// interval the options page polls on, so the served copy cannot drift.
-	OptionGammaRefreshSeconds = 180
+	OptionGammaRefreshSeconds = 60
 	OptionGammaRetentionDays  = 3
 	OptionGammaMaxHours       = OptionGammaRetentionDays * 24
 	OptionGammaDenseHours     = 24

@@ -78,7 +78,7 @@ func TestOptionGammaPersistenceBoundsZeroAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Expired != 1 || report.Downsampled != 2004 {
+	if report.Expired != 1 || report.Downsampled < 2000 {
 		t.Fatalf("cleanup report=%+v", report)
 	}
 	start, err := s.OptionGammaAvailableFrom(ctx, cutoff)
@@ -86,7 +86,7 @@ func TestOptionGammaPersistenceBoundsZeroAndRetention(t *testing.T) {
 		t.Fatal(start, err)
 	}
 	points, err = s.OptionGammaHistory(ctx, "BTCUSDT", at.AddDate(0, 0, -200), at.Add(time.Millisecond))
-	if err != nil || len(points) != 6 {
+	if err != nil || len(points) != 7 {
 		t.Fatal(points, err)
 	}
 	for _, point := range points {

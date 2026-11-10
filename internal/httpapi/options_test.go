@@ -42,7 +42,7 @@ func TestOptionsEndpointWindowAndZero(t *testing.T) {
 		if hours == "" && packet.Data.Hours != 24 {
 			t.Fatalf("default options window=%d, want 24", packet.Data.Hours)
 		}
-		if packet.Data.RefreshSeconds != 180 || packet.Data.RetentionDays != 3 || packet.Data.DenseHours != 24 || packet.Data.ArchiveMinutes != 30 {
+		if packet.Data.RefreshSeconds != 60 || packet.Data.RetentionDays != 3 || packet.Data.DenseHours != 24 || packet.Data.ArchiveMinutes != 30 {
 			t.Fatal(packet.Data)
 		}
 	}
@@ -60,8 +60,8 @@ func TestOptionsAssetFollowsServerCadence(t *testing.T) {
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/assets/options.js", nil))
 	body := w.Body.String()
 	// The chart and the poller must adopt the cadence the API reports instead of
-	// a hardcoded minute, otherwise the copy and the data drift apart.
-	for _, marker := range []string{"cadence(data.refresh_seconds)", "let cadenceSeconds = 180", "cadenceSeconds=data.refresh_seconds", "scheduleRefresh()", "setInterval(() => { if (!document.hidden) load(); }, next)"} {
+	// a different hardcoded cadence, otherwise the copy and the data drift apart.
+	for _, marker := range []string{"cadence(data.refresh_seconds)", "let cadenceSeconds = 60", "cadenceSeconds=data.refresh_seconds", "scheduleRefresh()", "setInterval(() => { if (!document.hidden) load(); }, next)"} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("options asset lost %q", marker)
 		}
@@ -71,7 +71,7 @@ func TestOptionsAssetFollowsServerCadence(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/options", nil))
-	if !strings.Contains(w.Body.String(), "每 3 分钟") || !strings.Contains(w.Body.String(), "最长保留 3 天") || !strings.Contains(w.Body.String(), "整点和半点的值") || strings.Contains(w.Body.String(), "附近") {
+	if !strings.Contains(w.Body.String(), "后台每分钟采集，页面每分钟刷新") || !strings.Contains(w.Body.String(), "完整的 1 分钟数据") || !strings.Contains(w.Body.String(), "最长保留 3 天") || !strings.Contains(w.Body.String(), "整点和半点的值") || strings.Contains(w.Body.String(), "附近") {
 		t.Fatal("options page copy does not describe tiered retention")
 	}
 }
