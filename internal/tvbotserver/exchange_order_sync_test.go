@@ -212,7 +212,14 @@ func TestFetchBinanceExchangeOrdersIncludesUSDCQuoteSymbols(t *testing.T) {
 	}
 	from := time.Date(2026, 11, 9, 14, 0, 0, 0, time.UTC)
 	to := from.Add(time.Hour)
+	if _, err := srv.Orders.UpsertExchangeOrders([]storage.ExchangeOrder{{
+		Exchange: "binance", APIID: "binance-main", TradeEnv: "demo", RemoteOrderID: "known-ethusdt",
+		InstID: "ETHUSDT", Status: "FILLED", CreatedAt: from,
+	}}, from); err != nil {
+		t.Fatal(err)
+	}
 	requested := map[string]int{}
+	starts := map[string][]time.Time{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -226,6 +233,13 @@ func TestFetchBinanceExchangeOrdersIncludesUSDCQuoteSymbols(t *testing.T) {
 		case "/fapi/v1/allOrders":
 			symbol := r.URL.Query().Get("symbol")
 			requested[symbol]++
+			if start := r.URL.Query().Get("startTime"); start != "" {
+				startMillis, err := strconv.ParseInt(start, 10, 64)
+				if err != nil {
+					t.Fatalf("invalid startTime for %s: %v", symbol, err)
+				}
+				starts[symbol] = append(starts[symbol], time.UnixMilli(startMillis).UTC())
+			}
 			if symbol == "ETHUSDC" {
 				_, _ = w.Write([]byte(`[
 					{"symbol":"ETHUSDC","orderId":99,"status":"FILLED","time":1791554400000}
@@ -267,6 +281,10 @@ func TestFetchBinanceExchangeOrdersIncludesUSDCQuoteSymbols(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("USDC-quoted Binance order was not converted: %#v", orders)
+	}
+	wantBackfill := to.Add(-exchangeOrderInitialWindow)
+	if got := starts["ETHUSDC"]; len(got) == 0 || !got[0].Equal(wantBackfill) {
+		t.Fatalf("unknown USDC-quoted symbol should use backfill window from=%s, got %#v", wantBackfill, got)
 	}
 }
 

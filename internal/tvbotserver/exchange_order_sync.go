@@ -408,9 +408,12 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 		return result, cursor, err
 	}
 	symbols := make([]string, 0, len(info.Symbols))
+	symbolQuoteAssets := make(map[string]string, len(info.Symbols))
 	for _, symbol := range info.Symbols {
-		if strings.EqualFold(strings.TrimSpace(symbol.Status), "trading") && supportedBinanceExchangeOrderQuoteAsset(symbol.QuoteAsset) {
-			symbols = append(symbols, symbol.Symbol)
+		symbolName := strings.TrimSpace(symbol.Symbol)
+		if strings.EqualFold(strings.TrimSpace(symbol.Status), "trading") && supportedBinanceExchangeOrderQuoteAsset(symbol.QuoteAsset) && symbolName != "" {
+			symbols = append(symbols, symbolName)
+			symbolQuoteAssets[strings.ToUpper(symbolName)] = strings.ToUpper(strings.TrimSpace(symbol.QuoteAsset))
 		}
 	}
 	if len(symbols) == 0 {
@@ -434,7 +437,7 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 				filtered = append(filtered, symbol)
 				continue
 			}
-			if _, ok := discovered[normalized]; ok {
+			if _, ok := discovered[normalized]; ok || symbolQuoteAssets[normalized] == "USDC" {
 				filtered = append(filtered, symbol)
 			}
 		}
@@ -444,8 +447,9 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 	}
 	for _, symbol := range symbols {
 		windowStart := from
-		if _, known := knownSet[strings.ToUpper(strings.TrimSpace(symbol))]; !known {
-			if _, ok := discovered[strings.ToUpper(strings.TrimSpace(symbol))]; ok {
+		normalized := strings.ToUpper(strings.TrimSpace(symbol))
+		if _, known := knownSet[normalized]; !known {
+			if _, ok := discovered[normalized]; ok || symbolQuoteAssets[normalized] == "USDC" {
 				windowStart = to.Add(-exchangeOrderInitialWindow)
 			}
 		}
