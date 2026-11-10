@@ -50,3 +50,15 @@ func TestLoadHonorsMarketLoadSettings(t *testing.T) {
 		t.Fatalf("backfill=%d poll=%s info=%s concurrency=%d", cfg.BackfillDays, cfg.MarketPollInterval, cfg.MarketInfoInterval, cfg.MarketFetchConcurrency)
 	}
 }
+
+func TestLoadReadsStandaloneTVBotDatabase(t *testing.T) {
+	t.Setenv("APP_DATABASE", "data/main.db")
+	t.Setenv("APP_TVBOT_DATABASE", "data/tvbot.db")
+	got := Load()
+	if got.DatabasePath != "data/main.db" {
+		t.Fatalf("database path = %q", got.DatabasePath)
+	}
+	if got.TVBotDatabasePath != "data/tvbot.db" {
+		t.Fatalf("TVBot database path = %q", got.TVBotDatabasePath)
+	}
+}

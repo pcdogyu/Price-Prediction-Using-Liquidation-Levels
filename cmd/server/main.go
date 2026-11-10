@@ -28,6 +28,10 @@ func main() {
 		hashPassword()
 		return
 	}
+	if len(os.Args) == 2 && os.Args[1] == "split-databases" {
+		splitDatabases()
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "add-user" {
 		addUser(os.Args[2])
 		return
@@ -115,6 +119,20 @@ func main() {
 		log.Error("shutdown failed", "error", err)
 	}
 	log.Info("stopped")
+}
+
+func splitDatabases() {
+	cfg := config.Load()
+	migrated, err := tvbotbridge.SplitDatabases(context.Background(), cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not split databases: %v\n", err)
+		os.Exit(2)
+	}
+	if migrated {
+		fmt.Println("TVBot database split completed")
+	} else {
+		fmt.Println("TVBot database split already completed or source database is unavailable")
+	}
 }
 
 func ensureUnifiedAccounts(ctx context.Context, st *store.Store, cfg config.Config) error {

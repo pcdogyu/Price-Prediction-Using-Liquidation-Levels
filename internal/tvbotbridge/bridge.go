@@ -26,8 +26,8 @@ import (
 )
 
 // Bridge owns the TradingView bot runtime inside the liquidation service. The
-// order store intentionally points at the liquidation database so the two
-// applications share one durable history and one backup boundary.
+// order store uses a standalone database when APP_TVBOT_DATABASE has been
+// migrated; it falls back to the unified application handle until then.
 type Bridge struct {
 	Handler       *tvbotserver.Server
 	ConfigStore   *tvbotconfig.Store
@@ -145,11 +145,12 @@ func New(cfg config.Config, appStore *store.Store, logger *slog.Logger, build tv
 	if appStore == nil || appStore.SQLDB() == nil {
 		return nil, errors.New("application store is required")
 	}
+	tvbotDatabase := resolveTVBotDatabase(cfg, logger)
 	tvCfg, err := loadConfig(cfg.TVBotConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	tvCfg.DatabaseFile = cfg.DatabasePath
+	tvCfg.DatabaseFile = tvbotDatabase
 	if strings.TrimSpace(tvCfg.Server.Addr) == "" {
 		tvCfg.Server.Addr = cfg.Address
 	}
@@ -157,7 +158,12 @@ func New(cfg config.Config, appStore *store.Store, logger *slog.Logger, build tv
 	if strings.TrimSpace(tvCfg.DataFile) != "" {
 		legacyOrders = resolvePath(cfg.TVBotLegacyDataPath, tvCfg.DataFile)
 	}
-	orders, err := tvbotstorage.NewSQLiteOrderStoreWithDB(appStore.SQLDB(), legacyOrders)
+	var orders *tvbotstorage.OrderStore
+	if sameFilePath(tvbotDatabase, cfg.DatabasePath) {
+		orders, err = tvbotstorage.NewSQLiteOrderStoreWithDB(appStore.SQLDB(), legacyOrders)
+	} else {
+		orders, err = tvbotstorage.NewSQLiteOrderStore(tvbotDatabase, legacyOrders)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -352,11 +358,50 @@ func New(cfg config.Config, appStore *store.Store, logger *slog.Logger, build tv
 // locked". The command entry point calls this once, before store.Open.
 func MigrateLegacyDatabase(ctx context.Context, cfg config.Config) (bool, string, error) {
 	legacyDatabase := resolvePath(cfg.TVBotLegacyDataPath, cfg.TVBotLegacyDatabasePath)
-	if err := os.MkdirAll(filepath.Dir(cfg.DatabasePath), 0o750); err != nil {
+	targetDatabase := cfg.TVBotDatabasePath
+	if strings.TrimSpace(targetDatabase) == "" {
+		targetDatabase = cfg.DatabasePath
+	}
+	if err := os.MkdirAll(filepath.Dir(targetDatabase), 0o750); err != nil {
 		return false, legacyDatabase, err
 	}
-	migrated, err := tvbotmigration.MigrateSQLite(ctx, cfg.DatabasePath, legacyDatabase)
+	migrated, err := tvbotmigration.MigrateSQLite(ctx, targetDatabase, legacyDatabase)
 	return migrated, legacyDatabase, err
+}
+
+// SplitDatabases performs the explicit one-time copy that moves TVBot-owned
+// rows out of the unified application database. It is intentionally not called
+// during normal startup or release deployment: the operator can stop the
+// service, run this command, verify counts, and then restart into the split
+// layout.
+func SplitDatabases(ctx context.Context, cfg config.Config) (bool, error) {
+	targetDatabase := strings.TrimSpace(cfg.TVBotDatabasePath)
+	if targetDatabase == "" {
+		return false, errors.New("APP_TVBOT_DATABASE is required for database split")
+	}
+	if sameFilePath(targetDatabase, cfg.DatabasePath) {
+		return false, errors.New("APP_TVBOT_DATABASE must differ from APP_DATABASE")
+	}
+	return tvbotmigration.MigrateUnifiedSQLite(ctx, targetDatabase, cfg.DatabasePath)
+}
+
+func resolveTVBotDatabase(cfg config.Config, logger *slog.Logger) string {
+	target := strings.TrimSpace(cfg.TVBotDatabasePath)
+	if target == "" || sameFilePath(target, cfg.DatabasePath) {
+		return cfg.DatabasePath
+	}
+	ready, err := tvbotmigration.HasCompletedMigration(context.Background(), target, cfg.DatabasePath)
+	if err == nil && ready {
+		return target
+	}
+	if logger != nil {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			logger.Warn("tvbot database readiness check failed; using unified database", "error", err)
+		} else {
+			logger.Warn("tvbot database not migrated; using unified database", "database", target)
+		}
+	}
+	return cfg.DatabasePath
 }
 
 func (b *Bridge) Start(ctx context.Context) {
