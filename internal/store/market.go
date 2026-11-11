@@ -36,6 +36,8 @@ func (s *Store) databaseForTable(table string) *sql.DB {
 		return s.options()
 	case "volume_profile_levels", "volume_profile_cursors", "volume_profile_snapshots", "volume_archive_imports":
 		return s.volume()
+	case "predictions", "backtests":
+		return s.models()
 	default:
 		return s.db
 	}

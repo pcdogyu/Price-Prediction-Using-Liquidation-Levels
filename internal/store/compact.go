@@ -36,7 +36,7 @@ func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactRep
 	}
 	if s.alertsDB == nil || s.alertsDB == s.db || s.alertsDB == s.marketDB {
 		if s.optionsDB == nil || s.optionsDB == s.db || s.optionsDB == s.marketDB {
-			if s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB {
+			if (s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB) && (s.modelsDB == nil || s.modelsDB == s.db || s.modelsDB == s.marketDB) {
 				return report, nil
 			}
 		}
@@ -53,7 +53,7 @@ func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactRep
 		report.Elapsed += alertsReport.Elapsed
 	}
 	if s.optionsDB == nil || s.optionsDB == s.db || s.optionsDB == s.marketDB || s.optionsDB == s.alertsDB {
-		if s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB || s.volumeDB == s.alertsDB {
+		if (s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB || s.volumeDB == s.alertsDB) && (s.modelsDB == nil || s.modelsDB == s.db || s.modelsDB == s.marketDB || s.modelsDB == s.alertsDB) {
 			return report, nil
 		}
 	} else {
@@ -68,17 +68,31 @@ func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactRep
 		report.Elapsed += optionsReport.Elapsed
 	}
 	if s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB || s.volumeDB == s.alertsDB || s.volumeDB == s.optionsDB {
-		return report, nil
+		if s.modelsDB == nil || s.modelsDB == s.db || s.modelsDB == s.marketDB || s.modelsDB == s.alertsDB || s.modelsDB == s.optionsDB {
+			return report, nil
+		}
+	} else {
+		volumeReport, err := compactDatabase(ctx, s.volumeDB, minimumFreeBytes)
+		if err != nil {
+			return report, err
+		}
+		report.Compacted = report.Compacted || volumeReport.Compacted
+		report.FreeBytes += volumeReport.FreeBytes
+		report.BytesBefore += volumeReport.BytesBefore
+		report.BytesAfter += volumeReport.BytesAfter
+		report.Elapsed += volumeReport.Elapsed
 	}
-	volumeReport, err := compactDatabase(ctx, s.volumeDB, minimumFreeBytes)
-	if err != nil {
-		return report, err
+	if s.modelsDB != nil && s.modelsDB != s.db && s.modelsDB != s.marketDB && s.modelsDB != s.alertsDB && s.modelsDB != s.optionsDB && s.modelsDB != s.volumeDB {
+		modelsReport, err := compactDatabase(ctx, s.modelsDB, minimumFreeBytes)
+		if err != nil {
+			return report, err
+		}
+		report.Compacted = report.Compacted || modelsReport.Compacted
+		report.FreeBytes += modelsReport.FreeBytes
+		report.BytesBefore += modelsReport.BytesBefore
+		report.BytesAfter += modelsReport.BytesAfter
+		report.Elapsed += modelsReport.Elapsed
 	}
-	report.Compacted = report.Compacted || volumeReport.Compacted
-	report.FreeBytes += volumeReport.FreeBytes
-	report.BytesBefore += volumeReport.BytesBefore
-	report.BytesAfter += volumeReport.BytesAfter
-	report.Elapsed += volumeReport.Elapsed
 	return report, nil
 }
 

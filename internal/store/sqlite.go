@@ -25,16 +25,17 @@ type Store struct {
 	alertsDB  *sql.DB
 	optionsDB *sql.DB
 	volumeDB  *sql.DB
+	modelsDB  *sql.DB
 }
 
 func Open(path string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, "", "", "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, "", "", "", "", "")
 }
 
 // OpenWithMarketDatabase keeps the unified database as the default while
 // allowing market-data methods to use a separately migrated SQLite file.
 func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, "", "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, "", "", "", "")
 }
 
 // OpenWithMarketAndAlertsDatabase opens the unified store plus any separately
@@ -42,7 +43,7 @@ func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
 // corresponding tables on the unified database for legacy deployments and
 // tenant-local stores.
 func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alertsPath, "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, alertsPath, "", "", "")
 }
 
 // OpenWithMarketAndAlertsAndOptionsDatabase opens the unified store plus any
@@ -50,7 +51,7 @@ func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Stor
 // Empty paths keep the corresponding tables on the unified database for legacy
 // deployments and tenant-local stores.
 func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, optionsPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alertsPath, optionsPath, "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, alertsPath, optionsPath, "", "")
 }
 
 // OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase opens the unified store
@@ -58,6 +59,15 @@ func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, opt
 // volume-profile databases. Empty paths keep the corresponding tables on the
 // unified database for legacy deployments and tenant-local stores.
 func OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alertsPath, optionsPath, volumePath string) (*Store, error) {
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, "")
+}
+
+// OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase opens the
+// unified store plus any separately migrated market-data, alert-history,
+// options/Gamma, volume-profile, and model-result databases. Empty paths keep
+// the corresponding tables on the unified database for legacy deployments and
+// tenant-local stores.
+func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, modelsPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
@@ -71,7 +81,7 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alerts
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	s := &Store{db: db, marketDB: db, alertsDB: db, optionsDB: db, volumeDB: db}
+	s := &Store{db: db, marketDB: db, alertsDB: db, optionsDB: db, volumeDB: db, modelsDB: db}
 	marketPath = strings.TrimSpace(marketPath)
 	if marketPath != "" {
 		mainAbs, mainErr := filepath.Abs(path)
@@ -206,6 +216,50 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alerts
 		volumeDB.SetMaxIdleConns(1)
 		s.volumeDB = volumeDB
 	}
+	modelsPath = strings.TrimSpace(modelsPath)
+	if modelsPath != "" {
+		mainAbs, mainErr := filepath.Abs(path)
+		modelsAbs, modelsErr := filepath.Abs(modelsPath)
+		marketAbs, marketErr := filepath.Abs(marketPath)
+		alertsAbs, alertsErr := filepath.Abs(alertsPath)
+		optionsAbs, optionsErr := filepath.Abs(optionsPath)
+		volumeAbs, volumeErr := filepath.Abs(volumePath)
+		if mainErr != nil || modelsErr != nil || (marketPath != "" && marketErr != nil) || (alertsPath != "" && alertsErr != nil) || (optionsPath != "" && optionsErr != nil) || (volumePath != "" && volumeErr != nil) {
+			_ = s.Close()
+			if mainErr != nil {
+				return nil, mainErr
+			}
+			if modelsErr != nil {
+				return nil, modelsErr
+			}
+			if marketPath != "" && marketErr != nil {
+				return nil, marketErr
+			}
+			if alertsPath != "" && alertsErr != nil {
+				return nil, alertsErr
+			}
+			if optionsPath != "" && optionsErr != nil {
+				return nil, optionsErr
+			}
+			return nil, volumeErr
+		}
+		if modelsAbs == mainAbs || (marketPath != "" && modelsAbs == marketAbs) || (alertsPath != "" && modelsAbs == alertsAbs) || (optionsPath != "" && modelsAbs == optionsAbs) || (volumePath != "" && modelsAbs == volumeAbs) {
+			_ = s.Close()
+			return nil, fmt.Errorf("models database must differ from application, market, alerts, options, and volume databases")
+		}
+		if err := os.MkdirAll(filepath.Dir(modelsPath), 0750); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+		modelsDB, err := sql.Open("sqlite", modelsPath+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+		if err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+		modelsDB.SetMaxOpenConns(1)
+		modelsDB.SetMaxIdleConns(1)
+		s.modelsDB = modelsDB
+	}
 	if err = s.migrate(context.Background()); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -230,6 +284,12 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alerts
 	}
 	if s.volumeDB != s.db {
 		if err = s.migrateVolumeProfile(context.Background()); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+	}
+	if s.modelsDB != s.db {
+		if err = s.migrateModelResults(context.Background()); err != nil {
 			_ = s.Close()
 			return nil, err
 		}
@@ -265,6 +325,13 @@ func (s *Store) volume() *sql.DB {
 	return s.volumeDB
 }
 
+func (s *Store) models() *sql.DB {
+	if s == nil || s.modelsDB == nil {
+		return s.db
+	}
+	return s.modelsDB
+}
+
 func (s *Store) Close() error {
 	if s == nil {
 		return nil
@@ -290,6 +357,13 @@ func (s *Store) Close() error {
 	}
 	if s.volumeDB != nil && s.volumeDB != s.db && s.volumeDB != s.marketDB && s.volumeDB != s.alertsDB && s.volumeDB != s.optionsDB {
 		if err := s.volumeDB.Close(); err != nil {
+			_ = s.marketDB.Close()
+			_ = s.db.Close()
+			return err
+		}
+	}
+	if s.modelsDB != nil && s.modelsDB != s.db && s.modelsDB != s.marketDB && s.modelsDB != s.alertsDB && s.modelsDB != s.optionsDB && s.modelsDB != s.volumeDB {
+		if err := s.modelsDB.Close(); err != nil {
 			_ = s.marketDB.Close()
 			_ = s.db.Close()
 			return err
@@ -327,7 +401,12 @@ func (s *Store) Ping(ctx context.Context) error {
 		}
 	}
 	if s.volumeDB != nil && s.volumeDB != s.db && s.volumeDB != s.marketDB && s.volumeDB != s.alertsDB && s.volumeDB != s.optionsDB {
-		return s.volumeDB.PingContext(ctx)
+		if err := s.volumeDB.PingContext(ctx); err != nil {
+			return err
+		}
+	}
+	if s.modelsDB != nil && s.modelsDB != s.db && s.modelsDB != s.marketDB && s.modelsDB != s.alertsDB && s.modelsDB != s.optionsDB && s.modelsDB != s.volumeDB {
+		return s.modelsDB.PingContext(ctx)
 	}
 	return nil
 }
@@ -908,12 +987,12 @@ func (s *Store) SavePrediction(ctx context.Context, p domain.Prediction) error {
 	if e != nil {
 		return e
 	}
-	_, e = s.db.ExecContext(ctx, `INSERT INTO predictions(symbol,ts,source,payload) VALUES(?,?,?,?) ON CONFLICT(symbol,ts) DO UPDATE SET source=excluded.source,payload=excluded.payload`, p.Symbol, p.Time.UnixMilli(), p.DataSource, b)
+	_, e = s.models().ExecContext(ctx, `INSERT INTO predictions(symbol,ts,source,payload) VALUES(?,?,?,?) ON CONFLICT(symbol,ts) DO UPDATE SET source=excluded.source,payload=excluded.payload`, p.Symbol, p.Time.UnixMilli(), p.DataSource, b)
 	return e
 }
 func (s *Store) LatestPrediction(ctx context.Context, symbol string) (domain.Prediction, error) {
 	var b []byte
-	e := s.db.QueryRowContext(ctx, `SELECT payload FROM predictions WHERE source=? AND symbol=? ORDER BY ts DESC LIMIT 1`, domain.DataSourceBinanceUSDM, symbol).Scan(&b)
+	e := s.models().QueryRowContext(ctx, `SELECT payload FROM predictions WHERE source=? AND symbol=? ORDER BY ts DESC LIMIT 1`, domain.DataSourceBinanceUSDM, symbol).Scan(&b)
 	if e != nil {
 		return domain.Prediction{}, e
 	}
@@ -922,7 +1001,7 @@ func (s *Store) LatestPrediction(ctx context.Context, symbol string) (domain.Pre
 	return p, e
 }
 func (s *Store) Predictions(ctx context.Context, symbol string, from, before time.Time) ([]domain.Prediction, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM predictions WHERE source=? AND symbol=? AND ts>=? AND ts<? ORDER BY ts`, domain.DataSourceBinanceUSDM, symbol, from.UTC().UnixMilli(), before.UTC().UnixMilli())
+	rows, err := s.models().QueryContext(ctx, `SELECT payload FROM predictions WHERE source=? AND symbol=? AND ts>=? AND ts<? ORDER BY ts`, domain.DataSourceBinanceUSDM, symbol, from.UTC().UnixMilli(), before.UTC().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -1177,12 +1256,12 @@ func (s *Store) SaveBacktest(ctx context.Context, r domain.BacktestReport) error
 	if e != nil {
 		return e
 	}
-	_, e = s.db.ExecContext(ctx, `INSERT INTO backtests(symbol,payload,updated_ts)VALUES(?,?,?) ON CONFLICT(symbol)DO UPDATE SET payload=excluded.payload,updated_ts=excluded.updated_ts`, r.Symbol, b, time.Now().UTC().UnixMilli())
+	_, e = s.models().ExecContext(ctx, `INSERT INTO backtests(symbol,payload,updated_ts)VALUES(?,?,?) ON CONFLICT(symbol)DO UPDATE SET payload=excluded.payload,updated_ts=excluded.updated_ts`, r.Symbol, b, time.Now().UTC().UnixMilli())
 	return e
 }
 func (s *Store) Backtest(ctx context.Context, symbol string) (domain.BacktestReport, error) {
 	var b []byte
-	e := s.db.QueryRowContext(ctx, `SELECT payload FROM backtests WHERE symbol=?`, symbol).Scan(&b)
+	e := s.models().QueryRowContext(ctx, `SELECT payload FROM backtests WHERE symbol=?`, symbol).Scan(&b)
 	if e != nil {
 		return domain.BacktestReport{}, fmt.Errorf("backtest unavailable: %w", e)
 	}
