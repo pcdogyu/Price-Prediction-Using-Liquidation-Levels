@@ -993,7 +993,20 @@ const tvbotHTML = `<!doctype html>
       background: var(--muted);
       position: relative;
       cursor: pointer;
-      transition: background 120ms ease;
+      transition: transform .18s ease, box-shadow .2s ease, background-color .2s ease, border-color .2s ease;
+    }
+    .position-open-mode-toggle input:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 5px 14px rgba(23, 32, 51, 0.14);
+    }
+    .position-open-mode-toggle input:active:not(:disabled) {
+      transform: scale(.98);
+      box-shadow: 0 2px 6px rgba(23, 32, 51, 0.12);
+      transition-duration: .08s;
+    }
+    .position-open-mode-toggle input:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
     }
     .position-open-mode-toggle input::after {
       content: "";
@@ -1015,6 +1028,15 @@ const tvbotHTML = `<!doctype html>
     .position-open-mode-toggle input:disabled {
       opacity: 0.58;
       cursor: not-allowed;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .position-open-mode-toggle input {
+        transition-duration: .01ms;
+      }
+      .position-open-mode-toggle input:hover,
+      .position-open-mode-toggle input:active {
+        transform: none;
+      }
     }
     .position-monitor-panel {
       border-top: 1px solid var(--line);
@@ -7193,7 +7215,7 @@ const tvbotHTML = `<!doctype html>
         { label: "50%", ratio: "0.5" },
         { label: "75%", ratio: "0.75" }
       ].map((item) => '<button class="btn small position-percent-open-btn" type="button" data-position-open="' + openMode + '" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="' + (openMode === "limit" ? "限价" : "市价") + '开仓 ' + item.label + '（同向加仓）"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
-      const openModeToggle = '<label class="position-open-mode-toggle" title="切换本行增仓订单方式"><span>市价</span><input type="checkbox" data-position-open-mode="true" data-position-key="' + keyAttr + '"' + baseAttrs + (openMode === "limit" ? " checked" : "") + (busy || modeSaving ? " disabled" : "") + ' aria-label="当前' + (openMode === "limit" ? "限价" : "市价") + '，点击切换" /><span>限价</span></label>';
+      const openModeToggle = '<label class="position-open-mode-toggle" title="切换本行增仓订单方式"><span>限价</span><input type="checkbox" data-position-open-mode="true" data-position-key="' + keyAttr + '"' + baseAttrs + (openMode === "market" ? " checked" : "") + (busy || modeSaving ? " disabled" : "") + (modeSaving ? ' aria-busy="true"' : "") + ' aria-label="当前' + (openMode === "market" ? "市价" : "限价") + '，点击切换" /><span>市价</span></label>';
       const closePercentButtons = [
         { label: "10%", ratio: "0.1" },
         { label: "25%", ratio: "0.25" },
@@ -9597,7 +9619,7 @@ const tvbotHTML = `<!doctype html>
       const instID = input.dataset.instId || "";
       const posSide = input.dataset.posSide || "";
       const previous = positionOpenModeForKey(key);
-      const mode = input.checked ? "limit" : "market";
+      const mode = input.checked ? "market" : "limit";
       const requestSeq = (Number(state.positionOpenModeRequestSeq[key]) || 0) + 1;
       state.positionOpenModeRequestSeq[key] = requestSeq;
       state.positionOpenModePending[key] = mode;

@@ -1018,6 +1018,7 @@ func TestPositionOpenModeUIUsesTenantSavedMode(t *testing.T) {
 		"function savePositionOpenMode(input)",
 		"/tvbot/positions/open-mode",
 		"mode: button.dataset.positionOpen || \"market\"",
+		"const mode = input.checked ? \"market\" : \"limit\";",
 		"positionOpenModeSaving",
 		"positionOpenModePending",
 		"AbortController",
@@ -1025,6 +1026,29 @@ func TestPositionOpenModeUIUsesTenantSavedMode(t *testing.T) {
 	} {
 		if !strings.Contains(tvbotHTML, marker) {
 			t.Fatalf("position open mode UI missing %q", marker)
+		}
+	}
+}
+
+func TestPositionOpenModeToggleShowsLimitLeftAndMarketRight(t *testing.T) {
+	start := strings.Index(tvbotHTML, "function positionActionCell(row)")
+	end := strings.Index(tvbotHTML, "function positionEntryTimeTitle(row)")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatal("position action cell boundaries are missing")
+	}
+	actions := tvbotHTML[start:end]
+	limitLabel := strings.Index(actions, `<span>限价</span><input type="checkbox"`)
+	marketLabel := strings.Index(actions, `<span>市价</span></label>`)
+	if limitLabel < 0 || marketLabel < 0 || limitLabel >= marketLabel {
+		t.Fatalf("position open mode toggle should render limit before market: limit=%d market=%d", limitLabel, marketLabel)
+	}
+	for _, marker := range []string{
+		`(openMode === "market" ? " checked" : "")`,
+		`(openMode === "market" ? "市价" : "限价")`,
+		`(modeSaving ? ' aria-busy="true"' : "")`,
+	} {
+		if !strings.Contains(actions, marker) {
+			t.Fatalf("position open mode toggle missing %q", marker)
 		}
 	}
 }
