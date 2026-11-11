@@ -54,11 +54,15 @@ func TestLoadHonorsMarketLoadSettings(t *testing.T) {
 func TestLoadReadsStandaloneTVBotDatabase(t *testing.T) {
 	t.Setenv("APP_DATABASE", "data/main.db")
 	t.Setenv("APP_TVBOT_DATABASE", "data/tvbot.db")
+	t.Setenv("APP_MARKET_DATABASE", "data/market.db")
 	got := Load()
 	if got.DatabasePath != "data/main.db" {
 		t.Fatalf("database path = %q", got.DatabasePath)
 	}
 	if got.TVBotDatabasePath != "data/tvbot.db" {
 		t.Fatalf("TVBot database path = %q", got.TVBotDatabasePath)
+	}
+	if got.MarketDatabasePath != "data/market.db" {
+		t.Fatalf("market database path = %q", got.MarketDatabasePath)
 	}
 }

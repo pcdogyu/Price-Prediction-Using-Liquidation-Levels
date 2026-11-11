@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -18,45 +19,66 @@ type CompactReport struct {
 // retention has freed at least minimumFreeBytes. VACUUM touches the whole file,
 // so it belongs to the maintenance window and never runs for a few free pages.
 func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactReport, error) {
+	report, err := compactDatabase(ctx, s.db, minimumFreeBytes)
+	if err != nil || s.marketDB == nil || s.marketDB == s.db {
+		return report, err
+	}
+	marketReport, err := compactDatabase(ctx, s.marketDB, minimumFreeBytes)
+	if err != nil {
+		return report, err
+	}
+	report.Compacted = report.Compacted || marketReport.Compacted
+	report.FreeBytes += marketReport.FreeBytes
+	report.BytesBefore += marketReport.BytesBefore
+	report.BytesAfter += marketReport.BytesAfter
+	report.Elapsed += marketReport.Elapsed
+	return report, nil
+}
+
+func compactDatabase(ctx context.Context, db *sql.DB, minimumFreeBytes int64) (CompactReport, error) {
 	report := CompactReport{}
 	started := time.Now().UTC()
-	pageSize, pageCount, freePages, err := s.pageStats(ctx)
+	pageSize, pageCount, freePages, err := pageStats(ctx, db)
 	if err != nil {
 		return report, err
 	}
 	report.FreeBytes = freePages * pageSize
 	report.BytesBefore = pageCount * pageSize
 	if freePages*pageSize >= minimumFreeBytes {
-		if _, err = s.db.ExecContext(ctx, `VACUUM`); err != nil {
+		if _, err = db.ExecContext(ctx, `VACUUM`); err != nil {
 			return report, err
 		}
 		report.Compacted = true
-		if _, pageCount, _, err = s.pageStats(ctx); err != nil {
+		if _, pageCount, _, err = pageStats(ctx, db); err != nil {
 			return report, err
 		}
 		report.BytesAfter = pageCount * pageSize
 	}
-	if _, err = s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+	if _, err = db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 		return report, err
 	}
 	// PRAGMA optimize lets SQLite refresh the query planner statistics it needs
 	// after a day of deletions instead of waiting for the next table scan.
-	if _, err = s.db.ExecContext(ctx, `PRAGMA optimize`); err != nil {
+	if _, err = db.ExecContext(ctx, `PRAGMA optimize`); err != nil {
 		return report, err
 	}
 	report.Elapsed = time.Since(started)
 	return report, nil
 }
 
-func (s *Store) pageStats(ctx context.Context) (pageSize, pageCount, freePages int64, err error) {
-	if err = s.db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
+func pageStats(ctx context.Context, db *sql.DB) (pageSize, pageCount, freePages int64, err error) {
+	if err = db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
 		return 0, 0, 0, err
 	}
-	if err = s.db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
+	if err = db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
 		return 0, 0, 0, err
 	}
-	if err = s.db.QueryRowContext(ctx, `PRAGMA freelist_count`).Scan(&freePages); err != nil {
+	if err = db.QueryRowContext(ctx, `PRAGMA freelist_count`).Scan(&freePages); err != nil {
 		return 0, 0, 0, err
 	}
 	return pageSize, pageCount, freePages, nil
+}
+
+func (s *Store) pageStats(ctx context.Context) (pageSize, pageCount, freePages int64, err error) {
+	return pageStats(ctx, s.db)
 }

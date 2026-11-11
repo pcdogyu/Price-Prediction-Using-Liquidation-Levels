@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Address, DatabasePath, ModelPath string
 	TVBotDatabasePath                string
+	MarketDatabasePath               string
 	BasePath                         string
 	TVBotConfigPath                  string
 	TVBotDataPath                    string
@@ -97,8 +98,9 @@ func Load() Config {
 	}
 	return Config{
 		Address: env("APP_ADDRESS", ":9090"), DatabasePath: databasePath,
-		TVBotDatabasePath: strings.TrimSpace(os.Getenv("APP_TVBOT_DATABASE")),
-		ModelPath:         env("APP_MODEL", "models/model.json"), Symbols: symbols, DepthSymbols: depthSymbols, BootstrapSymbols: bootstrapSymbols,
+		TVBotDatabasePath:  strings.TrimSpace(os.Getenv("APP_TVBOT_DATABASE")),
+		MarketDatabasePath: strings.TrimSpace(os.Getenv("APP_MARKET_DATABASE")),
+		ModelPath:          env("APP_MODEL", "models/model.json"), Symbols: symbols, DepthSymbols: depthSymbols, BootstrapSymbols: bootstrapSymbols,
 		BasePath: env("APP_BASE_PATH", "/"), AuthUsername: strings.TrimSpace(os.Getenv("APP_AUTH_USERNAME")),
 		AuthPasswordHash: strings.TrimSpace(os.Getenv("APP_AUTH_PASSWORD_HASH")), LogPath: strings.TrimSpace(os.Getenv("APP_LOG_PATH")), MarketCollectorLogPath: strings.TrimSpace(os.Getenv("APP_MARKET_COLLECTOR_LOG_PATH")),
 		TVBotConfigPath:           env("APP_TVBOT_CONFIG", "data/tvbot-config.json"),

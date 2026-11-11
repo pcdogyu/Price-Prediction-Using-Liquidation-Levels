@@ -895,7 +895,7 @@ func (s *Store) RecentLiquidationEvents(ctx context.Context, since time.Time, li
 	if limit < 1 || limit > 200000 {
 		return nil, errors.New("invalid liquidation read limit")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage FROM liquidations WHERE exchange='binance' AND event_ts>=? ORDER BY event_ts ASC,id ASC LIMIT ?`, since.UnixMilli(), limit)
+	rows, err := s.market().QueryContext(ctx, `SELECT id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage FROM liquidations WHERE exchange='binance' AND event_ts>=? ORDER BY event_ts ASC,id ASC LIMIT ?`, since.UnixMilli(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -923,7 +923,7 @@ func (s *Store) LiquidationEventsForSymbol(ctx context.Context, symbol string, s
 	if limit < 1 || limit > 200000 {
 		return nil, errors.New("invalid liquidation replay limit")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage FROM liquidations WHERE exchange='binance' AND symbol=? AND event_ts>=? ORDER BY event_ts ASC,id ASC LIMIT ?`, strings.ToUpper(strings.TrimSpace(symbol)), since.UTC().UnixMilli(), limit)
+	rows, err := s.market().QueryContext(ctx, `SELECT id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage FROM liquidations WHERE exchange='binance' AND symbol=? AND event_ts>=? ORDER BY event_ts ASC,id ASC LIMIT ?`, strings.ToUpper(strings.TrimSpace(symbol)), since.UTC().UnixMilli(), limit)
 	if err != nil {
 		return nil, err
 	}

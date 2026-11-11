@@ -19,9 +19,18 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db       *sql.DB
+	marketDB *sql.DB
+}
 
 func Open(path string) (*Store, error) {
+	return OpenWithMarketDatabase(path, "")
+}
+
+// OpenWithMarketDatabase keeps the unified database as the default while
+// allowing market-data methods to use a separately migrated SQLite file.
+func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
@@ -35,16 +44,78 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	s := &Store{db: db}
+	s := &Store{db: db, marketDB: db}
+	marketPath = strings.TrimSpace(marketPath)
+	if marketPath != "" {
+		mainAbs, mainErr := filepath.Abs(path)
+		marketAbs, marketErr := filepath.Abs(marketPath)
+		if mainErr != nil || marketErr != nil {
+			_ = db.Close()
+			if mainErr != nil {
+				return nil, mainErr
+			}
+			return nil, marketErr
+		}
+		if mainAbs != marketAbs {
+			if err := os.MkdirAll(filepath.Dir(marketPath), 0750); err != nil {
+				_ = db.Close()
+				return nil, err
+			}
+			marketDB, err := sql.Open("sqlite", marketPath+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+			if err != nil {
+				_ = db.Close()
+				return nil, err
+			}
+			marketDB.SetMaxOpenConns(1)
+			marketDB.SetMaxIdleConns(1)
+			s.marketDB = marketDB
+		}
+	}
 	if err = s.migrate(context.Background()); err != nil {
-		db.Close()
+		_ = s.Close()
 		return nil, err
+	}
+	if s.marketDB != s.db {
+		if err = s.migrateMarket(context.Background()); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
 	}
 	return s, nil
 }
 
-func (s *Store) Close() error                   { return s.db.Close() }
-func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+func (s *Store) market() *sql.DB {
+	if s == nil || s.marketDB == nil {
+		return s.db
+	}
+	return s.marketDB
+}
+
+func (s *Store) Close() error {
+	if s == nil {
+		return nil
+	}
+	if s.marketDB != nil && s.marketDB != s.db {
+		if err := s.marketDB.Close(); err != nil {
+			_ = s.db.Close()
+			return err
+		}
+	}
+	if s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
+
+func (s *Store) Ping(ctx context.Context) error {
+	if err := s.db.PingContext(ctx); err != nil {
+		return err
+	}
+	if s.marketDB != nil && s.marketDB != s.db {
+		return s.marketDB.PingContext(ctx)
+	}
+	return nil
+}
 
 // SQLDB returns the shared database handle used by the application store.
 // Components that persist data in the same SQLite file must reuse this handle
@@ -397,7 +468,7 @@ func (s *Store) UpsertCandles(ctx context.Context, cs []domain.Candle) error {
 	if len(cs) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.market().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -421,7 +492,7 @@ func (s *Store) Candles(ctx context.Context, symbol string, since time.Time) ([]
 }
 
 func (s *Store) CandlesByExchange(ctx context.Context, exchange, symbol string, since time.Time) ([]domain.Candle, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT exchange,symbol,ts,open,high,low,close,volume_usd,taker_buy_usd,open_interest_usd,funding_rate,long_short_ratio FROM candles WHERE exchange=? AND symbol=? AND ts>=? ORDER BY ts`, exchange, symbol, since.UTC().UnixMilli())
+	rows, err := s.market().QueryContext(ctx, `SELECT exchange,symbol,ts,open,high,low,close,volume_usd,taker_buy_usd,open_interest_usd,funding_rate,long_short_ratio FROM candles WHERE exchange=? AND symbol=? AND ts>=? ORDER BY ts`, exchange, symbol, since.UTC().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +515,7 @@ func (s *Store) CandlesRange(ctx context.Context, symbol string, from, before ti
 }
 
 func (s *Store) CandlesRangeByExchange(ctx context.Context, exchange, symbol string, from, before time.Time) ([]domain.Candle, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT exchange,symbol,ts,open,high,low,close,volume_usd,taker_buy_usd,open_interest_usd,funding_rate,long_short_ratio FROM candles WHERE exchange=? AND symbol=? AND ts>=? AND ts<? ORDER BY ts`, exchange, symbol, from.UTC().UnixMilli(), before.UTC().UnixMilli())
+	rows, err := s.market().QueryContext(ctx, `SELECT exchange,symbol,ts,open,high,low,close,volume_usd,taker_buy_usd,open_interest_usd,funding_rate,long_short_ratio FROM candles WHERE exchange=? AND symbol=? AND ts>=? AND ts<? ORDER BY ts`, exchange, symbol, from.UTC().UnixMilli(), before.UTC().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +535,7 @@ func (s *Store) CandlesRangeByExchange(ctx context.Context, exchange, symbol str
 
 func (s *Store) CandleBounds(ctx context.Context, exchange, symbol string) (time.Time, time.Time, bool, error) {
 	var first, last sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT MIN(ts),MAX(ts) FROM candles WHERE exchange=? AND symbol=?`, exchange, symbol).Scan(&first, &last)
+	err := s.market().QueryRowContext(ctx, `SELECT MIN(ts),MAX(ts) FROM candles WHERE exchange=? AND symbol=?`, exchange, symbol).Scan(&first, &last)
 	if err != nil {
 		return time.Time{}, time.Time{}, false, err
 	}
@@ -480,7 +551,7 @@ func (s *Store) SymbolBounds(ctx context.Context, symbol string) (time.Time, tim
 
 func (s *Store) ExchangeSymbolBounds(ctx context.Context, exchange, symbol string) (time.Time, time.Time, bool, error) {
 	var first, last sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT MIN(ts),MAX(ts) FROM candles WHERE exchange=? AND symbol=?`, exchange, symbol).Scan(&first, &last)
+	err := s.market().QueryRowContext(ctx, `SELECT MIN(ts),MAX(ts) FROM candles WHERE exchange=? AND symbol=?`, exchange, symbol).Scan(&first, &last)
 	if err != nil {
 		return time.Time{}, time.Time{}, false, err
 	}
@@ -491,12 +562,12 @@ func (s *Store) ExchangeSymbolBounds(ctx context.Context, exchange, symbol strin
 }
 
 func (s *Store) InsertLiquidation(ctx context.Context, e domain.LiquidationEvent) error {
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO liquidations(id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage) VALUES(?,?,?,?,?,?,?,?,?,?)`, e.ID, e.Exchange, e.Symbol, e.PositionSide, e.EventTime.UnixMilli(), e.ReceivedAt.UnixMilli(), e.Price, e.Quantity, e.NotionalUSD, e.Coverage)
+	_, err := s.market().ExecContext(ctx, `INSERT OR IGNORE INTO liquidations(id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage) VALUES(?,?,?,?,?,?,?,?,?,?)`, e.ID, e.Exchange, e.Symbol, e.PositionSide, e.EventTime.UnixMilli(), e.ReceivedAt.UnixMilli(), e.Price, e.Quantity, e.NotionalUSD, e.Coverage)
 	return err
 }
 
 func (s *Store) LiquidationTotals(ctx context.Context, symbol string, since time.Time) (longUSD, shortUSD float64, err error) {
-	rows, e := s.db.QueryContext(ctx, `SELECT position_side,COALESCE(SUM(notional_usd),0) FROM liquidations WHERE exchange='binance' AND symbol=? AND event_ts>=? GROUP BY position_side`, symbol, since.UnixMilli())
+	rows, e := s.market().QueryContext(ctx, `SELECT position_side,COALESCE(SUM(notional_usd),0) FROM liquidations WHERE exchange='binance' AND symbol=? AND event_ts>=? GROUP BY position_side`, symbol, since.UnixMilli())
 	if e != nil {
 		return 0, 0, e
 	}
@@ -538,7 +609,7 @@ func (s *Store) LiquidationDelta(ctx context.Context, symbol string, from, to ti
 	for i, point := range points {
 		index[point.Time.UnixMilli()] = i
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.market().QueryContext(ctx, `
 		SELECT CAST(event_ts / ? AS INTEGER) * ?,
 			COALESCE(SUM(CASE WHEN position_side='long' THEN notional_usd ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN position_side='short' THEN notional_usd ELSE 0 END),0),
@@ -584,7 +655,7 @@ func (s *Store) Liquidations(ctx context.Context, symbol string, from, before ti
 	if !from.Before(before) {
 		return out, false, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage
+	rows, err := s.market().QueryContext(ctx, `SELECT id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage
 		FROM liquidations WHERE exchange='binance' AND symbol=? AND event_ts>=? AND event_ts<? AND notional_usd>=?
 		ORDER BY event_ts DESC,id DESC LIMIT ?`, symbol, from.UTC().UnixMilli(), before.UTC().UnixMilli(), minimumUSD, limit+1)
 	if err != nil {
@@ -869,7 +940,7 @@ func (s *Store) pruneBatches(ctx context.Context, table, column string, cutoff a
 	var total int64
 	query := `DELETE FROM ` + table + ` WHERE rowid IN (SELECT rowid FROM ` + table + ` WHERE ` + column + `<? LIMIT ?)`
 	for {
-		result, err := s.db.ExecContext(ctx, query, cutoff, pruneBatchSize)
+		result, err := s.databaseForTable(table).ExecContext(ctx, query, cutoff, pruneBatchSize)
 		if err != nil {
 			return total, err
 		}

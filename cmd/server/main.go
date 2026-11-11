@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authn"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/marketmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/observability"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbridge"
@@ -30,6 +33,10 @@ func main() {
 	}
 	if len(os.Args) == 2 && os.Args[1] == "split-databases" {
 		splitDatabases()
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "split-market-database" {
+		splitMarketDatabase()
 		return
 	}
 	if len(os.Args) == 3 && os.Args[1] == "add-user" {
@@ -49,7 +56,8 @@ func main() {
 	} else if migrated {
 		log.Info("legacy tvbot database migrated", "source", legacyDatabase)
 	}
-	st, err := store.Open(cfg.DatabasePath)
+	marketDatabase := resolveMarketDatabase(context.Background(), cfg, log)
+	st, err := store.OpenWithMarketDatabase(cfg.DatabasePath, marketDatabase)
 	if err != nil {
 		log.Error("database open failed", "error", err)
 		os.Exit(1)
@@ -133,6 +141,63 @@ func splitDatabases() {
 	} else {
 		fmt.Println("TVBot database split already completed or source database is unavailable")
 	}
+}
+
+func splitMarketDatabase() {
+	cfg := config.Load()
+	target := strings.TrimSpace(cfg.MarketDatabasePath)
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "could not split market database: APP_MARKET_DATABASE is required")
+		os.Exit(2)
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil {
+		if sourceErr != nil {
+			fmt.Fprintf(os.Stderr, "could not split market database: %v\n", sourceErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "could not split market database: %v\n", targetErr)
+		}
+		os.Exit(2)
+	}
+	if sourceAbs == targetAbs {
+		fmt.Fprintln(os.Stderr, "could not split market database: APP_MARKET_DATABASE must differ from APP_DATABASE")
+		os.Exit(2)
+	}
+	migrated, err := marketmigration.MigrateUnifiedSQLite(context.Background(), target, cfg.DatabasePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not split market database: %v\n", err)
+		os.Exit(2)
+	}
+	if migrated {
+		fmt.Println("market database split completed")
+	} else {
+		fmt.Println("market database split already completed or source database is unavailable")
+	}
+}
+
+func resolveMarketDatabase(ctx context.Context, cfg config.Config, log *slog.Logger) string {
+	target := strings.TrimSpace(cfg.MarketDatabasePath)
+	if target == "" {
+		return ""
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil || sourceAbs == targetAbs {
+		log.Warn("market database path invalid; using unified database", "database", target)
+		return ""
+	}
+	completed, err := marketmigration.HasCompletedMigration(ctx, target, cfg.DatabasePath)
+	if err != nil {
+		log.Warn("market database migration marker unavailable; using unified database", "database", target, "error", err)
+		return ""
+	}
+	if !completed {
+		log.Warn("market database not migrated; using unified database", "database", target)
+		return ""
+	}
+	log.Info("using standalone market database", "database", target)
+	return target
 }
 
 func ensureUnifiedAccounts(ctx context.Context, st *store.Store, cfg config.Config) error {

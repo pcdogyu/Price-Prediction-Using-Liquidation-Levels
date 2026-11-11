@@ -90,7 +90,7 @@ func (s *Store) LiquidationHistory(ctx context.Context, f domain.LiquidationFilt
 		args = append(args, ct.UnixMilli(), ct.UnixMilli(), ci)
 	}
 	args = append(args, f.Limit+1)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage FROM liquidations WHERE `+where+` ORDER BY event_ts DESC,id DESC LIMIT ?`, args...)
+	rows, err := s.market().QueryContext(ctx, `SELECT id,exchange,symbol,position_side,event_ts,received_ts,price,quantity,notional_usd,coverage FROM liquidations WHERE `+where+` ORDER BY event_ts DESC,id DESC LIMIT ?`, args...)
 	if err != nil {
 		return out, err
 	}
@@ -116,14 +116,14 @@ func (s *Store) LiquidationHistory(ctx context.Context, f domain.LiquidationFilt
 		out.NextCursor = EncodeCursor(last.EventTime, last.ID)
 	}
 	var oldest sql.NullInt64
-	if err = s.db.QueryRowContext(ctx, `SELECT MIN(event_ts) FROM liquidations WHERE exchange='binance'`).Scan(&oldest); err != nil {
+	if err = s.market().QueryRowContext(ctx, `SELECT MIN(event_ts) FROM liquidations WHERE exchange='binance'`).Scan(&oldest); err != nil {
 		return out, err
 	}
 	if oldest.Valid {
 		t := time.UnixMilli(oldest.Int64).UTC()
 		out.AvailableFrom = &t
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT DISTINCT symbol FROM liquidations WHERE exchange='binance' ORDER BY symbol`)
+	rows, err = s.market().QueryContext(ctx, `SELECT DISTINCT symbol FROM liquidations WHERE exchange='binance' ORDER BY symbol`)
 	if err != nil {
 		return out, err
 	}
@@ -156,7 +156,7 @@ func (s *Store) LiquidationHistory(ctx context.Context, f domain.LiquidationFilt
 		}
 		w, a := liquidationWhere(sf)
 		p := domain.LiquidationPeriod{Label: window.label}
-		err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN position_side='long' THEN notional_usd ELSE 0 END),0),COALESCE(SUM(CASE WHEN position_side='short' THEN notional_usd ELSE 0 END),0),COUNT(*) FROM liquidations WHERE `+w, a...).Scan(&p.LongUSD, &p.ShortUSD, &p.Count)
+		err = s.market().QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN position_side='long' THEN notional_usd ELSE 0 END),0),COALESCE(SUM(CASE WHEN position_side='short' THEN notional_usd ELSE 0 END),0),COUNT(*) FROM liquidations WHERE `+w, a...).Scan(&p.LongUSD, &p.ShortUSD, &p.Count)
 		if err != nil {
 			return out, err
 		}
@@ -174,11 +174,11 @@ func (s *Store) SaveWallEvent(ctx context.Context, e domain.WallEvent) error {
 	if e.EndedAt != nil {
 		ended = e.EndedAt.UnixMilli()
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO wall_events(id,symbol,ts,ended_ts,payload) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ended_ts=excluded.ended_ts,payload=excluded.payload`, e.ID, e.Symbol, e.QualifiedAt.UnixMilli(), ended, b)
+	_, err = s.market().ExecContext(ctx, `INSERT INTO wall_events(id,symbol,ts,ended_ts,payload) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ended_ts=excluded.ended_ts,payload=excluded.payload`, e.ID, e.Symbol, e.QualifiedAt.UnixMilli(), ended, b)
 	return err
 }
 func (s *Store) InterruptWallEvents(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM wall_events WHERE ended_ts IS NULL`)
+	rows, err := s.market().QueryContext(ctx, `SELECT payload FROM wall_events WHERE ended_ts IS NULL`)
 	if err != nil {
 		return err
 	}
@@ -224,7 +224,7 @@ func (s *Store) SaveBookSnapshot(ctx context.Context, b domain.BookSnapshot) err
 	if err = z.Close(); err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO book_snapshots(symbol,ts,payload) VALUES(?,?,?)`, b.Symbol, b.Time.UnixMilli(), buf.Bytes())
+	_, err = s.market().ExecContext(ctx, `INSERT OR IGNORE INTO book_snapshots(symbol,ts,payload) VALUES(?,?,?)`, b.Symbol, b.Time.UnixMilli(), buf.Bytes())
 	return err
 }
 func decodeBook(b []byte) (domain.BookSnapshot, error) {
@@ -266,7 +266,7 @@ func (s *Store) WallHistory(ctx context.Context, symbol, kind string, from, to t
 		order += ",id DESC"
 	}
 	a = append(a, limit+1)
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM `+table+` WHERE `+w+` ORDER BY `+order+` LIMIT ?`, a...)
+	rows, err := s.market().QueryContext(ctx, `SELECT payload FROM `+table+` WHERE `+w+` ORDER BY `+order+` LIMIT ?`, a...)
 	if err != nil {
 		return out, err
 	}
@@ -307,7 +307,7 @@ func (s *Store) WallHistory(ctx context.Context, symbol, kind string, from, to t
 
 func (s *Store) SaveMarketMetric(ctx context.Context, m domain.MarketMetric) error {
 	// Historical endpoints populate different fields at the same timestamp.
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.market().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -347,7 +347,7 @@ func (s *Store) SaveMarketMetric(ctx context.Context, m domain.MarketMetric) err
 	return tx.Commit()
 }
 func (s *Store) MarketMetrics(ctx context.Context, symbol string, from, to time.Time) ([]domain.MarketMetric, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM market_metrics WHERE symbol=? AND ts>=? AND ts<? ORDER BY ts`, symbol, from.UnixMilli(), to.UnixMilli())
+	rows, err := s.market().QueryContext(ctx, `SELECT payload FROM market_metrics WHERE symbol=? AND ts>=? AND ts<? ORDER BY ts`, symbol, from.UnixMilli(), to.UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +370,7 @@ func (s *Store) MarketMetrics(ctx context.Context, symbol string, from, to time.
 func (s *Store) MarketMetricBounds(ctx context.Context, symbol string) (time.Time, time.Time, bool, error) {
 	var first, last sql.NullInt64
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT MIN(ts),MAX(ts),COUNT(*) FROM market_metrics WHERE symbol=?`, symbol).Scan(&first, &last, &count)
+	err := s.market().QueryRowContext(ctx, `SELECT MIN(ts),MAX(ts),COUNT(*) FROM market_metrics WHERE symbol=?`, symbol).Scan(&first, &last, &count)
 	if err != nil {
 		return time.Time{}, time.Time{}, false, err
 	}
