@@ -741,7 +741,11 @@ func (s *Store) SaveUserTheme(ctx context.Context, username, theme string) error
 }
 
 func (s *Store) hasColumn(ctx context.Context, table, column string) bool {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	return hasColumnOn(ctx, s.db, table, column)
+}
+
+func hasColumnOn(ctx context.Context, db *sql.DB, table, column string) bool {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {
 		return false
 	}

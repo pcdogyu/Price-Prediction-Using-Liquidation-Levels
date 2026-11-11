@@ -29,6 +29,21 @@ func TestOpenWithAlertsDatabaseRoutesAlertHistoryWrites(t *testing.T) {
 	if _, err := st.SaveTradeSignal(ctx, signalRow("split-signal", "BTCUSDT", domain.SignalAggressive, "long", at)); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.ReplaceWatchSymbols(ctx, []domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1, QuoteVolumeUSD: 100, UpdatedAt: at}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveAlertSettings(ctx, domain.NotificationSettings{TelegramToken: "split-token", TelegramChatID: "split-chat", NotifyAlerts: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveAlertStrategySettings(ctx, domain.AlertStrategySettings{WindowMinutes: 5, BTCUSD: 300000}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveAlertSettingsForTenant(ctx, "alice", domain.NotificationSettings{TelegramToken: "tenant-token", NotifyAggressive: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveAlertStrategySettingsForTenant(ctx, "alice", domain.AlertStrategySettings{WindowMinutes: 10, ETHUSD: 200000}); err != nil {
+		t.Fatal(err)
+	}
 
 	mainDB, err := sql.Open("sqlite", mainPath+"?mode=ro")
 	if err != nil {
@@ -40,7 +55,7 @@ func TestOpenWithAlertsDatabaseRoutesAlertHistoryWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer alertsDB.Close()
-	for _, table := range []string{"liquidation_alerts", "trade_signals"} {
+	for _, table := range []string{"liquidation_alerts", "trade_signals", "alert_watch_symbols", "alert_settings", "alert_strategy_settings", "alert_tenant_settings", "alert_tenant_strategy_settings"} {
 		var mainCount, alertsCount int
 		if err := mainDB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&mainCount); err != nil {
 			t.Fatal(err)
@@ -52,11 +67,11 @@ func TestOpenWithAlertsDatabaseRoutesAlertHistoryWrites(t *testing.T) {
 			t.Fatalf("table %s main=%d alerts=%d", table, mainCount, alertsCount)
 		}
 	}
-	var configTable int
-	if err := mainDB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='alert_settings'").Scan(&configTable); err != nil {
+	var authTable int
+	if err := mainDB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='auth_users'").Scan(&authTable); err != nil {
 		t.Fatal(err)
 	}
-	if configTable != 1 {
-		t.Fatal("alert settings table must remain in the main database")
+	if authTable != 1 {
+		t.Fatal("authentication schema must remain in the main database")
 	}
 }

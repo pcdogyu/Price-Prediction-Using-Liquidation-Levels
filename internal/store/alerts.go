@@ -17,9 +17,9 @@ import (
 // timestamp are repaired on startup to the intended same-direction mapping.
 const liquidationDirectionRepairCutoverUnixMilli int64 = 1793290295000
 
-// migrateAlerts creates the tables behind the liquidation alert engine. Alerts and
-// signals store their JSON payload next to the indexed columns that drive the
-// history pages, so a row stays readable even if the struct gains fields later.
+// migrateAlerts creates the tables behind the liquidation alert engine on the
+// unified database. The same schema remains there during the rollback window
+// even when the complete alert module is selected from alerts.db.
 func (s *Store) migrateAlerts(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS liquidation_alerts(id TEXT PRIMARY KEY,symbol TEXT NOT NULL,side TEXT NOT NULL,trigger_ts INTEGER NOT NULL,status TEXT NOT NULL,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
@@ -71,9 +71,8 @@ CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY
 	return s.repairLiquidationDirectionRows(ctx)
 }
 
-// migrateAlertHistory initializes only the history tables in a standalone
-// alerts database. Alert settings and tenant settings deliberately remain in
-// the unified database because they are shared configuration, not history.
+// migrateAlertHistory initializes the complete alert module in a standalone
+// alerts database. The unified database retains a rollback copy.
 func (s *Store) migrateAlertHistory(ctx context.Context) error {
 	if _, err := s.alerts().ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS liquidation_alerts(id TEXT PRIMARY KEY,symbol TEXT NOT NULL,side TEXT NOT NULL,trigger_ts INTEGER NOT NULL,status TEXT NOT NULL,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
@@ -85,7 +84,53 @@ CREATE INDEX IF NOT EXISTS trade_signals_kind ON trade_signals(kind,created_ts D
 CREATE INDEX IF NOT EXISTS trade_signals_symbol ON trade_signals(symbol,created_ts DESC);`); err != nil {
 		return err
 	}
+	if err := migrateAlertSettingsOn(ctx, s.alerts()); err != nil {
+		return err
+	}
 	return s.repairLiquidationDirectionRowsOn(ctx, s.alerts())
+}
+
+func migrateAlertSettingsOn(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS alert_watch_symbols(symbol TEXT PRIMARY KEY,rank INTEGER NOT NULL,quote_volume_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_settings(id INTEGER PRIMARY KEY CHECK(id=1),telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,notify_value_area INTEGER NOT NULL DEFAULT 1,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_value_area INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,order_value_area_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_tenant_settings(tenant_id TEXT PRIMARY KEY,telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,notify_value_area INTEGER NOT NULL DEFAULT 1,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_value_area INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,order_value_area_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY KEY,window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);`); err != nil {
+		return err
+	}
+	for _, table := range []string{"alert_settings", "alert_tenant_settings"} {
+		for _, column := range []string{"notify_value_area", "order_alerts", "order_aggressive", "order_steady", "order_value_area", "order_alerts_close", "order_aggressive_close", "order_steady_close", "order_value_area_close"} {
+			if hasColumnOn(ctx, db, table, column) {
+				continue
+			}
+			if _, err := db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` INTEGER NOT NULL DEFAULT 1`); err != nil {
+				return err
+			}
+		}
+	}
+	for _, table := range []string{"alert_strategy_settings", "alert_tenant_strategy_settings"} {
+		for _, column := range []struct{ name, definition string }{
+			{"vwap_range_hours", "INTEGER NOT NULL DEFAULT 24"},
+			{"vwap_min_drawdown_pct", "REAL NOT NULL DEFAULT 2.2"},
+			{"vwap_donchian_pct", "REAL NOT NULL DEFAULT 35"},
+			{"vwap_filter_enabled", "INTEGER NOT NULL DEFAULT 1"},
+			{"donchian_filter_enabled", "INTEGER NOT NULL DEFAULT 1"},
+			{"block_open_0800_0900", "INTEGER NOT NULL DEFAULT 1"},
+			{"block_open_1600_1700", "INTEGER NOT NULL DEFAULT 1"},
+			{"block_open_2130_2230", "INTEGER NOT NULL DEFAULT 1"},
+			{"value_area_start_minute", "INTEGER NOT NULL DEFAULT 1200"},
+			{"value_area_end_minute", "INTEGER NOT NULL DEFAULT 1440"},
+		} {
+			if hasColumnOn(ctx, db, table, column.name) {
+				continue
+			}
+			if _, err := db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column.name+` `+column.definition); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // repairLiquidationDirectionRows fixes only liquidation-driven rows created at
@@ -736,7 +781,7 @@ func (s *Store) SignalTotalsWithValueArea(ctx context.Context) (total, aggressiv
 
 // ReplaceWatchSymbols stores the current top volume watch list as one snapshot.
 func (s *Store) ReplaceWatchSymbols(ctx context.Context, rows []domain.WatchSymbol) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.alerts().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -757,7 +802,7 @@ func (s *Store) ReplaceWatchSymbols(ctx context.Context, rows []domain.WatchSymb
 
 // WatchSymbols reads the last persisted watch list ordered by rank.
 func (s *Store) WatchSymbols(ctx context.Context) ([]domain.WatchSymbol, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT symbol,rank,quote_volume_usd,updated_ts FROM alert_watch_symbols ORDER BY rank,symbol`)
+	rows, err := s.alerts().QueryContext(ctx, `SELECT symbol,rank,quote_volume_usd,updated_ts FROM alert_watch_symbols ORDER BY rank,symbol`)
 	if err != nil {
 		return nil, err
 	}
@@ -783,7 +828,7 @@ func (s *Store) AlertSettings(ctx context.Context) (domain.NotificationSettings,
 	var enabled, alerts, aggressive, steady, valueArea, orderAlerts, orderAggressive, orderSteady, orderValueArea, orderAlertsClose, orderAggressiveClose, orderSteadyClose, orderValueAreaClose int
 	var token, chatID string
 	var updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts FROM alert_settings WHERE id=1`).
+	err := s.alerts().QueryRowContext(ctx, `SELECT telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts FROM alert_settings WHERE id=1`).
 		Scan(&enabled, &token, &chatID, &alerts, &aggressive, &steady, &valueArea, &orderAlerts, &orderAggressive, &orderSteady, &orderValueArea, &orderAlertsClose, &orderAggressiveClose, &orderSteadyClose, &orderValueAreaClose, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
@@ -797,7 +842,7 @@ func (s *Store) AlertSettings(ctx context.Context) (domain.NotificationSettings,
 
 // SaveAlertSettings stores the settings as the single row the alert page manages.
 func (s *Store) SaveAlertSettings(ctx context.Context, in domain.NotificationSettings) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_settings(id,telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := s.alerts().ExecContext(ctx, `INSERT INTO alert_settings(id,telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,telegram_token=excluded.telegram_token,telegram_chat_id=excluded.telegram_chat_id,notify_alerts=excluded.notify_alerts,notify_aggressive=excluded.notify_aggressive,notify_steady=excluded.notify_steady,notify_value_area=excluded.notify_value_area,order_alerts=excluded.order_alerts,order_aggressive=excluded.order_aggressive,order_steady=excluded.order_steady,order_value_area=excluded.order_value_area,order_alerts_close=excluded.order_alerts_close,order_aggressive_close=excluded.order_aggressive_close,order_steady_close=excluded.order_steady_close,order_value_area_close=excluded.order_value_area_close,updated_ts=excluded.updated_ts`,
 		boolInt(in.TelegramEnabled), in.TelegramToken, in.TelegramChatID, boolInt(in.NotifyAlerts), boolInt(in.NotifyAggressive), boolInt(in.NotifySteady), boolInt(in.NotifyValueArea), boolInt(in.OrderAlerts), boolInt(in.OrderAggressive), boolInt(in.OrderSteady), boolInt(in.OrderValueArea), boolInt(in.OrderAlertsClose), boolInt(in.OrderAggressiveClose), boolInt(in.OrderSteadyClose), boolInt(in.OrderValueAreaClose), time.Now().UTC().UnixMilli())
 	return err
@@ -814,7 +859,7 @@ func (s *Store) AlertSettingsForTenant(ctx context.Context, tenantID string) (do
 	var enabled, alerts, aggressive, steady, valueArea, orderAlerts, orderAggressive, orderSteady, orderValueArea, orderAlertsClose, orderAggressiveClose, orderSteadyClose, orderValueAreaClose int
 	var token, chatID string
 	var updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts FROM alert_tenant_settings WHERE tenant_id=?`, tenantID).
+	err := s.alerts().QueryRowContext(ctx, `SELECT telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts FROM alert_tenant_settings WHERE tenant_id=?`, tenantID).
 		Scan(&enabled, &token, &chatID, &alerts, &aggressive, &steady, &valueArea, &orderAlerts, &orderAggressive, &orderSteady, &orderValueArea, &orderAlertsClose, &orderAggressiveClose, &orderSteadyClose, &orderValueAreaClose, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
@@ -832,7 +877,7 @@ func (s *Store) SaveAlertSettingsForTenant(ctx context.Context, tenantID string,
 	if tenantID == "" {
 		return s.SaveAlertSettings(ctx, in)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_tenant_settings(tenant_id,telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := s.alerts().ExecContext(ctx, `INSERT INTO alert_tenant_settings(tenant_id,telegram_enabled,telegram_token,telegram_chat_id,notify_alerts,notify_aggressive,notify_steady,notify_value_area,order_alerts,order_aggressive,order_steady,order_value_area,order_alerts_close,order_aggressive_close,order_steady_close,order_value_area_close,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(tenant_id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,telegram_token=excluded.telegram_token,telegram_chat_id=excluded.telegram_chat_id,notify_alerts=excluded.notify_alerts,notify_aggressive=excluded.notify_aggressive,notify_steady=excluded.notify_steady,notify_value_area=excluded.notify_value_area,order_alerts=excluded.order_alerts,order_aggressive=excluded.order_aggressive,order_steady=excluded.order_steady,order_value_area=excluded.order_value_area,order_alerts_close=excluded.order_alerts_close,order_aggressive_close=excluded.order_aggressive_close,order_steady_close=excluded.order_steady_close,order_value_area_close=excluded.order_value_area_close,updated_ts=excluded.updated_ts`,
 		tenantID, boolInt(in.TelegramEnabled), in.TelegramToken, in.TelegramChatID, boolInt(in.NotifyAlerts), boolInt(in.NotifyAggressive), boolInt(in.NotifySteady), boolInt(in.NotifyValueArea), boolInt(in.OrderAlerts), boolInt(in.OrderAggressive), boolInt(in.OrderSteady), boolInt(in.OrderValueArea), boolInt(in.OrderAlertsClose), boolInt(in.OrderAggressiveClose), boolInt(in.OrderSteadyClose), boolInt(in.OrderValueAreaClose), time.Now().UTC().UnixMilli())
 	return err
@@ -844,7 +889,7 @@ func (s *Store) AlertStrategySettings(ctx context.Context) (domain.AlertStrategy
 	var out domain.AlertStrategySettings
 	var window, vwapFilter, donchianFilter, blockOpen0800To0900, blockOpen1600To1700, blockOpen2130To2230 int
 	var updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts FROM alert_strategy_settings WHERE id=1`).
+	err := s.alerts().QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts FROM alert_strategy_settings WHERE id=1`).
 		Scan(&window, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &out.VWAPRangeHours, &out.VWAPMinDrawdownPct, &out.VWAPDonchianPct, &vwapFilter, &donchianFilter, &blockOpen0800To0900, &blockOpen1600To1700, &blockOpen2130To2230, &out.ValueAreaStartMinute, &out.ValueAreaEndMinute, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
@@ -865,7 +910,7 @@ func (s *Store) AlertStrategySettings(ctx context.Context) (domain.AlertStrategy
 // SaveAlertStrategySettings stores the editable threshold and rolling-window
 // parameters as a single row.
 func (s *Store) SaveAlertStrategySettings(ctx context.Context, in domain.AlertStrategySettings) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_strategy_settings(id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := s.alerts().ExecContext(ctx, `INSERT INTO alert_strategy_settings(id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,vwap_range_hours=excluded.vwap_range_hours,vwap_min_drawdown_pct=excluded.vwap_min_drawdown_pct,vwap_donchian_pct=excluded.vwap_donchian_pct,vwap_filter_enabled=excluded.vwap_filter_enabled,donchian_filter_enabled=excluded.donchian_filter_enabled,block_open_0800_0900=excluded.block_open_0800_0900,block_open_1600_1700=excluded.block_open_1600_1700,block_open_2130_2230=excluded.block_open_2130_2230,value_area_start_minute=excluded.value_area_start_minute,value_area_end_minute=excluded.value_area_end_minute,updated_ts=excluded.updated_ts`,
 		in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, in.VWAPRangeHours, in.VWAPMinDrawdownPct, in.VWAPDonchianPct, boolInt(in.VWAPFilterEnabled), boolInt(in.DonchianFilterEnabled), boolInt(in.BlockOpen0800To0900), boolInt(in.BlockOpen1600To1700), boolInt(in.BlockOpen2130To2230), in.ValueAreaStartMinute, in.ValueAreaEndMinute, time.Now().UTC().UnixMilli())
 	return err
@@ -881,7 +926,7 @@ func (s *Store) AlertStrategySettingsForTenant(ctx context.Context, tenantID str
 	var out domain.AlertStrategySettings
 	var vwapFilter, donchianFilter, blockOpen0800To0900, blockOpen1600To1700, blockOpen2130To2230 int
 	var updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts FROM alert_tenant_strategy_settings WHERE tenant_id=?`, tenantID).
+	err := s.alerts().QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts FROM alert_tenant_strategy_settings WHERE tenant_id=?`, tenantID).
 		Scan(&out.WindowMinutes, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &out.VWAPRangeHours, &out.VWAPMinDrawdownPct, &out.VWAPDonchianPct, &vwapFilter, &donchianFilter, &blockOpen0800To0900, &blockOpen1600To1700, &blockOpen2130To2230, &out.ValueAreaStartMinute, &out.ValueAreaEndMinute, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
@@ -904,7 +949,7 @@ func (s *Store) SaveAlertStrategySettingsForTenant(ctx context.Context, tenantID
 	if tenantID == "" {
 		return s.SaveAlertStrategySettings(ctx, in)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO alert_tenant_strategy_settings(tenant_id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := s.alerts().ExecContext(ctx, `INSERT INTO alert_tenant_strategy_settings(tenant_id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(tenant_id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,vwap_range_hours=excluded.vwap_range_hours,vwap_min_drawdown_pct=excluded.vwap_min_drawdown_pct,vwap_donchian_pct=excluded.vwap_donchian_pct,vwap_filter_enabled=excluded.vwap_filter_enabled,donchian_filter_enabled=excluded.donchian_filter_enabled,block_open_0800_0900=excluded.block_open_0800_0900,block_open_1600_1700=excluded.block_open_1600_1700,block_open_2130_2230=excluded.block_open_2130_2230,value_area_start_minute=excluded.value_area_start_minute,value_area_end_minute=excluded.value_area_end_minute,updated_ts=excluded.updated_ts`,
 		tenantID, in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, in.VWAPRangeHours, in.VWAPMinDrawdownPct, in.VWAPDonchianPct, boolInt(in.VWAPFilterEnabled), boolInt(in.DonchianFilterEnabled), boolInt(in.BlockOpen0800To0900), boolInt(in.BlockOpen1600To1700), boolInt(in.BlockOpen2130To2230), in.ValueAreaStartMinute, in.ValueAreaEndMinute, time.Now().UTC().UnixMilli())
 	return err

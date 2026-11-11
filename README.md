@@ -163,7 +163,7 @@ systemctl start liquidation-predictor.service
 
 普通启动和发布不会自动复制市场数据；目标库没有当前主库的已提交迁移标记时，服务继续使用 `APP_DATABASE`。迁移只复制上述市场表，不删除主库旧表，确认线上数据和图表正常后再安排旧表清理；需要回退时恢复不带 `APP_MARKET_DATABASE` 的旧环境并重启即可。
 
-报警历史和交易信号可以在维护窗口从统一数据库拆分到 `APP_ALERTS_DATABASE` 指定的独立 SQLite 文件。当前边界只包含 `liquidation_alerts` 和 `trade_signals`；`alert_settings`、租户报警设置、策略设置和 `alert_watch_symbols` 仍保留在主库。确认服务已停止后，只传递非敏感路径执行一次：
+完整报警模块可以在维护窗口从统一数据库拆分到 `APP_ALERTS_DATABASE` 指定的独立 SQLite 文件。当前边界包含 `liquidation_alerts`、`trade_signals`、`alert_watch_symbols`、`alert_settings`、`alert_strategy_settings`、`alert_tenant_settings` 和 `alert_tenant_strategy_settings`；认证、菜单和 TVBot 表仍保留在各自原库。确认服务已停止后，只传递非敏感路径执行一次：
 
 ```bash
 systemctl stop liquidation-predictor.service
@@ -174,7 +174,7 @@ chown liquidation:liquidation /var/lib/liquidation-predictor/alerts.db /var/lib/
 systemctl start liquidation-predictor.service
 ```
 
-普通启动和发布不会自动复制报警历史；目标库没有当前主库的已提交迁移标记时，服务继续使用 `APP_DATABASE`。迁移只复制上述两张历史表，不删除主库旧表，确认报警写入、历史查询和信号通知正常后再安排旧表清理；需要回退时恢复不带 `APP_ALERTS_DATABASE` 的旧环境并重启即可。
+普通启动和发布不会自动复制报警数据；目标库没有完整报警模块的已提交迁移标记时，服务继续使用 `APP_DATABASE`。对已经完成历史拆分的旧 `alerts.db`，再次执行同一个命令只补齐报警配置并写入新的设置迁移标记，不会重复复制历史；迁移不删除主库旧表，确认报警写入、历史查询、信号通知、策略配置和租户配置正常后再安排旧表清理；需要回退时恢复不带 `APP_ALERTS_DATABASE` 的旧环境并重启即可。
 
 期权 Gamma 数据可以在维护窗口从统一数据库拆分到 `APP_OPTIONS_DATABASE` 指定的独立 SQLite 文件。当前边界包含 Binance Gamma 最新快照 `gamma_latest` 和 Deribit Gamma 历史 `deribit_gamma_history`；市场、报警、认证和 TVBot 表仍保留在各自原库。确认服务已停止后，只传递非敏感路径执行一次：
 

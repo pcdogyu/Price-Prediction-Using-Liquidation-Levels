@@ -13,11 +13,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var tables = []string{"liquidation_alerts", "trade_signals"}
+var historyTables = []string{"liquidation_alerts", "trade_signals"}
+var settingsTables = []string{"alert_watch_symbols", "alert_settings", "alert_strategy_settings", "alert_tenant_settings", "alert_tenant_strategy_settings"}
 
-// MigrateUnifiedSQLite copies alert history and signal history into a
-// standalone database. Alert settings and tenant configuration are deliberately
-// excluded and remain in the unified application database.
+// MigrateUnifiedSQLite copies the complete alert module into a standalone
+// database. The second marker lets an existing history-only alerts database
+// finish the settings migration without recopying its history.
 func MigrateUnifiedSQLite(ctx context.Context, targetPath, sourcePath string) (bool, error) {
 	if strings.TrimSpace(sourcePath) == "" {
 		return false, nil
@@ -48,14 +49,17 @@ func MigrateUnifiedSQLite(ctx context.Context, targetPath, sourcePath string) (b
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	if _, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS alerts_migrations(source_path TEXT PRIMARY KEY,completed_ts INTEGER NOT NULL)`); err != nil {
+	if _, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS alerts_migrations(source_path TEXT PRIMARY KEY,completed_ts INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS alerts_settings_migrations(source_path TEXT PRIMARY KEY,completed_ts INTEGER NOT NULL)`); err != nil {
 		return false, err
 	}
-	var completed int
-	if err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts_migrations WHERE source_path=?`, sourceAbs).Scan(&completed); err != nil {
+	var historyCompleted, settingsCompleted int
+	if err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts_migrations WHERE source_path=?`, sourceAbs).Scan(&historyCompleted); err != nil {
 		return false, err
 	}
-	if completed != 0 {
+	if err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts_settings_migrations WHERE source_path=?`, sourceAbs).Scan(&settingsCompleted); err != nil {
+		return false, err
+	}
+	if historyCompleted != 0 && settingsCompleted != 0 {
 		return false, nil
 	}
 	if _, err = db.ExecContext(ctx, `ATTACH DATABASE ? AS legacy`, sourceAbs); err != nil {
@@ -67,20 +71,39 @@ func MigrateUnifiedSQLite(ctx context.Context, targetPath, sourcePath string) (b
 		return false, err
 	}
 	defer tx.Rollback()
-	for _, table := range tables {
-		var present int
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM legacy.sqlite_master WHERE type='table' AND name=?`, table).Scan(&present); err != nil {
+	if historyCompleted == 0 {
+		for _, table := range historyTables {
+			var present int
+			if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM legacy.sqlite_master WHERE type='table' AND name=?`, table).Scan(&present); err != nil {
+				return false, err
+			}
+			if present == 0 {
+				continue
+			}
+			if err := copyTable(ctx, tx, table); err != nil {
+				return false, fmt.Errorf("split alerts table %s: %w", table, err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO alerts_migrations(source_path,completed_ts) VALUES(?,?)`, sourceAbs, time.Now().UTC().UnixMilli()); err != nil {
 			return false, err
 		}
-		if present == 0 {
-			continue
-		}
-		if err := copyTable(ctx, tx, table); err != nil {
-			return false, fmt.Errorf("split alerts table %s: %w", table, err)
-		}
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO alerts_migrations(source_path,completed_ts) VALUES(?,?)`, sourceAbs, time.Now().UTC().UnixMilli()); err != nil {
-		return false, err
+	if settingsCompleted == 0 {
+		for _, table := range settingsTables {
+			var present int
+			if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM legacy.sqlite_master WHERE type='table' AND name=?`, table).Scan(&present); err != nil {
+				return false, err
+			}
+			if present == 0 {
+				continue
+			}
+			if err := copyTable(ctx, tx, table); err != nil {
+				return false, fmt.Errorf("split alert settings table %s: %w", table, err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO alerts_settings_migrations(source_path,completed_ts) VALUES(?,?)`, sourceAbs, time.Now().UTC().UnixMilli()); err != nil {
+			return false, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return false, err
@@ -107,18 +130,24 @@ func HasCompletedMigration(ctx context.Context, targetPath, sourcePath string) (
 		return false, err
 	}
 	defer db.Close()
-	var tableCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='alerts_migrations'`).Scan(&tableCount); err != nil {
+	var historyTableCount, settingsTableCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='alerts_migrations'`).Scan(&historyTableCount); err != nil {
 		return false, err
 	}
-	if tableCount == 0 {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='alerts_settings_migrations'`).Scan(&settingsTableCount); err != nil {
+		return false, err
+	}
+	if historyTableCount == 0 || settingsTableCount == 0 {
 		return false, nil
 	}
-	var migrationCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts_migrations WHERE source_path=?`, sourceAbs).Scan(&migrationCount); err != nil {
+	var historyMigrationCount, settingsMigrationCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts_migrations WHERE source_path=?`, sourceAbs).Scan(&historyMigrationCount); err != nil {
 		return false, err
 	}
-	return migrationCount > 0, nil
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts_settings_migrations WHERE source_path=?`, sourceAbs).Scan(&settingsMigrationCount); err != nil {
+		return false, err
+	}
+	return historyMigrationCount > 0 && settingsMigrationCount > 0, nil
 }
 
 func copyTable(ctx context.Context, tx *sql.Tx, table string) error {
