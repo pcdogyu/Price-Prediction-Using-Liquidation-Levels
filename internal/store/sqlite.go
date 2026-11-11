@@ -20,22 +20,23 @@ import (
 )
 
 type Store struct {
-	db        *sql.DB
-	marketDB  *sql.DB
-	alertsDB  *sql.DB
-	optionsDB *sql.DB
-	volumeDB  *sql.DB
-	modelsDB  *sql.DB
+	db         *sql.DB
+	marketDB   *sql.DB
+	alertsDB   *sql.DB
+	optionsDB  *sql.DB
+	volumeDB   *sql.DB
+	modelsDB   *sql.DB
+	settingsDB *sql.DB
 }
 
 func Open(path string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, "", "", "", "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, "", "", "", "", "", "")
 }
 
 // OpenWithMarketDatabase keeps the unified database as the default while
 // allowing market-data methods to use a separately migrated SQLite file.
 func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, "", "", "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, "", "", "", "", "")
 }
 
 // OpenWithMarketAndAlertsDatabase opens the unified store plus any separately
@@ -43,7 +44,7 @@ func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
 // corresponding tables on the unified database for legacy deployments and
 // tenant-local stores.
 func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, alertsPath, "", "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, alertsPath, "", "", "", "")
 }
 
 // OpenWithMarketAndAlertsAndOptionsDatabase opens the unified store plus any
@@ -51,7 +52,7 @@ func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Stor
 // Empty paths keep the corresponding tables on the unified database for legacy
 // deployments and tenant-local stores.
 func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, optionsPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, alertsPath, optionsPath, "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, alertsPath, optionsPath, "", "", "")
 }
 
 // OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase opens the unified store
@@ -59,7 +60,7 @@ func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, opt
 // volume-profile databases. Empty paths keep the corresponding tables on the
 // unified database for legacy deployments and tenant-local stores.
 func OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alertsPath, optionsPath, volumePath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, "", "")
 }
 
 // OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase opens the
@@ -68,6 +69,14 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alerts
 // the corresponding tables on the unified database for legacy deployments and
 // tenant-local stores.
 func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, modelsPath string) (*Store, error) {
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, modelsPath, "")
+}
+
+// OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase opens
+// the unified store plus all optional standalone module databases. Empty paths
+// keep the corresponding tables on the unified database for legacy deployments
+// and tenant-local stores.
+func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, modelsPath, settingsPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
@@ -81,7 +90,7 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPat
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	s := &Store{db: db, marketDB: db, alertsDB: db, optionsDB: db, volumeDB: db, modelsDB: db}
+	s := &Store{db: db, marketDB: db, alertsDB: db, optionsDB: db, volumeDB: db, modelsDB: db, settingsDB: db}
 	marketPath = strings.TrimSpace(marketPath)
 	if marketPath != "" {
 		mainAbs, mainErr := filepath.Abs(path)
@@ -260,6 +269,54 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPat
 		modelsDB.SetMaxIdleConns(1)
 		s.modelsDB = modelsDB
 	}
+	settingsPath = strings.TrimSpace(settingsPath)
+	if settingsPath != "" {
+		mainAbs, mainErr := filepath.Abs(path)
+		settingsAbs, settingsErr := filepath.Abs(settingsPath)
+		marketAbs, marketErr := filepath.Abs(marketPath)
+		alertsAbs, alertsErr := filepath.Abs(alertsPath)
+		optionsAbs, optionsErr := filepath.Abs(optionsPath)
+		volumeAbs, volumeErr := filepath.Abs(volumePath)
+		modelsAbs, modelsErr := filepath.Abs(modelsPath)
+		if mainErr != nil || settingsErr != nil || (marketPath != "" && marketErr != nil) || (alertsPath != "" && alertsErr != nil) || (optionsPath != "" && optionsErr != nil) || (volumePath != "" && volumeErr != nil) || (modelsPath != "" && modelsErr != nil) {
+			_ = s.Close()
+			if mainErr != nil {
+				return nil, mainErr
+			}
+			if settingsErr != nil {
+				return nil, settingsErr
+			}
+			if marketPath != "" && marketErr != nil {
+				return nil, marketErr
+			}
+			if alertsPath != "" && alertsErr != nil {
+				return nil, alertsErr
+			}
+			if optionsPath != "" && optionsErr != nil {
+				return nil, optionsErr
+			}
+			if volumePath != "" && volumeErr != nil {
+				return nil, volumeErr
+			}
+			return nil, modelsErr
+		}
+		if settingsAbs == mainAbs || (marketPath != "" && settingsAbs == marketAbs) || (alertsPath != "" && settingsAbs == alertsAbs) || (optionsPath != "" && settingsAbs == optionsAbs) || (volumePath != "" && settingsAbs == volumeAbs) || (modelsPath != "" && settingsAbs == modelsAbs) {
+			_ = s.Close()
+			return nil, fmt.Errorf("settings database must differ from application, market, alerts, options, volume, and models databases")
+		}
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0750); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+		settingsDB, err := sql.Open("sqlite", settingsPath+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+		if err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+		settingsDB.SetMaxOpenConns(1)
+		settingsDB.SetMaxIdleConns(1)
+		s.settingsDB = settingsDB
+	}
 	if err = s.migrate(context.Background()); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -290,6 +347,12 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPat
 	}
 	if s.modelsDB != s.db {
 		if err = s.migrateModelResults(context.Background()); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+	}
+	if s.settingsDB != s.db {
+		if err = s.migrateSettingsState(context.Background()); err != nil {
 			_ = s.Close()
 			return nil, err
 		}
@@ -332,6 +395,13 @@ func (s *Store) models() *sql.DB {
 	return s.modelsDB
 }
 
+func (s *Store) settings() *sql.DB {
+	if s == nil || s.settingsDB == nil {
+		return s.db
+	}
+	return s.settingsDB
+}
+
 func (s *Store) Close() error {
 	if s == nil {
 		return nil
@@ -364,6 +434,13 @@ func (s *Store) Close() error {
 	}
 	if s.modelsDB != nil && s.modelsDB != s.db && s.modelsDB != s.marketDB && s.modelsDB != s.alertsDB && s.modelsDB != s.optionsDB && s.modelsDB != s.volumeDB {
 		if err := s.modelsDB.Close(); err != nil {
+			_ = s.marketDB.Close()
+			_ = s.db.Close()
+			return err
+		}
+	}
+	if s.settingsDB != nil && s.settingsDB != s.db && s.settingsDB != s.marketDB && s.settingsDB != s.alertsDB && s.settingsDB != s.optionsDB && s.settingsDB != s.volumeDB && s.settingsDB != s.modelsDB {
+		if err := s.settingsDB.Close(); err != nil {
 			_ = s.marketDB.Close()
 			_ = s.db.Close()
 			return err
@@ -406,7 +483,12 @@ func (s *Store) Ping(ctx context.Context) error {
 		}
 	}
 	if s.modelsDB != nil && s.modelsDB != s.db && s.modelsDB != s.marketDB && s.modelsDB != s.alertsDB && s.modelsDB != s.optionsDB && s.modelsDB != s.volumeDB {
-		return s.modelsDB.PingContext(ctx)
+		if err := s.modelsDB.PingContext(ctx); err != nil {
+			return err
+		}
+	}
+	if s.settingsDB != nil && s.settingsDB != s.db && s.settingsDB != s.marketDB && s.settingsDB != s.alertsDB && s.settingsDB != s.optionsDB && s.settingsDB != s.volumeDB && s.settingsDB != s.modelsDB {
+		return s.settingsDB.PingContext(ctx)
 	}
 	return nil
 }
@@ -641,6 +723,11 @@ func (s *Store) SetAuthUserState(ctx context.Context, username, role string, dis
 
 func (s *Store) DeleteAuthUser(ctx context.Context, username string) error {
 	username = strings.TrimSpace(username)
+	if s.settingsDB != nil && s.settingsDB != s.db {
+		if _, err := s.settings().ExecContext(ctx, `DELETE FROM user_theme WHERE username=?`, username); err != nil {
+			return err
+		}
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -649,8 +736,10 @@ func (s *Store) DeleteAuthUser(ctx context.Context, username string) error {
 	if _, err = tx.ExecContext(ctx, `DELETE FROM auth_users WHERE username=?`, username); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM user_theme WHERE username=?`, username); err != nil {
-		return err
+	if s.settingsDB == nil || s.settingsDB == s.db {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM user_theme WHERE username=?`, username); err != nil {
+			return err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return err
@@ -665,7 +754,7 @@ func (s *Store) RecordAuthAudit(ctx context.Context, actor, action, target strin
 
 func (s *Store) LoadAdminMenu(ctx context.Context) ([]byte, bool, error) {
 	var payload []byte
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM admin_menu WHERE id=1`).Scan(&payload)
+	err := s.settings().QueryRowContext(ctx, `SELECT payload FROM admin_menu WHERE id=1`).Scan(&payload)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -679,7 +768,7 @@ func (s *Store) SaveAdminMenu(ctx context.Context, payload []byte) error {
 	if len(payload) == 0 {
 		return errors.New("menu payload is empty")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO admin_menu(id,payload,updated_ts) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_ts=excluded.updated_ts`, payload, time.Now().UTC().UnixMilli())
+	_, err := s.settings().ExecContext(ctx, `INSERT INTO admin_menu(id,payload,updated_ts) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_ts=excluded.updated_ts`, payload, time.Now().UTC().UnixMilli())
 	return err
 }
 
@@ -689,7 +778,7 @@ func (s *Store) LoadUserMenu(ctx context.Context, username string) ([]byte, bool
 		return nil, false, errors.New("menu username is empty")
 	}
 	var payload []byte
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM user_menu WHERE username=?`, username).Scan(&payload)
+	err := s.settings().QueryRowContext(ctx, `SELECT payload FROM user_menu WHERE username=?`, username).Scan(&payload)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -707,7 +796,7 @@ func (s *Store) SaveUserMenu(ctx context.Context, username string, payload []byt
 	if len(payload) == 0 {
 		return errors.New("menu payload is empty")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO user_menu(username,payload,updated_ts) VALUES(?,?,?) ON CONFLICT(username) DO UPDATE SET payload=excluded.payload,updated_ts=excluded.updated_ts`, username, payload, time.Now().UTC().UnixMilli())
+	_, err := s.settings().ExecContext(ctx, `INSERT INTO user_menu(username,payload,updated_ts) VALUES(?,?,?) ON CONFLICT(username) DO UPDATE SET payload=excluded.payload,updated_ts=excluded.updated_ts`, username, payload, time.Now().UTC().UnixMilli())
 	return err
 }
 
@@ -717,7 +806,7 @@ func (s *Store) LoadUserTheme(ctx context.Context, username string) (string, boo
 		return "", false, errors.New("theme username is empty")
 	}
 	var theme string
-	err := s.db.QueryRowContext(ctx, `SELECT theme FROM user_theme WHERE username=?`, username).Scan(&theme)
+	err := s.settings().QueryRowContext(ctx, `SELECT theme FROM user_theme WHERE username=?`, username).Scan(&theme)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -736,7 +825,7 @@ func (s *Store) SaveUserTheme(ctx context.Context, username, theme string) error
 	if theme != "dark" && theme != "light" {
 		return errors.New("theme must be dark or light")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO user_theme(username,theme,updated_ts) VALUES(?,?,?) ON CONFLICT(username) DO UPDATE SET theme=excluded.theme,updated_ts=excluded.updated_ts`, username, theme, time.Now().UTC().UnixMilli())
+	_, err := s.settings().ExecContext(ctx, `INSERT INTO user_theme(username,theme,updated_ts) VALUES(?,?,?) ON CONFLICT(username) DO UPDATE SET theme=excluded.theme,updated_ts=excluded.updated_ts`, username, theme, time.Now().UTC().UnixMilli())
 	return err
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/modelsmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/observability"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/optionsmigration"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/settingsmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbridge"
 	tvbotenv "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotenv"
@@ -59,6 +60,10 @@ func main() {
 		splitModelsDatabase()
 		return
 	}
+	if len(os.Args) == 2 && os.Args[1] == "split-settings-database" {
+		splitSettingsDatabase()
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "add-user" {
 		addUser(os.Args[2])
 		return
@@ -81,7 +86,8 @@ func main() {
 	optionsDatabase := resolveOptionsDatabase(context.Background(), cfg, log)
 	volumeDatabase := resolveVolumeDatabase(context.Background(), cfg, log)
 	modelsDatabase := resolveModelsDatabase(context.Background(), cfg, log)
-	st, err := store.OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(cfg.DatabasePath, marketDatabase, alertsDatabase, optionsDatabase, volumeDatabase, modelsDatabase)
+	settingsDatabase := resolveSettingsDatabase(context.Background(), cfg, log)
+	st, err := store.OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(cfg.DatabasePath, marketDatabase, alertsDatabase, optionsDatabase, volumeDatabase, modelsDatabase, settingsDatabase)
 	if err != nil {
 		log.Error("database open failed", "error", err)
 		os.Exit(1)
@@ -449,6 +455,63 @@ func resolveModelsDatabase(ctx context.Context, cfg config.Config, log *slog.Log
 		return ""
 	}
 	log.Info("using standalone models database", "database", target)
+	return target
+}
+
+func splitSettingsDatabase() {
+	cfg := config.Load()
+	target := strings.TrimSpace(cfg.SettingsDatabasePath)
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "could not split settings database: APP_SETTINGS_DATABASE is required")
+		os.Exit(2)
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil {
+		if sourceErr != nil {
+			fmt.Fprintf(os.Stderr, "could not split settings database: %v\n", sourceErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "could not split settings database: %v\n", targetErr)
+		}
+		os.Exit(2)
+	}
+	if sourceAbs == targetAbs {
+		fmt.Fprintln(os.Stderr, "could not split settings database: APP_SETTINGS_DATABASE must differ from APP_DATABASE")
+		os.Exit(2)
+	}
+	migrated, err := settingsmigration.MigrateUnifiedSQLite(context.Background(), target, cfg.DatabasePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not split settings database: %v\n", err)
+		os.Exit(2)
+	}
+	if migrated {
+		fmt.Println("settings database split completed")
+	} else {
+		fmt.Println("settings database split already completed or source database is unavailable")
+	}
+}
+
+func resolveSettingsDatabase(ctx context.Context, cfg config.Config, log *slog.Logger) string {
+	target := strings.TrimSpace(cfg.SettingsDatabasePath)
+	if target == "" {
+		return ""
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil || sourceAbs == targetAbs {
+		log.Warn("settings database path invalid; using unified database", "database", target)
+		return ""
+	}
+	completed, err := settingsmigration.HasCompletedMigration(ctx, target, cfg.DatabasePath)
+	if err != nil {
+		log.Warn("settings database migration marker unavailable; using unified database", "database", target, "error", err)
+		return ""
+	}
+	if !completed {
+		log.Warn("settings database not migrated; using unified database", "database", target)
+		return ""
+	}
+	log.Info("using standalone settings database", "database", target)
 	return target
 }
 

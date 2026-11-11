@@ -17,6 +17,7 @@ type Config struct {
 	OptionsDatabasePath              string
 	VolumeDatabasePath               string
 	ModelsDatabasePath               string
+	SettingsDatabasePath             string
 	BasePath                         string
 	TVBotConfigPath                  string
 	TVBotDataPath                    string
@@ -102,13 +103,14 @@ func Load() Config {
 	}
 	return Config{
 		Address: env("APP_ADDRESS", ":9090"), DatabasePath: databasePath,
-		TVBotDatabasePath:   strings.TrimSpace(os.Getenv("APP_TVBOT_DATABASE")),
-		MarketDatabasePath:  strings.TrimSpace(os.Getenv("APP_MARKET_DATABASE")),
-		AlertsDatabasePath:  strings.TrimSpace(os.Getenv("APP_ALERTS_DATABASE")),
-		OptionsDatabasePath: strings.TrimSpace(os.Getenv("APP_OPTIONS_DATABASE")),
-		VolumeDatabasePath:  strings.TrimSpace(os.Getenv("APP_VOLUME_DATABASE")),
-		ModelsDatabasePath:  strings.TrimSpace(os.Getenv("APP_MODELS_DATABASE")),
-		ModelPath:           env("APP_MODEL", "models/model.json"), Symbols: symbols, DepthSymbols: depthSymbols, BootstrapSymbols: bootstrapSymbols,
+		TVBotDatabasePath:    strings.TrimSpace(os.Getenv("APP_TVBOT_DATABASE")),
+		MarketDatabasePath:   strings.TrimSpace(os.Getenv("APP_MARKET_DATABASE")),
+		AlertsDatabasePath:   strings.TrimSpace(os.Getenv("APP_ALERTS_DATABASE")),
+		OptionsDatabasePath:  strings.TrimSpace(os.Getenv("APP_OPTIONS_DATABASE")),
+		VolumeDatabasePath:   strings.TrimSpace(os.Getenv("APP_VOLUME_DATABASE")),
+		ModelsDatabasePath:   strings.TrimSpace(os.Getenv("APP_MODELS_DATABASE")),
+		SettingsDatabasePath: strings.TrimSpace(os.Getenv("APP_SETTINGS_DATABASE")),
+		ModelPath:            env("APP_MODEL", "models/model.json"), Symbols: symbols, DepthSymbols: depthSymbols, BootstrapSymbols: bootstrapSymbols,
 		BasePath: env("APP_BASE_PATH", "/"), AuthUsername: strings.TrimSpace(os.Getenv("APP_AUTH_USERNAME")),
 		AuthPasswordHash: strings.TrimSpace(os.Getenv("APP_AUTH_PASSWORD_HASH")), LogPath: strings.TrimSpace(os.Getenv("APP_LOG_PATH")), MarketCollectorLogPath: strings.TrimSpace(os.Getenv("APP_MARKET_COLLECTOR_LOG_PATH")),
 		TVBotConfigPath:           env("APP_TVBOT_CONFIG", "data/tvbot-config.json"),
