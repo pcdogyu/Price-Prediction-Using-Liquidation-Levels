@@ -147,6 +147,18 @@ backup_tree "$data_root/users" "$backup/tvbot-user-credentials"
 # is left untouched and is not recreated by later releases.
 echo "database_backup=skipped"
 
+# Maintenance migrations are run as root, while the services run as the
+# liquidation user. Normalize only the known SQLite files so a newly created
+# split database cannot make the next service restart read-only. This changes
+# ownership only; deployment never copies or backs up live databases.
+for database_file in \
+  "$data_root/tvbot.db" "$data_root/tvbot.db-wal" "$data_root/tvbot.db-shm" \
+  "$data_root/market.db" "$data_root/market.db-wal" "$data_root/market.db-shm"; do
+  if [[ -e "$database_file" ]]; then
+    chown "$builder:$builder" "$database_file"
+  fi
+done
+
 chown -R liquidation:liquidation "$app_root"
 
 if [[ ! -f "$data_root/tvbot-config.json" ]]; then

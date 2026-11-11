@@ -157,6 +157,7 @@ systemctl stop liquidation-predictor.service
 APP_DATABASE=/var/lib/liquidation-predictor/liquidation.db \
 APP_MARKET_DATABASE=/var/lib/liquidation-predictor/market.db \
 /opt/Price-Prediction-Using-Liquidation-Levels/liquidation-predictor split-market-database
+chown liquidation:liquidation /var/lib/liquidation-predictor/market.db /var/lib/liquidation-predictor/market.db-wal /var/lib/liquidation-predictor/market.db-shm
 systemctl start liquidation-predictor.service
 ```
 
