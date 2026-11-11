@@ -30,6 +30,8 @@ func (s *Store) databaseForTable(table string) *sql.DB {
 	switch table {
 	case "candles", "liquidations", "wall_events", "book_snapshots", "market_metrics":
 		return s.market()
+	case "liquidation_alerts", "trade_signals":
+		return s.alerts()
 	default:
 		return s.db
 	}

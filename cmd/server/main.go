@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/alertsmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/app"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authn"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
@@ -39,6 +40,10 @@ func main() {
 		splitMarketDatabase()
 		return
 	}
+	if len(os.Args) == 2 && os.Args[1] == "split-alerts-database" {
+		splitAlertsDatabase()
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "add-user" {
 		addUser(os.Args[2])
 		return
@@ -57,7 +62,8 @@ func main() {
 		log.Info("legacy tvbot database migrated", "source", legacyDatabase)
 	}
 	marketDatabase := resolveMarketDatabase(context.Background(), cfg, log)
-	st, err := store.OpenWithMarketDatabase(cfg.DatabasePath, marketDatabase)
+	alertsDatabase := resolveAlertsDatabase(context.Background(), cfg, log)
+	st, err := store.OpenWithMarketAndAlertsDatabase(cfg.DatabasePath, marketDatabase, alertsDatabase)
 	if err != nil {
 		log.Error("database open failed", "error", err)
 		os.Exit(1)
@@ -197,6 +203,63 @@ func resolveMarketDatabase(ctx context.Context, cfg config.Config, log *slog.Log
 		return ""
 	}
 	log.Info("using standalone market database", "database", target)
+	return target
+}
+
+func splitAlertsDatabase() {
+	cfg := config.Load()
+	target := strings.TrimSpace(cfg.AlertsDatabasePath)
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "could not split alerts database: APP_ALERTS_DATABASE is required")
+		os.Exit(2)
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil {
+		if sourceErr != nil {
+			fmt.Fprintf(os.Stderr, "could not split alerts database: %v\n", sourceErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "could not split alerts database: %v\n", targetErr)
+		}
+		os.Exit(2)
+	}
+	if sourceAbs == targetAbs {
+		fmt.Fprintln(os.Stderr, "could not split alerts database: APP_ALERTS_DATABASE must differ from APP_DATABASE")
+		os.Exit(2)
+	}
+	migrated, err := alertsmigration.MigrateUnifiedSQLite(context.Background(), target, cfg.DatabasePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not split alerts database: %v\n", err)
+		os.Exit(2)
+	}
+	if migrated {
+		fmt.Println("alerts database split completed")
+	} else {
+		fmt.Println("alerts database split already completed or source database is unavailable")
+	}
+}
+
+func resolveAlertsDatabase(ctx context.Context, cfg config.Config, log *slog.Logger) string {
+	target := strings.TrimSpace(cfg.AlertsDatabasePath)
+	if target == "" {
+		return ""
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil || sourceAbs == targetAbs {
+		log.Warn("alerts database path invalid; using unified database", "database", target)
+		return ""
+	}
+	completed, err := alertsmigration.HasCompletedMigration(ctx, target, cfg.DatabasePath)
+	if err != nil {
+		log.Warn("alerts database migration marker unavailable; using unified database", "database", target, "error", err)
+		return ""
+	}
+	if !completed {
+		log.Warn("alerts database not migrated; using unified database", "database", target)
+		return ""
+	}
+	log.Info("using standalone alerts database", "database", target)
 	return target
 }
 

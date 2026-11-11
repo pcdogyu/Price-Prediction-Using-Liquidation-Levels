@@ -71,12 +71,33 @@ CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY
 	return s.repairLiquidationDirectionRows(ctx)
 }
 
+// migrateAlertHistory initializes only the history tables in a standalone
+// alerts database. Alert settings and tenant settings deliberately remain in
+// the unified database because they are shared configuration, not history.
+func (s *Store) migrateAlertHistory(ctx context.Context) error {
+	if _, err := s.alerts().ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS liquidation_alerts(id TEXT PRIMARY KEY,symbol TEXT NOT NULL,side TEXT NOT NULL,trigger_ts INTEGER NOT NULL,status TEXT NOT NULL,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS liquidation_alerts_time ON liquidation_alerts(trigger_ts DESC,id DESC);
+CREATE INDEX IF NOT EXISTS liquidation_alerts_symbol ON liquidation_alerts(symbol,trigger_ts DESC);
+CREATE TABLE IF NOT EXISTS trade_signals(id TEXT PRIMARY KEY,symbol TEXT NOT NULL,kind TEXT NOT NULL,side TEXT NOT NULL,alert_id TEXT NOT NULL DEFAULT '',created_ts INTEGER NOT NULL,notified INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS trade_signals_time ON trade_signals(created_ts DESC,id DESC);
+CREATE INDEX IF NOT EXISTS trade_signals_kind ON trade_signals(kind,created_ts DESC);
+CREATE INDEX IF NOT EXISTS trade_signals_symbol ON trade_signals(symbol,created_ts DESC);`); err != nil {
+		return err
+	}
+	return s.repairLiquidationDirectionRowsOn(ctx, s.alerts())
+}
+
 // repairLiquidationDirectionRows fixes only liquidation-driven rows created at
 // or after the d46f114 cutover. The observed liquidation side remains intact;
 // the recommended trade side and its persisted filter reason are normalized to
 // the same direction. Value-area rows without a liquidation side are untouched.
 func (s *Store) repairLiquidationDirectionRows(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	return s.repairLiquidationDirectionRowsOn(ctx, s.db)
+}
+
+func (s *Store) repairLiquidationDirectionRowsOn(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -193,7 +214,7 @@ func (s *Store) SaveLiquidationAlert(ctx context.Context, alert domain.Liquidati
 	if updated.IsZero() {
 		updated = time.Now().UTC()
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.alerts().BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
@@ -233,7 +254,7 @@ func (s *Store) SaveLiquidationAlert(ctx context.Context, alert domain.Liquidati
 // LiquidationAlertByID reads one persisted alert for a manual order trigger.
 func (s *Store) LiquidationAlertByID(ctx context.Context, id string) (domain.LiquidationAlert, error) {
 	var payload []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT payload FROM liquidation_alerts WHERE id=?`, id).Scan(&payload); err != nil {
+	if err := s.alerts().QueryRowContext(ctx, `SELECT payload FROM liquidation_alerts WHERE id=?`, id).Scan(&payload); err != nil {
 		return domain.LiquidationAlert{}, err
 	}
 	var out domain.LiquidationAlert
@@ -269,7 +290,7 @@ func (s *Store) LiquidationAlerts(ctx context.Context, symbol, side string, limi
 		where += " AND (trigger_ts<? OR (trigger_ts=? AND id<?))"
 		args = append(args, at.UnixMilli(), at.UnixMilli(), id)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM liquidation_alerts WHERE `+where+` ORDER BY trigger_ts DESC,id DESC LIMIT ?`, append(args, limit+1)...)
+	rows, err := s.alerts().QueryContext(ctx, `SELECT payload FROM liquidation_alerts WHERE `+where+` ORDER BY trigger_ts DESC,id DESC LIMIT ?`, append(args, limit+1)...)
 	if err != nil {
 		return out, err
 	}
@@ -293,14 +314,14 @@ func (s *Store) LiquidationAlerts(ctx context.Context, symbol, side string, limi
 		last := out.Rows[len(out.Rows)-1]
 		out.NextCursor = EncodeCursor(last.TriggeredAt, last.ID)
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts WHERE `+where, args...).Scan(&out.AlertCount)
+	err = s.alerts().QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts WHERE `+where, args...).Scan(&out.AlertCount)
 	return out, err
 }
 
 // AlertCount reports how many alerts are stored, used by the summary metrics.
 func (s *Store) AlertCount(ctx context.Context) (int64, error) {
 	var count int64
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts`).Scan(&count)
+	err := s.alerts().QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts`).Scan(&count)
 	return count, err
 }
 
@@ -315,7 +336,7 @@ func (s *Store) SaveTradeSignal(ctx context.Context, signal domain.TradeSignal) 
 	if err != nil {
 		return false, err
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO trade_signals(id,symbol,kind,side,alert_id,created_ts,notified,payload,updated_ts) VALUES(?,?,?,?,?,?,0,?,?)`,
+	res, err := s.alerts().ExecContext(ctx, `INSERT OR IGNORE INTO trade_signals(id,symbol,kind,side,alert_id,created_ts,notified,payload,updated_ts) VALUES(?,?,?,?,?,?,0,?,?)`,
 		signal.ID, signal.Symbol, signal.Kind, signal.Side, signal.AlertID, signal.CreatedAt.UnixMilli(), payload, time.Now().UTC().UnixMilli())
 	if err != nil {
 		return false, err
@@ -343,7 +364,7 @@ func (s *Store) ImportAlertHistory(ctx context.Context, source *Store) error {
 		payload                  []byte
 	}
 	alertRows := []alertRow{}
-	rows, err := source.db.QueryContext(ctx, `SELECT id,symbol,side,trigger_ts,status,payload,updated_ts FROM liquidation_alerts`)
+	rows, err := source.alerts().QueryContext(ctx, `SELECT id,symbol,side,trigger_ts,status,payload,updated_ts FROM liquidation_alerts`)
 	if err != nil {
 		return err
 	}
@@ -369,7 +390,7 @@ func (s *Store) ImportAlertHistory(ctx context.Context, source *Store) error {
 		payload                         []byte
 	}
 	signalRows := []signalRow{}
-	rows, err = source.db.QueryContext(ctx, `SELECT id,symbol,kind,side,alert_id,created_ts,notified,payload,updated_ts FROM trade_signals`)
+	rows, err = source.alerts().QueryContext(ctx, `SELECT id,symbol,kind,side,alert_id,created_ts,notified,payload,updated_ts FROM trade_signals`)
 	if err != nil {
 		return err
 	}
@@ -389,7 +410,7 @@ func (s *Store) ImportAlertHistory(ctx context.Context, source *Store) error {
 		return err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.alerts().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -410,7 +431,7 @@ func (s *Store) ImportAlertHistory(ctx context.Context, source *Store) error {
 // TradeSignalByID reads one persisted signal for a manual order trigger.
 func (s *Store) TradeSignalByID(ctx context.Context, id string) (domain.TradeSignal, error) {
 	var payload []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT payload FROM trade_signals WHERE id=?`, id).Scan(&payload); err != nil {
+	if err := s.alerts().QueryRowContext(ctx, `SELECT payload FROM trade_signals WHERE id=?`, id).Scan(&payload); err != nil {
 		return domain.TradeSignal{}, err
 	}
 	var out domain.TradeSignal
@@ -428,7 +449,7 @@ func (s *Store) MarkTradeSignalNotified(ctx context.Context, id, status, message
 		return errors.New("signal id is required")
 	}
 	var payload []byte
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM trade_signals WHERE id=?`, id).Scan(&payload)
+	err := s.alerts().QueryRowContext(ctx, `SELECT payload FROM trade_signals WHERE id=?`, id).Scan(&payload)
 	if err != nil {
 		return err
 	}
@@ -443,7 +464,7 @@ func (s *Store) MarkTradeSignalNotified(ctx context.Context, id, status, message
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE trade_signals SET notified=1,payload=?,updated_ts=? WHERE id=?`, raw, time.Now().UTC().UnixMilli(), id)
+	_, err = s.alerts().ExecContext(ctx, `UPDATE trade_signals SET notified=1,payload=?,updated_ts=? WHERE id=?`, raw, time.Now().UTC().UnixMilli(), id)
 	return err
 }
 
@@ -473,7 +494,7 @@ func (s *Store) TradeSignals(ctx context.Context, symbol, kind string, limit int
 		where += " AND (created_ts<? OR (created_ts=? AND id<?))"
 		args = append(args, at.UnixMilli(), at.UnixMilli(), id)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM trade_signals WHERE `+where+` ORDER BY created_ts DESC,id DESC LIMIT ?`, append(args, limit+1)...)
+	rows, err := s.alerts().QueryContext(ctx, `SELECT payload FROM trade_signals WHERE `+where+` ORDER BY created_ts DESC,id DESC LIMIT ?`, append(args, limit+1)...)
 	if err != nil {
 		return out, err
 	}
@@ -497,7 +518,7 @@ func (s *Store) TradeSignals(ctx context.Context, symbol, kind string, limit int
 		last := out.Rows[len(out.Rows)-1]
 		out.NextCursor = EncodeCursor(last.CreatedAt, last.ID)
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0),COALESCE(SUM(kind='value_area'),0) FROM trade_signals WHERE `+where, args...).Scan(&out.SignalCount, &out.AggressiveCount, &out.SteadyCount, &out.ValueAreaCount)
+	err = s.alerts().QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0),COALESCE(SUM(kind='value_area'),0) FROM trade_signals WHERE `+where, args...).Scan(&out.SignalCount, &out.AggressiveCount, &out.SteadyCount, &out.ValueAreaCount)
 	return out, err
 }
 
@@ -602,7 +623,7 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 	query += " ORDER BY event_ts DESC,sort_id DESC LIMIT ?"
 	args = append(args, outerArgs...)
 	args = append(args, limit+1)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.alerts().QueryContext(ctx, query, args...)
 	if err != nil {
 		return out, err
 	}
@@ -664,7 +685,7 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 	if len(alertCountWhereParts) > 0 {
 		alertCountWhere = " WHERE " + strings.Join(alertCountWhereParts, " AND ")
 	}
-	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts`+alertCountWhere, alertCountArgs...).Scan(&out.AlertCount); err != nil {
+	if err = s.alerts().QueryRowContext(ctx, `SELECT COUNT(*) FROM liquidation_alerts`+alertCountWhere, alertCountArgs...).Scan(&out.AlertCount); err != nil {
 		return out, err
 	}
 	signalCountWhereParts := []string{}
@@ -684,7 +705,7 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 	if len(signalCountWhereParts) > 0 {
 		signalCountWhere = " WHERE " + strings.Join(signalCountWhereParts, " AND ")
 	}
-	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0),COALESCE(SUM(kind='value_area'),0) FROM trade_signals`+signalCountWhere, signalCountArgs...).Scan(&out.AggressiveCount, &out.SteadyCount, &out.ValueAreaCount); err != nil {
+	if err = s.alerts().QueryRowContext(ctx, `SELECT COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0),COALESCE(SUM(kind='value_area'),0) FROM trade_signals`+signalCountWhere, signalCountArgs...).Scan(&out.AggressiveCount, &out.SteadyCount, &out.ValueAreaCount); err != nil {
 		return out, err
 	}
 	switch kind {
@@ -704,12 +725,12 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 
 // SignalTotals reports the stored signal counts per kind.
 func (s *Store) SignalTotals(ctx context.Context) (total, aggressive, steady int64, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0) FROM trade_signals`).Scan(&total, &aggressive, &steady)
+	err = s.alerts().QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0) FROM trade_signals`).Scan(&total, &aggressive, &steady)
 	return
 }
 
 func (s *Store) SignalTotalsWithValueArea(ctx context.Context) (total, aggressive, steady, valueArea int64, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0),COALESCE(SUM(kind='value_area'),0) FROM trade_signals`).Scan(&total, &aggressive, &steady, &valueArea)
+	err = s.alerts().QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(kind='aggressive'),0),COALESCE(SUM(kind='steady'),0),COALESCE(SUM(kind='value_area'),0) FROM trade_signals`).Scan(&total, &aggressive, &steady, &valueArea)
 	return
 }
 
@@ -963,7 +984,7 @@ func (s *Store) PruneAlerts(ctx context.Context, before time.Time) error {
 // of data available for backtesting.
 func (s *Store) AlertOldestTime(ctx context.Context) (time.Time, error) {
 	var oldest sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `SELECT MIN(trigger_ts) FROM liquidation_alerts`).Scan(&oldest); err != nil {
+	if err := s.alerts().QueryRowContext(ctx, `SELECT MIN(trigger_ts) FROM liquidation_alerts`).Scan(&oldest); err != nil {
 		return time.Time{}, err
 	}
 	if !oldest.Valid {

@@ -22,15 +22,24 @@ import (
 type Store struct {
 	db       *sql.DB
 	marketDB *sql.DB
+	alertsDB *sql.DB
 }
 
 func Open(path string) (*Store, error) {
-	return OpenWithMarketDatabase(path, "")
+	return OpenWithMarketAndAlertsDatabase(path, "", "")
 }
 
 // OpenWithMarketDatabase keeps the unified database as the default while
 // allowing market-data methods to use a separately migrated SQLite file.
 func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
+	return OpenWithMarketAndAlertsDatabase(path, marketPath, "")
+}
+
+// OpenWithMarketAndAlertsDatabase opens the unified store plus any separately
+// migrated market-data and alert-history databases. Empty paths keep the
+// corresponding tables on the unified database for legacy deployments and
+// tenant-local stores.
+func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
@@ -44,7 +53,7 @@ func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	s := &Store{db: db, marketDB: db}
+	s := &Store{db: db, marketDB: db, alertsDB: db}
 	marketPath = strings.TrimSpace(marketPath)
 	if marketPath != "" {
 		mainAbs, mainErr := filepath.Abs(path)
@@ -71,12 +80,50 @@ func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
 			s.marketDB = marketDB
 		}
 	}
+	alertsPath = strings.TrimSpace(alertsPath)
+	if alertsPath != "" {
+		mainAbs, mainErr := filepath.Abs(path)
+		alertsAbs, alertsErr := filepath.Abs(alertsPath)
+		marketAbs, marketErr := filepath.Abs(marketPath)
+		if mainErr != nil || alertsErr != nil || (marketPath != "" && marketErr != nil) {
+			_ = db.Close()
+			if mainErr != nil {
+				return nil, mainErr
+			}
+			if alertsErr != nil {
+				return nil, alertsErr
+			}
+			return nil, marketErr
+		}
+		if alertsAbs == mainAbs || (marketPath != "" && alertsAbs == marketAbs) {
+			_ = db.Close()
+			return nil, fmt.Errorf("alerts database must differ from application and market databases")
+		}
+		if err := os.MkdirAll(filepath.Dir(alertsPath), 0750); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		alertsDB, err := sql.Open("sqlite", alertsPath+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		alertsDB.SetMaxOpenConns(1)
+		alertsDB.SetMaxIdleConns(1)
+		s.alertsDB = alertsDB
+	}
 	if err = s.migrate(context.Background()); err != nil {
 		_ = s.Close()
 		return nil, err
 	}
 	if s.marketDB != s.db {
 		if err = s.migrateMarket(context.Background()); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+	}
+	if s.alertsDB != s.db {
+		if err = s.migrateAlertHistory(context.Background()); err != nil {
 			_ = s.Close()
 			return nil, err
 		}
@@ -91,9 +138,23 @@ func (s *Store) market() *sql.DB {
 	return s.marketDB
 }
 
+func (s *Store) alerts() *sql.DB {
+	if s == nil || s.alertsDB == nil {
+		return s.db
+	}
+	return s.alertsDB
+}
+
 func (s *Store) Close() error {
 	if s == nil {
 		return nil
+	}
+	if s.alertsDB != nil && s.alertsDB != s.db && s.alertsDB != s.marketDB {
+		if err := s.alertsDB.Close(); err != nil {
+			_ = s.marketDB.Close()
+			_ = s.db.Close()
+			return err
+		}
 	}
 	if s.marketDB != nil && s.marketDB != s.db {
 		if err := s.marketDB.Close(); err != nil {
@@ -112,7 +173,12 @@ func (s *Store) Ping(ctx context.Context) error {
 		return err
 	}
 	if s.marketDB != nil && s.marketDB != s.db {
-		return s.marketDB.PingContext(ctx)
+		if err := s.marketDB.PingContext(ctx); err != nil {
+			return err
+		}
+	}
+	if s.alertsDB != nil && s.alertsDB != s.db && s.alertsDB != s.marketDB {
+		return s.alertsDB.PingContext(ctx)
 	}
 	return nil
 }

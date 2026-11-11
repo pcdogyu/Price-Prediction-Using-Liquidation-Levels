@@ -20,18 +20,32 @@ type CompactReport struct {
 // so it belongs to the maintenance window and never runs for a few free pages.
 func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactReport, error) {
 	report, err := compactDatabase(ctx, s.db, minimumFreeBytes)
-	if err != nil || s.marketDB == nil || s.marketDB == s.db {
-		return report, err
-	}
-	marketReport, err := compactDatabase(ctx, s.marketDB, minimumFreeBytes)
 	if err != nil {
 		return report, err
 	}
-	report.Compacted = report.Compacted || marketReport.Compacted
-	report.FreeBytes += marketReport.FreeBytes
-	report.BytesBefore += marketReport.BytesBefore
-	report.BytesAfter += marketReport.BytesAfter
-	report.Elapsed += marketReport.Elapsed
+	if s.marketDB != nil && s.marketDB != s.db {
+		marketReport, marketErr := compactDatabase(ctx, s.marketDB, minimumFreeBytes)
+		if marketErr != nil {
+			return report, marketErr
+		}
+		report.Compacted = report.Compacted || marketReport.Compacted
+		report.FreeBytes += marketReport.FreeBytes
+		report.BytesBefore += marketReport.BytesBefore
+		report.BytesAfter += marketReport.BytesAfter
+		report.Elapsed += marketReport.Elapsed
+	}
+	if s.alertsDB == nil || s.alertsDB == s.db || s.alertsDB == s.marketDB {
+		return report, nil
+	}
+	alertsReport, err := compactDatabase(ctx, s.alertsDB, minimumFreeBytes)
+	if err != nil {
+		return report, err
+	}
+	report.Compacted = report.Compacted || alertsReport.Compacted
+	report.FreeBytes += alertsReport.FreeBytes
+	report.BytesBefore += alertsReport.BytesBefore
+	report.BytesAfter += alertsReport.BytesAfter
+	report.Elapsed += alertsReport.Elapsed
 	return report, nil
 }
 
