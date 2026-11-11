@@ -1037,7 +1037,7 @@ func TestPositionOpenModeToggleShowsLimitLeftAndMarketRight(t *testing.T) {
 		t.Fatal("position action cell boundaries are missing")
 	}
 	actions := tvbotHTML[start:end]
-	limitLabel := strings.Index(actions, `<span>限价</span><input type="checkbox"`)
+	limitLabel := strings.Index(actions, `<span>限价</span><span class="position-open-mode-control"><input type="checkbox"`)
 	marketLabel := strings.Index(actions, `<span>市价</span></label>`)
 	if limitLabel < 0 || marketLabel < 0 || limitLabel >= marketLabel {
 		t.Fatalf("position open mode toggle should render limit before market: limit=%d market=%d", limitLabel, marketLabel)
@@ -1046,9 +1046,21 @@ func TestPositionOpenModeToggleShowsLimitLeftAndMarketRight(t *testing.T) {
 		`(openMode === "market" ? " checked" : "")`,
 		`(openMode === "market" ? "市价" : "限价")`,
 		`(modeSaving ? ' aria-busy="true"' : "")`,
+		`position-open-mode-track" aria-hidden="true"`,
+		`<svg class="position-open-mode-icon" viewBox="0 0 24 24" focusable="false">`,
 	} {
 		if !strings.Contains(actions, marker) {
 			t.Fatalf("position open mode toggle missing %q", marker)
+		}
+	}
+	for _, marker := range []string{
+		`position-open-mode-control input:not(:checked) + .position-open-mode-track .position-open-mode-icon`,
+		`position-open-mode-control input:checked + .position-open-mode-track .position-open-mode-thumb`,
+		`position-open-mode-control input:focus-visible + .position-open-mode-track`,
+		`@media (prefers-reduced-motion: reduce)`,
+	} {
+		if !strings.Contains(tvbotHTML, marker) {
+			t.Fatalf("position open mode style missing %q", marker)
 		}
 	}
 }

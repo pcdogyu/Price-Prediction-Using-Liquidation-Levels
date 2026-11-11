@@ -983,58 +983,91 @@ const tvbotHTML = `<!doctype html>
       font-size: 12px;
       white-space: nowrap;
     }
-    .position-open-mode-toggle input {
-      appearance: none;
-      width: 32px;
-      height: 18px;
+    .position-open-mode-control {
+      position: relative;
+      display: inline-flex;
+      width: 36px;
+      height: 22px;
+      min-width: 36px;
+      flex: 0 0 36px;
+    }
+    .position-open-mode-control input {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      width: 100%;
+      height: 100%;
       margin: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .position-open-mode-track {
+      position: absolute;
+      inset: 0;
       border: 1px solid var(--line);
       border-radius: 999px;
       background: var(--muted);
-      position: relative;
-      cursor: pointer;
       transition: transform .18s ease, box-shadow .2s ease, background-color .2s ease, border-color .2s ease;
     }
-    .position-open-mode-toggle input:hover:not(:disabled) {
+    .position-open-mode-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      display: grid;
+      width: 14px;
+      height: 14px;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--panel);
+      color: var(--muted);
+      transition: transform 120ms ease, color 120ms ease;
+    }
+    .position-open-mode-icon {
+      width: 11px;
+      height: 11px;
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 2.25;
+      transition: transform 120ms ease;
+    }
+    .position-open-mode-control input:not(:checked) + .position-open-mode-track .position-open-mode-icon {
+      transform: rotate(180deg);
+    }
+    .position-open-mode-control input:checked + .position-open-mode-track {
+      background: var(--blue);
+      border-color: var(--blue);
+    }
+    .position-open-mode-control input:checked + .position-open-mode-track .position-open-mode-thumb {
+      transform: translateX(16px);
+      color: var(--blue);
+    }
+    .position-open-mode-control input:hover:not(:disabled) + .position-open-mode-track {
       transform: translateY(-1px);
       box-shadow: 0 5px 14px rgba(23, 32, 51, 0.14);
     }
-    .position-open-mode-toggle input:active:not(:disabled) {
+    .position-open-mode-control input:active:not(:disabled) + .position-open-mode-track {
       transform: scale(.98);
       box-shadow: 0 2px 6px rgba(23, 32, 51, 0.12);
       transition-duration: .08s;
     }
-    .position-open-mode-toggle input:focus-visible {
+    .position-open-mode-control input:focus-visible + .position-open-mode-track {
       outline: 2px solid var(--blue);
       outline-offset: 2px;
     }
-    .position-open-mode-toggle input::after {
-      content: "";
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      background: var(--panel);
-      transition: transform 120ms ease;
-    }
-    .position-open-mode-toggle input:checked {
-      background: var(--blue);
-    }
-    .position-open-mode-toggle input:checked::after {
-      transform: translateX(14px);
-    }
-    .position-open-mode-toggle input:disabled {
+    .position-open-mode-control input:disabled + .position-open-mode-track {
       opacity: 0.58;
       cursor: not-allowed;
     }
     @media (prefers-reduced-motion: reduce) {
-      .position-open-mode-toggle input {
+      .position-open-mode-track,
+      .position-open-mode-thumb,
+      .position-open-mode-icon {
         transition-duration: .01ms;
       }
-      .position-open-mode-toggle input:hover,
-      .position-open-mode-toggle input:active {
+      .position-open-mode-control input:hover + .position-open-mode-track,
+      .position-open-mode-control input:active + .position-open-mode-track {
         transform: none;
       }
     }
@@ -7215,7 +7248,7 @@ const tvbotHTML = `<!doctype html>
         { label: "50%", ratio: "0.5" },
         { label: "75%", ratio: "0.75" }
       ].map((item) => '<button class="btn small position-percent-open-btn" type="button" data-position-open="' + openMode + '" data-position-ratio="' + item.ratio + '"' + baseAttrs + ' title="' + (openMode === "limit" ? "限价" : "市价") + '开仓 ' + item.label + '（同向加仓）"' + (busy ? " disabled" : "") + '>' + item.label + '</button>').join("");
-      const openModeToggle = '<label class="position-open-mode-toggle" title="切换本行增仓订单方式"><span>限价</span><input type="checkbox" data-position-open-mode="true" data-position-key="' + keyAttr + '"' + baseAttrs + (openMode === "market" ? " checked" : "") + (busy || modeSaving ? " disabled" : "") + (modeSaving ? ' aria-busy="true"' : "") + ' aria-label="当前' + (openMode === "market" ? "市价" : "限价") + '，点击切换" /><span>市价</span></label>';
+      const openModeToggle = '<label class="position-open-mode-toggle" title="切换本行增仓订单方式"><span>限价</span><span class="position-open-mode-control"><input type="checkbox" data-position-open-mode="true" data-position-key="' + keyAttr + '"' + baseAttrs + (openMode === "market" ? " checked" : "") + (busy || modeSaving ? " disabled" : "") + (modeSaving ? ' aria-busy="true"' : "") + ' aria-label="当前' + (openMode === "market" ? "市价" : "限价") + '，点击切换" /><span class="position-open-mode-track" aria-hidden="true"><span class="position-open-mode-thumb"><svg class="position-open-mode-icon" viewBox="0 0 24 24" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></span></span></span><span>市价</span></label>';
       const closePercentButtons = [
         { label: "10%", ratio: "0.1" },
         { label: "25%", ratio: "0.25" },
