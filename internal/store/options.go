@@ -10,6 +10,17 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
 
+// migrateOptionGamma initializes only the tables served by a standalone
+// options database. The unified database keeps its historical copies during
+// the rollback window.
+func (s *Store) migrateOptionGamma(ctx context.Context) error {
+	_, err := s.options().ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS gamma_latest(symbol TEXT PRIMARY KEY,payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS deribit_gamma_history(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
+CREATE INDEX IF NOT EXISTS deribit_gamma_retention_time ON deribit_gamma_history(ts);`)
+	return err
+}
+
 func (s *Store) SaveOptionGamma(ctx context.Context, p domain.OptionGammaPoint) error {
 	if (p.Symbol != "BTCUSDT" && p.Symbol != "ETHUSDT") || p.Source != "deribit" || p.Time.IsZero() || p.Gamma == nil || math.IsNaN(*p.Gamma) || math.IsInf(*p.Gamma, 0) || math.Abs(*p.Gamma) > 1 || p.Contracts < 1 || (p.State != "ok" && p.State != "partial") {
 		return fmt.Errorf("invalid Deribit Gamma point")
@@ -18,14 +29,14 @@ func (s *Store) SaveOptionGamma(ctx context.Context, p domain.OptionGammaPoint) 
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO deribit_gamma_history(symbol,ts,payload) VALUES(?,?,?) ON CONFLICT(symbol,ts) DO UPDATE SET payload=excluded.payload`, p.Symbol, p.Time.UnixMilli(), data)
+	_, err = s.options().ExecContext(ctx, `INSERT INTO deribit_gamma_history(symbol,ts,payload) VALUES(?,?,?) ON CONFLICT(symbol,ts) DO UPDATE SET payload=excluded.payload`, p.Symbol, p.Time.UnixMilli(), data)
 	return err
 }
 
 func (s *Store) LatestOptionGamma(ctx context.Context, symbol string) (domain.OptionGammaPoint, error) {
 	var point domain.OptionGammaPoint
 	var data []byte
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM deribit_gamma_history WHERE symbol=? ORDER BY ts DESC LIMIT 1`, symbol).Scan(&data)
+	err := s.options().QueryRowContext(ctx, `SELECT payload FROM deribit_gamma_history WHERE symbol=? ORDER BY ts DESC LIMIT 1`, symbol).Scan(&data)
 	if err == nil {
 		err = json.Unmarshal(data, &point)
 	}
@@ -42,7 +53,7 @@ func (s *Store) OptionGammaHistory(ctx context.Context, symbol string, from, to 
 	// Old data is reduced at read time as well as during daily maintenance. Only
 	// exact UTC :00/:30 samples are part of the archive tier; this keeps the API
 	// contract deterministic between cleanup runs and avoids redundant points.
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.options().QueryContext(ctx, `
 SELECT payload,ts FROM deribit_gamma_history
 WHERE symbol=? AND ts>=? AND ts<?
 UNION ALL
@@ -71,7 +82,7 @@ ORDER BY ts`, symbol, denseCutoff, toMillis, symbol, fromMillis, denseCutoff, bu
 
 func (s *Store) OptionGammaAvailableFrom(ctx context.Context, since time.Time) (*time.Time, error) {
 	var ts *int64
-	if err := s.db.QueryRowContext(ctx, `SELECT MIN(ts) FROM deribit_gamma_history WHERE ts>=?`, since.UnixMilli()).Scan(&ts); err != nil {
+	if err := s.options().QueryRowContext(ctx, `SELECT MIN(ts) FROM deribit_gamma_history WHERE ts>=?`, since.UnixMilli()).Scan(&ts); err != nil {
 		return nil, err
 	}
 	if ts == nil {
@@ -127,7 +138,7 @@ func (s *Store) downsampleOptionGamma(ctx context.Context, from, to int64, bucke
 )`
 	var total int64
 	for {
-		result, execErr := s.db.ExecContext(ctx, query, halfBucket, bucketMillis, halfBucket, bucketMillis, bucketMillis, from, to, pruneBatchSize)
+		result, execErr := s.options().ExecContext(ctx, query, halfBucket, bucketMillis, halfBucket, bucketMillis, bucketMillis, from, to, pruneBatchSize)
 		if execErr != nil {
 			return total, execErr
 		}
@@ -150,7 +161,7 @@ func (s *Store) deleteOptionGammaOutsideSlots(ctx context.Context, from, to, buc
 )`
 	var total int64
 	for {
-		result, err := s.db.ExecContext(ctx, query, from, to, bucketMillis, pruneBatchSize)
+		result, err := s.options().ExecContext(ctx, query, from, to, bucketMillis, pruneBatchSize)
 		if err != nil {
 			return total, err
 		}

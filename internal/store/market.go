@@ -32,6 +32,8 @@ func (s *Store) databaseForTable(table string) *sql.DB {
 		return s.market()
 	case "liquidation_alerts", "trade_signals":
 		return s.alerts()
+	case "gamma_latest", "deribit_gamma_history":
+		return s.options()
 	default:
 		return s.db
 	}

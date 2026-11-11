@@ -385,13 +385,13 @@ func (s *Store) SaveGamma(ctx context.Context, g domain.GammaView) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO gamma_latest(symbol,payload) VALUES(?,?) ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload`, g.Symbol, b)
+	_, err = s.options().ExecContext(ctx, `INSERT INTO gamma_latest(symbol,payload) VALUES(?,?) ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload`, g.Symbol, b)
 	return err
 }
 func (s *Store) LatestGamma(ctx context.Context, symbol string) (domain.GammaView, error) {
 	var g domain.GammaView
 	var b []byte
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM gamma_latest WHERE symbol=?`, symbol).Scan(&b)
+	err := s.options().QueryRowContext(ctx, `SELECT payload FROM gamma_latest WHERE symbol=?`, symbol).Scan(&b)
 	if err == nil {
 		err = json.Unmarshal(b, &g)
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/marketmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/observability"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/optionsmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbridge"
 	tvbotenv "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotenv"
@@ -44,6 +45,10 @@ func main() {
 		splitAlertsDatabase()
 		return
 	}
+	if len(os.Args) == 2 && os.Args[1] == "split-options-database" {
+		splitOptionsDatabase()
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "add-user" {
 		addUser(os.Args[2])
 		return
@@ -63,7 +68,8 @@ func main() {
 	}
 	marketDatabase := resolveMarketDatabase(context.Background(), cfg, log)
 	alertsDatabase := resolveAlertsDatabase(context.Background(), cfg, log)
-	st, err := store.OpenWithMarketAndAlertsDatabase(cfg.DatabasePath, marketDatabase, alertsDatabase)
+	optionsDatabase := resolveOptionsDatabase(context.Background(), cfg, log)
+	st, err := store.OpenWithMarketAndAlertsAndOptionsDatabase(cfg.DatabasePath, marketDatabase, alertsDatabase, optionsDatabase)
 	if err != nil {
 		log.Error("database open failed", "error", err)
 		os.Exit(1)
@@ -260,6 +266,63 @@ func resolveAlertsDatabase(ctx context.Context, cfg config.Config, log *slog.Log
 		return ""
 	}
 	log.Info("using standalone alerts database", "database", target)
+	return target
+}
+
+func splitOptionsDatabase() {
+	cfg := config.Load()
+	target := strings.TrimSpace(cfg.OptionsDatabasePath)
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "could not split options database: APP_OPTIONS_DATABASE is required")
+		os.Exit(2)
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil {
+		if sourceErr != nil {
+			fmt.Fprintf(os.Stderr, "could not split options database: %v\n", sourceErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "could not split options database: %v\n", targetErr)
+		}
+		os.Exit(2)
+	}
+	if sourceAbs == targetAbs {
+		fmt.Fprintln(os.Stderr, "could not split options database: APP_OPTIONS_DATABASE must differ from APP_DATABASE")
+		os.Exit(2)
+	}
+	migrated, err := optionsmigration.MigrateUnifiedSQLite(context.Background(), target, cfg.DatabasePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not split options database: %v\n", err)
+		os.Exit(2)
+	}
+	if migrated {
+		fmt.Println("options database split completed")
+	} else {
+		fmt.Println("options database split already completed or source database is unavailable")
+	}
+}
+
+func resolveOptionsDatabase(ctx context.Context, cfg config.Config, log *slog.Logger) string {
+	target := strings.TrimSpace(cfg.OptionsDatabasePath)
+	if target == "" {
+		return ""
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil || sourceAbs == targetAbs {
+		log.Warn("options database path invalid; using unified database", "database", target)
+		return ""
+	}
+	completed, err := optionsmigration.HasCompletedMigration(ctx, target, cfg.DatabasePath)
+	if err != nil {
+		log.Warn("options database migration marker unavailable; using unified database", "database", target, "error", err)
+		return ""
+	}
+	if !completed {
+		log.Warn("options database not migrated; using unified database", "database", target)
+		return ""
+	}
+	log.Info("using standalone options database", "database", target)
 	return target
 }
 

@@ -35,17 +35,33 @@ func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactRep
 		report.Elapsed += marketReport.Elapsed
 	}
 	if s.alertsDB == nil || s.alertsDB == s.db || s.alertsDB == s.marketDB {
+		if s.optionsDB == nil || s.optionsDB == s.db || s.optionsDB == s.marketDB {
+			return report, nil
+		}
+	}
+	if s.alertsDB != nil && s.alertsDB != s.db && s.alertsDB != s.marketDB {
+		alertsReport, alertsErr := compactDatabase(ctx, s.alertsDB, minimumFreeBytes)
+		if alertsErr != nil {
+			return report, alertsErr
+		}
+		report.Compacted = report.Compacted || alertsReport.Compacted
+		report.FreeBytes += alertsReport.FreeBytes
+		report.BytesBefore += alertsReport.BytesBefore
+		report.BytesAfter += alertsReport.BytesAfter
+		report.Elapsed += alertsReport.Elapsed
+	}
+	if s.optionsDB == nil || s.optionsDB == s.db || s.optionsDB == s.marketDB || s.optionsDB == s.alertsDB {
 		return report, nil
 	}
-	alertsReport, err := compactDatabase(ctx, s.alertsDB, minimumFreeBytes)
+	optionsReport, err := compactDatabase(ctx, s.optionsDB, minimumFreeBytes)
 	if err != nil {
 		return report, err
 	}
-	report.Compacted = report.Compacted || alertsReport.Compacted
-	report.FreeBytes += alertsReport.FreeBytes
-	report.BytesBefore += alertsReport.BytesBefore
-	report.BytesAfter += alertsReport.BytesAfter
-	report.Elapsed += alertsReport.Elapsed
+	report.Compacted = report.Compacted || optionsReport.Compacted
+	report.FreeBytes += optionsReport.FreeBytes
+	report.BytesBefore += optionsReport.BytesBefore
+	report.BytesAfter += optionsReport.BytesAfter
+	report.Elapsed += optionsReport.Elapsed
 	return report, nil
 }
 

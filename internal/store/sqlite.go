@@ -20,19 +20,20 @@ import (
 )
 
 type Store struct {
-	db       *sql.DB
-	marketDB *sql.DB
-	alertsDB *sql.DB
+	db        *sql.DB
+	marketDB  *sql.DB
+	alertsDB  *sql.DB
+	optionsDB *sql.DB
 }
 
 func Open(path string) (*Store, error) {
-	return OpenWithMarketAndAlertsDatabase(path, "", "")
+	return OpenWithMarketAndAlertsAndOptionsDatabase(path, "", "", "")
 }
 
 // OpenWithMarketDatabase keeps the unified database as the default while
 // allowing market-data methods to use a separately migrated SQLite file.
 func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsDatabase(path, marketPath, "")
+	return OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, "", "")
 }
 
 // OpenWithMarketAndAlertsDatabase opens the unified store plus any separately
@@ -40,6 +41,14 @@ func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
 // corresponding tables on the unified database for legacy deployments and
 // tenant-local stores.
 func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Store, error) {
+	return OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, "")
+}
+
+// OpenWithMarketAndAlertsAndOptionsDatabase opens the unified store plus any
+// separately migrated market-data, alert-history, and options/Gamma databases.
+// Empty paths keep the corresponding tables on the unified database for legacy
+// deployments and tenant-local stores.
+func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, optionsPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
@@ -53,7 +62,7 @@ func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Stor
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	s := &Store{db: db, marketDB: db, alertsDB: db}
+	s := &Store{db: db, marketDB: db, alertsDB: db, optionsDB: db}
 	marketPath = strings.TrimSpace(marketPath)
 	if marketPath != "" {
 		mainAbs, mainErr := filepath.Abs(path)
@@ -112,6 +121,42 @@ func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Stor
 		alertsDB.SetMaxIdleConns(1)
 		s.alertsDB = alertsDB
 	}
+	optionsPath = strings.TrimSpace(optionsPath)
+	if optionsPath != "" {
+		mainAbs, mainErr := filepath.Abs(path)
+		optionsAbs, optionsErr := filepath.Abs(optionsPath)
+		marketAbs, marketErr := filepath.Abs(marketPath)
+		alertsAbs, alertsErr := filepath.Abs(alertsPath)
+		if mainErr != nil || optionsErr != nil || (marketPath != "" && marketErr != nil) || (alertsPath != "" && alertsErr != nil) {
+			_ = s.Close()
+			if mainErr != nil {
+				return nil, mainErr
+			}
+			if optionsErr != nil {
+				return nil, optionsErr
+			}
+			if marketPath != "" && marketErr != nil {
+				return nil, marketErr
+			}
+			return nil, alertsErr
+		}
+		if optionsAbs == mainAbs || (marketPath != "" && optionsAbs == marketAbs) || (alertsPath != "" && optionsAbs == alertsAbs) {
+			_ = s.Close()
+			return nil, fmt.Errorf("options database must differ from application, market, and alerts databases")
+		}
+		if err := os.MkdirAll(filepath.Dir(optionsPath), 0750); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+		optionsDB, err := sql.Open("sqlite", optionsPath+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+		if err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+		optionsDB.SetMaxOpenConns(1)
+		optionsDB.SetMaxIdleConns(1)
+		s.optionsDB = optionsDB
+	}
 	if err = s.migrate(context.Background()); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -124,6 +169,12 @@ func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Stor
 	}
 	if s.alertsDB != s.db {
 		if err = s.migrateAlertHistory(context.Background()); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+	}
+	if s.optionsDB != s.db {
+		if err = s.migrateOptionGamma(context.Background()); err != nil {
 			_ = s.Close()
 			return nil, err
 		}
@@ -145,12 +196,31 @@ func (s *Store) alerts() *sql.DB {
 	return s.alertsDB
 }
 
+func (s *Store) options() *sql.DB {
+	if s == nil || s.optionsDB == nil {
+		return s.db
+	}
+	return s.optionsDB
+}
+
 func (s *Store) Close() error {
 	if s == nil {
 		return nil
 	}
 	if s.alertsDB != nil && s.alertsDB != s.db && s.alertsDB != s.marketDB {
 		if err := s.alertsDB.Close(); err != nil {
+			if s.optionsDB != nil && s.optionsDB != s.db && s.optionsDB != s.marketDB && s.optionsDB != s.alertsDB {
+				_ = s.optionsDB.Close()
+			}
+			if s.marketDB != nil && s.marketDB != s.db {
+				_ = s.marketDB.Close()
+			}
+			_ = s.db.Close()
+			return err
+		}
+	}
+	if s.optionsDB != nil && s.optionsDB != s.db && s.optionsDB != s.marketDB && s.optionsDB != s.alertsDB {
+		if err := s.optionsDB.Close(); err != nil {
 			_ = s.marketDB.Close()
 			_ = s.db.Close()
 			return err
@@ -178,7 +248,12 @@ func (s *Store) Ping(ctx context.Context) error {
 		}
 	}
 	if s.alertsDB != nil && s.alertsDB != s.db && s.alertsDB != s.marketDB {
-		return s.alertsDB.PingContext(ctx)
+		if err := s.alertsDB.PingContext(ctx); err != nil {
+			return err
+		}
+	}
+	if s.optionsDB != nil && s.optionsDB != s.db && s.optionsDB != s.marketDB && s.optionsDB != s.alertsDB {
+		return s.optionsDB.PingContext(ctx)
 	}
 	return nil
 }
