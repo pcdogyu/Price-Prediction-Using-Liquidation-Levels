@@ -26,6 +26,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbridge"
 	tvbotenv "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotenv"
 	tvbotserver "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotserver"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumemigration"
 )
 
 func main() {
@@ -49,6 +50,10 @@ func main() {
 		splitOptionsDatabase()
 		return
 	}
+	if len(os.Args) == 2 && os.Args[1] == "split-volume-database" {
+		splitVolumeDatabase()
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "add-user" {
 		addUser(os.Args[2])
 		return
@@ -69,7 +74,8 @@ func main() {
 	marketDatabase := resolveMarketDatabase(context.Background(), cfg, log)
 	alertsDatabase := resolveAlertsDatabase(context.Background(), cfg, log)
 	optionsDatabase := resolveOptionsDatabase(context.Background(), cfg, log)
-	st, err := store.OpenWithMarketAndAlertsAndOptionsDatabase(cfg.DatabasePath, marketDatabase, alertsDatabase, optionsDatabase)
+	volumeDatabase := resolveVolumeDatabase(context.Background(), cfg, log)
+	st, err := store.OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(cfg.DatabasePath, marketDatabase, alertsDatabase, optionsDatabase, volumeDatabase)
 	if err != nil {
 		log.Error("database open failed", "error", err)
 		os.Exit(1)
@@ -323,6 +329,63 @@ func resolveOptionsDatabase(ctx context.Context, cfg config.Config, log *slog.Lo
 		return ""
 	}
 	log.Info("using standalone options database", "database", target)
+	return target
+}
+
+func splitVolumeDatabase() {
+	cfg := config.Load()
+	target := strings.TrimSpace(cfg.VolumeDatabasePath)
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "could not split volume database: APP_VOLUME_DATABASE is required")
+		os.Exit(2)
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil {
+		if sourceErr != nil {
+			fmt.Fprintf(os.Stderr, "could not split volume database: %v\n", sourceErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "could not split volume database: %v\n", targetErr)
+		}
+		os.Exit(2)
+	}
+	if sourceAbs == targetAbs {
+		fmt.Fprintln(os.Stderr, "could not split volume database: APP_VOLUME_DATABASE must differ from APP_DATABASE")
+		os.Exit(2)
+	}
+	migrated, err := volumemigration.MigrateUnifiedSQLite(context.Background(), target, cfg.DatabasePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not split volume database: %v\n", err)
+		os.Exit(2)
+	}
+	if migrated {
+		fmt.Println("volume database split completed")
+	} else {
+		fmt.Println("volume database split already completed or source database is unavailable")
+	}
+}
+
+func resolveVolumeDatabase(ctx context.Context, cfg config.Config, log *slog.Logger) string {
+	target := strings.TrimSpace(cfg.VolumeDatabasePath)
+	if target == "" {
+		return ""
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil || sourceAbs == targetAbs {
+		log.Warn("volume database path invalid; using unified database", "database", target)
+		return ""
+	}
+	completed, err := volumemigration.HasCompletedMigration(ctx, target, cfg.DatabasePath)
+	if err != nil {
+		log.Warn("volume database migration marker unavailable; using unified database", "database", target, "error", err)
+		return ""
+	}
+	if !completed {
+		log.Warn("volume database not migrated; using unified database", "database", target)
+		return ""
+	}
+	log.Info("using standalone volume database", "database", target)
 	return target
 }
 

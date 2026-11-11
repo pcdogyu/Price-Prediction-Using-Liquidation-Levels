@@ -57,6 +57,7 @@ func TestLoadReadsStandaloneTVBotDatabase(t *testing.T) {
 	t.Setenv("APP_MARKET_DATABASE", "data/market.db")
 	t.Setenv("APP_ALERTS_DATABASE", "data/alerts.db")
 	t.Setenv("APP_OPTIONS_DATABASE", "data/options.db")
+	t.Setenv("APP_VOLUME_DATABASE", "data/volume.db")
 	got := Load()
 	if got.DatabasePath != "data/main.db" {
 		t.Fatalf("database path = %q", got.DatabasePath)
@@ -72,5 +73,8 @@ func TestLoadReadsStandaloneTVBotDatabase(t *testing.T) {
 	}
 	if got.OptionsDatabasePath != "data/options.db" {
 		t.Fatalf("options database path = %q", got.OptionsDatabasePath)
+	}
+	if got.VolumeDatabasePath != "data/volume.db" {
+		t.Fatalf("volume database path = %q", got.VolumeDatabasePath)
 	}
 }

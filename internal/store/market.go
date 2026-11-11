@@ -34,6 +34,8 @@ func (s *Store) databaseForTable(table string) *sql.DB {
 		return s.alerts()
 	case "gamma_latest", "deribit_gamma_history":
 		return s.options()
+	case "volume_profile_levels", "volume_profile_cursors", "volume_profile_snapshots", "volume_archive_imports":
+		return s.volume()
 	default:
 		return s.db
 	}

@@ -155,7 +155,8 @@ for database_file in \
   "$data_root/tvbot.db" "$data_root/tvbot.db-wal" "$data_root/tvbot.db-shm" \
   "$data_root/market.db" "$data_root/market.db-wal" "$data_root/market.db-shm" \
   "$data_root/alerts.db" "$data_root/alerts.db-wal" "$data_root/alerts.db-shm" \
-  "$data_root/options.db" "$data_root/options.db-wal" "$data_root/options.db-shm"; do
+  "$data_root/options.db" "$data_root/options.db-wal" "$data_root/options.db-shm" \
+  "$data_root/volume.db" "$data_root/volume.db-wal" "$data_root/volume.db-shm"; do
   if [[ -e "$database_file" ]]; then
     chown "$builder:$builder" "$database_file"
   fi

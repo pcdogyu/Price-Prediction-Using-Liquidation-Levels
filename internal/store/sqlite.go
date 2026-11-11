@@ -24,16 +24,17 @@ type Store struct {
 	marketDB  *sql.DB
 	alertsDB  *sql.DB
 	optionsDB *sql.DB
+	volumeDB  *sql.DB
 }
 
 func Open(path string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsDatabase(path, "", "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, "", "", "", "")
 }
 
 // OpenWithMarketDatabase keeps the unified database as the default while
 // allowing market-data methods to use a separately migrated SQLite file.
 func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, "", "", "")
 }
 
 // OpenWithMarketAndAlertsDatabase opens the unified store plus any separately
@@ -41,7 +42,7 @@ func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
 // corresponding tables on the unified database for legacy deployments and
 // tenant-local stores.
 func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alertsPath, "", "")
 }
 
 // OpenWithMarketAndAlertsAndOptionsDatabase opens the unified store plus any
@@ -49,6 +50,14 @@ func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Stor
 // Empty paths keep the corresponding tables on the unified database for legacy
 // deployments and tenant-local stores.
 func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, optionsPath string) (*Store, error) {
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alertsPath, optionsPath, "")
+}
+
+// OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase opens the unified store
+// plus any separately migrated market-data, alert-history, options/Gamma, and
+// volume-profile databases. Empty paths keep the corresponding tables on the
+// unified database for legacy deployments and tenant-local stores.
+func OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alertsPath, optionsPath, volumePath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
@@ -62,7 +71,7 @@ func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, opt
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	s := &Store{db: db, marketDB: db, alertsDB: db, optionsDB: db}
+	s := &Store{db: db, marketDB: db, alertsDB: db, optionsDB: db, volumeDB: db}
 	marketPath = strings.TrimSpace(marketPath)
 	if marketPath != "" {
 		mainAbs, mainErr := filepath.Abs(path)
@@ -157,6 +166,46 @@ func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, opt
 		optionsDB.SetMaxIdleConns(1)
 		s.optionsDB = optionsDB
 	}
+	volumePath = strings.TrimSpace(volumePath)
+	if volumePath != "" {
+		mainAbs, mainErr := filepath.Abs(path)
+		volumeAbs, volumeErr := filepath.Abs(volumePath)
+		marketAbs, marketErr := filepath.Abs(marketPath)
+		alertsAbs, alertsErr := filepath.Abs(alertsPath)
+		optionsAbs, optionsErr := filepath.Abs(optionsPath)
+		if mainErr != nil || volumeErr != nil || (marketPath != "" && marketErr != nil) || (alertsPath != "" && alertsErr != nil) || (optionsPath != "" && optionsErr != nil) {
+			_ = s.Close()
+			if mainErr != nil {
+				return nil, mainErr
+			}
+			if volumeErr != nil {
+				return nil, volumeErr
+			}
+			if marketPath != "" && marketErr != nil {
+				return nil, marketErr
+			}
+			if alertsPath != "" && alertsErr != nil {
+				return nil, alertsErr
+			}
+			return nil, optionsErr
+		}
+		if volumeAbs == mainAbs || (marketPath != "" && volumeAbs == marketAbs) || (alertsPath != "" && volumeAbs == alertsAbs) || (optionsPath != "" && volumeAbs == optionsAbs) {
+			_ = s.Close()
+			return nil, fmt.Errorf("volume database must differ from application, market, alerts, and options databases")
+		}
+		if err := os.MkdirAll(filepath.Dir(volumePath), 0750); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+		volumeDB, err := sql.Open("sqlite", volumePath+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+		if err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+		volumeDB.SetMaxOpenConns(1)
+		volumeDB.SetMaxIdleConns(1)
+		s.volumeDB = volumeDB
+	}
 	if err = s.migrate(context.Background()); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -175,6 +224,12 @@ func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, opt
 	}
 	if s.optionsDB != s.db {
 		if err = s.migrateOptionGamma(context.Background()); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+	}
+	if s.volumeDB != s.db {
+		if err = s.migrateVolumeProfile(context.Background()); err != nil {
 			_ = s.Close()
 			return nil, err
 		}
@@ -203,6 +258,13 @@ func (s *Store) options() *sql.DB {
 	return s.optionsDB
 }
 
+func (s *Store) volume() *sql.DB {
+	if s == nil || s.volumeDB == nil {
+		return s.db
+	}
+	return s.volumeDB
+}
+
 func (s *Store) Close() error {
 	if s == nil {
 		return nil
@@ -221,6 +283,13 @@ func (s *Store) Close() error {
 	}
 	if s.optionsDB != nil && s.optionsDB != s.db && s.optionsDB != s.marketDB && s.optionsDB != s.alertsDB {
 		if err := s.optionsDB.Close(); err != nil {
+			_ = s.marketDB.Close()
+			_ = s.db.Close()
+			return err
+		}
+	}
+	if s.volumeDB != nil && s.volumeDB != s.db && s.volumeDB != s.marketDB && s.volumeDB != s.alertsDB && s.volumeDB != s.optionsDB {
+		if err := s.volumeDB.Close(); err != nil {
 			_ = s.marketDB.Close()
 			_ = s.db.Close()
 			return err
@@ -253,7 +322,12 @@ func (s *Store) Ping(ctx context.Context) error {
 		}
 	}
 	if s.optionsDB != nil && s.optionsDB != s.db && s.optionsDB != s.marketDB && s.optionsDB != s.alertsDB {
-		return s.optionsDB.PingContext(ctx)
+		if err := s.optionsDB.PingContext(ctx); err != nil {
+			return err
+		}
+	}
+	if s.volumeDB != nil && s.volumeDB != s.db && s.volumeDB != s.marketDB && s.volumeDB != s.alertsDB && s.volumeDB != s.optionsDB {
+		return s.volumeDB.PingContext(ctx)
 	}
 	return nil
 }
@@ -875,7 +949,7 @@ func (s *Store) ApplyAggregateTrades(ctx context.Context, symbol string, session
 		return nil
 	}
 	sort.Slice(trades, func(i, j int) bool { return trades[i].ID < trades[j].ID })
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.volume().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -919,7 +993,7 @@ func (s *Store) ApplyAggregateTrades(ctx context.Context, symbol string, session
 
 func (s *Store) VolumeProfileLevels(ctx context.Context, symbol string, sessionStart time.Time) ([]volumeprofile.Level, int64, time.Time, bool, error) {
 	key := sessionStart.UTC().UnixMilli()
-	rows, err := s.db.QueryContext(ctx, `SELECT price,volume_usd FROM volume_profile_levels WHERE symbol=? AND session_ts=? ORDER BY price`, symbol, key)
+	rows, err := s.volume().QueryContext(ctx, `SELECT price,volume_usd FROM volume_profile_levels WHERE symbol=? AND session_ts=? ORDER BY price`, symbol, key)
 	if err != nil {
 		return nil, 0, time.Time{}, false, err
 	}
@@ -937,7 +1011,7 @@ func (s *Store) VolumeProfileLevels(ctx context.Context, symbol string, sessionS
 	}
 	var lastID, lastMS int64
 	var complete int
-	err = s.db.QueryRowContext(ctx, `SELECT last_agg_id,last_trade_ts,complete FROM volume_profile_cursors WHERE symbol=? AND session_ts=?`, symbol, key).Scan(&lastID, &lastMS, &complete)
+	err = s.volume().QueryRowContext(ctx, `SELECT last_agg_id,last_trade_ts,complete FROM volume_profile_cursors WHERE symbol=? AND session_ts=?`, symbol, key).Scan(&lastID, &lastMS, &complete)
 	if errors.Is(err, sql.ErrNoRows) {
 		return levels, 0, time.Time{}, false, nil
 	}
@@ -954,7 +1028,7 @@ func (s *Store) VolumeProfileCursor(ctx context.Context, symbol string, sessionS
 	key := sessionStart.UTC().UnixMilli()
 	var lastID, lastMS int64
 	var complete int
-	err := s.db.QueryRowContext(ctx, `SELECT last_agg_id,last_trade_ts,complete FROM volume_profile_cursors WHERE symbol=? AND session_ts=?`, symbol, key).Scan(&lastID, &lastMS, &complete)
+	err := s.volume().QueryRowContext(ctx, `SELECT last_agg_id,last_trade_ts,complete FROM volume_profile_cursors WHERE symbol=? AND session_ts=?`, symbol, key).Scan(&lastID, &lastMS, &complete)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, time.Time{}, false, nil
 	}
@@ -965,7 +1039,7 @@ func (s *Store) VolumeProfileCursor(ctx context.Context, symbol string, sessionS
 }
 
 func (s *Store) SetVolumeProfileComplete(ctx context.Context, symbol string, sessionStart time.Time, complete bool) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO volume_profile_cursors(symbol,session_ts,last_agg_id,last_trade_ts,complete,updated_ts) VALUES(?,?,?,?,?,?) ON CONFLICT(symbol,session_ts) DO UPDATE SET complete=excluded.complete,updated_ts=excluded.updated_ts`, symbol, sessionStart.UTC().UnixMilli(), 0, 0, boolInt(complete), time.Now().UTC().UnixMilli())
+	_, err := s.volume().ExecContext(ctx, `INSERT INTO volume_profile_cursors(symbol,session_ts,last_agg_id,last_trade_ts,complete,updated_ts) VALUES(?,?,?,?,?,?) ON CONFLICT(symbol,session_ts) DO UPDATE SET complete=excluded.complete,updated_ts=excluded.updated_ts`, symbol, sessionStart.UTC().UnixMilli(), 0, 0, boolInt(complete), time.Now().UTC().UnixMilli())
 	return err
 }
 
@@ -977,7 +1051,7 @@ func (s *Store) SaveVolumeProfileSnapshots(ctx context.Context, snapshots []doma
 	if len(snapshots) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.volume().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -996,7 +1070,7 @@ func (s *Store) SaveVolumeProfileSnapshots(ctx context.Context, snapshots []doma
 }
 
 func (s *Store) VolumeProfileSnapshots(ctx context.Context, symbol string, from, before time.Time) ([]domain.VolumeProfileSnapshot, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ts,session_ts,val,vah,total_volume_usd,complete FROM volume_profile_snapshots WHERE symbol=? AND ts>=? AND ts<? ORDER BY ts`, symbol, from.UTC().UnixMilli(), before.UTC().UnixMilli())
+	rows, err := s.volume().QueryContext(ctx, `SELECT ts,session_ts,val,vah,total_volume_usd,complete FROM volume_profile_snapshots WHERE symbol=? AND ts>=? AND ts<? ORDER BY ts`, symbol, from.UTC().UnixMilli(), before.UTC().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -1019,13 +1093,13 @@ func (s *Store) VolumeProfileSnapshots(ctx context.Context, symbol string, from,
 }
 
 func (s *Store) MarkArchiveImport(ctx context.Context, symbol string, day time.Time, status, message string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO volume_archive_imports(symbol,day,status,error,updated_ts) VALUES(?,?,?,?,?) ON CONFLICT(symbol,day) DO UPDATE SET status=excluded.status,error=excluded.error,updated_ts=excluded.updated_ts`, symbol, day.UTC().Format("2006-01-02"), status, message, time.Now().UTC().UnixMilli())
+	_, err := s.volume().ExecContext(ctx, `INSERT INTO volume_archive_imports(symbol,day,status,error,updated_ts) VALUES(?,?,?,?,?) ON CONFLICT(symbol,day) DO UPDATE SET status=excluded.status,error=excluded.error,updated_ts=excluded.updated_ts`, symbol, day.UTC().Format("2006-01-02"), status, message, time.Now().UTC().UnixMilli())
 	return err
 }
 
 func (s *Store) ArchiveImported(ctx context.Context, symbol string, day time.Time) (bool, error) {
 	var status string
-	err := s.db.QueryRowContext(ctx, `SELECT status FROM volume_archive_imports WHERE symbol=? AND day=?`, symbol, day.UTC().Format("2006-01-02")).Scan(&status)
+	err := s.volume().QueryRowContext(ctx, `SELECT status FROM volume_archive_imports WHERE symbol=? AND day=?`, symbol, day.UTC().Format("2006-01-02")).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -1034,7 +1108,7 @@ func (s *Store) ArchiveImported(ctx context.Context, symbol string, day time.Tim
 
 func (s *Store) CompleteArchiveDays(ctx context.Context, symbol string, from, before time.Time) (int, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM volume_archive_imports WHERE symbol=? AND status=? AND day>=? AND day<?`, symbol, volumeprofile.ArchiveStatus, from.UTC().Format("2006-01-02"), before.UTC().Format("2006-01-02")).Scan(&count)
+	err := s.volume().QueryRowContext(ctx, `SELECT COUNT(*) FROM volume_archive_imports WHERE symbol=? AND status=? AND day>=? AND day<?`, symbol, volumeprofile.ArchiveStatus, from.UTC().Format("2006-01-02"), before.UTC().Format("2006-01-02")).Scan(&count)
 	return count, err
 }
 

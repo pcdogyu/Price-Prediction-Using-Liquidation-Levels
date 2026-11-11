@@ -1,0 +1,221 @@
+package volumemigration
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+// Tables is the explicit volume-profile boundary for this database split.
+// Market candles, predictions, options, alerts, authentication, and TVBot data
+// remain in their existing databases.
+var Tables = []string{
+	"volume_profile_levels",
+	"volume_profile_cursors",
+	"volume_profile_snapshots",
+	"volume_archive_imports",
+}
+
+// MigrateUnifiedSQLite copies only volume-profile tables from sourcePath to
+// targetPath. The source is never modified and a committed marker makes
+// retries idempotent.
+func MigrateUnifiedSQLite(ctx context.Context, targetPath, sourcePath string) (bool, error) {
+	sourceAbs, err := absoluteExistingPath(sourcePath)
+	if err != nil {
+		return false, err
+	}
+	if sourceAbs == "" {
+		return false, nil
+	}
+	targetAbs, err := filepath.Abs(strings.TrimSpace(targetPath))
+	if err != nil {
+		return false, err
+	}
+	if sourceAbs == targetAbs {
+		return false, errors.New("volume database must differ from APP_DATABASE")
+	}
+	if err := os.MkdirAll(filepath.Dir(targetAbs), 0o750); err != nil {
+		return false, err
+	}
+	db, err := openDatabase(targetAbs)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS volume_migrations(source_path TEXT PRIMARY KEY,completed_ts INTEGER NOT NULL)`); err != nil {
+		return false, err
+	}
+	var completed int
+	if err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM volume_migrations WHERE source_path=?`, sourceAbs).Scan(&completed); err != nil {
+		return false, err
+	}
+	if completed != 0 {
+		return false, nil
+	}
+	if _, err = db.ExecContext(ctx, `ATTACH DATABASE ? AS legacy`, sourceAbs); err != nil {
+		return false, err
+	}
+	defer db.ExecContext(context.Background(), `DETACH DATABASE legacy`)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	for _, table := range Tables {
+		var present int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM legacy.sqlite_master WHERE type='table' AND name=?`, table).Scan(&present); err != nil {
+			return false, err
+		}
+		if present == 0 {
+			continue
+		}
+		if err := copyTable(ctx, tx, table); err != nil {
+			return false, fmt.Errorf("split volume table %s: %w", table, err)
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO volume_migrations(source_path,completed_ts) VALUES(?,?)`, sourceAbs, time.Now().UTC().UnixMilli()); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// HasCompletedMigration reports whether targetPath contains a committed marker
+// for sourcePath. Startup uses this guard so it never selects an empty or
+// partially copied volume database.
+func HasCompletedMigration(ctx context.Context, targetPath, sourcePath string) (bool, error) {
+	targetAbs, err := filepath.Abs(strings.TrimSpace(targetPath))
+	if err != nil {
+		return false, err
+	}
+	if _, err := os.Stat(targetAbs); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	sourceAbs, err := filepath.Abs(strings.TrimSpace(sourcePath))
+	if err != nil {
+		return false, err
+	}
+	db, err := sql.Open("sqlite", targetAbs+"?mode=ro")
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	var tableCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='volume_migrations'`).Scan(&tableCount); err != nil {
+		return false, err
+	}
+	if tableCount == 0 {
+		return false, nil
+	}
+	var migrationCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM volume_migrations WHERE source_path=?`, sourceAbs).Scan(&migrationCount); err != nil {
+		return false, err
+	}
+	return migrationCount > 0, nil
+}
+
+func absoluteExistingPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("source database path is required")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+func openDatabase(path string) (*sql.DB, error) {
+	return sql.Open("sqlite", path+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+}
+
+func copyTable(ctx context.Context, tx *sql.Tx, table string) error {
+	var schema string
+	if err := tx.QueryRowContext(ctx, `SELECT sql FROM legacy.sqlite_master WHERE type='table' AND name=?`, table).Scan(&schema); err != nil {
+		return err
+	}
+	open := strings.Index(schema, "(")
+	if open < 0 {
+		return errors.New("table schema has no columns")
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS main.`+quoteIdent(table)+" "+schema[open:]); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `PRAGMA legacy.table_info(`+quoteIdent(table)+`)`)
+	if err != nil {
+		return err
+	}
+	var columns []string
+	for rows.Next() {
+		var cid, notNull, primary int
+		var name, kind string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primary); err != nil {
+			rows.Close()
+			return err
+		}
+		columns = append(columns, name)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if len(columns) == 0 {
+		return nil
+	}
+	sourceRows, err := tx.QueryContext(ctx, `SELECT `+joinQuoted(columns)+` FROM legacy.`+quoteIdent(table))
+	if err != nil {
+		return err
+	}
+	defer sourceRows.Close()
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(columns)), ",")
+	insert, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO main.`+quoteIdent(table)+` (`+joinQuoted(columns)+`) VALUES (`+placeholders+`)`)
+	if err != nil {
+		return err
+	}
+	defer insert.Close()
+	for sourceRows.Next() {
+		values := make([]any, len(columns))
+		pointers := make([]any, len(values))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := sourceRows.Scan(pointers...); err != nil {
+			return err
+		}
+		if _, err := insert.ExecContext(ctx, values...); err != nil {
+			return err
+		}
+	}
+	return sourceRows.Err()
+}
+
+func joinQuoted(values []string) string {
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = quoteIdent(value)
+	}
+	return strings.Join(quoted, ",")
+}
+
+func quoteIdent(value string) string { return `"` + strings.ReplaceAll(value, `"`, `""`) + `"` }

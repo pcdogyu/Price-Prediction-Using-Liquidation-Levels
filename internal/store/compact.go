@@ -36,7 +36,9 @@ func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactRep
 	}
 	if s.alertsDB == nil || s.alertsDB == s.db || s.alertsDB == s.marketDB {
 		if s.optionsDB == nil || s.optionsDB == s.db || s.optionsDB == s.marketDB {
-			return report, nil
+			if s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB {
+				return report, nil
+			}
 		}
 	}
 	if s.alertsDB != nil && s.alertsDB != s.db && s.alertsDB != s.marketDB {
@@ -51,17 +53,32 @@ func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactRep
 		report.Elapsed += alertsReport.Elapsed
 	}
 	if s.optionsDB == nil || s.optionsDB == s.db || s.optionsDB == s.marketDB || s.optionsDB == s.alertsDB {
+		if s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB || s.volumeDB == s.alertsDB {
+			return report, nil
+		}
+	} else {
+		optionsReport, err := compactDatabase(ctx, s.optionsDB, minimumFreeBytes)
+		if err != nil {
+			return report, err
+		}
+		report.Compacted = report.Compacted || optionsReport.Compacted
+		report.FreeBytes += optionsReport.FreeBytes
+		report.BytesBefore += optionsReport.BytesBefore
+		report.BytesAfter += optionsReport.BytesAfter
+		report.Elapsed += optionsReport.Elapsed
+	}
+	if s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB || s.volumeDB == s.alertsDB || s.volumeDB == s.optionsDB {
 		return report, nil
 	}
-	optionsReport, err := compactDatabase(ctx, s.optionsDB, minimumFreeBytes)
+	volumeReport, err := compactDatabase(ctx, s.volumeDB, minimumFreeBytes)
 	if err != nil {
 		return report, err
 	}
-	report.Compacted = report.Compacted || optionsReport.Compacted
-	report.FreeBytes += optionsReport.FreeBytes
-	report.BytesBefore += optionsReport.BytesBefore
-	report.BytesAfter += optionsReport.BytesAfter
-	report.Elapsed += optionsReport.Elapsed
+	report.Compacted = report.Compacted || volumeReport.Compacted
+	report.FreeBytes += volumeReport.FreeBytes
+	report.BytesBefore += volumeReport.BytesBefore
+	report.BytesAfter += volumeReport.BytesAfter
+	report.Elapsed += volumeReport.Elapsed
 	return report, nil
 }
 
