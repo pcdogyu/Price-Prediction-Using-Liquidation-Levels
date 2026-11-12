@@ -98,6 +98,13 @@ func minimumReversePositionHoldingMinutes(configured int) int {
 	return configured
 }
 
+func reversePositionHoldingMinutes(signal trading.Signal) int {
+	if trading.IsValueAreaOpeningSignal(signal) {
+		return 0
+	}
+	return minimumReversePositionHoldingMinutes(signal.Risk.StopLossMinHoldingMinutes)
+}
+
 func (t Trader) cancelBinanceOpenOrders(ctx context.Context, client Client, orders []OpenOrder) error {
 	for _, order := range orders {
 		req := CancelOrderRequest{Symbol: strings.ToUpper(strings.TrimSpace(order.Symbol))}

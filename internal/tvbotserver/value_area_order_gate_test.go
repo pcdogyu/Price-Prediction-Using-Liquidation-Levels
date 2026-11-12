@@ -299,7 +299,7 @@ func TestValueAreaLocalOpeningConflictUsesLiveStateAndFreshness(t *testing.T) {
 		{name: "stale other strategy with empty exchange", records: []tvbotstorage.OrderRecord{other(now.Add(-16 * time.Minute))}},
 		{name: "fresh other strategy with empty exchange", records: []tvbotstorage.OrderRecord{other(now.Add(-5 * time.Minute))}, want: true},
 		{name: "stale local record with live exchange state", records: []tvbotstorage.OrderRecord{other(now.Add(-16 * time.Minute))}, state: valueAreaExchangeState{OpenPosition: true}, want: true},
-		{name: "fresh value area record owns live state", records: []tvbotstorage.OrderRecord{valueArea(now.Add(-5 * time.Minute))}, state: valueAreaExchangeState{OpenEntryOrder: true}},
+		{name: "pending entry order remains a conflict", records: []tvbotstorage.OrderRecord{valueArea(now.Add(-5 * time.Minute))}, state: valueAreaExchangeState{OpenEntryOrder: true}, want: true},
 		{name: "live exchange state with no local record", state: valueAreaExchangeState{OpenPosition: true}, want: true},
 		{name: "stale value area record with empty exchange", records: []tvbotstorage.OrderRecord{valueArea(now.Add(-16 * time.Minute))}},
 	}
@@ -309,6 +309,37 @@ func TestValueAreaLocalOpeningConflictUsesLiveStateAndFreshness(t *testing.T) {
 				t.Fatalf("conflict=%v want=%v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestValueAreaImmediateReverseRequiresOppositeLivePosition(t *testing.T) {
+	now := time.Date(2026, time.November, 6, 1, 30, 0, 0, time.UTC)
+	signal := tvbottrading.Signal{
+		Condition:      "value_area_signal",
+		PositionEffect: tvbottrading.PositionEffectOpen,
+		PositionSide:   tvbottrading.PositionSideLong,
+	}
+	cases := []struct {
+		name  string
+		state valueAreaExchangeState
+		want  bool
+	}{
+		{name: "opposite short position", state: valueAreaExchangeState{OpenPosition: true, OpenPositionSides: []tvbottrading.Side{tvbottrading.ActionShort}}},
+		{name: "same long position", state: valueAreaExchangeState{OpenPosition: true, OpenPositionSides: []tvbottrading.Side{tvbottrading.ActionLong}}, want: true},
+		{name: "unknown position direction", state: valueAreaExchangeState{OpenPosition: true}, want: true},
+		{name: "opposite position with pending entry", state: valueAreaExchangeState{OpenPosition: true, OpenEntryOrder: true, OpenPositionSides: []tvbottrading.Side{tvbottrading.ActionShort}}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := valueAreaLocalOpeningConflictForSignal(nil, tc.state, now, signal); got != tc.want {
+				t.Fatalf("conflict=%v want=%v", got, tc.want)
+			}
+		})
+	}
+
+	signal.Condition = "value_area_manual"
+	if got := valueAreaLocalOpeningConflictForSignal(nil, valueAreaExchangeState{OpenPosition: true, OpenPositionSides: []tvbottrading.Side{tvbottrading.ActionShort}}, now, signal); got {
+		t.Fatal("manual value-area reverse should bypass the conflict guard")
 	}
 }
 

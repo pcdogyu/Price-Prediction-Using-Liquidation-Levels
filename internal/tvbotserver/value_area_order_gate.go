@@ -53,7 +53,7 @@ func (r *keyedMutexRegistry) lock(key string) func() {
 }
 
 func isAutomaticValueAreaOpenSignal(signal tvbottrading.Signal) bool {
-	return signal.PositionEffect == tvbottrading.PositionEffectOpen &&
+	return tvbottrading.IsValueAreaOpeningSignal(signal) &&
 		strings.EqualFold(strings.TrimSpace(signal.Condition), "value_area_signal")
 }
 
@@ -155,25 +155,78 @@ func (s *Server) defaultValueAreaOpenConflict(ctx context.Context, signal tvbott
 	if err != nil {
 		return false, err
 	}
-	return valueAreaLocalOpeningConflict(records, state, s.now()), nil
+	return valueAreaLocalOpeningConflictForSignal(records, state, s.now(), signal), nil
 }
 
 func valueAreaLocalOpeningConflict(records []tvbotstorage.OrderRecord, state valueAreaExchangeState, now time.Time) bool {
+	return valueAreaLocalOpeningConflictForSignal(records, state, now, tvbottrading.Signal{})
+}
+
+func valueAreaLocalOpeningConflictForSignal(records []tvbotstorage.OrderRecord, state valueAreaExchangeState, now time.Time, signal tvbottrading.Signal) bool {
 	freshRecord := false
 	for _, record := range records {
 		if !valueAreaLocalOpeningRecordFresh(record, now) {
 			continue
 		}
 		freshRecord = true
-		if orderRecordSignalKind(record) != "value_area" {
-			return true
-		}
 	}
 
-	// A live position or exchange-side entry order without a recent local
-	// value-area record is intentionally treated as unknown ownership. A stale
-	// local record is not proof that the live position belongs to value-area.
-	return (state.OpenPosition || state.OpenEntryOrder) && !freshRecord
+	// A value-area reverse opening is allowed only when the exchange confirms
+	// exactly one live position on the opposite side and there are no pending
+	// entry orders. The executor will close that position and wait for the
+	// exchange to report flat before submitting the new direction.
+	if valueAreaImmediateReverse(signal, state) {
+		return false
+	}
+
+	// Same-direction positions, unknown position direction, and any pending
+	// entry order remain conflicts even when a local record is recent. A recent
+	// local value-area record only permits another request when the exchange is
+	// otherwise flat, preserving the existing short-lived duplicate protection.
+	if state.OpenPosition || state.OpenEntryOrder {
+		return true
+	}
+	if freshRecord {
+		for _, record := range records {
+			if valueAreaLocalOpeningRecordFresh(record, now) && orderRecordSignalKind(record) != "value_area" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func valueAreaImmediateReverse(signal tvbottrading.Signal, state valueAreaExchangeState) bool {
+	if !tvbottrading.IsValueAreaOpeningSignal(signal) || !state.OpenPosition || state.OpenEntryOrder || len(state.OpenPositionSides) != 1 {
+		return false
+	}
+	target := normalizeValueAreaSide(signal.PositionSide)
+	if target == "" {
+		return false
+	}
+	return state.OpenPositionSides[0] == oppositeValueAreaSide(target)
+}
+
+func normalizeValueAreaSide(raw string) tvbottrading.Side {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case tvbottrading.PositionSideLong:
+		return tvbottrading.ActionLong
+	case tvbottrading.PositionSideShort:
+		return tvbottrading.ActionShort
+	default:
+		return ""
+	}
+}
+
+func oppositeValueAreaSide(side tvbottrading.Side) tvbottrading.Side {
+	switch side {
+	case tvbottrading.ActionLong:
+		return tvbottrading.ActionShort
+	case tvbottrading.ActionShort:
+		return tvbottrading.ActionLong
+	default:
+		return ""
+	}
 }
 
 func valueAreaLocalOpeningRecordFresh(record tvbotstorage.OrderRecord, now time.Time) bool {
@@ -190,8 +243,21 @@ func valueAreaLocalOpeningRecordFresh(record tvbotstorage.OrderRecord, now time.
 }
 
 type valueAreaExchangeState struct {
-	OpenPosition   bool
-	OpenEntryOrder bool
+	OpenPosition      bool
+	OpenEntryOrder    bool
+	OpenPositionSides []tvbottrading.Side
+}
+
+func appendValueAreaPositionSide(sides *[]tvbottrading.Side, side tvbottrading.Side) {
+	if side != tvbottrading.ActionLong && side != tvbottrading.ActionShort {
+		return
+	}
+	for _, existing := range *sides {
+		if existing == side {
+			return
+		}
+	}
+	*sides = append(*sides, side)
 }
 
 func valueAreaSymbolVariants(values ...string) []string {
@@ -247,7 +313,9 @@ func valueAreaOKXExchangeState(ctx context.Context, client tvbotokx.Client, sign
 	for _, position := range positions {
 		if strings.EqualFold(strings.TrimSpace(position.InstID), instID) && isOpenPosition(position.Pos) {
 			state.OpenPosition = true
-			break
+			if side, ok := valueAreaOKXPositionSide(position); ok {
+				appendValueAreaPositionSide(&state.OpenPositionSides, side)
+			}
 		}
 	}
 	orders, _, err := client.PendingOrders(ctx, "SWAP")
@@ -278,7 +346,9 @@ func valueAreaBinanceExchangeState(ctx context.Context, client tvbotbinance.Clie
 		converted := binancePositionToOKX(position)
 		if strings.EqualFold(strings.TrimSpace(position.Symbol), symbol) && isOpenPosition(converted.Pos) {
 			state.OpenPosition = true
-			break
+			if side, ok := valueAreaBinancePositionSide(position); ok {
+				appendValueAreaPositionSide(&state.OpenPositionSides, side)
+			}
 		}
 	}
 	orders, err := client.OpenOrders(ctx, symbol)
@@ -309,7 +379,11 @@ func valueAreaGateExchangeState(ctx context.Context, client tvbotgate.Client, si
 		size, parseErr := strconv.ParseFloat(strings.TrimSpace(position.Size), 64)
 		if strings.EqualFold(strings.TrimSpace(position.Contract), contract) && parseErr == nil && size != 0 && !math.IsNaN(size) && !math.IsInf(size, 0) {
 			state.OpenPosition = true
-			break
+			if size > 0 {
+				appendValueAreaPositionSide(&state.OpenPositionSides, tvbottrading.ActionLong)
+			} else {
+				appendValueAreaPositionSide(&state.OpenPositionSides, tvbottrading.ActionShort)
+			}
 		}
 	}
 	orders, err := client.OpenOrders(ctx, contract)
@@ -324,6 +398,58 @@ func valueAreaGateExchangeState(ctx context.Context, client tvbotgate.Client, si
 		break
 	}
 	return state, nil
+}
+
+func valueAreaBinancePositionSide(position tvbotbinance.Position) (tvbottrading.Side, bool) {
+	switch strings.ToUpper(strings.TrimSpace(position.PositionSide)) {
+	case "LONG":
+		return tvbottrading.ActionLong, true
+	case "SHORT":
+		return tvbottrading.ActionShort, true
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(position.PositionAmt), 64)
+	if err == nil {
+		switch {
+		case value > 0:
+			return tvbottrading.ActionLong, true
+		case value < 0:
+			return tvbottrading.ActionShort, true
+		}
+	}
+	raw := strings.TrimSpace(position.PositionAmt)
+	if strings.HasPrefix(raw, "-") {
+		return tvbottrading.ActionShort, true
+	}
+	if raw != "" {
+		return tvbottrading.ActionLong, true
+	}
+	return "", false
+}
+
+func valueAreaOKXPositionSide(position tvbotokx.Position) (tvbottrading.Side, bool) {
+	switch strings.ToLower(strings.TrimSpace(position.PosSide)) {
+	case "long":
+		return tvbottrading.ActionLong, true
+	case "short":
+		return tvbottrading.ActionShort, true
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(position.Pos), 64)
+	if err == nil {
+		switch {
+		case value > 0:
+			return tvbottrading.ActionLong, true
+		case value < 0:
+			return tvbottrading.ActionShort, true
+		}
+	}
+	raw := strings.TrimSpace(position.Pos)
+	if strings.HasPrefix(raw, "-") {
+		return tvbottrading.ActionShort, true
+	}
+	if raw != "" {
+		return tvbottrading.ActionLong, true
+	}
+	return "", false
 }
 
 func jsonTruthy(raw json.RawMessage) bool {

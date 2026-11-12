@@ -55,7 +55,7 @@ func (t Trader) ExecuteSignal(ctx context.Context, signal trading.Signal, cfg tr
 		orderSettings.ApplyToSignal(&signal)
 	}
 	signal.Risk.StopLossMinHoldingMinutes = stopLossMinHoldingMinutes
-	switchState, err := t.prepareDirectionSwitch(ctx, client, cfg, signal.Action, sym.InstID, minimumReversePositionHoldingMinutes(signal.Risk.StopLossMinHoldingMinutes))
+	switchState, err := t.prepareDirectionSwitch(ctx, client, cfg, signal.Action, sym.InstID, reversePositionHoldingMinutes(signal))
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
@@ -136,7 +136,7 @@ func (t Trader) executeLayeredSignal(ctx context.Context, signal trading.Signal,
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
-	switchState, err := t.prepareDirectionSwitch(ctx, client, cfg, signal.Action, sym.InstID, minimumReversePositionHoldingMinutes(signal.Risk.StopLossMinHoldingMinutes))
+	switchState, err := t.prepareDirectionSwitch(ctx, client, cfg, signal.Action, sym.InstID, reversePositionHoldingMinutes(signal))
 	if err != nil {
 		return trading.OrderResult{}, err
 	}
