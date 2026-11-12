@@ -124,10 +124,32 @@ type MarketPoint struct {
 }
 type MarketWindow struct {
 	Label               string   `json:"label"`
+	PriceDeltaUSD       *float64 `json:"price_delta_usd"`
+	PriceChangePct      *float64 `json:"price_change_pct"`
 	OIDeltaUSD          *float64 `json:"oi_delta_usd"`
 	NetPositionDeltaUSD *float64 `json:"net_position_delta_usd"`
 	CVDDeltaUSD         *float64 `json:"cvd_delta_usd"`
+	FlowImbalancePct    *float64 `json:"flow_imbalance_pct"`
+	Bias                string   `json:"bias"`
+	BiasLabel           string   `json:"bias_label"`
+	Structure           string   `json:"structure"`
+	Evidence            string   `json:"evidence"`
+	Risks               []string `json:"risks"`
 	Analysis            string   `json:"analysis"`
+}
+type MarketAssessmentSegment struct {
+	Key     string `json:"key"`
+	Label   string `json:"label"`
+	Bias    string `json:"bias"`
+	Summary string `json:"summary"`
+}
+type MarketAssessment struct {
+	Segments  []MarketAssessmentSegment `json:"segments"`
+	Overall   MarketAssessmentSegment   `json:"overall"`
+	RiskLevel string                    `json:"risk_level"`
+	RiskLabel string                    `json:"risk_label"`
+	Risks     []string                  `json:"risks"`
+	Summary   string                    `json:"summary"`
 }
 type GammaLevel struct {
 	Strike         float64 `json:"strike"`
@@ -165,11 +187,12 @@ type GammaView struct {
 	Warnings              []string      `json:"warnings"`
 }
 type MarketInfo struct {
-	Symbol  string         `json:"symbol"`
-	State   string         `json:"state"`
-	Range   string         `json:"range"`
-	Current *MarketMetric  `json:"current"`
-	Series  []MarketPoint  `json:"series"`
-	Windows []MarketWindow `json:"windows"`
-	Gamma   GammaView      `json:"gamma"`
+	Symbol     string           `json:"symbol"`
+	State      string           `json:"state"`
+	Range      string           `json:"range"`
+	Current    *MarketMetric    `json:"current"`
+	Series     []MarketPoint    `json:"series"`
+	Windows    []MarketWindow   `json:"windows"`
+	Assessment MarketAssessment `json:"assessment"`
+	Gamma      GammaView        `json:"gamma"`
 }

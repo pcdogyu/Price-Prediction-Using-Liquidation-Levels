@@ -253,12 +253,24 @@
     }
     canvas.onpointermove=event=>{const i=Math.max(0,Math.min(levels.length-1,Math.floor((event.offsetX-left)/step))),l=levels[i];canvas.title='行权价 '+price(l.strike)+'\n净 GEX USD '+amount(l.net_gex_usd)+'\n绝对 GEX USD '+amount(l.absolute_gex_usd);};
   }
+  function marketBiasLabel(bias) { return ({bullish:'偏多',bearish:'偏空',neutral:'中性',divergent:'周期分歧',insufficient:'数据不足'})[bias] || '中性'; }
+  function marketBiasClass(bias) { return ({bullish:'market-bias-bullish',bearish:'market-bias-bearish',neutral:'market-bias-neutral',divergent:'market-bias-divergent',insufficient:'market-bias-insufficient'})[bias] || 'market-bias-neutral'; }
+  function renderMarketAssessment(assessment) {
+    const a=assessment||{}, segments=Array.isArray(a.segments)?a.segments:[], cards=[...segments, a.overall&&a.overall.key ? a.overall : null].filter(Boolean);
+    $('market-assessment-summary').textContent=a.summary||'等待分析数据';
+    $('market-assessment-risk').className='market-risk-label '+(a.risk_level||'low');
+    $('market-assessment-risk').textContent=a.risk_label||'风险状态未知';
+    $('market-assessment-cards').innerHTML=cards.map(segment=>`<div class="info-metric market-assessment-card ${marketBiasClass(segment.bias)}"><div class="label">${escape(segment.label||'市场判断')}</div><div class="number">${escape(marketBiasLabel(segment.bias))}</div><div class="detail">${escape(segment.summary||'暂无判断依据')}</div></div>`).join('');
+    const risks=Array.isArray(a.risks)?a.risks:[];
+    $('market-assessment-risks').innerHTML=risks.length?risks.map(risk=>`<span class="market-risk-chip">${escape(risk)}</span>`).join(''):'<span class="muted">暂无额外风险标记</span>';
+  }
   function renderMarket(d) {
     const c=d.current||{},g=d.gamma||{},last=d.series[d.series.length-1]||{};
     $('status').textContent=stateLabel(d.state)+' · 更新 '+when(c.time);
     $('market-metrics').innerHTML=metric('标记价格',price(c.mark_price),'24h '+percent(c.change_24h),tone(c.change_24h))+metric('24h 成交额 USD',compact(c.volume_24h_usd),'低 '+price(c.low_24h)+' / 高 '+price(c.high_24h))+metric('OI 价值 USD',compact(c.oi_usd),'数量 '+price(c.oi_quantity))+metric('资金费率',percent(c.funding_rate),'下次 '+when(c.next_funding))+metric('盘口价差',valid(c.best_ask)&&valid(c.best_bid)?price(c.best_ask-c.best_bid):'—','Bid '+price(c.best_bid)+' / Ask '+price(c.best_ask))+metric('全账户多空比',ratio(c.account_ratio),'账户数量比例')+metric('顶级持仓多空比',ratio(c.top_position_ratio),'顶级交易员持仓比例')+metric('净仓估算 USD',compact(c.net_position_usd),'基于 OI 与顶级持仓比',tone(c.net_position_usd))+metric('最新采样主动买 USD',compact(last.buy_usd),'所选范围最后一个完整采样', 'buy')+metric('最新采样主动卖 USD',compact(last.sell_usd),'所选范围最后一个完整采样', 'sell');
     lineChart('oi-chart',d.series,[{key:'oi_usd',label:'OI USD',color:paint('#60a5fa')}]);lineChart('cvd-chart',d.series,[{key:'cvd_usd',label:'CVD USD',color:paint('#fbbf24')}]);lineChart('taker-chart',d.series,[{key:'buy_usd',label:'主动买 USD',color:paint('#2dd4bf')},{key:'sell_usd',label:'主动卖 USD',color:paint('#fb7185')}]);lineChart('ratio-chart',d.series,[{key:'account_ratio',label:'全账户',color:paint('#60a5fa')},{key:'top_position_ratio',label:'顶级持仓',color:paint('#c084fc')}]);lineChart('delta-chart',d.series,[{key:'delta_usd',label:'主动买卖差值 USD',color:paint('#2dd4bf')}]);
-    $('market-windows').innerHTML=d.windows.map(w=>`<tr><td>${escape(w.label)}</td><td class="${tone(w.oi_delta_usd)}">${compact(w.oi_delta_usd)}</td><td class="${tone(w.net_position_delta_usd)}">${compact(w.net_position_delta_usd)}</td><td class="${tone(w.cvd_delta_usd)}">${compact(w.cvd_delta_usd)}</td><td>${escape(w.analysis)}</td></tr>`).join('');
+    renderMarketAssessment(d.assessment);
+    $('market-windows').innerHTML=(d.windows||[]).map(w=>`<tr><td>${escape(w.label)}</td><td class="${tone(w.price_change_pct)}">${percent(w.price_change_pct)}</td><td class="${tone(w.oi_delta_usd)}">${compact(w.oi_delta_usd)}</td><td class="${tone(w.net_position_delta_usd)}">${compact(w.net_position_delta_usd)}</td><td class="${tone(w.cvd_delta_usd)}">${compact(w.cvd_delta_usd)}</td><td class="${marketBiasClass(w.bias)}"><strong>${escape(w.bias_label||marketBiasLabel(w.bias))}</strong><br><span class="muted">${escape(w.structure||'')}</span></td><td>${escape(w.evidence||w.analysis||'数据不足')}${Array.isArray(w.risks)&&w.risks.length?'<br><span class="warning">'+escape(w.risks.join('；'))+'</span>':''}</td></tr>`).join('');
     $('gamma-status').textContent=stateLabel(g.state)+' · '+when(g.time);$('gamma-method').textContent=g.method||'正在读取期权链；缺失数据不记为零。';
     const usable=['ok','partial','stale'].includes(g.state);
     const hasFlip=usable&&valid(g.gamma_flip)&&g.gamma_flip>0;

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -267,32 +266,6 @@ func mergeMarketMetricFields(dst *domain.MarketMetric, src domain.MarketMetric) 
 	}
 }
 
-func marketWindowAnalysis(window domain.MarketWindow) string {
-	missing := []string{}
-	if window.OIDeltaUSD == nil {
-		missing = append(missing, "OI历史数据")
-	}
-	if window.NetPositionDeltaUSD == nil {
-		missing = append(missing, "净仓估算历史数据")
-	}
-	if window.CVDDeltaUSD == nil {
-		missing = append(missing, "主动买卖历史数据")
-	}
-	if len(missing) > 0 {
-		return "数据不足：" + strings.Join(missing, "、")
-	}
-	flow := "主动买入占优"
-	if *window.CVDDeltaUSD < 0 {
-		flow = "主动卖出占优"
-	}
-	change := "持仓稳定"
-	if *window.OIDeltaUSD > 0 {
-		change = "增仓"
-	} else if *window.OIDeltaUSD < 0 {
-		change = "减仓"
-	}
-	return change + " · " + flow
-}
 func BuildMarketSeries(candles []domain.Candle, metrics []domain.MarketMetric, from, to time.Time, step time.Duration) []domain.MarketPoint {
 	out := []domain.MarketPoint{}
 	cvd := 0.
@@ -400,6 +373,10 @@ func (s *Service) MarketInfo(ctx context.Context, symbol, rangeName string) (dom
 		win := domain.MarketWindow{Label: w.label, Analysis: "数据不足"}
 		past := metricAt(metrics, to.Add(-w.duration))
 		if past != nil && exists && out.State != "stale" {
+			if current.MarkPrice != nil && past.MarkPrice != nil && *past.MarkPrice != 0 {
+				win.PriceDeltaUSD = ptr(*current.MarkPrice - *past.MarkPrice)
+				win.PriceChangePct = ptr((*current.MarkPrice - *past.MarkPrice) / *past.MarkPrice)
+			}
 			if current.OIUSD != nil && past.OIUSD != nil {
 				win.OIDeltaUSD = ptr(*current.OIUSD - *past.OIUSD)
 			}
@@ -411,9 +388,17 @@ func (s *Service) MarketInfo(ctx context.Context, symbol, rangeName string) (dom
 		series := BuildMarketSeries(candles, metrics, to.Add(-w.duration), to, w.duration)
 		if len(series) > 0 {
 			win.CVDDeltaUSD = series[0].CVDUSD
+			if total, ok := marketWindowFlowSummary(series); ok && win.CVDDeltaUSD != nil {
+				win.FlowImbalancePct = ptr(*win.CVDDeltaUSD / total)
+				win = enrichMarketWindow(win, current.OIUSD, total)
+			} else {
+				win = enrichMarketWindow(win, current.OIUSD, 0)
+			}
+		} else {
+			win = enrichMarketWindow(win, current.OIUSD, 0)
 		}
-		win.Analysis = marketWindowAnalysis(win)
 		out.Windows = append(out.Windows, win)
 	}
+	out.Assessment = buildMarketAssessment(out.State, out.Windows, out.Current, out.Gamma)
 	return out, nil
 }
