@@ -1,17 +1,79 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	tvbotbinance "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
-	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
+	okx "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotokx"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotstorage"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
+
+func TestFetchBinancePositionEntryFillsRetriesNewestPageWhenWindowIsCapped(t *testing.T) {
+	now := time.Date(2026, 11, 12, 6, 0, 0, 0, time.UTC)
+	newEntry := now.Add(-2 * time.Minute)
+	requests := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fapi/v1/userTrades" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		requests++
+		trades := make([]tvbotbinance.UserTrade, 0)
+		if r.URL.Query().Get("startTime") != "" {
+			trades = make([]tvbotbinance.UserTrade, 1000)
+			for i := range trades {
+				trades[i] = tvbotbinance.UserTrade{
+					ID:           int64(i + 1),
+					Symbol:       "SUIUSDT",
+					Side:         "SELL",
+					PositionSide: "BOTH",
+					Qty:          "1",
+					Time:         now.Add(-6 * 24 * time.Hour).Add(time.Duration(i) * time.Millisecond).UnixMilli(),
+				}
+			}
+		} else {
+			trades = []tvbotbinance.UserTrade{
+				{ID: 2001, Symbol: "SUIUSDT", Side: "BUY", PositionSide: "BOTH", Qty: "1", Time: newEntry.UnixMilli()},
+				{ID: 2002, Symbol: "SUIUSDT", Side: "BUY", PositionSide: "BOTH", Qty: "1", Time: now.Add(-time.Minute).UnixMilli()},
+			}
+		}
+		body, err := json.Marshal(trades)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	defer ts.Close()
+
+	client := tvbotbinance.Client{
+		BaseURL:     ts.URL,
+		Credentials: tvbotbinance.Credentials{APIKey: "fixture-key", SecretKey: "fixture-signing-value"},
+		HTTPClient:  ts.Client(),
+		Now:         func() time.Time { return now },
+	}
+	position := okx.Position{InstID: "SUIUSDT", PosSide: "net", Pos: "2"}
+	fills, err := fetchBinancePositionEntryFills(context.Background(), client, "SUIUSDT", []okx.Position{position}, now)
+	if err != nil {
+		t.Fatalf("fetch capped Binance fills: %v", err)
+	}
+	got, ok, message := positionEntryFillTime(position, fills)
+	if !ok || !got.Equal(newEntry) || message != "" {
+		t.Fatalf("entry=%s ok=%v message=%q", got, ok, message)
+	}
+	if requests != 2 {
+		t.Fatalf("expected capped window plus newest-page request, got %d", requests)
+	}
+}
 
 func TestPositionEntryFillTimeLongAddAndReduce(t *testing.T) {
 	entry := time.Date(2026, 7, 24, 1, 0, 0, 0, time.UTC)

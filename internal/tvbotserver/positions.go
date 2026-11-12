@@ -109,6 +109,7 @@ type positionEntryFill struct {
 	InstID   string
 	OrdID    string
 	ClOrdID  string
+	TradeID  int64
 	PosSide  string
 	Side     string
 	Size     float64
@@ -3959,6 +3960,7 @@ func fetchBinancePositionEntryFills(ctx context.Context, client binance.Client, 
 	since := now.Add(-positionEntryLookback)
 	windowEnd := now.UTC()
 	out := []positionEntryFill{}
+	seenTradeIDs := map[int64]struct{}{}
 	for windowEnd.After(since) {
 		windowStart := windowEnd.Add(-binanceUserTradesWindow)
 		if windowStart.Before(since) {
@@ -3968,28 +3970,49 @@ func fetchBinancePositionEntryFills(ctx context.Context, client binance.Client, 
 		if err != nil {
 			return nil, err
 		}
-		for _, trade := range trades {
-			fillTime := time.UnixMilli(trade.Time).UTC()
-			if fillTime.Before(since) {
-				continue
+		appendTrades := func(items []binance.UserTrade) {
+			for _, trade := range items {
+				if trade.ID > 0 {
+					if _, seen := seenTradeIDs[trade.ID]; seen {
+						continue
+					}
+					seenTradeIDs[trade.ID] = struct{}{}
+				}
+				fillTime := time.UnixMilli(trade.Time).UTC()
+				if fillTime.Before(since) {
+					continue
+				}
+				size, err := strconv.ParseFloat(strings.TrimSpace(trade.Qty), 64)
+				if err != nil || size <= 0 {
+					continue
+				}
+				out = append(out, positionEntryFill{
+					InstID:   strings.ToUpper(strings.TrimSpace(trade.Symbol)),
+					OrdID:    strconv.FormatInt(trade.OrderID, 10),
+					TradeID:  trade.ID,
+					PosSide:  trade.PositionSide,
+					Side:     trade.Side,
+					Size:     size,
+					FillTime: fillTime,
+				})
 			}
-			size, err := strconv.ParseFloat(strings.TrimSpace(trade.Qty), 64)
-			if err != nil || size <= 0 {
-				continue
-			}
-			out = append(out, positionEntryFill{
-				InstID:   strings.ToUpper(strings.TrimSpace(trade.Symbol)),
-				OrdID:    strconv.FormatInt(trade.OrderID, 10),
-				PosSide:  trade.PositionSide,
-				Side:     trade.Side,
-				Size:     size,
-				FillTime: fillTime,
-			})
 		}
+		appendTrades(trades)
 		if allPositionEntryTimesFound(positions, out) {
 			return out, nil
 		}
 		if len(trades) >= binanceUserTradesLimit {
+			// A bounded time-window request can return a full page without
+			// containing the newest fills. Ask Binance for its newest page before
+			// falling back to the exchange position timestamp, which is often the
+			// original position timestamp after a close-and-reopen cycle.
+			recentTrades, recentErr := client.RecentUserTrades(ctx, symbol, binanceUserTradesLimit)
+			if recentErr == nil {
+				appendTrades(recentTrades)
+				if allPositionEntryTimesFound(positions, out) {
+					return out, nil
+				}
+			}
 			return out, fmt.Errorf("Binance %s 7天成交超过 %d 条，成交历史可能不足", symbol, binanceUserTradesLimit)
 		}
 		windowEnd = windowStart.Add(-time.Millisecond)

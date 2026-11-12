@@ -717,6 +717,13 @@ func (c Client) UserTrades(ctx context.Context, symbol string, startTime, endTim
 	return out, nil
 }
 
+// RecentUserTrades returns the newest user trades for a symbol. Binance uses
+// the no-time-window form of userTrades to return the most recent page, which
+// is useful when a symbol has more than 1,000 fills inside a seven-day window.
+func (c Client) RecentUserTrades(ctx context.Context, symbol string, limit int) ([]UserTrade, error) {
+	return c.UserTrades(ctx, symbol, time.Time{}, time.Time{}, limit)
+}
+
 // AllOrders returns Binance USDⓈ-M order history. Binance accepts either a
 // time window or an order id lower bound; callers should use the order id as
 // the incremental cursor and a time window for the initial backfill.
