@@ -24,7 +24,25 @@ var marketWindowSpecs = []struct {
 	{"24h", 24 * time.Hour},
 }
 
-const marketMetricInterval = 5 * time.Minute
+const (
+	marketMetricInterval      = 5 * time.Minute
+	marketInfoDefaultInterval = 5 * time.Minute
+	marketMetricStaleGrace    = 2 * time.Minute
+)
+
+func marketInfoInterval(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return marketInfoDefaultInterval
+	}
+	return interval
+}
+
+// Market metrics are collected periodically, so their stale window must leave
+// room for the next collection cycle and a slow exchange response. A fixed
+// two-minute cutoff would mark normal five-minute collection gaps as stale.
+func marketMetricStaleAfter(interval time.Duration) time.Duration {
+	return marketInfoInterval(interval) + marketMetricStaleGrace
+}
 
 type marketMetricBackfillRange struct {
 	from, until time.Time
@@ -51,10 +69,7 @@ func marketMetricBackfillRanges(first, last time.Time, exists bool, target, now 
 }
 
 func (s *Service) marketInfoLoop(ctx context.Context) {
-	interval := s.cfg.MarketInfoInterval
-	if interval <= 0 {
-		interval = 5 * time.Minute
-	}
+	interval := marketInfoInterval(s.cfg.MarketInfoInterval)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -351,7 +366,7 @@ func (s *Service) MarketInfo(ctx context.Context, symbol, rangeName string) (dom
 		if current.MarkPrice == nil || current.OIUSD == nil || current.TopPositionRatio == nil || current.AccountRatio == nil || current.FundingRate == nil || len(current.Warnings) > 0 {
 			out.State = "partial"
 		}
-		if now.Sub(current.Time) > 2*time.Minute {
+		if now.Sub(current.Time) > marketMetricStaleAfter(s.cfg.MarketInfoInterval) {
 			out.State = "stale"
 		}
 	}
