@@ -19,6 +19,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authn"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/dbcleanup"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/marketmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/modelsmigration"
@@ -28,6 +29,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbridge"
 	tvbotenv "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotenv"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotmigration"
 	tvbotserver "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotserver"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumemigration"
 )
@@ -67,6 +69,10 @@ func main() {
 	}
 	if len(os.Args) == 2 && os.Args[1] == "split-auth-database" {
 		splitAuthDatabase()
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "cleanup-database" {
+		cleanupDatabase()
 		return
 	}
 	if len(os.Args) == 3 && os.Args[1] == "add-user" {
@@ -576,6 +582,28 @@ func resolveAuthDatabase(ctx context.Context, cfg config.Config, log *slog.Logge
 	}
 	log.Info("using standalone auth database", "database", target)
 	return target
+}
+
+func cleanupDatabase() {
+	cfg := config.Load()
+	targets := []dbcleanup.Target{
+		{Name: "tvbot", Path: cfg.TVBotDatabasePath, Tables: []string{
+			"orders", "pyramid_states", "exchange_orders", "exchange_order_sync_state", "okx_fills", "market_candles", "analysis_cache", "symbol_catalog_cache", "usdt_balance_snapshots", "binance_fills", "trade_lifecycles", "trade_monitor_checkpoints", "trade_monitor_events", "coinpair_blocks", "coinpair_block_events", "tvbot_scheduled_runs",
+		}, Ready: tvbotmigration.HasCompletedMigration},
+		{Name: "market", Path: cfg.MarketDatabasePath, Tables: []string{"candles", "liquidations", "wall_events", "book_snapshots", "market_metrics"}, Ready: marketmigration.HasCompletedMigration},
+		{Name: "alerts", Path: cfg.AlertsDatabasePath, Tables: []string{"liquidation_alerts", "trade_signals", "alert_watch_symbols", "alert_settings", "alert_strategy_settings", "alert_tenant_settings", "alert_tenant_strategy_settings"}, Ready: alertsmigration.HasCompletedMigration},
+		{Name: "options", Path: cfg.OptionsDatabasePath, Tables: []string{"gamma_latest", "deribit_gamma_history"}, Ready: optionsmigration.HasCompletedMigration},
+		{Name: "volume", Path: cfg.VolumeDatabasePath, Tables: []string{"volume_profile_levels", "volume_profile_cursors", "volume_profile_snapshots", "volume_archive_imports"}, Ready: volumemigration.HasCompletedMigration},
+		{Name: "models", Path: cfg.ModelsDatabasePath, Tables: []string{"predictions", "backtests"}, Ready: modelsmigration.HasCompletedMigration},
+		{Name: "settings", Path: cfg.SettingsDatabasePath, Tables: []string{"admin_menu", "user_menu", "user_theme", "background_symbol_snapshot"}, Ready: settingsmigration.HasCompletedMigration},
+		{Name: "auth", Path: cfg.AuthDatabasePath, Tables: []string{"auth_sessions", "auth_users", "auth_audit"}, Ready: authmigration.HasCompletedMigration},
+	}
+	report, err := dbcleanup.CleanupUnifiedSQLite(context.Background(), cfg.DatabasePath, targets)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not clean migrated database: %v\n", err)
+		os.Exit(2)
+	}
+	fmt.Printf("migrated database cleanup completed: tables=%d rows=%d bytes_before=%d bytes_after=%d elapsed=%s\n", len(report.Tables), report.Rows, report.BytesBefore, report.BytesAfter, report.Elapsed.Round(time.Millisecond))
 }
 
 func ensureUnifiedAccounts(ctx context.Context, st *store.Store, cfg config.Config) error {
