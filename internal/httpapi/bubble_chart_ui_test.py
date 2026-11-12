@@ -233,6 +233,12 @@ with sync_playwright() as playwright:
 
     page.goto(base + "/bubbles", wait_until="domcontentloaded")
     idle()
+    watermark = page.locator("[data-chart-watermark]")
+    assert watermark.count() == 1
+    assert watermark.get_attribute("pointer-events") == "none"
+    initial_watermark = page.evaluate("() => { const group = document.querySelector('[data-chart-watermark]'); const texts = Array.from(group.querySelectorAll('text')); return {labels: texts.map(item => item.textContent), x: Number(texts[0].getAttribute('x')), center: (dims.left + dims.candleRight) / 2}; }")
+    assert initial_watermark["labels"] == ["ETHUSDT", "1分钟"]
+    assert abs(initial_watermark["x"] - initial_watermark["center"]) < 0.001, initial_watermark
     if not production:
         page.wait_for_function("() => chart.candles.length > 0 && automaticMarketBackfill.active")
         assert not page.locator("#market-backfill").is_disabled()
@@ -554,6 +560,8 @@ with sync_playwright() as playwright:
         for interval in intervals:
             page.locator(f'button[data-interval="{interval}"]').click()
             idle()
+            assert watermark.count() == 1
+            assert page.locator("[data-chart-watermark] text").all_text_contents() == [symbol, {"1m": "1分钟", "2m": "2分钟", "3m": "3分钟", "5m": "5分钟", "15m": "15分钟", "30m": "30分钟", "1h": "1小时", "4h": "4小时", "8h": "8小时", "12h": "12小时", "24h": "24小时"}[interval]]
             view = check_axis()
             assert page.locator(f'button[data-interval="{interval}"]').evaluate("e => e.classList.contains('active')")
             if not production:

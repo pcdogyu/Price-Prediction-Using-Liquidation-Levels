@@ -1140,6 +1140,17 @@ function drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high, layout) 
   svg.appendChild(group);
 }
 
+function drawChartWatermark(svg, layout) {
+  if (embeddedChart) return;
+  const x = (layout.left + layout.candleRight) / 2;
+  const plotBottom = layout.height - layout.bottom;
+  const y = layout.top + (plotBottom - layout.top) / 2;
+  const group = svgNode('g', { 'data-chart-watermark': '', 'pointer-events': 'none', opacity: .12 });
+  group.appendChild(svgNode('text', { x, y: y - 8, 'text-anchor': 'middle', fill: '#f8fafc', 'font-size': 30, 'font-weight': 750, 'letter-spacing': 1.5 }, symbol));
+  group.appendChild(svgNode('text', { x, y: y + 26, 'text-anchor': 'middle', fill: '#83a0b2', 'font-size': 16, 'font-weight': 650 }, intervalName[chart.interval] || chart.interval));
+  svg.appendChild(group);
+}
+
 function draw(view, map, signal, volume) {
   const svg = $('market-chart');
   svg.replaceChildren();
@@ -1206,6 +1217,7 @@ function draw(view, map, signal, volume) {
   svg.setAttribute('data-window-start', new Date(timeScale.start).toISOString());
   svg.setAttribute('data-window-end', new Date(timeScale.end).toISOString());
   if (timeScale) drawTimeGrid(svg, timeScale, top, plotBottom, height - 17, left, candleRight);
+  drawChartWatermark(svg, layout);
   const plot = svgNode('g', { 'clip-path': 'url(#plot-clip)' });
   if (candles.length) {
     const bodyWidth = Math.max(2, timeScale.step * .58);

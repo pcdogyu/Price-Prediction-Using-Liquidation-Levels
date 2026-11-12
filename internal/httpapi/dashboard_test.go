@@ -360,6 +360,10 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"setChartHeight",
 		"useAutomaticChartHeight",
 		"const rankLabelWidthScale = .8",
+		"function drawChartWatermark",
+		"data-chart-watermark",
+		"pointer-events",
+		"intervalName[chart.interval] || chart.interval",
 	} {
 		if !strings.Contains(string(dashboardJS), marker) {
 			t.Fatalf("bubble chart missing manual sizing support %q", marker)
