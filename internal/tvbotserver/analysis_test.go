@@ -673,7 +673,6 @@ func TestBalancePointsFromSnapshotsUsesEquityForChartValue(t *testing.T) {
 	}
 }
 
-
 func TestAnalysisBalanceFromBinanceUsesOfficialMarginBalance(t *testing.T) {
 	got := analysisBalanceFromBinanceAccount(binance.AccountInformation{
 		TotalWalletBalance: "10306",
@@ -704,7 +703,7 @@ func TestAnalysisBalanceFromBinanceMarksMultiAssetsAsUSD(t *testing.T) {
 		AvailableBalance:   "1100.25",
 		MultiAssetsMargin:  true,
 		UpdateTime:         1785522000000,
-		Assets: []binance.AccountAsset{{Asset: "USDT", UpdateTime: 1785522000000}},
+		Assets:             []binance.AccountAsset{{Asset: "USDT", UpdateTime: 1785522000000}},
 	})
 	if got.Currency != "USD" || len(got.Details) != 1 || got.Details[0].Ccy != "USD" || got.Details[0].Eq != "1210.5" {
 		t.Fatalf("multi-assets account should be represented as USD equity: %#v", got)
@@ -1409,5 +1408,19 @@ func TestBalanceWindowStatsComputesChangeAndMaxDrawdown(t *testing.T) {
 	}
 	if got.MaxDrawdown != 30 || math.Abs(got.MaxDrawdownPct-0.25) > 0.0000001 {
 		t.Fatalf("bad max drawdown: %#v", got)
+	}
+}
+
+func TestBalanceWindowStatsWarnsAboutFundingLikeCashJumpAndSourceMix(t *testing.T) {
+	base := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+	got := balanceWindowStats([]analysisBalancePoint{
+		{Time: base, TS: base.UnixMilli(), Value: 10000, CashBal: "10000", EqSource: "legacy"},
+		{Time: base.Add(time.Hour), TS: base.Add(time.Hour).UnixMilli(), Value: 20000, CashBal: "20000", EqSource: "binance_account_v3"},
+	}, analysisBalance{})
+	if len(got.Warnings) != 2 {
+		t.Fatalf("warnings=%#v, want source and cash jump warnings", got.Warnings)
+	}
+	if got.Warnings[0] != "快照口径已切换，周期变化未跨口径校正" || got.Warnings[1] != "检测到现金余额大幅跳变，周期变化可能包含资金流" {
+		t.Fatalf("unexpected warnings=%#v", got.Warnings)
 	}
 }

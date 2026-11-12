@@ -305,6 +305,7 @@ type analysisBalanceWindow struct {
 	MaxDrawdownPct float64   `json:"max_drawdown_pct"`
 	StartTime      time.Time `json:"start_time,omitempty"`
 	CurrentTime    time.Time `json:"current_time,omitempty"`
+	Warnings       []string  `json:"warnings,omitempty"`
 }
 
 type analysisSymbolStats struct {
@@ -4133,6 +4134,7 @@ func balanceWindowStats(points []analysisBalancePoint, balance analysisBalance) 
 		Change:       current.Value - start.Value,
 		StartTime:    balancePointTime(start),
 		CurrentTime:  balancePointTime(current),
+		Warnings:     balanceWindowWarnings(values),
 	}
 	if start.Value != 0 {
 		window.ChangePct = window.Change / math.Abs(start.Value)
@@ -4152,6 +4154,57 @@ func balanceWindowStats(points []analysisBalancePoint, balance analysisBalance) 
 		}
 	}
 	return window
+}
+
+const (
+	balanceCashJumpMinUSDT = 1000.0
+	balanceCashJumpMinPct  = 0.05
+)
+
+func balanceWindowWarnings(points []analysisBalancePoint) []string {
+	if len(points) < 2 {
+		return nil
+	}
+	warnings := make([]string, 0, 2)
+	seen := map[string]struct{}{}
+	addWarning := func(warning string) {
+		if _, ok := seen[warning]; ok {
+			return
+		}
+		seen[warning] = struct{}{}
+		warnings = append(warnings, warning)
+	}
+	sources := map[string]struct{}{}
+	for _, point := range points {
+		source := strings.TrimSpace(point.EqSource)
+		if source == "" {
+			source = "legacy"
+		}
+		sources[source] = struct{}{}
+	}
+	if len(sources) > 1 {
+		addWarning("快照口径已切换，周期变化未跨口径校正")
+	}
+	for i := 1; i < len(points); i++ {
+		previous := points[i-1]
+		current := points[i]
+		previousCash, previousOK := parseAnyFloat(previous.CashBal)
+		currentCash, currentOK := parseAnyFloat(current.CashBal)
+		if !previousOK || !currentOK || previous.Value <= 0 {
+			continue
+		}
+		cashDelta := currentCash - previousCash
+		equityDelta := current.Value - previous.Value
+		if math.Abs(cashDelta) < math.Max(balanceCashJumpMinUSDT, previous.Value*balanceCashJumpMinPct) {
+			continue
+		}
+		if cashDelta*equityDelta <= 0 || math.Abs(cashDelta) < math.Abs(equityDelta)*0.5 {
+			continue
+		}
+		addWarning("检测到现金余额大幅跳变，周期变化可能包含资金流")
+		break
+	}
+	return warnings
 }
 
 func analysisCurrentBalanceValue(balance analysisBalance) (float64, bool) {

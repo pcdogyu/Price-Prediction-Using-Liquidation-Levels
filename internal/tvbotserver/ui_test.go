@@ -859,7 +859,7 @@ func TestRenderTVBotDashboardUsesFundingPeriods(t *testing.T) {
 		`height: 358px`,
 		`height: 343px`,
 		`chart-axis-title`,
-		`涨跌幅 (%)`,
+		`权益变化 (%)`,
 		`估值 (USDT)`,
 		`const pad = { left: 64, right: 72, top: 18, bottom: 58 }`,
 		`chart-axis-value-right`,

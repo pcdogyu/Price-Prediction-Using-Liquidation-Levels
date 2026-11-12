@@ -2443,7 +2443,7 @@ const tvbotHTML = `<!doctype html>
             <div class="analysis-metrics symbol-metrics exchange-balance-metrics">
               <div class="analysis-card"><div class="label">周期起始</div><div class="value" id="analysis-okx-window-start">-</div></div>
               <div class="analysis-card"><div class="label">当前USDT</div><div class="value" id="analysis-usdt-eq">-</div></div>
-              <div class="analysis-card"><div class="label">周期变化</div><div class="value" id="analysis-okx-window-change">-</div></div>
+              <div class="analysis-card"><div class="label">周期变化（含资金流）</div><div class="value" id="analysis-okx-window-change">-</div></div>
               <div class="analysis-card"><div class="label">最大回撤</div><div class="value" id="analysis-okx-max-drawdown">-</div></div>
               <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="analysis-balance-updated">-</div></div>
             </div>
@@ -2480,7 +2480,7 @@ const tvbotHTML = `<!doctype html>
             <div class="analysis-metrics symbol-metrics exchange-balance-metrics">
               <div class="analysis-card"><div class="label">周期起始</div><div class="value" id="analysis-binance-window-start">-</div></div>
               <div class="analysis-card"><div class="label">当前USDT</div><div class="value" id="analysis-binance-usdt-eq">-</div></div>
-              <div class="analysis-card"><div class="label">周期变化</div><div class="value" id="analysis-binance-window-change">-</div></div>
+              <div class="analysis-card"><div class="label">周期变化（含资金流）</div><div class="value" id="analysis-binance-window-change">-</div></div>
               <div class="analysis-card"><div class="label">最大回撤</div><div class="value" id="analysis-binance-max-drawdown">-</div></div>
               <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="analysis-binance-balance-updated">-</div></div>
             </div>
@@ -2515,7 +2515,7 @@ const tvbotHTML = `<!doctype html>
             <div class="analysis-metrics symbol-metrics exchange-balance-metrics">
               <div class="analysis-card"><div class="label">周期起始</div><div class="value" id="analysis-gate-window-start">-</div></div>
               <div class="analysis-card"><div class="label">当前USDT</div><div class="value" id="analysis-gate-usdt-eq">-</div></div>
-              <div class="analysis-card"><div class="label">周期变化</div><div class="value" id="analysis-gate-window-change">-</div></div>
+              <div class="analysis-card"><div class="label">周期变化（含资金流）</div><div class="value" id="analysis-gate-window-change">-</div></div>
               <div class="analysis-card"><div class="label">最大回撤</div><div class="value" id="analysis-gate-max-drawdown">-</div></div>
               <div class="analysis-card"><div class="label">更新时间</div><div class="value" id="analysis-gate-balance-updated">-</div></div>
             </div>
@@ -4157,6 +4157,11 @@ const tvbotHTML = `<!doctype html>
       }
       if (balanceCurrencyLabel(balance) === "USD") notices.push("USD 多资产账户");
       return notices.join(" · ");
+    }
+
+    function balanceWindowNotice(item) {
+      const warnings = item && item.window && Array.isArray(item.window.warnings) ? item.window.warnings : [];
+      return warnings.join("；");
     }
 
     function usdtBalanceRawValue(row) {
@@ -7384,7 +7389,7 @@ const tvbotHTML = `<!doctype html>
       renderAnalysisExchangeBalances();
       const exchange = activeExchange();
       const apiID = exchange === "binance" ? state.analysis.binance_api_id : (exchange === "gate" ? state.analysis.gate_api_id : state.analysis.api_id);
-      const staleLabel = state.analysis.cache && state.analysis.cache.stale ? " / 缓存数据（上游暂不可用）" : "";
+      const staleLabel = state.analysis.cache && state.analysis.cache.stale ? " / 缓存数据（上游暂不可用，订单时间可能落后）" : "";
       $("analysis-updated").textContent = shanghaiTime(state.analysis.refreshed_at) + " / API " + exchangeLabel(exchange) + " " + asText(apiID) + staleLabel;
       renderAnalysisExchangeStats("okx", "");
       renderAnalysisExchangeStats("binance", "");
@@ -8230,8 +8235,8 @@ const tvbotHTML = `<!doctype html>
       renderAnalysisBalanceWindow("analysis-okx", item);
       $("analysis-usdt-eq").textContent = usdt ? formatUSDTAmount(usdt.eq) : "-";
       $("analysis-balance-updated").textContent = balance && balance.updated_at ? shanghaiTime(balance.updated_at) : "-";
-      $("analysis-okx-balance-status").textContent = exchangeBalanceStatusText(item, balance, "OKX");
-      $("analysis-okx-usdt-title").textContent = "USDT 权益图 " + balanceWindowLabel(state.balanceWindowMinutes);
+      $("analysis-okx-balance-status").textContent = [exchangeBalanceStatusText(item, balance, "OKX"), balanceWindowNotice(item)].filter(Boolean).join(" · ");
+      $("analysis-okx-usdt-title").textContent = "USDT 权益图（含资金流） " + balanceWindowLabel(state.balanceWindowMinutes);
       const overviewPoints = item ? (item.balance_points || []) : [];
       const fallbackPoints = state.analysis ? (state.analysis.balance_points || []) : [];
       const points = usdtBalancePoints(overviewPoints.length ? overviewPoints : fallbackPoints, balance);
@@ -8247,8 +8252,8 @@ const tvbotHTML = `<!doctype html>
       $("analysis-binance-balance-updated").textContent = balance && balance.updated_at ? shanghaiTime(balance.updated_at) : (item && item.refreshed_at ? shanghaiTime(item.refreshed_at) : "-");
       const sourceNotice = binanceBalanceSourceNotice(item, balance);
       const status = exchangeBalanceStatusText(item, balance, "Binance");
-      $("analysis-binance-balance-status").textContent = [status, sourceNotice].filter(Boolean).join(" · ");
-      $("analysis-binance-usdt-title").textContent = (currency === "USD" ? "USD 账户权益图" : "USDT 权益图") + " " + balanceWindowLabel(state.balanceWindowMinutes);
+      $("analysis-binance-balance-status").textContent = [status, sourceNotice, balanceWindowNotice(item)].filter(Boolean).join(" · ");
+      $("analysis-binance-usdt-title").textContent = (currency === "USD" ? "USD 账户权益图" : "USDT 权益图") + "（含资金流） " + balanceWindowLabel(state.balanceWindowMinutes);
       const points = usdtBalancePoints(item ? (item.balance_points || []) : [], balance);
       drawUSDTChart(points, "analysis-binance-usdt-chart", item && item.configured ? "暂无 Binance " + currency + " 权益数据" : "Binance 未配置", "#138a55");
     }
@@ -8259,8 +8264,8 @@ const tvbotHTML = `<!doctype html>
       renderAnalysisBalanceWindow("analysis-gate", item);
       $("analysis-gate-usdt-eq").textContent = usdt ? formatUSDTAmount(usdt.eq) : "-";
       $("analysis-gate-balance-updated").textContent = balance && balance.updated_at ? shanghaiTime(balance.updated_at) : (item && item.refreshed_at ? shanghaiTime(item.refreshed_at) : "-");
-      $("analysis-gate-balance-status").textContent = exchangeBalanceStatusText(item, balance, "Gate");
-      $("analysis-gate-usdt-title").textContent = "USDT 权益图 " + balanceWindowLabel(state.balanceWindowMinutes);
+      $("analysis-gate-balance-status").textContent = [exchangeBalanceStatusText(item, balance, "Gate"), balanceWindowNotice(item)].filter(Boolean).join(" · ");
+      $("analysis-gate-usdt-title").textContent = "USDT 权益图（含资金流） " + balanceWindowLabel(state.balanceWindowMinutes);
       const points = usdtBalancePoints(item ? (item.balance_points || []) : [], balance);
       drawUSDTChart(points, "analysis-gate-usdt-chart", item && item.configured ? "暂无 Gate USDT 权益数据" : "Gate 未配置", "#1a9b8a");
     }
@@ -8447,7 +8452,7 @@ const tvbotHTML = `<!doctype html>
         '<line class="chart-axis" x1="' + pad.left + '" y1="' + pad.top + '" x2="' + pad.left + '" y2="' + plotBottom + '"/>' +
         '<line class="chart-axis" x1="' + (width - pad.right) + '" y1="' + pad.top + '" x2="' + (width - pad.right) + '" y2="' + plotBottom + '"/>' +
         '<line class="chart-axis" x1="' + pad.left + '" y1="' + plotBottom + '" x2="' + (width - pad.right) + '" y2="' + plotBottom + '"/>' +
-        '<text class="chart-axis-title" x="' + pad.left + '" y="12">涨跌幅 (%)</text>' +
+        '<text class="chart-axis-title" x="' + pad.left + '" y="12">权益变化 (%)</text>' +
         '<text class="chart-axis-title" x="' + (width - 8) + '" y="12" text-anchor="end">估值 (USDT)</text>' +
         paths +
         '<circle cx="' + x(last).toFixed(2) + '" cy="' + y(last.value).toFixed(2) + '" r="4" fill="' + colorForDelta(last.value - baselineValue) + '"/>';
