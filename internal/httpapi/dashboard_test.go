@@ -363,6 +363,7 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 		"function drawChartWatermark",
 		"data-chart-watermark",
 		"pointer-events",
+		"scale(4)",
 		"intervalName[chart.interval] || chart.interval",
 	} {
 		if !strings.Contains(string(dashboardJS), marker) {

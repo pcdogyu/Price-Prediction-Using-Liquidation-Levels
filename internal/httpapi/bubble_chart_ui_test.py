@@ -236,6 +236,7 @@ with sync_playwright() as playwright:
     watermark = page.locator("[data-chart-watermark]")
     assert watermark.count() == 1
     assert watermark.get_attribute("pointer-events") == "none"
+    assert "scale(4)" in watermark.get_attribute("transform")
     initial_watermark = page.evaluate("() => { const group = document.querySelector('[data-chart-watermark]'); const texts = Array.from(group.querySelectorAll('text')); return {labels: texts.map(item => item.textContent), x: Number(texts[0].getAttribute('x')), center: (dims.left + dims.candleRight) / 2}; }")
     assert initial_watermark["labels"] == ["ETHUSDT", "1分钟"]
     assert abs(initial_watermark["x"] - initial_watermark["center"]) < 0.001, initial_watermark
