@@ -20,7 +20,10 @@ import (
 	valuearea "github.com/pcdogyu/price-prediction-liquidation-levels/internal/valuearea"
 )
 
-const valueAreaOrderTimezone = "Asia/Shanghai"
+const (
+	valueAreaOrderTimezone           = "Asia/Shanghai"
+	valueAreaConflictingStrategyCode = "value_area_conflicting_strategy"
+)
 
 // A local accepted/submitted record protects the short interval in which an
 // exchange order may not be visible yet. Once that interval has elapsed, the

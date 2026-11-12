@@ -759,6 +759,7 @@ type manualTriggerResult struct {
 	Symbol         string `json:"symbol"`
 	Side           string `json:"side"`
 	Status         string `json:"status"`
+	ManualAdd      bool   `json:"manual_add,omitempty"`
 	TargetExchange string `json:"target_exchange"`
 	TradeEnv       string `json:"trade_env"`
 	APIID          string `json:"api_id,omitempty"`
@@ -811,6 +812,7 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 	}
 	var payloads [][]byte
 	var err error
+	manualAdd := false
 	if signal.Kind == domain.SignalValueArea && signal.PositionEffect == "close" {
 		var payload []byte
 		// Manual triggers must retain the manual condition so tvbot can fall
@@ -820,6 +822,7 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 		payload, err = buildManualWebhookPayload(signal, rtm.serviceConfig())
 		payloads = append(payloads, payload)
 	} else if signal.Kind == domain.SignalValueArea {
+		manualAdd = true
 		var preclose, payload []byte
 		preclose, err = buildPrecloseWebhookPayload(signal, rtm.serviceConfig())
 		if err == nil {
@@ -845,6 +848,7 @@ func (rtm *alertRuntime) triggerWebhook(ctx context.Context, recordType, recordI
 	cfg := rtm.serviceConfig()
 	return manualTriggerResult{
 		RecordType: recordType, RecordID: recordID, Symbol: signal.Symbol, Side: signal.Side, Status: "accepted",
+		ManualAdd:      manualAdd,
 		TargetExchange: cfg.SteadyWebhookTargetExchange, TradeEnv: cfg.SteadyWebhookTradeEnv, APIID: cfg.SteadyWebhookAPIID,
 	}, nil
 }

@@ -722,9 +722,12 @@ func TestTVBotUIOrderHistorySearchControls(t *testing.T) {
 		[]byte(`只过滤开仓信号`),
 		[]byte(`orderHistoryStatusText`),
 		[]byte(`function orderCanRetry(order)`),
+		[]byte(`function isManualValueAreaAdd(order)`),
 		[]byte(`function unsupportedOKXInstrumentMessage(order)`),
 		[]byte(`order.status === "failed" || order.status === "ignored"`),
 		[]byte(`OKX " + tradeEnv + "不支持 " + instID + "，无法重试`),
+		[]byte(`手动加仓已提交`),
+		[]byte(`aria-busy="true"`),
 		[]byte(`重试仍被忽略`),
 		[]byte(`重试信号重复`),
 	} {
@@ -2659,6 +2662,62 @@ func TestOrderRetryIgnoredFilterExecutesAfterFilterRemoval(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("removed-filter retry did not reach executor")
+	}
+}
+
+func TestOrderRetryValueAreaConflictBecomesManualAdd(t *testing.T) {
+	srv := newTestServer(t)
+	installOKXRetryTicker(t, srv, "BTC-USDT-SWAP", "49999", "50001", "50000")
+	signal := validSignal(t, srv)
+	signal.TargetExchange = trading.ExchangeOKX
+	signal.TradeEnv = trading.TradeEnvDemo
+	signal.Condition = "value_area_signal"
+	signal.SourceAction = signal.Action
+	signal.PositionEffect = trading.PositionEffectOpen
+	signal.PositionSide = trading.PositionSideLong
+	signal.OrderIntent = "entry_long"
+	signal.Text = "entry_long"
+	signal.RawJSON = `{"condition":"value_area_signal","source":"value_area_signal"}`
+	signal.Normalize()
+	source, err := srv.Orders.RecordIgnoredReason(signal, valueAreaConflictingStrategyCode, "same account coinpair is occupied by another strategy or unknown entry", srv.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ignoredOrderCanRetry(source) || !isManualValueAreaAddRetry(source) {
+		t.Fatalf("value-area conflict should be a manual-add retry: %#v", source)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tvbot/orders/"+source.SignalID+"/retry", nil)
+	req.SetBasicAuth("admin", "Admin123")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted || !bytes.Contains(rr.Body.Bytes(), []byte(`"manual_add":true`)) {
+		t.Fatalf("manual add retry status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var response struct {
+		SignalID  string `json:"signal_id"`
+		ManualAdd bool   `json:"manual_add"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.SignalID == "" || !response.ManualAdd {
+		t.Fatalf("unexpected manual add response: %#v", response)
+	}
+	select {
+	case got := <-srv.Executor.(fakeExecutor).calls:
+		if got.Condition != "value_area_manual" || got.OrderIntent != "manual_position_add" || got.PositionSide != trading.PositionSideLong || got.Price.Value != 50000 {
+			t.Fatalf("unexpected manual add signal: %#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("manual add retry did not reach executor")
+	}
+	waitOrderStatus(t, srv.Orders, response.SignalID, storage.StatusSubmitted)
+
+	nonValueArea := source
+	nonValueArea.RawJSON = `{"condition":"aggressive_liquidation_signal","source":"liquidation_alert"}`
+	if ignoredOrderCanRetry(nonValueArea) || isManualValueAreaAddRetry(nonValueArea) {
+		t.Fatal("value-area conflict retry must not apply to non-value-area records")
 	}
 }
 

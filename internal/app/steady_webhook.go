@@ -123,6 +123,7 @@ func buildValueAreaWebhookPayload(signal domain.TradeSignal, cfg config.Config, 
 	condition, source := "value_area_signal", "value_area_signal"
 	if manual {
 		condition, source = "value_area_manual", "value_area_manual"
+		intent = "manual_position_add"
 	}
 	return buildPositionWebhookPayload(signal, cfg, condition, source, action, "open", strings.ToLower(strings.TrimSpace(signal.Side)), intent)
 }

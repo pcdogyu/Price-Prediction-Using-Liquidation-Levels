@@ -8997,6 +8997,10 @@ const tvbotHTML = `<!doctype html>
       return !!(order && order.signal_id && (order.status === "failed" || order.status === "ignored") && !unsupportedOKXInstrumentMessage(order));
     }
 
+    function isManualValueAreaAdd(order) {
+      return !!(order && String(order.error_code || "").trim().toLowerCase() === "value_area_conflicting_strategy");
+    }
+
     function unsupportedOKXInstrumentMessage(order) {
       if (!order) return "";
       const result = order.result || {};
@@ -9040,7 +9044,11 @@ const tvbotHTML = `<!doctype html>
         const tone = order.status === "submitted" ? "ok" : (order.status === "partial" ? "warn" : (order.status === "failed" || order.status === "rejected" ? "bad" : "warn"));
         const canRetry = orderCanRetry(order);
         const retrying = canRetry && state.retrying[order.signal_id];
-        const retryButton = canRetry ? '<button class="btn small" type="button" data-retry-id="' + escapeHTML(order.signal_id) + '"' + (retrying ? " disabled" : "") + ">" + (retrying ? "重试中" : "重试") + "</button>" : "";
+        const manualAdd = isManualValueAreaAdd(order);
+        const retryButtonClass = retrying ? "btn small is-saving" : "btn small";
+        const retryButtonAttrs = retrying ? ' disabled aria-busy="true"' : "";
+        const retryButtonLabel = retrying ? (manualAdd ? "加仓中" : "重试中") : (manualAdd ? "手动加仓" : "重试");
+        const retryButton = canRetry ? '<button class="' + retryButtonClass + '" type="button" data-retry-id="' + escapeHTML(order.signal_id) + '"' + retryButtonAttrs + (manualAdd ? ' title="按最新市价沿用原金额手动加仓"' : "") + ">" + retryButtonLabel + "</button>" : "";
         const rawJSONButton = orderRawJSONText(order) ? '<button class="btn small order-json-button" type="button" data-order-json-index="' + index + '">JSON</button>' : "";
         const statusCell = '<div class="status-cell order-status-actions">' + pill(orderHistoryStatusText(order.status), tone) + rawJSONButton + "</div>";
         return "<tr>" +
@@ -9614,7 +9622,9 @@ const tvbotHTML = `<!doctype html>
       try {
         const result = await api("/tvbot/orders/" + encodeURIComponent(signalID) + "/retry", { method: "POST" });
         const retryPrice = result && result.price ? (" @ " + asText(result.price)) : "";
-        if (result && result.status === "ignored") {
+        if (result && result.manual_add) {
+          toast("手动加仓已提交" + retryPrice);
+        } else if (result && result.status === "ignored") {
           toast("重试仍被忽略: " + asText(result.reason || "当前安全规则"));
         } else if (result && result.status === "duplicate") {
           toast("重试信号重复: " + asText(result.signal_id));

@@ -98,9 +98,11 @@
   // page keeps its scroll position and filters while the chart opens beside it.
   const bubbleLink = symbol => '<a class="alerts-symbol-link" target="_blank" rel="noopener" href="' + base + 'bubbles?symbol=' + encodeURIComponent(symbol) + '" title="在新标签页打开 ' + escape(symbol) + ' 气泡图">' + escape(symbol) + '</a>';
 
-  const triggerLink = (recordType, recordID, symbol, side, referencePrice) => {
+  const triggerLink = (recordType, recordID, symbol, side, referencePrice, manualAdd = false) => {
     if (!recordID || !Number.isFinite(referencePrice) || referencePrice <= 0) return '<span class="muted">不可触发</span>';
-    return '<button type="button" class="alerts-trigger alerts-action alerts-order-trigger" data-action="order" data-trigger-type="' + escape(recordType) + '" data-trigger-id="' + escape(recordID) + '" data-trigger-symbol="' + escape(symbol) + '" data-trigger-side="' + escape(sideLabel(side)) + '">触发下单</button>';
+    const label = manualAdd ? '手动加仓' : '触发下单';
+    const title = manualAdd ? '按该价值区信号手动加仓' : '按该信号触发下单';
+    return '<button type="button" class="alerts-trigger alerts-action alerts-order-trigger" data-action="order" data-trigger-type="' + escape(recordType) + '" data-trigger-id="' + escape(recordID) + '" data-trigger-symbol="' + escape(symbol) + '" data-trigger-side="' + escape(sideLabel(side)) + '" title="' + escape(title) + '">' + label + '</button>';
   };
 
   const notifyLink = (recordType, recordID) => {
@@ -398,7 +400,7 @@
       '<td class="' + (valueArea ? (signal.side === 'short' ? 'sell' : 'buy') : signal.kind === 'steady' ? 'buy' : 'warning') + '">' + recordTypeLabel(signal, label) + '</td>' +
       '<td' + directionClass(signal.side, historicalGammaIgnored(signal)) + '>' + escape(valueArea ? valueDirection : directionLabel(signal.side, historicalGammaIgnored(signal))) + (valueArea ? '' : '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span>') + '</td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
-      '<td>' + detail + (valueArea ? '<span class="muted"> · VAL/VAH 来回刷</span>' : '') + radarFilterStatus(signal) + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price) + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
+      '<td>' + detail + (valueArea ? '<span class="muted"> · VAL/VAH 来回刷</span>' : '') + radarFilterStatus(signal) + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price, valueArea && signal.position_effect !== 'close') + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
       '<td>' + escape(notifyLabels[signal.notify_status] || signal.notify_status || '未推送') + (signal.notify_error ? '<span class="muted" title="' + escape(signal.notify_error) + '"> ⓘ</span>' : '') + '</td>';
   }
 
@@ -833,7 +835,8 @@
       const exchangeLabel = exchange === 'gate' ? 'Gate' : exchange === 'okx' ? 'OKX' : exchange === 'binance' ? 'Binance' : '配置目标交易所';
       const envLabel = packet.trade_env === 'live' ? '实盘' : '模拟盘';
       const ordersURL = base + 'tvbot?tab=orders' + (exchange ? '&exchange=' + encodeURIComponent(exchange) : '');
-      success('下单信号已发送到 ' + escape(exchangeLabel) + ' ' + escape(envLabel) + '。订单历史按交易所分开，请刷新对应页面查看。 <a href="' + escape(ordersURL) + '">打开订单历史</a>');
+      const actionLabel = packet.manual_add ? '手动加仓信号已发送' : '下单信号已发送';
+      success(actionLabel + '到 ' + escape(exchangeLabel) + ' ' + escape(envLabel) + '。订单历史按交易所分开，请刷新对应页面查看。 <a href="' + escape(ordersURL) + '">打开订单历史</a>');
     } catch (caught) {
       button.disabled = false;
       button.textContent = original;

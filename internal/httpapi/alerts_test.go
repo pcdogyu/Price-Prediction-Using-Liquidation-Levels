@@ -91,7 +91,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 		}
 	}
 	script := serveAlert(srv, http.MethodGet, "/assets/alerts.js", nil).Body.String()
-	if !strings.Contains(script, "alerts-trigger") || !strings.Contains(script, "api/v1/alerts/trigger") {
+	if !strings.Contains(script, "alerts-trigger") || !strings.Contains(script, "api/v1/alerts/trigger") || !strings.Contains(script, "手动加仓") || !strings.Contains(script, "manual_add") {
 		t.Fatal("the alerts script must expose the manual order trigger")
 	}
 	css := serveAlert(srv, http.MethodGet, "/assets/alerts.css", nil).Body.String()
@@ -135,6 +135,62 @@ func TestAlertPageAndAssets(t *testing.T) {
 	}
 	if post := serveAlert(srv, http.MethodPost, "/alerts", nil); post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /alerts status=%d", post.Code)
+	}
+}
+
+func TestManualValueAreaTriggerUsesAddPayload(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, logs, err := observability.New(t.TempDir()+"/application.log", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	requests := make(chan []byte, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer upstream.Close()
+	srv, st := testService(t, config.Config{
+		SteadyWebhookURL: upstream.URL, SteadyWebhookAPIID: "binance_demo", SteadyWebhookTargetExchange: "binance",
+		SteadyWebhookTradeEnv: "demo", SteadyWebhookExchange: "binance", SteadyWebhookInterval: "3m",
+		SteadyWebhookTokenNonce: "nonce-value", SteadyWebhookToken: "token-value",
+	}, logger, logs)
+	defer st.Close()
+	at := time.Now().UTC().Truncate(time.Second)
+	if _, err := st.SaveTradeSignal(context.Background(), domain.TradeSignal{
+		ID: "manual-value-area-signal", Symbol: "INJUSDT", Kind: domain.SignalValueArea, Side: "long",
+		CreatedAt: at, ReferencePrice: 7.467, PositionEffect: "open", Boundary: "val", BoundaryPrice: 7.467875,
+		VAL: 7.467875, VAH: 7.541, WindowMinutes: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w := serveAlert(srv, http.MethodPost, "/api/v1/alerts/trigger", strings.NewReader(`{"record_type":"value_area","record_id":"manual-value-area-signal"}`))
+	if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"status":"accepted"`) || !strings.Contains(w.Body.String(), `"manual_add":true`) {
+		t.Fatalf("value-area trigger status=%d body=%s", w.Code, w.Body.String())
+	}
+	var payloads []map[string]any
+	for range 2 {
+		select {
+		case raw := <-requests:
+			var got map[string]any
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			payloads = append(payloads, got)
+		case <-time.After(2 * time.Second):
+			t.Fatal("value-area trigger did not send both preclose and add payloads")
+		}
+	}
+	var manual map[string]any
+	for _, payload := range payloads {
+		if payload["condition"] == "value_area_manual" {
+			manual = payload
+		}
+	}
+	if manual == nil || manual["source"] != "value_area_manual" || manual["order_intent"] != "manual_position_add" || manual["position_effect"] != "open" || manual["position_side"] != "long" {
+		t.Fatalf("value-area manual add payload missing or incorrect: %#v", payloads)
 	}
 }
 

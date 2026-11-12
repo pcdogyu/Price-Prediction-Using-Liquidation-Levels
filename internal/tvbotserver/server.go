@@ -2473,6 +2473,16 @@ func (s *Server) handleOrderRetry(w http.ResponseWriter, r *http.Request, path s
 		writeError(w, http.StatusBadRequest, "invalid_retry_signal", err.Error())
 		return
 	}
+	manualAdd := isManualValueAreaAddRetry(source)
+	if manualAdd {
+		// A manual retry is an explicit operator action. Preserve the original
+		// payload for audit, but classify the new execution as manual so it can
+		// add to the existing same-direction position without weakening the
+		// automatic value-area conflict gate.
+		signal.Condition = "value_area_manual"
+		signal.Text = "订单历史手动加仓"
+		signal.OrderIntent = "manual_position_add"
+	}
 	executeCfg := retryExecutionConfig(cfg, source)
 	record, duplicate, err := s.Orders.RecordAccepted(signal, storage.RetryKey(source.SignalID, signal, now), now)
 	if err != nil {
@@ -2481,24 +2491,32 @@ func (s *Server) handleOrderRetry(w http.ResponseWriter, r *http.Request, path s
 	}
 	if duplicate {
 		writeJSON(w, http.StatusAccepted, map[string]any{
-			"status":    "duplicate",
-			"signal_id": record.SignalID,
-			"retry_of":  source.SignalID,
+			"status":     "duplicate",
+			"signal_id":  record.SignalID,
+			"retry_of":   source.SignalID,
+			"manual_add": manualAdd,
 		})
 		return
 	}
 	go s.execute(record.SignalID, signal, executeCfg)
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"status":    "accepted",
-		"signal_id": record.SignalID,
-		"retry_of":  source.SignalID,
-		"price":     trading.NormalizeFloat(signal.Price.Value),
+		"status":     "accepted",
+		"signal_id":  record.SignalID,
+		"retry_of":   source.SignalID,
+		"price":      trading.NormalizeFloat(signal.Price.Value),
+		"manual_add": manualAdd,
 	})
 }
 
 func ignoredOrderCanRetry(rec storage.OrderRecord) bool {
 	code := strings.ToLower(strings.TrimSpace(rec.ErrorCode))
-	return strings.HasPrefix(code, "outside_market_") || code == "coinpair_filtered" || code == "coinpair_cooldown" || code == "coinpair_whitelist"
+	return strings.HasPrefix(code, "outside_market_") || code == "coinpair_filtered" || code == "coinpair_cooldown" || code == "coinpair_whitelist" || isManualValueAreaAddRetry(rec)
+}
+
+func isManualValueAreaAddRetry(rec storage.OrderRecord) bool {
+	return strings.EqualFold(strings.TrimSpace(rec.ErrorCode), valueAreaConflictingStrategyCode) &&
+		rec.PositionEffect == trading.PositionEffectOpen &&
+		orderRecordSignalKind(rec) == "value_area"
 }
 
 func unsupportedOKXInstrumentMessage(rec storage.OrderRecord) string {
