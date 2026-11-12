@@ -16,6 +16,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/alertsmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/app"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authn"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi"
@@ -64,6 +65,10 @@ func main() {
 		splitSettingsDatabase()
 		return
 	}
+	if len(os.Args) == 2 && os.Args[1] == "split-auth-database" {
+		splitAuthDatabase()
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "add-user" {
 		addUser(os.Args[2])
 		return
@@ -87,7 +92,8 @@ func main() {
 	volumeDatabase := resolveVolumeDatabase(context.Background(), cfg, log)
 	modelsDatabase := resolveModelsDatabase(context.Background(), cfg, log)
 	settingsDatabase := resolveSettingsDatabase(context.Background(), cfg, log)
-	st, err := store.OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(cfg.DatabasePath, marketDatabase, alertsDatabase, optionsDatabase, volumeDatabase, modelsDatabase, settingsDatabase)
+	authDatabase := resolveAuthDatabase(context.Background(), cfg, log)
+	st, err := store.OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase(cfg.DatabasePath, marketDatabase, alertsDatabase, optionsDatabase, volumeDatabase, modelsDatabase, settingsDatabase, authDatabase)
 	if err != nil {
 		log.Error("database open failed", "error", err)
 		os.Exit(1)
@@ -512,6 +518,63 @@ func resolveSettingsDatabase(ctx context.Context, cfg config.Config, log *slog.L
 		return ""
 	}
 	log.Info("using standalone settings database", "database", target)
+	return target
+}
+
+func splitAuthDatabase() {
+	cfg := config.Load()
+	target := strings.TrimSpace(cfg.AuthDatabasePath)
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "could not split auth database: APP_AUTH_DATABASE is required")
+		os.Exit(2)
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil {
+		if sourceErr != nil {
+			fmt.Fprintf(os.Stderr, "could not split auth database: %v\n", sourceErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "could not split auth database: %v\n", targetErr)
+		}
+		os.Exit(2)
+	}
+	if sourceAbs == targetAbs {
+		fmt.Fprintln(os.Stderr, "could not split auth database: APP_AUTH_DATABASE must differ from APP_DATABASE")
+		os.Exit(2)
+	}
+	migrated, err := authmigration.MigrateUnifiedSQLite(context.Background(), target, cfg.DatabasePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not split auth database: %v\n", err)
+		os.Exit(2)
+	}
+	if migrated {
+		fmt.Println("auth database split completed")
+	} else {
+		fmt.Println("auth database split already completed or source database is unavailable")
+	}
+}
+
+func resolveAuthDatabase(ctx context.Context, cfg config.Config, log *slog.Logger) string {
+	target := strings.TrimSpace(cfg.AuthDatabasePath)
+	if target == "" {
+		return ""
+	}
+	sourceAbs, sourceErr := filepath.Abs(cfg.DatabasePath)
+	targetAbs, targetErr := filepath.Abs(target)
+	if sourceErr != nil || targetErr != nil || sourceAbs == targetAbs {
+		log.Warn("auth database path invalid; using unified database", "database", target)
+		return ""
+	}
+	completed, err := authmigration.HasCompletedMigration(ctx, target, cfg.DatabasePath)
+	if err != nil {
+		log.Warn("auth database migration marker unavailable; using unified database", "database", target, "error", err)
+		return ""
+	}
+	if !completed {
+		log.Warn("auth database not migrated; using unified database", "database", target)
+		return ""
+	}
+	log.Info("using standalone auth database", "database", target)
 	return target
 }
 

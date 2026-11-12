@@ -27,16 +27,17 @@ type Store struct {
 	volumeDB   *sql.DB
 	modelsDB   *sql.DB
 	settingsDB *sql.DB
+	authDB     *sql.DB
 }
 
 func Open(path string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, "", "", "", "", "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase(path, "", "", "", "", "", "", "")
 }
 
 // OpenWithMarketDatabase keeps the unified database as the default while
 // allowing market-data methods to use a separately migrated SQLite file.
 func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, "", "", "", "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase(path, marketPath, "", "", "", "", "", "")
 }
 
 // OpenWithMarketAndAlertsDatabase opens the unified store plus any separately
@@ -44,7 +45,7 @@ func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {
 // corresponding tables on the unified database for legacy deployments and
 // tenant-local stores.
 func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, alertsPath, "", "", "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase(path, marketPath, alertsPath, "", "", "", "", "")
 }
 
 // OpenWithMarketAndAlertsAndOptionsDatabase opens the unified store plus any
@@ -52,7 +53,7 @@ func OpenWithMarketAndAlertsDatabase(path, marketPath, alertsPath string) (*Stor
 // Empty paths keep the corresponding tables on the unified database for legacy
 // deployments and tenant-local stores.
 func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, optionsPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, alertsPath, optionsPath, "", "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase(path, marketPath, alertsPath, optionsPath, "", "", "", "")
 }
 
 // OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase opens the unified store
@@ -60,7 +61,7 @@ func OpenWithMarketAndAlertsAndOptionsDatabase(path, marketPath, alertsPath, opt
 // volume-profile databases. Empty paths keep the corresponding tables on the
 // unified database for legacy deployments and tenant-local stores.
 func OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alertsPath, optionsPath, volumePath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, "", "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase(path, marketPath, alertsPath, optionsPath, volumePath, "", "", "")
 }
 
 // OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase opens the
@@ -69,7 +70,7 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeDatabase(path, marketPath, alerts
 // the corresponding tables on the unified database for legacy deployments and
 // tenant-local stores.
 func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, modelsPath string) (*Store, error) {
-	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, modelsPath, "")
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase(path, marketPath, alertsPath, optionsPath, volumePath, modelsPath, "", "")
 }
 
 // OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase opens
@@ -77,6 +78,14 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsDatabase(path, marketPat
 // keep the corresponding tables on the unified database for legacy deployments
 // and tenant-local stores.
 func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path, marketPath, alertsPath, optionsPath, volumePath, modelsPath, settingsPath string) (*Store, error) {
+	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase(path, marketPath, alertsPath, optionsPath, volumePath, modelsPath, settingsPath, "")
+}
+
+// OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase
+// opens the unified store plus all optional standalone module databases. Empty
+// paths keep the corresponding tables on the unified database for legacy
+// deployments and tenant-local stores.
+func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase(path, marketPath, alertsPath, optionsPath, volumePath, modelsPath, settingsPath, authPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
@@ -90,7 +99,7 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	s := &Store{db: db, marketDB: db, alertsDB: db, optionsDB: db, volumeDB: db, modelsDB: db, settingsDB: db}
+	s := &Store{db: db, marketDB: db, alertsDB: db, optionsDB: db, volumeDB: db, modelsDB: db, settingsDB: db, authDB: db}
 	marketPath = strings.TrimSpace(marketPath)
 	if marketPath != "" {
 		mainAbs, mainErr := filepath.Abs(path)
@@ -317,6 +326,58 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path
 		settingsDB.SetMaxIdleConns(1)
 		s.settingsDB = settingsDB
 	}
+	authPath = strings.TrimSpace(authPath)
+	if authPath != "" {
+		mainAbs, mainErr := filepath.Abs(path)
+		authAbs, authErr := filepath.Abs(authPath)
+		marketAbs, marketErr := filepath.Abs(marketPath)
+		alertsAbs, alertsErr := filepath.Abs(alertsPath)
+		optionsAbs, optionsErr := filepath.Abs(optionsPath)
+		volumeAbs, volumeErr := filepath.Abs(volumePath)
+		modelsAbs, modelsErr := filepath.Abs(modelsPath)
+		settingsAbs, settingsErr := filepath.Abs(settingsPath)
+		if mainErr != nil || authErr != nil || (marketPath != "" && marketErr != nil) || (alertsPath != "" && alertsErr != nil) || (optionsPath != "" && optionsErr != nil) || (volumePath != "" && volumeErr != nil) || (modelsPath != "" && modelsErr != nil) || (settingsPath != "" && settingsErr != nil) {
+			_ = s.Close()
+			if mainErr != nil {
+				return nil, mainErr
+			}
+			if authErr != nil {
+				return nil, authErr
+			}
+			if marketPath != "" && marketErr != nil {
+				return nil, marketErr
+			}
+			if alertsPath != "" && alertsErr != nil {
+				return nil, alertsErr
+			}
+			if optionsPath != "" && optionsErr != nil {
+				return nil, optionsErr
+			}
+			if volumePath != "" && volumeErr != nil {
+				return nil, volumeErr
+			}
+			if modelsPath != "" && modelsErr != nil {
+				return nil, modelsErr
+			}
+			return nil, settingsErr
+		}
+		if authAbs == mainAbs || (marketPath != "" && authAbs == marketAbs) || (alertsPath != "" && authAbs == alertsAbs) || (optionsPath != "" && authAbs == optionsAbs) || (volumePath != "" && authAbs == volumeAbs) || (modelsPath != "" && authAbs == modelsAbs) || (settingsPath != "" && authAbs == settingsAbs) {
+			_ = s.Close()
+			return nil, fmt.Errorf("auth database must differ from application, market, alerts, options, volume, models, and settings databases")
+		}
+		if err := os.MkdirAll(filepath.Dir(authPath), 0750); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+		authDB, err := sql.Open("sqlite", authPath+"?_pragma=busy_timeout(60000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+		if err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+		authDB.SetMaxOpenConns(1)
+		authDB.SetMaxIdleConns(1)
+		s.authDB = authDB
+	}
 	if err = s.migrate(context.Background()); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -353,6 +414,12 @@ func OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsDatabase(path
 	}
 	if s.settingsDB != s.db {
 		if err = s.migrateSettingsState(context.Background()); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+	}
+	if s.authDB != s.db {
+		if err = migrateAuthState(context.Background(), s.authDB); err != nil {
 			_ = s.Close()
 			return nil, err
 		}
@@ -402,6 +469,13 @@ func (s *Store) settings() *sql.DB {
 	return s.settingsDB
 }
 
+func (s *Store) auth() *sql.DB {
+	if s == nil || s.authDB == nil {
+		return s.db
+	}
+	return s.authDB
+}
+
 func (s *Store) Close() error {
 	if s == nil {
 		return nil
@@ -441,6 +515,13 @@ func (s *Store) Close() error {
 	}
 	if s.settingsDB != nil && s.settingsDB != s.db && s.settingsDB != s.marketDB && s.settingsDB != s.alertsDB && s.settingsDB != s.optionsDB && s.settingsDB != s.volumeDB && s.settingsDB != s.modelsDB {
 		if err := s.settingsDB.Close(); err != nil {
+			_ = s.marketDB.Close()
+			_ = s.db.Close()
+			return err
+		}
+	}
+	if s.authDB != nil && s.authDB != s.db && s.authDB != s.marketDB && s.authDB != s.alertsDB && s.authDB != s.optionsDB && s.authDB != s.volumeDB && s.authDB != s.modelsDB && s.authDB != s.settingsDB {
+		if err := s.authDB.Close(); err != nil {
 			_ = s.marketDB.Close()
 			_ = s.db.Close()
 			return err
@@ -488,7 +569,12 @@ func (s *Store) Ping(ctx context.Context) error {
 		}
 	}
 	if s.settingsDB != nil && s.settingsDB != s.db && s.settingsDB != s.marketDB && s.settingsDB != s.alertsDB && s.settingsDB != s.optionsDB && s.settingsDB != s.volumeDB && s.settingsDB != s.modelsDB {
-		return s.settingsDB.PingContext(ctx)
+		if err := s.settingsDB.PingContext(ctx); err != nil {
+			return err
+		}
+	}
+	if s.authDB != nil && s.authDB != s.db && s.authDB != s.marketDB && s.authDB != s.alertsDB && s.authDB != s.optionsDB && s.authDB != s.volumeDB && s.authDB != s.modelsDB && s.authDB != s.settingsDB {
+		return s.authDB.PingContext(ctx)
 	}
 	return nil
 }
@@ -542,21 +628,8 @@ CREATE TABLE IF NOT EXISTS background_symbol_snapshot(id INTEGER PRIMARY KEY CHE
 			return err
 		}
 	}
-	for column, definition := range map[string]string{
-		"role":          "TEXT NOT NULL DEFAULT 'user'",
-		"disabled":      "INTEGER NOT NULL DEFAULT 0",
-		"last_login_ts": "INTEGER",
-	} {
-		if !s.hasColumn(ctx, "auth_users", column) {
-			if _, err := s.db.ExecContext(ctx, `ALTER TABLE auth_users ADD COLUMN `+column+` `+definition); err != nil {
-				return err
-			}
-		}
-	}
-	if !s.hasColumn(ctx, "auth_sessions", "username") {
-		if _, err := s.db.ExecContext(ctx, `ALTER TABLE auth_sessions ADD COLUMN username TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
+	if err := migrateAuthState(ctx, s.db); err != nil {
+		return err
 	}
 	// Databases created before source isolation do not have this column. Keep
 	// their rows with an empty source so they remain preserved but are ignored.
@@ -576,10 +649,10 @@ CREATE TABLE IF NOT EXISTS background_symbol_snapshot(id INTEGER PRIMARY KEY CHE
 }
 
 func (s *Store) LoadAuthSessions(ctx context.Context, now time.Time) (map[string]time.Time, error) {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE expires_ts<=?`, now.UTC().UnixMilli()); err != nil {
+	if _, err := s.auth().ExecContext(ctx, `DELETE FROM auth_sessions WHERE expires_ts<=?`, now.UTC().UnixMilli()); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT token_hash,expires_ts FROM auth_sessions WHERE expires_ts>?`, now.UTC().UnixMilli())
+	rows, err := s.auth().QueryContext(ctx, `SELECT token_hash,expires_ts FROM auth_sessions WHERE expires_ts>?`, now.UTC().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -597,15 +670,15 @@ func (s *Store) LoadAuthSessions(ctx context.Context, now time.Time) (map[string
 }
 
 func (s *Store) SaveAuthSession(ctx context.Context, tokenHash string, expires time.Time) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_sessions(token_hash,expires_ts,username) VALUES(?,?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_ts=excluded.expires_ts`, tokenHash, expires.UTC().UnixMilli(), "")
+	_, err := s.auth().ExecContext(ctx, `INSERT INTO auth_sessions(token_hash,expires_ts,username) VALUES(?,?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_ts=excluded.expires_ts`, tokenHash, expires.UTC().UnixMilli(), "")
 	return err
 }
 
 func (s *Store) LoadAuthSessionRecords(ctx context.Context, now time.Time) (map[string]authn.RichSessionRecord, error) {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE expires_ts<=?`, now.UTC().UnixMilli()); err != nil {
+	if _, err := s.auth().ExecContext(ctx, `DELETE FROM auth_sessions WHERE expires_ts<=?`, now.UTC().UnixMilli()); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT token_hash,expires_ts,username FROM auth_sessions WHERE expires_ts>?`, now.UTC().UnixMilli())
+	rows, err := s.auth().QueryContext(ctx, `SELECT token_hash,expires_ts,username FROM auth_sessions WHERE expires_ts>?`, now.UTC().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -624,12 +697,12 @@ func (s *Store) LoadAuthSessionRecords(ctx context.Context, now time.Time) (map[
 }
 
 func (s *Store) SaveAuthSessionRecord(ctx context.Context, record authn.RichSessionRecord) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_sessions(token_hash,expires_ts,username) VALUES(?,?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_ts=excluded.expires_ts,username=excluded.username`, record.TokenHash, record.Expires.UTC().UnixMilli(), strings.TrimSpace(record.Username))
+	_, err := s.auth().ExecContext(ctx, `INSERT INTO auth_sessions(token_hash,expires_ts,username) VALUES(?,?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_ts=excluded.expires_ts,username=excluded.username`, record.TokenHash, record.Expires.UTC().UnixMilli(), strings.TrimSpace(record.Username))
 	return err
 }
 
 func (s *Store) DeleteAuthSession(ctx context.Context, tokenHash string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE token_hash=?`, tokenHash)
+	_, err := s.auth().ExecContext(ctx, `DELETE FROM auth_sessions WHERE token_hash=?`, tokenHash)
 	return err
 }
 
@@ -648,7 +721,7 @@ func (s *Store) LoadAuthUsers(ctx context.Context) (map[string]string, error) {
 }
 
 func (s *Store) LoadAuthUserRecords(ctx context.Context) (map[string]authn.UserRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT username,password_hash,role,disabled,created_ts,updated_ts,last_login_ts FROM auth_users ORDER BY username`)
+	rows, err := s.auth().QueryContext(ctx, `SELECT username,password_hash,role,disabled,created_ts,updated_ts,last_login_ts FROM auth_users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -694,7 +767,7 @@ func (s *Store) UpsertAuthUser(ctx context.Context, username, passwordHash strin
 		return errors.New("invalid authentication user")
 	}
 	now := time.Now().UTC().UnixMilli()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_users(username,password_hash,created_ts,updated_ts,role,disabled) VALUES(?,?,?,?,'user',0)
+	_, err := s.auth().ExecContext(ctx, `INSERT INTO auth_users(username,password_hash,created_ts,updated_ts,role,disabled) VALUES(?,?,?,?,'user',0)
 		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,updated_ts=excluded.updated_ts`, username, passwordHash, now, now)
 	return err
 }
@@ -707,7 +780,7 @@ func (s *Store) CreateAuthUser(ctx context.Context, username, passwordHash, role
 		return errors.New("invalid authentication user")
 	}
 	now := time.Now().UTC().UnixMilli()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_users(username,password_hash,created_ts,updated_ts,role,disabled) VALUES(?,?,?,?,?,0)`, username, passwordHash, now, now, role)
+	_, err := s.auth().ExecContext(ctx, `INSERT INTO auth_users(username,password_hash,created_ts,updated_ts,role,disabled) VALUES(?,?,?,?,?,0)`, username, passwordHash, now, now, role)
 	return err
 }
 
@@ -717,7 +790,7 @@ func (s *Store) SetAuthUserState(ctx context.Context, username, role string, dis
 	if username == "" || (role != "admin" && role != "user") {
 		return errors.New("invalid authentication user state")
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE auth_users SET role=?,disabled=?,updated_ts=? WHERE username=?`, role, boolInt(disabled), time.Now().UTC().UnixMilli(), username)
+	_, err := s.auth().ExecContext(ctx, `UPDATE auth_users SET role=?,disabled=?,updated_ts=? WHERE username=?`, role, boolInt(disabled), time.Now().UTC().UnixMilli(), username)
 	return err
 }
 
@@ -728,7 +801,12 @@ func (s *Store) DeleteAuthUser(ctx context.Context, username string) error {
 			return err
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s.authDB != nil && s.authDB != s.db && (s.settingsDB == nil || s.settingsDB == s.db) {
+		if _, err := s.settings().ExecContext(ctx, `DELETE FROM user_theme WHERE username=?`, username); err != nil {
+			return err
+		}
+	}
+	tx, err := s.auth().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -736,7 +814,7 @@ func (s *Store) DeleteAuthUser(ctx context.Context, username string) error {
 	if _, err = tx.ExecContext(ctx, `DELETE FROM auth_users WHERE username=?`, username); err != nil {
 		return err
 	}
-	if s.settingsDB == nil || s.settingsDB == s.db {
+	if (s.authDB == nil || s.authDB == s.db) && (s.settingsDB == nil || s.settingsDB == s.db) {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM user_theme WHERE username=?`, username); err != nil {
 			return err
 		}
@@ -748,7 +826,7 @@ func (s *Store) DeleteAuthUser(ctx context.Context, username string) error {
 }
 
 func (s *Store) RecordAuthAudit(ctx context.Context, actor, action, target string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO auth_audit(actor,action,target,created_ts) VALUES(?,?,?,?)`, strings.TrimSpace(actor), strings.TrimSpace(action), strings.TrimSpace(target), time.Now().UTC().UnixMilli())
+	_, err := s.auth().ExecContext(ctx, `INSERT INTO auth_audit(actor,action,target,created_ts) VALUES(?,?,?,?)`, strings.TrimSpace(actor), strings.TrimSpace(action), strings.TrimSpace(target), time.Now().UTC().UnixMilli())
 	return err
 }
 

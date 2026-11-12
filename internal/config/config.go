@@ -18,6 +18,7 @@ type Config struct {
 	VolumeDatabasePath               string
 	ModelsDatabasePath               string
 	SettingsDatabasePath             string
+	AuthDatabasePath                 string
 	BasePath                         string
 	TVBotConfigPath                  string
 	TVBotDataPath                    string
@@ -110,6 +111,7 @@ func Load() Config {
 		VolumeDatabasePath:   strings.TrimSpace(os.Getenv("APP_VOLUME_DATABASE")),
 		ModelsDatabasePath:   strings.TrimSpace(os.Getenv("APP_MODELS_DATABASE")),
 		SettingsDatabasePath: strings.TrimSpace(os.Getenv("APP_SETTINGS_DATABASE")),
+		AuthDatabasePath:     strings.TrimSpace(os.Getenv("APP_AUTH_DATABASE")),
 		ModelPath:            env("APP_MODEL", "models/model.json"), Symbols: symbols, DepthSymbols: depthSymbols, BootstrapSymbols: bootstrapSymbols,
 		BasePath: env("APP_BASE_PATH", "/"), AuthUsername: strings.TrimSpace(os.Getenv("APP_AUTH_USERNAME")),
 		AuthPasswordHash: strings.TrimSpace(os.Getenv("APP_AUTH_PASSWORD_HASH")), LogPath: strings.TrimSpace(os.Getenv("APP_LOG_PATH")), MarketCollectorLogPath: strings.TrimSpace(os.Getenv("APP_MARKET_COLLECTOR_LOG_PATH")),

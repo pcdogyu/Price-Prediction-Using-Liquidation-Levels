@@ -40,6 +40,8 @@ func (s *Store) databaseForTable(table string) *sql.DB {
 		return s.models()
 	case "admin_menu", "user_menu", "user_theme", "background_symbol_snapshot":
 		return s.settings()
+	case "auth_sessions", "auth_users", "auth_audit":
+		return s.auth()
 	default:
 		return s.db
 	}

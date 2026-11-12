@@ -158,7 +158,8 @@ for database_file in \
   "$data_root/options.db" "$data_root/options.db-wal" "$data_root/options.db-shm" \
   "$data_root/volume.db" "$data_root/volume.db-wal" "$data_root/volume.db-shm" \
   "$data_root/models.db" "$data_root/models.db-wal" "$data_root/models.db-shm" \
-  "$data_root/settings.db" "$data_root/settings.db-wal" "$data_root/settings.db-shm"; do
+  "$data_root/settings.db" "$data_root/settings.db-wal" "$data_root/settings.db-shm" \
+  "$data_root/auth.db" "$data_root/auth.db-wal" "$data_root/auth.db-shm"; do
   if [[ -e "$database_file" ]]; then
     chown "$builder:$builder" "$database_file"
   fi

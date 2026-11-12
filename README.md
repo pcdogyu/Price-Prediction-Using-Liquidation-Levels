@@ -228,6 +228,19 @@ systemctl start liquidation-predictor.service
 
 普通启动和发布不会自动复制 UI 状态；目标库没有已提交迁移标记时，服务继续使用 `APP_DATABASE`。迁移不删除主库旧表，确认菜单、主题、后台候选符号刷新和用户删除流程正常后再安排旧表清理；需要回退时恢复不带 `APP_SETTINGS_DATABASE` 的旧环境并重启即可。
 
+认证状态可以在维护窗口从统一数据库拆分到 `APP_AUTH_DATABASE` 指定的独立 SQLite 文件。当前边界包含 `auth_users`、`auth_sessions` 和 `auth_audit`；菜单、主题、后台候选符号，以及交易和采集数据仍保留在各自原库。认证数据包含密码哈希和会话哈希，迁移命令只在服务器本地执行，不输出数据：
+
+```bash
+systemctl stop liquidation-predictor.service
+APP_DATABASE=/var/lib/liquidation-predictor/liquidation.db \
+APP_AUTH_DATABASE=/var/lib/liquidation-predictor/auth.db \
+/opt/Price-Prediction-Using-Liquidation-Levels/liquidation-predictor split-auth-database
+chown liquidation:liquidation /var/lib/liquidation-predictor/auth.db /var/lib/liquidation-predictor/auth.db-wal /var/lib/liquidation-predictor/auth.db-shm
+systemctl start liquidation-predictor.service
+```
+
+普通启动和发布不会自动复制认证数据；目标库没有已提交迁移标记时，服务继续使用 `APP_DATABASE`。迁移不删除主库旧表，确认登录、会话续期、退出登录、用户管理和审计记录正常后再安排旧表清理；需要回退时恢复不带 `APP_AUTH_DATABASE` 的旧环境并重启即可。
+
 可选的 CoinGlass 人工登录窗口由服务器上的持久化 Chrome、Xvfb、x11vnc 和 noVNC 组成。相关 systemd 单元位于 `deploy/coinglass-*.service`；VNC、noVNC 和 Chrome CDP 分别只监听 `127.0.0.1:5900`、`127.0.0.1:6080` 和 `127.0.0.1:9222`。Nginx 的 `/liquidation/coinglass-login/` 必须通过应用的 `/api/v1/auth/check` 子请求鉴权，不能将这些端口直接暴露到公网。Chrome 登录状态保存在 `/var/lib/liquidation-predictor/coinglass-profile`，其权限应限制为服务用户可读写。登录后可由仪表盘的“抓取 CoinGlass”按钮调用 `POST /api/v1/coinglass/capture`；服务也会按照 `APP_COINGLASS_CAPTURE_INTERVAL`（默认 10 分钟）自动抓取 BTC/ETH。选择其它 Binance USDT 永续时，`/api/v1/map` 会按需请求对应的 CoinGlass Binance 图并合并到缓存；每个币对独立计算两小时有效期。每次结果保存由 CoinGlass 页面自身运行时解码得到 Binance/全交易所结构化 JSON；浏览器 Cookie 不会写入结果。清算墙按 10x/25x/50x/100x 分色显示，同时列出多头与空头清算强度 Top 3 价格。每次抓取还会以该快照现价分别汇总上下方清算金额：下方更大时显示绿色向上箭头，上方更大时显示红色向下箭头；金额相等时不显示方向箭头，方向仅随下一次 CoinGlass 抓取重新计算。该接口只提供两小时内的 CoinGlass 数据，过期或解析不可用时返回 503，不回退本地估算地图。原始抓取文件只保留最近 3 天，由每日维护窗口删除，`latest.json` 作为实时指针不参与清理，避免抓取目录无限增长。
 
 每天北京时间 03:30（服务启动后立即先执行一次）自动完成一次数据库与磁盘清理：按各自保留期分批删除 K 线、清算事件、盘口快照、墙事件、市场指标、报警与信号；Deribit 期权 Gamma 会先删除 3 天外数据，近 24 小时按 1 分钟时间槽去重，再把 24 小时外的数据只保留整点和半点值。随后删除超过 3 天的 CoinGlass 原始抓取文件，最后把 WAL 检查点回主库并更新查询计划器统计。只有当删除释放的空闲页累计达到 512 MB 时才执行一次 `VACUUM` 真正回收磁盘空间，避免每天重写整库。清理按每批最多 2000 行分批提交，不会长时间阻塞实时采集；任何一步失败只记录 WARN 日志，不影响服务运行。

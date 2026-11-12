@@ -36,7 +36,7 @@ func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactRep
 	}
 	if s.alertsDB == nil || s.alertsDB == s.db || s.alertsDB == s.marketDB {
 		if s.optionsDB == nil || s.optionsDB == s.db || s.optionsDB == s.marketDB {
-			if (s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB) && (s.modelsDB == nil || s.modelsDB == s.db || s.modelsDB == s.marketDB) && (s.settingsDB == nil || s.settingsDB == s.db || s.settingsDB == s.marketDB) {
+			if (s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB) && (s.modelsDB == nil || s.modelsDB == s.db || s.modelsDB == s.marketDB) && (s.settingsDB == nil || s.settingsDB == s.db || s.settingsDB == s.marketDB) && (s.authDB == nil || s.authDB == s.db || s.authDB == s.marketDB) {
 				return report, nil
 			}
 		}
@@ -53,7 +53,7 @@ func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactRep
 		report.Elapsed += alertsReport.Elapsed
 	}
 	if s.optionsDB == nil || s.optionsDB == s.db || s.optionsDB == s.marketDB || s.optionsDB == s.alertsDB {
-		if (s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB || s.volumeDB == s.alertsDB) && (s.modelsDB == nil || s.modelsDB == s.db || s.modelsDB == s.marketDB || s.modelsDB == s.alertsDB) && (s.settingsDB == nil || s.settingsDB == s.db || s.settingsDB == s.marketDB || s.settingsDB == s.alertsDB) {
+		if (s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB || s.volumeDB == s.alertsDB) && (s.modelsDB == nil || s.modelsDB == s.db || s.modelsDB == s.marketDB || s.modelsDB == s.alertsDB) && (s.settingsDB == nil || s.settingsDB == s.db || s.settingsDB == s.marketDB || s.settingsDB == s.alertsDB) && (s.authDB == nil || s.authDB == s.db || s.authDB == s.marketDB || s.authDB == s.alertsDB) {
 			return report, nil
 		}
 	} else {
@@ -68,7 +68,7 @@ func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactRep
 		report.Elapsed += optionsReport.Elapsed
 	}
 	if s.volumeDB == nil || s.volumeDB == s.db || s.volumeDB == s.marketDB || s.volumeDB == s.alertsDB || s.volumeDB == s.optionsDB {
-		if (s.modelsDB == nil || s.modelsDB == s.db || s.modelsDB == s.marketDB || s.modelsDB == s.alertsDB || s.modelsDB == s.optionsDB) && (s.settingsDB == nil || s.settingsDB == s.db || s.settingsDB == s.marketDB || s.settingsDB == s.alertsDB || s.settingsDB == s.optionsDB) {
+		if (s.modelsDB == nil || s.modelsDB == s.db || s.modelsDB == s.marketDB || s.modelsDB == s.alertsDB || s.modelsDB == s.optionsDB) && (s.settingsDB == nil || s.settingsDB == s.db || s.settingsDB == s.marketDB || s.settingsDB == s.alertsDB || s.settingsDB == s.optionsDB) && (s.authDB == nil || s.authDB == s.db || s.authDB == s.marketDB || s.authDB == s.alertsDB || s.authDB == s.optionsDB) {
 			return report, nil
 		}
 	} else {
@@ -92,6 +92,17 @@ func (s *Store) Compact(ctx context.Context, minimumFreeBytes int64) (CompactRep
 		report.BytesBefore += modelsReport.BytesBefore
 		report.BytesAfter += modelsReport.BytesAfter
 		report.Elapsed += modelsReport.Elapsed
+	}
+	if s.authDB != nil && s.authDB != s.db && s.authDB != s.marketDB && s.authDB != s.alertsDB && s.authDB != s.optionsDB && s.authDB != s.volumeDB && s.authDB != s.modelsDB && s.authDB != s.settingsDB {
+		authReport, err := compactDatabase(ctx, s.authDB, minimumFreeBytes)
+		if err != nil {
+			return report, err
+		}
+		report.Compacted = report.Compacted || authReport.Compacted
+		report.FreeBytes += authReport.FreeBytes
+		report.BytesBefore += authReport.BytesBefore
+		report.BytesAfter += authReport.BytesAfter
+		report.Elapsed += authReport.Elapsed
 	}
 	if s.settingsDB != nil && s.settingsDB != s.db && s.settingsDB != s.marketDB && s.settingsDB != s.alertsDB && s.settingsDB != s.optionsDB && s.settingsDB != s.volumeDB && s.settingsDB != s.modelsDB {
 		settingsReport, err := compactDatabase(ctx, s.settingsDB, minimumFreeBytes)
