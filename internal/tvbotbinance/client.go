@@ -168,6 +168,38 @@ type Balance struct {
 	UpdateTime         int64  `json:"updateTime"`
 }
 
+// AccountInformation is the authoritative USDⓈ-M futures account response.
+// Its asset-level marginBalance already includes the exchange-calculated
+// unrealized PnL, so callers do not need to combine separate balance and
+// positionRisk responses.
+type AccountInformation struct {
+	TotalWalletBalance    string         `json:"totalWalletBalance"`
+	TotalUnrealizedProfit string         `json:"totalUnrealizedProfit"`
+	TotalMarginBalance    string         `json:"totalMarginBalance"`
+	AvailableBalance      string         `json:"availableBalance"`
+	MaxWithdrawAmount     string         `json:"maxWithdrawAmount"`
+	MultiAssetsMargin     bool           `json:"multiAssetsMargin"`
+	UpdateTime            int64          `json:"updateTime"`
+	Assets                []AccountAsset `json:"assets"`
+}
+
+type AccountAsset struct {
+	Asset                  string `json:"asset"`
+	WalletBalance          string `json:"walletBalance"`
+	UnrealizedProfit       string `json:"unrealizedProfit"`
+	MarginBalance          string `json:"marginBalance"`
+	MaintMargin            string `json:"maintMargin"`
+	InitialMargin          string `json:"initialMargin"`
+	PositionInitialMargin  string `json:"positionInitialMargin"`
+	OpenOrderInitialMargin string `json:"openOrderInitialMargin"`
+	MaxWithdrawAmount      string `json:"maxWithdrawAmount"`
+	CrossWalletBalance     string `json:"crossWalletBalance"`
+	CrossUnPnl             string `json:"crossUnPnl"`
+	AvailableBalance       string `json:"availableBalance"`
+	MarginAvailable        bool   `json:"marginAvailable"`
+	UpdateTime             int64  `json:"updateTime"`
+}
+
 type Position struct {
 	Symbol                 string `json:"symbol"`
 	PositionSide           string `json:"positionSide"`
@@ -566,6 +598,18 @@ func (c Client) AccountBalance(ctx context.Context) ([]Balance, error) {
 	var out []Balance
 	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+func (c Client) AccountInformation(ctx context.Context) (AccountInformation, error) {
+	b, err := c.Do(ctx, http.MethodGet, "/fapi/v3/account", nil, true)
+	if err != nil {
+		return AccountInformation{}, err
+	}
+	var out AccountInformation
+	if err := json.Unmarshal(b, &out); err != nil {
+		return AccountInformation{}, err
 	}
 	return out, nil
 }

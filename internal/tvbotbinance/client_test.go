@@ -55,6 +55,47 @@ func TestClientSignsPrivateBalanceRequest(t *testing.T) {
 	}
 }
 
+func TestClientSignsPrivateAccountInformationRequest(t *testing.T) {
+	const secret = "unit-secret"
+	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fapi/v3/account" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if r.Header.Get("X-MBX-APIKEY") != "unit-key" {
+			t.Fatalf("missing API key header")
+		}
+		q := r.URL.Query()
+		if q.Get("timestamp") != strconv.FormatInt(now.UnixMilli(), 10) {
+			t.Fatalf("bad timestamp: %s", r.URL.RawQuery)
+		}
+		payload, gotSig := splitSignatureTail(t, r.URL.RawQuery)
+		if payload != qWithoutSignature(q).Encode() {
+			t.Fatalf("signature payload does not match request query got=%s query=%s", payload, qWithoutSignature(q).Encode())
+		}
+		if gotSig != sign(payload, secret) {
+			t.Fatalf("bad signature got=%s payload=%s", gotSig, payload)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"totalWalletBalance":"123.45","totalMarginBalance":"124.56","availableBalance":"120.00","multiAssetsMargin":false,"assets":[{"asset":"USDT","walletBalance":"123.45","unrealizedProfit":"1.11","marginBalance":"124.56","availableBalance":"120.00","updateTime":1784880000000}]}`))
+	}))
+	defer ts.Close()
+
+	client := Client{
+		BaseURL:     ts.URL,
+		Credentials: Credentials{APIKey: "unit-key", SecretKey: secret},
+		HTTPClient:  ts.Client(),
+		Now:         func() time.Time { return now },
+	}
+	account, err := client.AccountInformation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if account.TotalMarginBalance != "124.56" || len(account.Assets) != 1 || account.Assets[0].MarginBalance != "124.56" {
+		t.Fatalf("bad account information: %#v", account)
+	}
+}
+
 func TestClientUserTradesSignsPrivateRequest(t *testing.T) {
 	const secret = "unit-secret"
 	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)

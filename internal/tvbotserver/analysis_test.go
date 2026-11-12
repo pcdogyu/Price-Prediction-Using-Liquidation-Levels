@@ -307,10 +307,8 @@ func TestBuildAnalysisDoesNotCacheBinanceUpstreamError(t *testing.T) {
 			_, _ = w.Write([]byte(`temporary upstream failure`))
 		case "/fapi/v1/income":
 			_, _ = w.Write([]byte(`[]`))
-		case "/fapi/v3/balance":
-			_, _ = w.Write([]byte(`[{"asset":"USDT","balance":"100","availableBalance":"100","crossWalletBalance":"100","updateTime":1784862000000}]`))
-		case "/fapi/v3/positionRisk":
-			_, _ = w.Write([]byte(`[]`))
+		case "/fapi/v3/account":
+			_, _ = w.Write([]byte(`{"totalWalletBalance":"100","totalMarginBalance":"100","availableBalance":"100","updateTime":1784862000000,"assets":[{"asset":"USDT","walletBalance":"100","marginBalance":"100","availableBalance":"100","updateTime":1784862000000}]}`))
 		default:
 			t.Fatalf("unexpected Binance path %s", r.URL.Path)
 		}
@@ -675,46 +673,41 @@ func TestBalancePointsFromSnapshotsUsesEquityForChartValue(t *testing.T) {
 	}
 }
 
-func TestAnalysisBalanceFromBinanceIncludesUSDTPositionUnrealizedPnL(t *testing.T) {
-	got := analysisBalanceFromBinance([]binance.Balance{
-		{
-			Asset:              "USDT",
-			Balance:            "10306",
-			AvailableBalance:   "9900.25",
-			CrossWalletBalance: "10000",
-			UpdateTime:         1785522000000,
-		},
-	}, []binance.Position{
-		{
-			Symbol:           "MANTAUSDT",
-			PositionAmt:      "63222.3",
-			MarginAsset:      "USDT",
-			UnRealizedProfit: "-340.12345678",
-		},
-		{
-			Symbol:           "MEWUSDT",
-			PositionAmt:      "-15342129",
-			MarginAsset:      "USDT",
-			UnRealizedProfit: "20",
-		},
-		{
-			Symbol:           "ETHUSDT",
-			PositionAmt:      "0",
-			MarginAsset:      "USDT",
-			UnRealizedProfit: "999",
-		},
-		{
-			Symbol:           "BTCUSDC",
-			PositionAmt:      "1",
-			MarginAsset:      "USDC",
-			UnRealizedProfit: "999",
-		},
+
+func TestAnalysisBalanceFromBinanceUsesOfficialMarginBalance(t *testing.T) {
+	got := analysisBalanceFromBinanceAccount(binance.AccountInformation{
+		TotalWalletBalance: "10306",
+		TotalMarginBalance: "9985.87654322",
+		AvailableBalance:   "9900.25",
+		UpdateTime:         1785522000000,
+		Assets: []binance.AccountAsset{{
+			Asset:            "USDT",
+			WalletBalance:    "10306",
+			UnrealizedProfit: "-320.12345678",
+			MarginBalance:    "9985.87654322",
+			AvailableBalance: "9900.25",
+			UpdateTime:       1785522000000,
+		}},
 	})
-	if got.TotalEq != "9985.87654322" || got.AvailEq != "9900.25" {
+	if got.TotalEq != "9985.87654322" || got.AvailEq != "9900.25" || got.EqSource != "binance_account_v3" {
 		t.Fatalf("bad Binance balance: %#v", got)
 	}
-	if len(got.Details) != 1 || got.Details[0].Eq != "9985.87654322" || got.Details[0].EqUsd != "9985.87654322" || got.Details[0].CashBal != "10000" {
+	if len(got.Details) != 1 || got.Details[0].Eq != "9985.87654322" || got.Details[0].EqUsd != "9985.87654322" || got.Details[0].CashBal != "10306" {
 		t.Fatalf("bad Binance USDT detail: %#v", got.Details)
+	}
+}
+
+func TestAnalysisBalanceFromBinanceMarksMultiAssetsAsUSD(t *testing.T) {
+	got := analysisBalanceFromBinanceAccount(binance.AccountInformation{
+		TotalWalletBalance: "1200",
+		TotalMarginBalance: "1210.5",
+		AvailableBalance:   "1100.25",
+		MultiAssetsMargin:  true,
+		UpdateTime:         1785522000000,
+		Assets: []binance.AccountAsset{{Asset: "USDT", UpdateTime: 1785522000000}},
+	})
+	if got.Currency != "USD" || len(got.Details) != 1 || got.Details[0].Ccy != "USD" || got.Details[0].Eq != "1210.5" {
+		t.Fatalf("multi-assets account should be represented as USD equity: %#v", got)
 	}
 }
 

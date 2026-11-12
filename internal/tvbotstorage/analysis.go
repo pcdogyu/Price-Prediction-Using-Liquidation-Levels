@@ -44,6 +44,8 @@ type USDTBalanceSnapshot struct {
 	Env              string    `json:"env"`
 	BucketTS         int64     `json:"bucket_ts"`
 	ObservedAt       time.Time `json:"observed_at"`
+	Currency         string    `json:"currency,omitempty"`
+	EqSource         string    `json:"eq_source,omitempty"`
 	TotalEq          string    `json:"total_eq,omitempty"`
 	Eq               string    `json:"eq,omitempty"`
 	EqUsd            string    `json:"eq_usd,omitempty"`
@@ -242,6 +244,14 @@ func (s *OrderStore) UpsertUSDTBalanceSnapshot(snapshot USDTBalanceSnapshot) err
 	if snapshot.Env == "" {
 		snapshot.Env = "demo"
 	}
+	snapshot.Currency = strings.ToUpper(strings.TrimSpace(snapshot.Currency))
+	if snapshot.Currency == "" {
+		snapshot.Currency = "USDT"
+	}
+	snapshot.EqSource = strings.TrimSpace(snapshot.EqSource)
+	if snapshot.EqSource == "" {
+		snapshot.EqSource = "legacy"
+	}
 	if snapshot.ObservedAt.IsZero() {
 		snapshot.ObservedAt = time.Now().UTC()
 	}
@@ -252,10 +262,12 @@ func (s *OrderStore) UpsertUSDTBalanceSnapshot(snapshot USDTBalanceSnapshot) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.Exec(`INSERT INTO usdt_balance_snapshots
-		(exchange, api_id, env, bucket_ts, observed_at, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(exchange, api_id, env, bucket_ts, observed_at, currency, eq_source, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(exchange, api_id, env, bucket_ts) DO UPDATE SET
 			observed_at=excluded.observed_at,
+			currency=excluded.currency,
+			eq_source=excluded.eq_source,
 			total_eq=excluded.total_eq,
 			eq=excluded.eq,
 			eq_usd=excluded.eq_usd,
@@ -270,6 +282,8 @@ func (s *OrderStore) UpsertUSDTBalanceSnapshot(snapshot USDTBalanceSnapshot) err
 		snapshot.Env,
 		snapshot.BucketTS,
 		snapshot.ObservedAt.Format(time.RFC3339Nano),
+		snapshot.Currency,
+		snapshot.EqSource,
 		snapshot.TotalEq,
 		snapshot.Eq,
 		snapshot.EqUsd,
@@ -308,7 +322,7 @@ func (s *OrderStore) ListExchangeUSDTBalanceSnapshots(exchange, apiID, env strin
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT exchange, api_id, env, bucket_ts, observed_at, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at
+	rows, err := s.db.Query(`SELECT exchange, api_id, env, bucket_ts, observed_at, currency, eq_source, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at
 		FROM usdt_balance_snapshots
 		WHERE exchange = ? AND api_id = ? AND env = ? AND bucket_ts >= ?
 		ORDER BY bucket_ts ASC LIMIT ?`,
@@ -332,6 +346,8 @@ func (s *OrderStore) ListExchangeUSDTBalanceSnapshots(exchange, apiID, env strin
 			&snapshot.Env,
 			&snapshot.BucketTS,
 			&observedAt,
+			&snapshot.Currency,
+			&snapshot.EqSource,
 			&snapshot.TotalEq,
 			&snapshot.Eq,
 			&snapshot.EqUsd,
@@ -350,6 +366,12 @@ func (s *OrderStore) ListExchangeUSDTBalanceSnapshots(exchange, apiID, env strin
 				return nil, err
 			}
 			snapshot.ObservedAt = parsed
+		}
+		if snapshot.Currency == "" {
+			snapshot.Currency = "USDT"
+		}
+		if snapshot.EqSource == "" {
+			snapshot.EqSource = "legacy"
 		}
 		out = append(out, snapshot)
 	}

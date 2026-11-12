@@ -1162,6 +1162,8 @@ func (s *OrderStore) migrateSQLite() error {
 			env TEXT NOT NULL,
 			bucket_ts INTEGER NOT NULL,
 			observed_at TEXT NOT NULL,
+			currency TEXT NOT NULL DEFAULT 'USDT',
+			eq_source TEXT NOT NULL DEFAULT 'legacy',
 			total_eq TEXT,
 			eq TEXT,
 			eq_usd TEXT,
@@ -1299,6 +1301,9 @@ func (s *OrderStore) migrateSQLite() error {
 	if err := s.ensureUSDTBalanceExchangeKey(); err != nil {
 		return err
 	}
+	if err := s.ensureUSDTBalanceMetadataColumns(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1417,6 +1422,8 @@ func (s *OrderStore) ensureUSDTBalanceExchangeKey() error {
 			env TEXT NOT NULL,
 			bucket_ts INTEGER NOT NULL,
 			observed_at TEXT NOT NULL,
+			currency TEXT NOT NULL DEFAULT 'USDT',
+			eq_source TEXT NOT NULL DEFAULT 'legacy',
 			total_eq TEXT,
 			eq TEXT,
 			eq_usd TEXT,
@@ -1429,9 +1436,9 @@ func (s *OrderStore) ensureUSDTBalanceExchangeKey() error {
 			PRIMARY KEY(exchange, api_id, env, bucket_ts)
 		);
 		INSERT OR REPLACE INTO usdt_balance_snapshots_new
-			(exchange, api_id, env, bucket_ts, observed_at, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at)
+			(exchange, api_id, env, bucket_ts, observed_at, currency, eq_source, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at)
 		SELECT
-			COALESCE(NULLIF(exchange, ''), 'okx'), api_id, env, bucket_ts, observed_at, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at
+			COALESCE(NULLIF(exchange, ''), 'okx'), api_id, env, bucket_ts, observed_at, 'USDT', 'legacy', total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at
 		FROM usdt_balance_snapshots;
 		DROP TABLE usdt_balance_snapshots;
 		ALTER TABLE usdt_balance_snapshots_new RENAME TO usdt_balance_snapshots;
@@ -1446,6 +1453,8 @@ func (s *OrderStore) ensureUSDTBalanceExchangeKey() error {
 				env TEXT NOT NULL,
 				bucket_ts INTEGER NOT NULL,
 				observed_at TEXT NOT NULL,
+				currency TEXT NOT NULL DEFAULT 'USDT',
+				eq_source TEXT NOT NULL DEFAULT 'legacy',
 				total_eq TEXT,
 				eq TEXT,
 				eq_usd TEXT,
@@ -1458,15 +1467,37 @@ func (s *OrderStore) ensureUSDTBalanceExchangeKey() error {
 				PRIMARY KEY(exchange, api_id, env, bucket_ts)
 			);
 			INSERT OR REPLACE INTO usdt_balance_snapshots_new
-				(exchange, api_id, env, bucket_ts, observed_at, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at)
+				(exchange, api_id, env, bucket_ts, observed_at, currency, eq_source, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at)
 			SELECT
-				'okx', api_id, env, bucket_ts, observed_at, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at
+				'okx', api_id, env, bucket_ts, observed_at, 'USDT', 'legacy', total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at
 			FROM usdt_balance_snapshots;
 			DROP TABLE usdt_balance_snapshots;
 			ALTER TABLE usdt_balance_snapshots_new RENAME TO usdt_balance_snapshots;
 			CREATE INDEX IF NOT EXISTS idx_usdt_balance_snapshots_time ON usdt_balance_snapshots(exchange, api_id, env, bucket_ts);
 		`)
 	}
+	return err
+}
+
+func (s *OrderStore) ensureUSDTBalanceMetadataColumns() error {
+	columns, err := sqliteTableColumns(s.db, "usdt_balance_snapshots")
+	if err != nil {
+		return err
+	}
+	if !columns["currency"] {
+		if _, err := s.db.Exec(`ALTER TABLE usdt_balance_snapshots ADD COLUMN currency TEXT NOT NULL DEFAULT 'USDT'`); err != nil {
+			return err
+		}
+	}
+	if !columns["eq_source"] {
+		if _, err := s.db.Exec(`ALTER TABLE usdt_balance_snapshots ADD COLUMN eq_source TEXT NOT NULL DEFAULT 'legacy'`); err != nil {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`UPDATE usdt_balance_snapshots SET currency = 'USDT' WHERE currency IS NULL OR TRIM(currency) = ''`); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE usdt_balance_snapshots SET eq_source = 'legacy' WHERE eq_source IS NULL OR TRIM(eq_source) = ''`)
 	return err
 }
 

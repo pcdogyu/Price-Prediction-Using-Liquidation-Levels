@@ -4134,7 +4134,29 @@ const tvbotHTML = `<!doctype html>
 
     function usdtBalanceDetail(balance) {
       const details = balance && Array.isArray(balance.details) ? balance.details : [];
-      return details.find((row) => String(row.ccy || "").toUpperCase() === "USDT") || null;
+      const currency = String(balance && balance.currency || "USDT").trim().toUpperCase() || "USDT";
+      return details.find((row) => String(row.ccy || "").toUpperCase() === currency) ||
+        details.find((row) => String(row.ccy || "").toUpperCase() === "USDT") || null;
+    }
+
+    function balanceCurrencyLabel(balance) {
+      const currency = String(balance && balance.currency || "USDT").trim().toUpperCase();
+      return currency || "USDT";
+    }
+
+    function binanceBalanceSourceNotice(item, balance) {
+      const points = item && Array.isArray(item.balance_points) ? item.balance_points : [];
+      const sources = Array.from(new Set(points.map((point) => String(point && point.eq_source || "").trim()).filter(Boolean)));
+      const hasOfficial = sources.includes("binance_account_v3");
+      const hasLegacy = sources.includes("legacy") || (sources.length === 0 && points.length > 0);
+      const notices = [];
+      if (hasOfficial && hasLegacy) {
+        notices.push("新点为官方账户权益，历史点保留旧口径");
+      } else if (hasOfficial || (balance && balance.eq_source === "binance_account_v3")) {
+        notices.push("Binance 官方账户权益");
+      }
+      if (balanceCurrencyLabel(balance) === "USD") notices.push("USD 多资产账户");
+      return notices.join(" · ");
     }
 
     function usdtBalanceRawValue(row) {
@@ -8219,13 +8241,16 @@ const tvbotHTML = `<!doctype html>
     function renderAnalysisBinanceBalance(item) {
       const balance = item && item.balance ? item.balance : null;
       const usdt = usdtBalanceDetail(balance);
+      const currency = balanceCurrencyLabel(balance);
       renderAnalysisBalanceWindow("analysis-binance", item);
       $("analysis-binance-usdt-eq").textContent = usdt ? formatUSDTAmount(usdt.eq) : "-";
       $("analysis-binance-balance-updated").textContent = balance && balance.updated_at ? shanghaiTime(balance.updated_at) : (item && item.refreshed_at ? shanghaiTime(item.refreshed_at) : "-");
-      $("analysis-binance-balance-status").textContent = exchangeBalanceStatusText(item, balance, "Binance");
-      $("analysis-binance-usdt-title").textContent = "USDT 权益图 " + balanceWindowLabel(state.balanceWindowMinutes);
+      const sourceNotice = binanceBalanceSourceNotice(item, balance);
+      const status = exchangeBalanceStatusText(item, balance, "Binance");
+      $("analysis-binance-balance-status").textContent = [status, sourceNotice].filter(Boolean).join(" · ");
+      $("analysis-binance-usdt-title").textContent = (currency === "USD" ? "USD 账户权益图" : "USDT 权益图") + " " + balanceWindowLabel(state.balanceWindowMinutes);
       const points = usdtBalancePoints(item ? (item.balance_points || []) : [], balance);
-      drawUSDTChart(points, "analysis-binance-usdt-chart", item && item.configured ? "暂无 Binance USDT 权益数据" : "Binance 未配置", "#138a55");
+      drawUSDTChart(points, "analysis-binance-usdt-chart", item && item.configured ? "暂无 Binance " + currency + " 权益数据" : "Binance 未配置", "#138a55");
     }
 
     function renderAnalysisGateBalance(item) {

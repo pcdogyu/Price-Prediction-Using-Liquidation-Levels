@@ -35,6 +35,53 @@ func TestSQLiteOrderStoreCanShareApplicationDatabase(t *testing.T) {
 	}
 }
 
+func TestSQLiteOrderStoreAddsBalanceMetadataWithoutRewritingHistory(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "tvbot.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE usdt_balance_snapshots (
+		exchange TEXT NOT NULL DEFAULT 'okx',
+		api_id TEXT NOT NULL,
+		env TEXT NOT NULL,
+		bucket_ts INTEGER NOT NULL,
+		observed_at TEXT NOT NULL,
+		total_eq TEXT,
+		eq TEXT,
+		eq_usd TEXT,
+		avail_eq TEXT,
+		avail_bal TEXT,
+		cash_bal TEXT,
+		frozen_bal TEXT,
+		dis_eq TEXT,
+		balance_updated_at TEXT,
+		PRIMARY KEY(exchange, api_id, env, bucket_ts)
+	);
+	INSERT INTO usdt_balance_snapshots (exchange, api_id, env, bucket_ts, observed_at, total_eq, eq, eq_usd, avail_eq, avail_bal, cash_bal, frozen_bal, dis_eq, balance_updated_at)
+	VALUES ('binance', 'main', 'demo', 1784880000000, '2026-07-24T03:00:00Z', '', '100.25', '', '', '', '', '', '', '')`)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewSQLiteOrderStore(dbPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	snapshots, err := store.ListExchangeUSDTBalanceSnapshots("binance", "main", "demo", time.UnixMilli(1784870000000), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 || snapshots[0].Eq != "100.25" || snapshots[0].Currency != "USDT" || snapshots[0].EqSource != "legacy" {
+		t.Fatalf("legacy balance history was not preserved and marked: %#v", snapshots)
+	}
+}
+
 func TestSQLiteOrderStoreMigratesLegacyJSONOnce(t *testing.T) {
 	dir := t.TempDir()
 	legacyPath := filepath.Join(dir, "orders.json")

@@ -4018,8 +4018,9 @@ func TestTVBotBinancePositionsPendingOrdersAndBalanceOverview(t *testing.T) {
 				t.Fatalf("bad book ticker query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`{"symbol":"BTCUSDT","bidPrice":"49999.9","bidQty":"1","askPrice":"50000.1","askQty":"2","time":1784880000000}`))
-		case "/fapi/v3/balance":
-			_, _ = w.Write([]byte(`[{"asset":"USDT","balance":"2000.5","availableBalance":"1500.25","crossWalletBalance":"1800.25","updateTime":1784886000000}]`))
+		case "/fapi/v3/account":
+			seen[r.URL.Path] = true
+			_, _ = w.Write([]byte(`{"totalWalletBalance":"2000.5","totalMarginBalance":"2020.5","availableBalance":"1500.25","updateTime":1784886000000,"assets":[{"asset":"USDT","walletBalance":"2000.5","marginBalance":"2020.5","availableBalance":"1500.25","updateTime":1784886000000}]}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -4133,7 +4134,7 @@ func TestTVBotBinancePositionsPendingOrdersAndBalanceOverview(t *testing.T) {
 	if binanceOverview.Status != "ok" || binanceOverview.APIID != "main" || len(binanceOverview.BalancePoints) != 1 || binanceOverview.Balance.Details[0].Eq != "2020.5" || math.Abs(binanceOverview.BalancePoints[0].Value-2020.5) > 0.0000001 {
 		t.Fatalf("bad Binance overview: %#v", overview)
 	}
-	for _, path := range []string{"/fapi/v3/positionRisk", "/fapi/v1/userTrades", "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders", "/fapi/v1/exchangeInfo", "/fapi/v1/ticker/bookTicker", "/fapi/v3/balance"} {
+	for _, path := range []string{"/fapi/v3/positionRisk", "/fapi/v1/userTrades", "/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders", "/fapi/v1/exchangeInfo", "/fapi/v1/ticker/bookTicker", "/fapi/v3/account"} {
 		if !seen[path] {
 			t.Fatalf("expected %s to be called, seen=%#v", path, seen)
 		}
