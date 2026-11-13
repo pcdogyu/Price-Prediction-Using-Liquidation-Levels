@@ -179,6 +179,22 @@ type analysisTradesPageResponse struct {
 	Trades       []analysisPositionTrade `json:"trades"`
 }
 
+type analysisIncomePageResponse struct {
+	OK          bool                `json:"ok"`
+	APIID       string              `json:"api_id"`
+	Env         string              `json:"env"`
+	PNLMinutes  int                 `json:"pnl_minutes"`
+	StartTime   time.Time           `json:"start_time"`
+	EndTime     time.Time           `json:"end_time"`
+	RefreshedAt time.Time           `json:"refreshed_at"`
+	Cache       analysisCacheStatus `json:"cache"`
+	Page        int                 `json:"page"`
+	PageSize    int                 `json:"page_size"`
+	Total       int                 `json:"total"`
+	TotalPages  int                 `json:"total_pages"`
+	Incomes     []binance.Income    `json:"incomes"`
+}
+
 type analysisOpenPositionsResponse struct {
 	OK           bool                    `json:"ok"`
 	APIID        string                  `json:"api_id"`
@@ -745,6 +761,118 @@ func (s *Server) handleAnalysisTrades(w http.ResponseWriter, r *http.Request) {
 		Total:        total,
 		TotalPages:   totalPages,
 		Trades:       trades,
+	})
+}
+
+func (s *Server) handleAnalysisIncome(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	if s.Orders == nil || s.ConfigStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "not_configured", "order database is not configured")
+		return
+	}
+	cfg := s.ConfigStore.Get()
+	apiID := strings.TrimSpace(r.URL.Query().Get("binance_api_id"))
+	creds, resolvedAPIID, ok := s.analysisBinanceCredentials(cfg, apiID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "binance_not_configured", "Binance API is not configured")
+		return
+	}
+	minutes := analysisPNLMinutesFromQuery(r, defaultPNLDays)
+	now := s.now().UTC().Truncate(time.Minute)
+	since := analysisPNLSince(now, minutes)
+	env := analysisEnvName(cfg)
+	state, stateFound, err := s.Orders.LoadBinanceIncomeSyncState(resolvedAPIID, env)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "binance_income_storage_failed", err.Error())
+		return
+	}
+	client := s.analysisBinanceClient(cfg, creds)
+	all := make([]binance.Income, 0)
+	coveredSince := since.UnixMilli()
+	if stateFound {
+		coveredSince = state.CoveredSinceMS
+		if since.UnixMilli() < state.CoveredSinceMS {
+			backfillEnd := time.UnixMilli(state.CoveredSinceMS - 1).UTC()
+			rows, fetchErr := fetchBinanceAnalysisIncome(r.Context(), client, since, backfillEnd)
+			if fetchErr != nil {
+				writeError(w, http.StatusBadGateway, "binance_income_failed", fetchErr.Error())
+				return
+			}
+			all = append(all, rows...)
+			coveredSince = since.UnixMilli()
+		}
+		incrementalStart := state.LastSyncedMS - int64(time.Minute/time.Millisecond)
+		if incrementalStart < coveredSince {
+			incrementalStart = coveredSince
+		}
+		if incrementalStart <= now.UnixMilli() {
+			rows, fetchErr := fetchBinanceAnalysisIncome(r.Context(), client, time.UnixMilli(incrementalStart).UTC(), now)
+			if fetchErr != nil {
+				writeError(w, http.StatusBadGateway, "binance_income_failed", fetchErr.Error())
+				return
+			}
+			all = append(all, rows...)
+		}
+	} else {
+		all, err = fetchBinanceAnalysisIncome(r.Context(), client, since, now)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "binance_income_failed", err.Error())
+			return
+		}
+	}
+	all = deduplicateBinanceIncome(all)
+	stored := make([]storage.BinanceIncomeRecord, 0, len(all))
+	for _, row := range all {
+		stored = append(stored, storage.BinanceIncomeRecord{
+			IncomeKey: binanceIncomeKey(row), Symbol: row.Symbol, IncomeType: row.IncomeType,
+			Income: row.Income, Asset: row.Asset, Info: row.Info,
+			TranID: strconv.FormatInt(row.TranID, 10), TradeID: row.TradeID, Time: row.Time,
+		})
+	}
+	state = storage.BinanceIncomeSyncState{CoveredSinceMS: coveredSince, LastSyncedMS: now.UnixMilli(), UpdatedAt: now}
+	if err := s.Orders.SaveBinanceIncomeSync(resolvedAPIID, env, stored, state, now); err != nil {
+		writeError(w, http.StatusInternalServerError, "binance_income_storage_failed", err.Error())
+		return
+	}
+	persisted, err := s.Orders.ListBinanceIncome(resolvedAPIID, env, since, now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "binance_income_storage_failed", err.Error())
+		return
+	}
+	incomes := make([]binance.Income, 0, len(persisted))
+	for _, row := range persisted {
+		tranID, _ := strconv.ParseInt(row.TranID, 10, 64)
+		incomes = append(incomes, binance.Income{
+			Symbol: row.Symbol, IncomeType: row.IncomeType, Income: row.Income,
+			Asset: row.Asset, Info: row.Info, TranID: tranID, TradeID: row.TradeID, Time: row.Time,
+		})
+	}
+	page, pageSize := analysisPageQuery(r)
+	total := len(incomes)
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+	if totalPages > 0 && page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	incomes = append([]binance.Income(nil), incomes[start:end]...)
+	writeJSON(w, http.StatusOK, analysisIncomePageResponse{
+		OK: true, APIID: resolvedAPIID, Env: env, PNLMinutes: minutes,
+		StartTime: since, EndTime: now, RefreshedAt: now,
+		Cache: analysisCacheStatus{CachedAt: now, CacheKey: "binance_income|" + resolvedAPIID + "|" + env},
+		Page:  page, PageSize: pageSize, Total: total, TotalPages: totalPages, Incomes: incomes,
 	})
 }
 
@@ -1715,6 +1843,76 @@ func (s *Server) fetchBinanceAnalysisFunding(ctx context.Context, client binance
 		}
 	}
 	return out, nil
+}
+
+func fetchBinanceAnalysisIncome(ctx context.Context, client binance.Client, since, until time.Time) ([]binance.Income, error) {
+	const maxIncomeQueryWindow = 7 * 24 * time.Hour
+	const maxIncomePage = 1000
+	all := make([]binance.Income, 0)
+	for start := since.UTC(); !start.After(until); {
+		end := start.Add(maxIncomeQueryWindow - time.Millisecond)
+		if end.After(until) {
+			end = until
+		}
+		rows, err := fetchBinanceAnalysisIncomeWindow(ctx, client, start, end, maxIncomePage, 0)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, rows...)
+		start = end.Add(time.Millisecond)
+	}
+	return deduplicateBinanceIncome(all), nil
+}
+
+func deduplicateBinanceIncome(all []binance.Income) []binance.Income {
+	seen := make(map[string]struct{}, len(all))
+	unique := all[:0]
+	for _, row := range all {
+		key := binanceIncomeKey(row)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, row)
+	}
+	sort.SliceStable(unique, func(i, j int) bool {
+		if unique[i].Time == unique[j].Time {
+			if unique[i].IncomeType == unique[j].IncomeType {
+				return unique[i].TranID > unique[j].TranID
+			}
+			return unique[i].IncomeType < unique[j].IncomeType
+		}
+		return unique[i].Time > unique[j].Time
+	})
+	return unique
+}
+
+func binanceIncomeKey(row binance.Income) string {
+	key := strings.ToUpper(strings.TrimSpace(row.IncomeType)) + "|" + strconv.FormatInt(row.TranID, 10)
+	if row.TranID == 0 {
+		key += "|" + row.Symbol + "|" + row.TradeID + "|" + strconv.FormatInt(row.Time, 10) + "|" + row.Income
+	}
+	return key
+}
+
+func fetchBinanceAnalysisIncomeWindow(ctx context.Context, client binance.Client, start, end time.Time, limit, depth int) ([]binance.Income, error) {
+	rows, err := client.IncomeHistory(ctx, "", "", start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) < limit || depth >= 20 || end.Sub(start) <= time.Millisecond {
+		return rows, nil
+	}
+	mid := start.Add(end.Sub(start) / 2).Truncate(time.Millisecond)
+	left, err := fetchBinanceAnalysisIncomeWindow(ctx, client, start, mid, limit, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	right, err := fetchBinanceAnalysisIncomeWindow(ctx, client, mid.Add(time.Millisecond), end, limit, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	return append(left, right...), nil
 }
 
 func analysisBalanceFromOKX(balance okx.AccountBalanceData) analysisBalance {

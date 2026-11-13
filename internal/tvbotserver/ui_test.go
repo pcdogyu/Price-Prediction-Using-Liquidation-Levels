@@ -530,7 +530,10 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 	}
 	for _, want := range []string{
 		`id="analysis-trade-history-section"`,
-		`section.hidden = exchange === "binance"`,
+		`endpoint = "/tvbot/analysis/income"`,
+		`Binance 资金流水 / 盈亏`,
+		`row.incomeType`,
+		`row.tranId`,
 		`id="analysis-trade-aggregate-toggle" aria-pressed="false"`,
 		`type="button"`,
 		`analysis-trade-history-actions`,

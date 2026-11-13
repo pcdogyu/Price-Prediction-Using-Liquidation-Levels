@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -975,6 +976,78 @@ func TestCorrectBinanceAnalysisADLPricesUsesSiblingAutoclosePrice(t *testing.T) 
 	}
 	if got := correctBinanceAnalysisADLPrices(trades, orders); got != 1 || trades[0].FillPx != "0.0934" {
 		t.Fatalf("ADL price correction=%d trade=%#v, want one correction to 0.0934", got, trades[0])
+	}
+}
+
+func TestHandleAnalysisIncomeUsesSelectedWindowAndPagesResults(t *testing.T) {
+	srv := newTestServer(t)
+	now := srv.now().Truncate(time.Minute)
+	var requestedStart, requestedEnd int64
+	requestCount := 0
+	firstIncomeTime := now.Add(-30 * time.Second).UnixMilli()
+	secondIncomeTime := now.Add(-29 * time.Second).UnixMilli()
+	thirdIncomeTime := now.Add(-28 * time.Second).UnixMilli()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fapi/v1/income" {
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("incomeType") != "" {
+			t.Fatalf("income history should include all transaction types: %s", r.URL.RawQuery)
+		}
+		requestedStart, _ = strconv.ParseInt(r.URL.Query().Get("startTime"), 10, 64)
+		requestedEnd, _ = strconv.ParseInt(r.URL.Query().Get("endTime"), 10, 64)
+		requestCount++
+		if requestCount > 1 {
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":"ETHUSDT","incomeType":"FUNDING_FEE","income":"0.2","asset":"USDT","info":"","tranId":13,"tradeId":"","time":%d}]`, thirdIncomeTime)))
+			return
+		}
+		_, _ = w.Write([]byte(fmt.Sprintf(`[
+			{"symbol":"BTCUSDT","incomeType":"REALIZED_PNL","income":"2.5","asset":"USDT","info":"","tranId":11,"tradeId":"7","time":%d},
+			{"symbol":"BTCUSDT","incomeType":"COMMISSION","income":"-0.1","asset":"USDT","info":"","tranId":12,"tradeId":"7","time":%d}
+		]`, firstIncomeTime, secondIncomeTime)))
+	}))
+	defer upstream.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = upstream.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = upstream.Client()
+	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
+		ID: "demo-main", Active: true, Credentials: binance.Credentials{APIKey: "demo-key", SecretKey: "demo-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/tvbot/analysis/income?pnl_minutes=60&page=2&page_size=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAnalysisIncome(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("income handler code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got analysisIncomePageResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	wantStart := now.Add(-time.Hour).UnixMilli()
+	if requestedStart != wantStart || requestedEnd != now.UnixMilli() {
+		t.Fatalf("unexpected income history window start=%d end=%d want start=%d end=%d", requestedStart, requestedEnd, wantStart, now.UnixMilli())
+	}
+	if got.PNLMinutes != 60 || got.Total != 2 || got.TotalPages != 2 || got.Page != 2 || len(got.Incomes) != 1 || got.Incomes[0].IncomeType != "REALIZED_PNL" {
+		t.Fatalf("income page did not match selected time/page: %#v", got)
+	}
+	requestedStart, requestedEnd = 0, 0
+	incrementalReq := httptest.NewRequest(http.MethodGet, "/tvbot/analysis/income?pnl_minutes=60&page_size=20", nil)
+	incrementalRR := httptest.NewRecorder()
+	srv.handleAnalysisIncome(incrementalRR, incrementalReq)
+	if incrementalRR.Code != http.StatusOK {
+		t.Fatalf("incremental income handler code=%d body=%s", incrementalRR.Code, incrementalRR.Body.String())
+	}
+	if requestedStart != now.Add(-time.Minute).UnixMilli() || requestedEnd != now.UnixMilli() {
+		t.Fatalf("incremental sync should overlap only the latest minute: start=%d end=%d", requestedStart, requestedEnd)
+	}
+	if err := json.Unmarshal(incrementalRR.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Total != 3 || len(got.Incomes) != 3 {
+		t.Fatalf("incremental sync should return persisted old and new rows: %#v", got)
 	}
 }
 

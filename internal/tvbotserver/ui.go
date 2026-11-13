@@ -4903,14 +4903,21 @@ const tvbotHTML = `<!doctype html>
     async function loadAnalysisTradesPage(page, sequence) {
       const requestedPage = Math.max(1, Number(page || 1));
       const requestSequence = ++analysisTradeLoadSequence;
+      const exchange = activeExchange();
       const qs = new URLSearchParams({
         price_days: "3",
         pnl_minutes: String(analysisPNLWindowMinutes()),
-        exchange: activeExchange(),
         page: String(requestedPage),
         page_size: String(analysisTradePageSize)
       });
-      const result = await api("/tvbot/analysis/trades?" + qs.toString());
+      let endpoint = "/tvbot/analysis/trades";
+      if (exchange === "binance") {
+        endpoint = "/tvbot/analysis/income";
+        if (state.analysis && state.analysis.binance_api_id) qs.set("binance_api_id", state.analysis.binance_api_id);
+      } else {
+        qs.set("exchange", exchange);
+      }
+      const result = await api(endpoint + "?" + qs.toString());
       if ((sequence && sequence !== analysisLoadSequence) || requestSequence !== analysisTradeLoadSequence) return;
       state.analysisTrades = result;
       state.analysisTradePage = Number(result.page || requestedPage);
@@ -8125,17 +8132,41 @@ const tvbotHTML = `<!doctype html>
       const pageInfo = $("analysis-trade-page-info");
       const prev = $("analysis-trade-prev");
       const next = $("analysis-trade-next");
-      if (section) section.hidden = exchange === "binance";
-      if (title) title.textContent = label + " 下单盈亏分析";
-      renderAnalysisTradeAggregateToggle();
-      renderAnalysisTradeHead();
+      const binanceIncome = exchange === "binance";
+      if (section) section.hidden = false;
+      if (title) title.textContent = binanceIncome ? ("Binance 资金流水 / 盈亏 · " + balanceWindowLabel(analysisPNLWindowMinutes())) : label + " 下单盈亏分析";
+      const aggregateToggle = $("analysis-trade-aggregate-toggle");
+      if (aggregateToggle) aggregateToggle.hidden = binanceIncome;
+      if (binanceIncome) {
+        $("analysis-trade-head").innerHTML = '<tr><th>时间</th><th>币对</th><th>流水类型</th><th>金额</th><th>资产</th><th>说明</th><th>流水 ID</th></tr>';
+      } else {
+        renderAnalysisTradeAggregateToggle();
+        renderAnalysisTradeHead();
+      }
       if (!rowsEl) return;
       if (errorText) {
-        rowsEl.innerHTML = '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">' + escapeHTML(errorText) + '</td></tr>';
+        rowsEl.innerHTML = '<tr><td colspan="' + (binanceIncome ? 7 : analysisTradeColumnCount()) + '" class="muted">' + escapeHTML(errorText) + '</td></tr>';
         if (status) status.textContent = errorText;
         if (pageInfo) pageInfo.textContent = "-";
         if (prev) prev.disabled = true;
         if (next) next.disabled = true;
+        return;
+      }
+      if (binanceIncome) {
+        const incomes = state.analysisTrades && Array.isArray(state.analysisTrades.incomes) ? state.analysisTrades.incomes : [];
+        rowsEl.innerHTML = incomes.map((row) => {
+          const time = Number(row.time);
+          const timeText = Number.isFinite(time) && time > 0 ? shanghaiTime(new Date(time).toISOString()) : "-";
+          const amount = asText(row.income || "0");
+          const amountClass = Number(amount) > 0 ? "positive" : (Number(amount) < 0 ? "negative" : "");
+          return "<tr><td>" + escapeHTML(timeText) + "</td><td>" + escapeHTML(row.symbol || "-") + "</td><td>" + escapeHTML(row.incomeType || "-") + "</td><td class=\"" + amountClass + "\">" + escapeHTML(amount) + "</td><td>" + escapeHTML(row.asset || "-") + "</td><td>" + escapeHTML(row.info || "-") + "</td><td>" + escapeHTML(row.tranId || "-") + "</td></tr>";
+        }).join("") || '<tr><td colspan="7" class="muted">当前周期暂无资金流水</td></tr>';
+        const total = Number(state.analysisTrades && state.analysisTrades.total || 0);
+        const totalPages = Math.max(1, Number(state.analysisTrades && state.analysisTrades.total_pages || 0));
+        if (status) status.textContent = total ? ("共 " + total + " 条资金流水") : "-";
+        if (pageInfo) pageInfo.textContent = total ? ("第 " + Number(state.analysisTrades.page || 1) + " / " + totalPages + " 页") : "-";
+        if (prev) prev.disabled = Number(state.analysisTrades && state.analysisTrades.page || 1) <= 1;
+        if (next) next.disabled = Number(state.analysisTrades && state.analysisTrades.page || 1) >= totalPages;
         return;
       }
       const rawTrades = analysisTradesForActiveExchange();
