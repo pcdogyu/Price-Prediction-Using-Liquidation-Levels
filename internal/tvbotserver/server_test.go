@@ -485,7 +485,6 @@ func TestRoutes(t *testing.T) {
 		[]byte(`id="refresh-analysis"`),
 		[]byte("刷新分析"),
 		[]byte("<tr><th>时间</th><th>币对</th><th>方向</th><th>成交价</th><th>数量</th><th>盈亏</th><th>手续费</th><th>订单号</th><th>成交笔数</th></tr>"),
-		[]byte("analysis-trade-history-section"),
 		[]byte("OKX 盈亏分析"),
 		[]byte("Binance 盈亏分析"),
 		[]byte("analysis-okx-symbol-status"),

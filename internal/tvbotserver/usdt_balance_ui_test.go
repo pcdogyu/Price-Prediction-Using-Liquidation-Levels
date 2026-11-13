@@ -212,7 +212,6 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`function renderAnalysisAPISelect(select, exchange)`,
 		`默认 ' + escapeHTML(exchangeLabel(exchange)) + ' 交易 API`,
 		`id="analysis-symbol-section"`,
-		`id="analysis-trade-history-section"`,
 		`OKX 盈亏分析`,
 		`Binance 盈亏分析`,
 		`analysis-okx-symbol-status`,
@@ -278,7 +277,7 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 	if !(gateValuation < gatePNL && gatePNL < gateChart) {
 		t.Fatal("Gate column should show USDT valuation cards, pnl summary, then equity chart")
 	}
-	tradeHistory := strings.Index(tvbotHTML, `id="analysis-trade-history-title"`)
+	tradeHistory := strings.Index(tvbotHTML, `id="analysis-trade-history-section"`)
 	tradeRows := strings.Index(tvbotHTML, `id="analysis-trade-rows"`)
 	tradePage := strings.Index(tvbotHTML, `id="analysis-trade-page-info"`)
 	if tradeHistory < 0 || tradeRows < 0 || tradePage < 0 || !(analysisGrid < tradeHistory && tradeHistory < tradeRows && tradeRows < tradePage) {

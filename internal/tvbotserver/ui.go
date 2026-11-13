@@ -2539,7 +2539,7 @@ const tvbotHTML = `<!doctype html>
           </div>
         </div>
       </div>
-      <div class="analysis-trade-history-card">
+      <div class="analysis-trade-history-card" id="analysis-trade-history-section">
         <div class="section-head" style="margin-bottom:10px">
           <h3 id="analysis-trade-history-title">下单盈亏分析</h3>
           <div class="analysis-trade-history-actions">
@@ -8118,12 +8118,14 @@ const tvbotHTML = `<!doctype html>
     function renderAnalysisTradeHistory(errorText) {
       const exchange = activeExchange();
       const label = exchangeLabel(exchange);
+      const section = $("analysis-trade-history-section");
       const title = $("analysis-trade-history-title");
       const status = $("analysis-trade-history-status");
       const rowsEl = $("analysis-trade-rows");
       const pageInfo = $("analysis-trade-page-info");
       const prev = $("analysis-trade-prev");
       const next = $("analysis-trade-next");
+      if (section) section.hidden = exchange === "binance";
       if (title) title.textContent = label + " 下单盈亏分析";
       renderAnalysisTradeAggregateToggle();
       renderAnalysisTradeHead();

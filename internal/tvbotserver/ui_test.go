@@ -529,6 +529,8 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 		t.Fatalf("analysis aggregation toggle should be placed on the right side of the trade history heading: title=%d toggle=%d status=%d", title, toggle, status)
 	}
 	for _, want := range []string{
+		`id="analysis-trade-history-section"`,
+		`section.hidden = exchange === "binance"`,
 		`id="analysis-trade-aggregate-toggle" aria-pressed="false"`,
 		`type="button"`,
 		`analysis-trade-history-actions`,
