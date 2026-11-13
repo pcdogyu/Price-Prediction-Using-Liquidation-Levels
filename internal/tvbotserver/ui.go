@@ -4169,7 +4169,7 @@ const tvbotHTML = `<!doctype html>
       return raw !== undefined && raw !== null && String(raw).trim() !== "" ? raw : "";
     }
 
-    function usdtBalancePoints(balancePoints, balance) {
+    function usdtBalancePoints(balancePoints, balance, liveUpdatedAt) {
       const stored = (Array.isArray(balancePoints) ? balancePoints : []).map((point, index) => {
         return {
           index: index,
@@ -4177,9 +4177,20 @@ const tvbotHTML = `<!doctype html>
           date: chartPointDate(point)
         };
       }).filter((point) => Number.isFinite(point.value));
-      if (stored.length) return stored;
       const usdt = usdtBalanceDetail(balance);
       const currentValue = Number(usdtBalanceRawValue(usdt));
+      if (liveUpdatedAt && Number.isFinite(currentValue)) {
+        const liveDate = new Date(liveUpdatedAt);
+        if (!Number.isNaN(liveDate.getTime())) {
+          const last = stored[stored.length - 1];
+          if (last && last.date && last.date.getTime() === liveDate.getTime()) {
+            stored[stored.length - 1] = { index: last.index, value: currentValue, date: liveDate };
+          } else {
+            stored.push({ index: stored.length, value: currentValue, date: liveDate });
+          }
+        }
+      }
+      if (stored.length) return stored;
       if (!Number.isFinite(currentValue)) return [];
       return [{ index: 0, value: currentValue, date: balance && balance.updated_at ? new Date(balance.updated_at) : null }];
     }
@@ -8287,7 +8298,8 @@ const tvbotHTML = `<!doctype html>
       const status = exchangeBalanceStatusText(item, balance, "Binance");
       $("analysis-binance-balance-status").textContent = [status, sourceNotice, balanceWindowNotice(item)].filter(Boolean).join(" · ");
       $("analysis-binance-usdt-title").textContent = (currency === "USD" ? "USD 账户权益图" : "USDT 权益图") + "（含资金流） " + balanceWindowLabel(state.balanceWindowMinutes);
-      const points = usdtBalancePoints(item ? (item.balance_points || []) : [], balance);
+      const liveUpdatedAt = item && item.status === "ok" ? (item.refreshed_at || (balance && balance.updated_at)) : "";
+      const points = usdtBalancePoints(item ? (item.balance_points || []) : [], balance, liveUpdatedAt);
       drawUSDTChart(points, "analysis-binance-usdt-chart", item && item.configured ? "暂无 Binance " + currency + " 权益数据" : "Binance 未配置", "#138a55");
     }
 
