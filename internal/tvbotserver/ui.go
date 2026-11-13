@@ -2382,7 +2382,7 @@ const tvbotHTML = `<!doctype html>
           <label>低保证金持仓小时数<input id="position-monitor-low-margin-hours" type="number" min="1" step="1"></label>
           <label class="check"><input id="position-monitor-daily-enabled" type="checkbox">每日定时平仓</label>
           <label>平仓时间（中国时间）<input id="position-monitor-daily-time" type="time" min="00:00" max="23:59" step="60"></label>
-          <div class="muted position-monitor-daily-note">自动扫描止盈/止损只处理持仓超过15分钟的币对；交易所原生保护单仍禁用。低保证金和每日定时平仓覆盖所有已配置交易所；限价追价。</div>
+          <div class="muted position-monitor-daily-note">自动扫描止盈/止损只处理持仓超过15分钟的币对；每日平仓在设定时间前8分钟、设定时间、后7分钟各执行一次，三次均处理主交易所全部未平仓位（包含低于保证金阈值的仓位）；低保证金自动清理另按持仓时长和减仓记录条件触发。交易所原生保护单仍禁用；限价追价。</div>
         </div>
       </div>
       <div class="section-head" style="margin:18px 0 10px">
@@ -5578,6 +5578,18 @@ const tvbotHTML = `<!doctype html>
       };
     }
 
+    function dailyCloseAttemptTimes(value) {
+      const raw = String(value || "06:00");
+      const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(raw);
+      if (!match) return raw;
+      const configuredMinutes = Number(match[1]) * 60 + Number(match[2]);
+      const formatMinutes = (minutes) => {
+        const normalized = (minutes + 1440) % 1440;
+        return String(Math.floor(normalized / 60)).padStart(2, "0") + ":" + String(normalized % 60).padStart(2, "0");
+      };
+      return [configuredMinutes - 8, configuredMinutes, configuredMinutes + 7].map(formatMinutes).join(" / ");
+    }
+
     function renderPositionMonitor() {
       if (!$("position-monitor-interval")) return;
       const monitor = positionMonitorConfig();
@@ -5596,7 +5608,7 @@ const tvbotHTML = `<!doctype html>
         : "读取中";
       $("position-monitor-active-exchanges").textContent = "当前租户启用交易所：" + (activeExchanges || "无");
       const dailyLabel = monitor.daily_close_enabled
-        ? " / 每日 " + (monitor.daily_close_time || "06:00") + " 中国时间主交易所平仓"
+        ? " / 每日 " + dailyCloseAttemptTimes(monitor.daily_close_time) + " 中国时间平仓（含低于保证金阈值仓位）"
         : " / 每日定时平仓关闭";
       $("position-monitor-status").textContent = (monitor.enabled ? "已启用" : "已关闭") +
         " / " + asText(monitor.poll_interval_seconds || 60) + "s" +

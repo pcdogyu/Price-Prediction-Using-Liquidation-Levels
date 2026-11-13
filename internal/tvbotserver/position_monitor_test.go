@@ -120,7 +120,7 @@ func TestPositionMonitorOKXStartsLimitCloseAtThresholds(t *testing.T) {
 	}
 }
 
-func TestScheduledPositionCloseStartsFullOKXLimitClose(t *testing.T) {
+func TestScheduledPositionCloseIncludesYoungLowMarginOKXPosition(t *testing.T) {
 	restore := isolatePositionCloseJobsForTest()
 	defer restore()
 
@@ -137,8 +137,6 @@ func TestScheduledPositionCloseStartsFullOKXLimitClose(t *testing.T) {
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","tickSz":"0.1","ctVal":"1","lotSz":"1","minSz":"1"}]}`))
 		case "/api/v5/market/ticker":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"ETH-USDT-SWAP","bidPx":"99.9","askPx":"100.1","last":"100","ts":"1784880000000"}]}`))
-		case "/api/v5/trade/fills-history":
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":"ETH-USDT-SWAP","ordId":"entry","posSide":"long","side":"buy","fillSz":"1","fillTime":%q}]}`, strconv.FormatInt(srv.now().Add(-time.Hour).UnixMilli(), 10))))
 		case "/api/v5/trade/order":
 			if err := json.NewDecoder(r.Body).Decode(&order); err != nil {
 				t.Fatal(err)
@@ -157,6 +155,9 @@ func TestScheduledPositionCloseStartsFullOKXLimitClose(t *testing.T) {
 	cfg.Trading.PositionMonitor.GateEnabled = false
 	cfg.Trading.PositionMonitor.DailyCloseEnabled = true
 	cfg.Trading.PositionMonitor.DailyCloseTime = "06:00"
+	cfg.Trading.PositionMonitor.LowMarginCloseEnabled = true
+	cfg.Trading.PositionMonitor.LowMarginThresholdUSDT = 30
+	cfg.Trading.PositionMonitor.LowMarginHoldingHours = 1
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.OKXHTTPClient = okxServer.Client()
 	if _, err := srv.OKXCredentials.UpdateAccount(okx.CredentialAccountUpdate{
@@ -171,6 +172,24 @@ func TestScheduledPositionCloseStartsFullOKXLimitClose(t *testing.T) {
 	}
 	if order["instId"] != "ETH-USDT-SWAP" || order["side"] != "sell" || order["ordType"] != "limit" || order["sz"] != "1" || order["posSide"] != "long" {
 		t.Fatalf("bad scheduled OKX close order: %#v", order)
+	}
+}
+
+func TestScheduledBinanceNetShortCloseIsBuyReduceOnly(t *testing.T) {
+	position := okx.Position{
+		InstID:  "ETHUSDT",
+		PosSide: "net",
+		Pos:     "-2.5",
+	}
+	req, partial, err := binancePositionCloseOrderRequest(position, "limit", "100", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partial {
+		t.Fatal("full-position scheduled close must not be marked partial")
+	}
+	if req.Symbol != "ETHUSDT" || req.Side != "BUY" || req.PositionSide != "BOTH" || !req.ReduceOnly || req.Quantity != "2.5" {
+		t.Fatalf("net short must close with a BUY reduce-only order for the absolute size: %#v", req)
 	}
 }
 
