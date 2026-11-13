@@ -697,6 +697,19 @@ func TestAnalysisBalanceFromBinanceUsesOfficialMarginBalance(t *testing.T) {
 	}
 }
 
+func TestAnalysisBalanceFromBinanceIncludesUnrealizedPnLWhenMarginBalanceMissing(t *testing.T) {
+	got := analysisBalanceFromBinanceAccount(binance.AccountInformation{
+		Assets: []binance.AccountAsset{{
+			Asset:            "USDT",
+			WalletBalance:    "1000",
+			UnrealizedProfit: "-12.3456",
+		}},
+	})
+	if got.TotalEq != "987.6544" || len(got.Details) != 1 || got.Details[0].Eq != "987.6544" {
+		t.Fatalf("Binance chart equity should include open-position unrealized PnL: %#v", got)
+	}
+}
+
 func TestAnalysisBalanceFromBinanceMarksMultiAssetsAsUSD(t *testing.T) {
 	got := analysisBalanceFromBinanceAccount(binance.AccountInformation{
 		TotalWalletBalance: "1200",

@@ -1987,10 +1987,7 @@ func analysisBalanceFromBinanceAccount(account binance.AccountInformation) analy
 	if updatedAt == "" {
 		updatedAt = binanceMillisToRFC3339(account.UpdateTime)
 	}
-	equity := strings.TrimSpace(asset.MarginBalance)
-	if equity == "" {
-		equity = strings.TrimSpace(asset.WalletBalance)
-	}
+	equity := binanceUSDTEquity(*asset)
 	available := strings.TrimSpace(asset.AvailableBalance)
 	if available == "" {
 		available = strings.TrimSpace(account.AvailableBalance)
@@ -2008,6 +2005,29 @@ func analysisBalanceFromBinanceAccount(account binance.AccountInformation) analy
 		UpdatedAt: updatedAt,
 	}}
 	return out
+}
+
+// binanceUSDTEquity is mark-to-market equity. Binance's marginBalance already
+// includes unrealizedProfit; compute that same value explicitly when the
+// response omits marginBalance so open positions remain visible on the chart.
+func binanceUSDTEquity(asset binance.AccountAsset) string {
+	if value := strings.TrimSpace(asset.MarginBalance); value != "" {
+		return value
+	}
+	wallet := strings.TrimSpace(asset.WalletBalance)
+	unrealized := strings.TrimSpace(asset.UnrealizedProfit)
+	if wallet == "" {
+		return ""
+	}
+	walletValue, walletErr := strconv.ParseFloat(wallet, 64)
+	unrealizedValue, unrealizedErr := strconv.ParseFloat(unrealized, 64)
+	if unrealized == "" {
+		unrealizedValue, unrealizedErr = 0, nil
+	}
+	if walletErr != nil || unrealizedErr != nil {
+		return wallet
+	}
+	return strconv.FormatFloat(walletValue+unrealizedValue, 'f', -1, 64)
 }
 
 func sortBalanceDetails(details []analysisBalanceDetail) {
