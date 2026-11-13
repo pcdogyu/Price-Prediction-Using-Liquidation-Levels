@@ -265,7 +265,7 @@
     $('market-assessment-risks').innerHTML=risks.length?risks.map(risk=>`<span class="market-risk-chip">${escape(risk)}</span>`).join(''):'<span class="muted">暂无额外风险标记</span>';
   }
   function renderMarket(d) {
-    const c=d.current||{},g=d.gamma||{},last=d.series[d.series.length-1]||{};
+    const c=d.current||{},g=d.gamma||{},dex=g.delta_exposure||{},last=d.series[d.series.length-1]||{};
     $('status').textContent=stateLabel(d.state)+' · 更新 '+when(c.time);
     $('market-metrics').innerHTML=metric('标记价格',price(c.mark_price),'24h '+percent(c.change_24h),tone(c.change_24h))+metric('24h 成交额 USD',compact(c.volume_24h_usd),'低 '+price(c.low_24h)+' / 高 '+price(c.high_24h))+metric('OI 价值 USD',compact(c.oi_usd),'数量 '+price(c.oi_quantity))+metric('资金费率',percent(c.funding_rate),'下次 '+when(c.next_funding))+metric('盘口价差',valid(c.best_ask)&&valid(c.best_bid)?price(c.best_ask-c.best_bid):'—','Bid '+price(c.best_bid)+' / Ask '+price(c.best_ask))+metric('全账户多空比',ratio(c.account_ratio),'账户数量比例')+metric('顶级持仓多空比',ratio(c.top_position_ratio),'顶级交易员持仓比例')+metric('净仓估算 USD',compact(c.net_position_usd),'基于 OI 与顶级持仓比',tone(c.net_position_usd))+metric('最新采样主动买 USD',compact(last.buy_usd),'所选范围最后一个完整采样', 'buy')+metric('最新采样主动卖 USD',compact(last.sell_usd),'所选范围最后一个完整采样', 'sell');
     lineChart('oi-chart',d.series,[{key:'oi_usd',label:'OI USD',color:paint('#60a5fa')}]);lineChart('cvd-chart',d.series,[{key:'cvd_usd',label:'CVD USD',color:paint('#fbbf24')}]);lineChart('taker-chart',d.series,[{key:'buy_usd',label:'主动买 USD',color:paint('#2dd4bf')},{key:'sell_usd',label:'主动卖 USD',color:paint('#fb7185')}]);lineChart('ratio-chart',d.series,[{key:'account_ratio',label:'全账户',color:paint('#60a5fa')},{key:'top_position_ratio',label:'顶级持仓',color:paint('#c084fc')}]);lineChart('delta-chart',d.series,[{key:'delta_usd',label:'主动买卖差值 USD',color:paint('#2dd4bf')}]);
@@ -275,10 +275,15 @@
     const usable=['ok','partial','stale'].includes(g.state);
     const hasFlip=usable&&valid(g.gamma_flip)&&g.gamma_flip>0;
     const flipDetail=hasFlip?(g.flip_state==='partial'||g.state==='partial'?'部分期权链估算 · ':'最近现价 · ')+(g.gamma_flips?.length||1)+' 处零交叉':g.flip_state==='no_crossing'?'搜索范围内无零交叉':'数据不足，等待计算';
-    $('gamma-metrics').innerHTML=metric('净 GEX USD',usable?compact(g.net_gex_usd):'—','1% 标的价格变化',tone(g.net_gex_usd))+metric('绝对 GEX USD',usable?compact(g.absolute_gex_usd):'—','逐合约绝对敞口之和')+metric('Gamma Wall',price(g.gamma_wall),'绝对 GEX 最大的行权价')+metric('Gamma Flip 价格',hasFlip?amount(g.gamma_flip):'—',flipDetail,'','gamma-flip-metric')+metric('合约覆盖',usable?g.contracts+' / '+g.expected_contracts:'—',(g.expiries?.length||0)+' 个到期日');
+    const dexState=g.state==='stale'&&['ok','partial'].includes(dex.state)?'stale':dex.state;
+    const dexUsable=['ok','partial','stale'].includes(dexState);
+    const hedgeSide=dex.hedge_side==='buy'?'买入标的':dex.hedge_side==='sell'?'卖出标的':dex.hedge_side==='neutral'?'近似中性':'—';
+    const dexCoverage=dexUsable?dex.contracts+' / '+dex.expected_contracts:'—';
+    $('gamma-metrics').innerHTML=metric('净 GEX USD',usable?compact(g.net_gex_usd):'—','1% 标的价格变化',tone(g.net_gex_usd))+metric('绝对 GEX USD',usable?compact(g.absolute_gex_usd):'—','逐合约绝对敞口之和')+metric('Delta Exposure (DEX)',dexUsable?compact(dex.net_usd):'—','期权净 Delta · 覆盖 '+dexCoverage,tone(dex.net_usd))+metric('对冲方向',dexUsable?hedgeSide:'—',dexUsable?compact(dex.hedge_usd)+' USD · 做市商短期权代理':'等待有效 Delta',dex.hedge_side==='buy'?'buy':dex.hedge_side==='sell'?'sell':'')+metric('Gamma Wall',price(g.gamma_wall),'绝对 GEX 最大的行权价')+metric('Gamma Flip 价格',hasFlip?amount(g.gamma_flip):'—',flipDetail,'','gamma-flip-metric')+metric('合约覆盖',usable?g.contracts+' / '+g.expected_contracts:'—',(g.expiries?.length||0)+' 个到期日');
+    $('delta-exposure-method').textContent=dex.method||'DEX：使用 Binance 期权 mark delta × OI × 合约单位 × 标的指数价格；正值对应做市商短期权代理下的买入对冲，负值对应卖出。公开 OI 不含持仓方向，缺失 Delta 不记为零。'+(dexState==='partial'?' 当前为部分期权链估算。':dexState==='stale'?' 当前期权链数据已过期。':'');
     $('gamma-flip-method').textContent=(g.flip_method||'Gamma Flip：固定当前隐含波动率，重估净 GEX 的零交叉价格。')+(valid(g.flip_range_low)&&valid(g.flip_range_high)?' 本次范围 '+amount(g.flip_range_low)+'～'+amount(g.flip_range_high)+' USD，IV/利率覆盖 '+(g.flip_contracts||0)+'/'+(g.flip_expected_contracts||0)+' 个有持仓合约。':'')+(g.state==='partial'?' 当前期权链不完整，结果为可用样本估算。':'')+(hasFlip&&(g.gamma_flip<(g.levels?.[0]?.strike??Infinity)||g.gamma_flip>(g.levels?.[g.levels.length-1]?.strike??-Infinity))?' Flip 超出当前行权价视野，价格保留在卡片中。':'');
     gammaChart(g);$('gamma-expiries').innerHTML=(g.expiries||[]).map(e=>`<tr><td>${escape(e.expiry)}</td><td>${e.contracts}</td><td class="${tone(e.net_gex_usd)}">${amount(e.net_gex_usd)}</td></tr>`).join('')||blankRow(3);
-    $('market-warnings').textContent=[...(c.warnings||[]),...(g.warnings||[]),...(d.state==='stale'?['永续指标已过期']:[]),...(g.state==='stale'?['期权数据已过期']:[])].join('；');
+    $('market-warnings').textContent=[...(c.warnings||[]),...(g.warnings||[]),...(dex.warnings||[]),...(d.state==='stale'?['永续指标已过期']:[]),...(g.state==='stale'?['期权数据已过期']:[])].join('；');
   }
   $('refresh').addEventListener('click',load);
   $('symbol').addEventListener('change',()=>{liqCursor='';liqStack=[];frozenBook=null;historyRows=[];$('history-results').innerHTML='';$('history-more').disabled=true;load();});

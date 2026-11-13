@@ -372,6 +372,9 @@ func (s *Service) MarketInfo(ctx context.Context, symbol, rangeName string) (dom
 	}
 	if hasGamma {
 		out.Gamma = g
+		if out.Gamma.DeltaExposure.State == "" {
+			out.Gamma.DeltaExposure.State = "unavailable"
+		}
 		if now.Sub(g.Time) > 15*time.Minute {
 			out.Gamma.State = "stale"
 		}

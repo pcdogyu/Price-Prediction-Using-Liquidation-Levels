@@ -11,6 +11,8 @@ func TestMarketInfoAssessmentUIIsEmbedded(t *testing.T) {
 		`id="market-assessment-heading"`,
 		`id="market-assessment-cards"`,
 		`id="market-assessment-risks"`,
+		`Delta Exposure (DEX)`,
+		`id="delta-exposure-method"`,
 		`<th>交易倾向</th>`,
 		`<th>依据 / 风险</th>`,
 	} {
@@ -22,6 +24,8 @@ func TestMarketInfoAssessmentUIIsEmbedded(t *testing.T) {
 	for _, marker := range []string{
 		"function renderMarketAssessment(assessment)",
 		"marketBiasLabel",
+		"delta_exposure",
+		"对冲方向",
 		"price_change_pct",
 		"w.evidence||w.analysis",
 	} {

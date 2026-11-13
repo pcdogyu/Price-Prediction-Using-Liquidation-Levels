@@ -360,6 +360,7 @@ type OptionContract struct {
 type OptionExposure struct {
 	Contract     OptionContract
 	Gamma        float64
+	Delta        *float64
 	OI           float64
 	IV           *float64
 	InterestRate *float64
@@ -367,6 +368,7 @@ type OptionExposure struct {
 
 type binanceOptionMark struct {
 	Symbol       string `json:"symbol"`
+	Delta        string `json:"delta"`
 	Gamma        string `json:"gamma"`
 	IV           string `json:"markIV"`
 	InterestRate string `json:"riskFreeInterest"`
@@ -432,12 +434,56 @@ func BuildGamma(symbol string, spot float64, rows []OptionExposure, at time.Time
 	}
 	sort.Slice(g.Levels, func(i, j int) bool { return g.Levels[i].Strike < g.Levels[j].Strike })
 	sort.Slice(g.Expiries, func(i, j int) bool { return g.Expiries[i].Expiry < g.Expiries[j].Expiry })
+	g.DeltaExposure = buildDeltaExposure(rows, spot, len(rows))
 	if g.Contracts == 0 {
 		g.State = "unavailable"
 	}
 	buildGammaFlip(&g, rows, at)
 	return g
 }
+
+const deltaExposureMethod = "DEX = Σ(期权 Delta × OI × 合约单位 × 标的指数价格)。正值表示期权链净正 Delta，做市商短期权代理下对应买入标的；负值对应卖出。公开 OI 不含持仓方向，因此仅作方向性对冲敞口估算，不代表做市商真实净仓。"
+
+func buildDeltaExposure(rows []OptionExposure, spot float64, expected int) domain.DeltaExposureView {
+	d := domain.DeltaExposureView{State: "unavailable", ExpectedContracts: expected, Method: deltaExposureMethod, Warnings: []string{}}
+	if !finite(spot) || spot <= 0 {
+		d.Warnings = append(d.Warnings, "标的指数价格不可用")
+		return d
+	}
+	for _, row := range rows {
+		strike := f(row.Contract.Strike)
+		if row.Delta == nil || !finite(*row.Delta) || !finite(row.OI) || row.OI < 0 || !finite(row.Contract.Unit) || row.Contract.Unit <= 0 || strike <= 0 {
+			continue
+		}
+		value := *row.Delta * row.OI * row.Contract.Unit * spot
+		if !finite(value) {
+			continue
+		}
+		d.NetUSD += value
+		d.GrossUSD += math.Abs(value)
+		d.Contracts++
+	}
+	d.HedgeUSD = math.Abs(d.NetUSD)
+	switch {
+	case d.NetUSD > 0:
+		d.HedgeSide = "buy"
+	case d.NetUSD < 0:
+		d.HedgeSide = "sell"
+	default:
+		d.HedgeSide = "neutral"
+	}
+	switch {
+	case d.Contracts == 0:
+		d.State = "unavailable"
+	case expected > 0 && d.Contracts < expected:
+		d.State = "partial"
+		d.Warnings = append(d.Warnings, fmt.Sprintf("DEX 数据覆盖不足：%d/%d 个合约", d.Contracts, expected))
+	default:
+		d.State = "ok"
+	}
+	return d
+}
+
 func BinanceGamma(ctx context.Context, symbol string) (domain.GammaView, error) {
 	h := newHTTP()
 	at := time.Now().UTC()
@@ -468,9 +514,11 @@ func BinanceGamma(ctx context.Context, symbol string) (domain.GammaView, error) 
 		return domain.GammaView{}, err
 	}
 	gammas := map[string]float64{}
+	deltas := map[string]*float64{}
 	ivs := map[string]*float64{}
 	rates := map[string]*float64{}
 	for _, m := range marks {
+		deltas[m.Symbol] = number(m.Delta)
 		if v := number(m.Gamma); v != nil {
 			gammas[m.Symbol] = *v
 		}
@@ -504,11 +552,12 @@ func BinanceGamma(ctx context.Context, symbol string) (domain.GammaView, error) 
 		gamma, gm := gammas[c.Symbol]
 		quantity, ok := oi[c.Symbol]
 		if gm && ok {
-			rows = append(rows, OptionExposure{Contract: c, Gamma: gamma, OI: quantity, IV: ivs[c.Symbol], InterestRate: rates[c.Symbol]})
+			rows = append(rows, OptionExposure{Contract: c, Gamma: gamma, Delta: deltas[c.Symbol], OI: quantity, IV: ivs[c.Symbol], InterestRate: rates[c.Symbol]})
 		}
 	}
 	g := BuildGamma(symbol, spot, rows, at)
 	g.ExpectedContracts = len(contracts)
+	g.DeltaExposure = buildDeltaExposure(rows, spot, len(contracts))
 	g.Warnings = warnings
 	if len(rows) < len(contracts) {
 		g.Warnings = append(g.Warnings, fmt.Sprintf("期权链不完整：%d/%d 个合约", len(rows), len(contracts)))

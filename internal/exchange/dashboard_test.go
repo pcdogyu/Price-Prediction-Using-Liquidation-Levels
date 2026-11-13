@@ -148,3 +148,31 @@ func TestGammaUnitsSignsAndMissingNetPosition(t *testing.T) {
 		t.Fatal(v)
 	}
 }
+
+func TestDeltaExposureUsesSignedDeltaAndContractUnits(t *testing.T) {
+	at := time.Now().UTC()
+	callDelta, putDelta := 0.6, -0.4
+	g := BuildGamma("ETHUSDT", 100, []OptionExposure{
+		{Contract: OptionContract{Side: "CALL", Strike: "100", Unit: 2, Expiry: at.Add(time.Hour).UnixMilli()}, Gamma: .01, Delta: &callDelta, OI: 3},
+		{Contract: OptionContract{Side: "PUT", Strike: "100", Unit: 1, Expiry: at.Add(time.Hour).UnixMilli()}, Gamma: .01, Delta: &putDelta, OI: 1},
+	}, at)
+	d := g.DeltaExposure
+	if d.State != "ok" || d.Contracts != 2 || d.ExpectedContracts != 2 || d.HedgeSide != "buy" {
+		t.Fatalf("delta exposure metadata=%+v", d)
+	}
+	if math.Abs(d.NetUSD-320) > 1e-9 || math.Abs(d.GrossUSD-400) > 1e-9 || math.Abs(d.HedgeUSD-320) > 1e-9 {
+		t.Fatalf("delta exposure values=%+v", d)
+	}
+}
+
+func TestDeltaExposureMarksPartialCoverageWithoutTreatingMissingAsZero(t *testing.T) {
+	at := time.Now().UTC()
+	delta := .5
+	g := BuildGamma("ETHUSDT", 100, []OptionExposure{
+		{Contract: OptionContract{Side: "CALL", Strike: "100", Unit: 1, Expiry: at.Add(time.Hour).UnixMilli()}, Gamma: .01, Delta: &delta, OI: 2},
+		{Contract: OptionContract{Side: "PUT", Strike: "100", Unit: 1, Expiry: at.Add(time.Hour).UnixMilli()}, Gamma: .01, OI: 5},
+	}, at)
+	if g.DeltaExposure.State != "partial" || g.DeltaExposure.Contracts != 1 || g.DeltaExposure.ExpectedContracts != 2 || g.DeltaExposure.NetUSD != 100 {
+		t.Fatalf("delta exposure partial=%+v", g.DeltaExposure)
+	}
+}
