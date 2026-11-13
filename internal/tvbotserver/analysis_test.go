@@ -180,6 +180,52 @@ func TestAnalysisCacheRejectsResponsesWithUpstreamErrors(t *testing.T) {
 	}
 }
 
+func TestReadOnlyAnalysisWithoutExchangeCredentialsReturnsEmptyData(t *testing.T) {
+	srv := newTestServer(t)
+	cfg := srv.ConfigStore.Get()
+	if srv.anyExchangeConfigured() {
+		t.Fatal("test account should have no exchange credentials configured")
+	}
+
+	cacheKey, err := srv.analysisCacheKeyForRequest(cfg, "", "", "", 1, 30*24*60)
+	if err != nil {
+		t.Fatalf("read-only analysis should not require a selected exchange: %v", err)
+	}
+	if !strings.Contains(cacheKey, "read-only-no-exchange") {
+		t.Fatalf("read-only analysis should use its isolated cache key, got %q", cacheKey)
+	}
+
+	for _, tc := range []struct {
+		name string
+		run  func(http.ResponseWriter, *http.Request)
+		path string
+	}{
+		{name: "full", run: srv.handleAnalysis, path: "/tvbot/analysis?price_days=1&pnl_days=30"},
+		{name: "trades", run: srv.handleAnalysisTrades, path: "/tvbot/analysis/trades?price_days=1&pnl_days=30&page=1&page_size=100"},
+		{name: "open positions", run: srv.handleAnalysisOpenPositions, path: "/tvbot/analysis/open-positions?price_days=1&pnl_days=30"},
+		{name: "summary", run: srv.handleAnalysisSummary, path: "/tvbot/analysis/summary?price_days=1&pnl_days=30"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			tc.run(recorder, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("read-only analysis status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if strings.Contains(recorder.Body.String(), `"error"`) {
+				t.Fatalf("read-only analysis should return empty data, got error: %s", recorder.Body.String())
+			}
+		})
+	}
+
+	response, err := srv.buildAnalysis(context.Background(), cfg, "", "", 1, 30*24*60, false)
+	if err != nil {
+		t.Fatalf("read-only analysis should succeed without exchange credentials: %v", err)
+	}
+	if !response.OK || len(response.PositionTrades) != 0 || len(response.OpenPositionTrades) != 0 || len(response.Trades) != 0 {
+		t.Fatalf("read-only analysis should return empty trade collections: %#v", response)
+	}
+}
+
 func TestStaleAnalysisCacheIgnoresUpstreamErrorPayload(t *testing.T) {
 	srv := newTestServer(t)
 	cfg := srv.ConfigStore.Get()

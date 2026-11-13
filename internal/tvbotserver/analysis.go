@@ -1240,6 +1240,9 @@ func (s *Server) analysisCacheKeyForRequest(cfg config.Config, requestedAPIID, r
 	envName := analysisEnvName(cfg)
 	primary := s.primaryExchangeForConfig(cfg)
 	if primary == "" {
+		if !s.anyExchangeConfigured() {
+			return readOnlyAnalysisCacheKey(envName, priceDays, pnlMinutes), nil
+		}
 		return "", errors.New("no primary trading exchange is selected")
 	}
 	_, apiID, okxConfigured := s.analysisOKXCredentials(cfg, requestedAPIID)
@@ -1354,6 +1357,9 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 	envName := analysisEnvName(cfg)
 	primary := s.primaryExchangeForConfig(cfg)
 	if primary == "" {
+		if !s.anyExchangeConfigured() {
+			return emptyReadOnlyAnalysisResponse(envName, priceDays, pnlMinutes, now), nil
+		}
 		return analysisResponse{}, errors.New("no primary trading exchange is selected")
 	}
 	okxCreds, apiID, okxConfigured := s.analysisOKXCredentials(cfg, requestedAPIID)
@@ -1592,6 +1598,30 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 		}
 	}
 	return resp, nil
+}
+
+func readOnlyAnalysisCacheKey(envName string, priceDays, pnlMinutes int) string {
+	return analysisCacheKey("read-only-no-exchange", "", envName, priceDays, pnlMinutes)
+}
+
+func emptyReadOnlyAnalysisResponse(envName string, priceDays, pnlMinutes int, now time.Time) analysisResponse {
+	return analysisResponse{
+		OK:                 true,
+		Env:                envName,
+		PriceDays:          priceDays,
+		PNLDays:            analysisPNLDaysForMinutes(pnlMinutes),
+		PNLMinutes:         pnlMinutes,
+		RefreshedAt:        now.UTC(),
+		Cache:              analysisCacheStatus{CacheKey: readOnlyAnalysisCacheKey(envName, priceDays, pnlMinutes)},
+		Source:             analysisSourceStatus{Fills: "read_only"},
+		PricePoints:        []analysisPricePoint{},
+		BalancePoints:      []analysisBalancePoint{},
+		ExchangeSummaries:  []analysisSymbolStats{},
+		Symbols:            []analysisSymbolStats{},
+		Trades:             []analysisTrade{},
+		PositionTrades:     []analysisPositionTrade{},
+		OpenPositionTrades: []analysisPositionTrade{},
+	}
 }
 
 func (s *Server) staleAnalysisFromCache(cacheKey string) (analysisResponse, bool) {
