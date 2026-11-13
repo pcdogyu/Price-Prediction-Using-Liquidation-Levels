@@ -13,6 +13,7 @@ func TestMarketInfoAssessmentUIIsEmbedded(t *testing.T) {
 		`id="market-assessment-risks"`,
 		`Delta Exposure (DEX)`,
 		`id="delta-exposure-method"`,
+		`id="gamma-chart-help"`,
 		`<th>交易倾向</th>`,
 		`<th>依据 / 风险</th>`,
 	} {
@@ -28,6 +29,10 @@ func TestMarketInfoAssessmentUIIsEmbedded(t *testing.T) {
 		"对冲方向",
 		"price_change_pct",
 		"w.evidence||w.analysis",
+		"function gammaChart(g, currentPrice)",
+		"gamma-chart-panning",
+		"chart.onwheel",
+		"当前价格上下20%",
 	} {
 		if !strings.Contains(assets, marker) {
 			t.Fatalf("market information asset is missing %q", marker)

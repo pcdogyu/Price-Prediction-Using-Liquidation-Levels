@@ -81,6 +81,7 @@ with sync_playwright() as playwright:
         packet["symbol"] = symbol
         spot = 2500 if symbol == "ETHUSDT" else 100000
         flip = 2650.125 if symbol == "ETHUSDT" else 101000.125
+        packet["current"] = {**(packet.get("current") or {}), "mark_price": spot}
         strikes = [spot * v for v in (.8, .9, 1, 1.1, 1.2)]
         packet["gamma"] = {
             **packet["gamma"], "symbol": symbol, "spot_price": spot,
@@ -111,7 +112,7 @@ with sync_playwright() as playwright:
         page.route("**/api/v1/market-info?**", fixture)
 
     def loaded():
-        page.wait_for_function("() => window.__testActiveRequests === 0 && document.querySelectorAll('#gamma-metrics .info-metric').length === 5")
+        page.wait_for_function("() => window.__testActiveRequests === 0 && document.querySelectorAll('#gamma-metrics .info-metric').length === 7")
         expect(page.locator("#page-error")).to_be_hidden()
         assert page.locator("#gamma-chart").bounding_box()["height"] == 440
         assert page.locator("#oi-chart").bounding_box()["height"] == 260
@@ -125,7 +126,7 @@ with sync_playwright() as playwright:
         texts = drawing["texts"]
         assert {"净 GEX · USD", "行权价 · USD"}.issubset({item["text"] for item in texts})
         y_ticks = [item for item in texts if item["align"] == "right" and item["text"] != "行权价 · USD"]
-        x_ticks = [item for item in texts if item["y"] > 390 and item["align"] == "left"]
+        x_ticks = [item for item in texts if item["y"] > 390 and item["align"] == "center"]
         assert len(y_ticks) >= 7 and any(item["text"] == "0" for item in y_ticks)
         assert len(x_ticks) >= minimum_x
         assert drawing["strokes"] >= len(x_ticks) + len(y_ticks)
@@ -139,6 +140,23 @@ with sync_playwright() as playwright:
         assert market_ranges and market_ranges[0] == "12h", market_ranges
     assert page.locator('#market-ranges button[data-range="12h"]').get_attribute("class") == "selected"
     axes(5)
+    expect(page.locator("#gamma-chart-help")).to_contain_text("当前价格上下20%")
+    initial_view = page.locator("#gamma-chart").evaluate("canvas => ({low: Number(canvas.dataset.viewLow), high: Number(canvas.dataset.viewHigh)})")
+    assert abs(initial_view["low"] - 2000) < 0.001 and abs(initial_view["high"] - 3000) < 0.001
+    chart_box = page.locator("#gamma-chart").bounding_box()
+    page.mouse.move(chart_box["x"] + chart_box["width"] * .5, chart_box["y"] + chart_box["height"] * .5)
+    page.mouse.wheel(0, -500)
+    zoomed_view = page.locator("#gamma-chart").evaluate("canvas => ({low: Number(canvas.dataset.viewLow), high: Number(canvas.dataset.viewHigh)})")
+    assert zoomed_view["high"] - zoomed_view["low"] < initial_view["high"] - initial_view["low"]
+    page.mouse.move(chart_box["x"] + chart_box["width"] * .6, chart_box["y"] + chart_box["height"] * .5)
+    page.mouse.down()
+    page.mouse.move(chart_box["x"] + chart_box["width"] * .45, chart_box["y"] + chart_box["height"] * .5)
+    page.mouse.up()
+    panned_view = page.locator("#gamma-chart").evaluate("canvas => ({low: Number(canvas.dataset.viewLow), high: Number(canvas.dataset.viewHigh)})")
+    assert abs(panned_view["low"] - zoomed_view["low"]) > 0.001
+    page.locator("#gamma-chart").dblclick()
+    reset_view = page.locator("#gamma-chart").evaluate("canvas => ({low: Number(canvas.dataset.viewLow), high: Number(canvas.dataset.viewHigh)})")
+    assert abs(reset_view["low"] - initial_view["low"]) < 0.001 and abs(reset_view["high"] - initial_view["high"]) < 0.001
     card = page.locator(".gamma-flip-metric")
     expect(card.locator(".label")).to_have_text("Gamma Flip 价格")
     if production:

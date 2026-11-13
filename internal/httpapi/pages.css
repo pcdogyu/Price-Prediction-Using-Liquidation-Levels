@@ -22,7 +22,7 @@ button[aria-busy="true"]::before,.btn[aria-busy="true"]::before,button.is-saving
 @media(max-width:1400px){.metric-grid.seven{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:720px){.metric-grid.six,.metric-grid.seven{grid-template-columns:repeat(2,minmax(0,1fr))}}
 body[data-page="liquidations"] .page-controls #symbol{display:none}
-#gamma-chart{height:440px}#gamma-flip-method{overflow-wrap:anywhere}
+#gamma-chart{height:440px;cursor:grab;touch-action:none;user-select:none}#gamma-chart.gamma-chart-panning{cursor:grabbing}#gamma-flip-method,#gamma-chart-help{overflow-wrap:anywhere}
 .symbol-field{width:270px;max-width:100%;color:var(--muted);font-size:12px}
 .symbol-field>label{margin-bottom:4px}.symbol-controls{display:flex;gap:6px;align-items:center}
 .symbol-picker{position:relative;flex:1;min-width:0}.symbol-input{display:flex}
