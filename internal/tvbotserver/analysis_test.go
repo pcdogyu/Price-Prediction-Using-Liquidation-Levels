@@ -451,8 +451,8 @@ func TestFetchBinanceAnalysisTradesContinuesAfterSymbolError(t *testing.T) {
 		Now:         func() time.Time { return now },
 	}
 	trades, err := (&Server{}).fetchBinanceAnalysisTrades(context.Background(), client, "binance-main", cfg, 1440, now)
-	if err == nil || !strings.Contains(err.Error(), "BADUSDT") || !strings.Contains(err.Error(), "-1121") {
-		t.Fatalf("expected symbol-specific Binance error, got %v", err)
+	if err != nil {
+		t.Fatalf("invalid historical symbol should not fail analysis refresh: %v", err)
 	}
 	if len(trades) != 2 || trades[0].InstID != "AAAUSDT" || trades[1].InstID != "ZZZUSDT" {
 		t.Fatalf("successful symbols should be retained, trades=%#v", trades)
@@ -511,8 +511,8 @@ func TestFetchBinanceAnalysisTradesRetainsPartialTradesAndAggregatesErrors(t *te
 		Now:         func() time.Time { return now },
 	}
 	trades, err := (&Server{}).fetchBinanceAnalysisTrades(context.Background(), client, "binance-main", cfg, 1440, now)
-	if err == nil || !strings.Contains(err.Error(), "PARTIALUSDT") || !strings.Contains(err.Error(), "SECONDUSDT") {
-		t.Fatalf("expected aggregated symbol errors, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "PARTIALUSDT") || strings.Contains(err.Error(), "SECONDUSDT") {
+		t.Fatalf("expected only actionable symbol errors, got %v", err)
 	}
 	if len(trades) != 1 || trades[0].InstID != "PARTIALUSDT" || trades[0].TradeID != "401" {
 		t.Fatalf("partial symbol trades should be retained, trades=%#v", trades)

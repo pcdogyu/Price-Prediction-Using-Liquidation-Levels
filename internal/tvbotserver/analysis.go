@@ -2035,6 +2035,8 @@ func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.
 		return nil, nil
 	}
 	symbolErrs := []error{}
+	invalidSymbols := []string{}
+	successfulSymbols := 0
 	for _, symbol := range symbols {
 		if streamActive {
 			if _, ok := localSymbols[strings.ToUpper(strings.TrimSpace(symbol))]; ok {
@@ -2048,6 +2050,14 @@ func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.
 		trades, err := s.fetchBinanceAnalysisSymbolTrades(ctx, client, apiID, symbol, since, now.UTC())
 		out = append(out, trades...)
 		if err != nil {
+			// The durable symbol catalog can retain contracts that Binance has
+			// since delisted or removed from the current environment.  A -1121
+			// response for one such symbol must not make otherwise valid recent
+			// analysis stale; keep processing the remaining symbols.
+			if binance.IsAPIErrorCode(err, -1121) {
+				invalidSymbols = append(invalidSymbols, symbol)
+				continue
+			}
 			symbolErr := fmt.Errorf("Binance %s analysis trades: %w", symbol, err)
 			symbolErrs = append(symbolErrs, symbolErr)
 			if _, blocked := binance.RateLimitPauseUntil(now); blocked {
@@ -2056,7 +2066,12 @@ func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 				return out, errors.Join(symbolErrs...)
 			}
+		} else {
+			successfulSymbols++
 		}
+	}
+	if len(symbolErrs) == 0 && successfulSymbols == 0 && len(invalidSymbols) > 0 && len(out) == 0 {
+		return out, fmt.Errorf("Binance analysis symbols are unavailable: %s", strings.Join(invalidSymbols, ", "))
 	}
 	return out, errors.Join(symbolErrs...)
 }
