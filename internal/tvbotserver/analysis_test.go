@@ -941,6 +941,72 @@ func TestFetchBinanceAnalysisTradesBackfillsSymbolsMissingFromUserStream(t *test
 	}
 }
 
+func TestCorrectBinanceAnalysisADLPricesUsesSiblingAutoclosePrice(t *testing.T) {
+	base := time.Date(2026, 11, 12, 14, 46, 32, 0, time.UTC)
+	trades := []analysisTrade{{
+		Exchange: trading.ExchangeBinance,
+		APIID:    "binance-main",
+		InstID:   "ERAUSDT",
+		OrdID:    "adl-order",
+		FillPx:   "1000",
+		FillTime: base,
+	}}
+	orders := []storage.ExchangeOrder{
+		{
+			Exchange:      trading.ExchangeBinance,
+			RemoteOrderID: "adl-order",
+			ClientOrderID: "adl_autoclose",
+			InstID:        "ERAUSDT",
+			Side:          "BUY",
+			Status:        "FILLED",
+			AveragePrice:  "1000",
+			FinishedAt:    base,
+		},
+		{
+			Exchange:      trading.ExchangeBinance,
+			RemoteOrderID: "autoclose-order",
+			ClientOrderID: "autoclose-123",
+			InstID:        "ERAUSDT",
+			Side:          "BUY",
+			Status:        "FILLED",
+			AveragePrice:  "0.0934000",
+			FinishedAt:    base.Add(time.Second),
+		},
+	}
+	if got := correctBinanceAnalysisADLPrices(trades, orders); got != 1 || trades[0].FillPx != "0.0934" {
+		t.Fatalf("ADL price correction=%d trade=%#v, want one correction to 0.0934", got, trades[0])
+	}
+}
+
+func TestBuildAnalysisPositionTradesUsesBinancePricePnL(t *testing.T) {
+	base := time.Date(2026, 11, 12, 10, 5, 0, 0, time.UTC)
+	trades := []analysisTrade{
+		{
+			Exchange: trading.ExchangeBinance, APIID: "binance-main", InstID: "ERAUSDT",
+			TradeID: "open", OrdID: "open-order", Side: "SELL", PosSide: trading.PositionSideShort,
+			PositionEffect: trading.PositionEffectOpen, FillPx: "0.0984", FillSz: "5078",
+			Fee: "-0.2498376", FeeCcy: "USDT", FillTime: base, FillTS: base.UnixMilli(), FillCount: 1,
+		},
+		{
+			Exchange: trading.ExchangeBinance, APIID: "binance-main", InstID: "ERAUSDT",
+			TradeID: "close", OrdID: "close-order", Side: "BUY", PosSide: trading.PositionSideShort,
+			PositionEffect: trading.PositionEffectClose, FillPx: "0.0934", FillSz: "5078",
+			FillPnl: "-296970.7752", Fee: "-0.2498376", FeeCcy: "USDT",
+			FillTime: base.Add(time.Hour), FillTS: base.Add(time.Hour).UnixMilli(), FillCount: 1,
+		},
+	}
+	positions := buildAnalysisPositionTrades(config.Config{}, trades, base.Add(-time.Minute))
+	if len(positions) != 1 {
+		t.Fatalf("positions len=%d positions=%#v", len(positions), positions)
+	}
+	if got := parseFloat(positions[0].RealizedPnL); math.Abs(got-25.39) > 0.0000001 {
+		t.Fatalf("realized P&L=%v, want 25.39 from prices", got)
+	}
+	if got := parseFloat(positions[0].NetPnL); math.Abs(got-24.8903248) > 0.0000001 {
+		t.Fatalf("net P&L=%v, want price P&L plus fees", got)
+	}
+}
+
 func TestBuildAnalysisPositionTradesCountsClosedPositionsOnly(t *testing.T) {
 	cfg := config.Config{Symbols: map[string]config.SymbolConfig{
 		"TEST": {InstID: "TEST-USDT-SWAP", CtVal: 0.01},

@@ -1618,7 +1618,7 @@ func analysisCacheKey(apiID, binanceAPIID, envName string, priceDays, pnlMinutes
 	if len(gateAPIIDs) > 0 {
 		gateAPIID = strings.TrimSpace(gateAPIIDs[0])
 	}
-	return "analysis|v3|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
+	return "analysis|v4|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
 }
 
 func (s *Server) refreshAnalysisData(ctx context.Context, client okx.Client, apiID string, priceDays, pnlMinutes int, now time.Time) error {
@@ -2287,6 +2287,141 @@ func analysisTradeFromBinanceFill(fill storage.BinanceFill) (analysisTrade, bool
 		FillTS:    fill.FillTime,
 		FillCount: 1,
 	}, true
+}
+
+const binanceAnalysisADLPriceWindow = 10 * time.Second
+
+// correctBinanceAnalysisADLPrices repairs the synthetic price returned for an
+// ADL order. Binance exposes the ADL client order as "adl_autoclose" and can
+// report its placeholder price (for example 1000) even when the corresponding
+// autoclose order in the same execution has the real average price. Keep the
+// fill in the position history, but use the real sibling close price for
+// matching and P&L calculation.
+func correctBinanceAnalysisADLPrices(trades []analysisTrade, orders []storage.ExchangeOrder) int {
+	if len(trades) == 0 || len(orders) == 0 {
+		return 0
+	}
+	byOrderID := make(map[string]storage.ExchangeOrder, len(orders))
+	for _, order := range orders {
+		if trading.NormalizeExchange(order.Exchange) != trading.ExchangeBinance {
+			continue
+		}
+		remoteID := strings.TrimSpace(order.RemoteOrderID)
+		if remoteID == "" {
+			continue
+		}
+		byOrderID[remoteID] = order
+	}
+	corrected := 0
+	for i := range trades {
+		trade := &trades[i]
+		if trading.NormalizeExchange(trade.Exchange) != trading.ExchangeBinance {
+			continue
+		}
+		adl, ok := byOrderID[strings.TrimSpace(trade.OrdID)]
+		if !ok || !strings.EqualFold(strings.TrimSpace(adl.ClientOrderID), "adl_autoclose") {
+			continue
+		}
+		adlTime := adl.FinishedAt
+		if adlTime.IsZero() {
+			adlTime = adl.UpdatedAt
+		}
+		if adlTime.IsZero() {
+			adlTime = adl.CreatedAt
+		}
+		if adlTime.IsZero() {
+			adlTime = trade.FillTime
+		}
+		bestDistance := binanceAnalysisADLPriceWindow + time.Second
+		bestPrice := ""
+		for _, sibling := range orders {
+			if trading.NormalizeExchange(sibling.Exchange) != trading.ExchangeBinance ||
+				!strings.EqualFold(strings.TrimSpace(sibling.InstID), strings.TrimSpace(adl.InstID)) ||
+				!strings.EqualFold(strings.TrimSpace(sibling.Status), "FILLED") ||
+				strings.EqualFold(strings.TrimSpace(sibling.ClientOrderID), "adl_autoclose") ||
+				!strings.EqualFold(strings.TrimSpace(sibling.Side), strings.TrimSpace(adl.Side)) {
+				continue
+			}
+			price, priceOK := parsePositiveFloat(sibling.AveragePrice)
+			if !priceOK {
+				continue
+			}
+			siblingTime := sibling.FinishedAt
+			if siblingTime.IsZero() {
+				siblingTime = sibling.UpdatedAt
+			}
+			if siblingTime.IsZero() {
+				siblingTime = sibling.CreatedAt
+			}
+			distance := siblingTime.Sub(adlTime)
+			if distance < 0 {
+				distance = -distance
+			}
+			if distance > binanceAnalysisADLPriceWindow || distance >= bestDistance {
+				continue
+			}
+			bestDistance = distance
+			bestPrice = trading.NormalizeFloat(price)
+		}
+		if bestPrice == "" || strings.TrimSpace(trade.FillPx) == bestPrice {
+			continue
+		}
+		trade.FillPx = bestPrice
+		corrected++
+	}
+	return corrected
+}
+
+func (s *Server) correctBinanceAnalysisADLPrices(apiID, tradeEnv string, trades []analysisTrade) {
+	if s == nil || s.Orders == nil || strings.TrimSpace(apiID) == "" || len(trades) == 0 {
+		return
+	}
+	orderSymbols := map[string]struct{}{}
+	var from, to time.Time
+	for _, trade := range trades {
+		if trading.NormalizeExchange(trade.Exchange) != trading.ExchangeBinance || trade.FillTime.IsZero() {
+			continue
+		}
+		symbol := strings.ToUpper(strings.TrimSpace(trade.InstID))
+		if symbol == "" {
+			continue
+		}
+		orderSymbols[symbol] = struct{}{}
+		if from.IsZero() || trade.FillTime.Before(from) {
+			from = trade.FillTime
+		}
+		if to.IsZero() || trade.FillTime.After(to) {
+			to = trade.FillTime
+		}
+	}
+	if len(orderSymbols) == 0 {
+		return
+	}
+	from = from.Add(-binanceAnalysisADLPriceWindow)
+	to = to.Add(binanceAnalysisADLPriceWindow)
+	orders := []storage.ExchangeOrder{}
+	for symbol := range orderSymbols {
+		for offset := 0; ; offset += 200 {
+			page, err := s.Orders.ListExchangeOrders(storage.ExchangeOrderFilter{
+				Exchange: trading.ExchangeBinance,
+				APIID:    apiID,
+				TradeEnv: tradeEnv,
+				InstID:   symbol,
+				From:     from,
+				To:       to,
+				Limit:    200,
+				Offset:   offset,
+			})
+			if err != nil {
+				return
+			}
+			orders = append(orders, page.Orders...)
+			if len(page.Orders) == 0 || offset+len(page.Orders) >= page.Total {
+				break
+			}
+		}
+	}
+	correctBinanceAnalysisADLPrices(trades, orders)
 }
 
 func normalizedBinanceFee(commission string) string {
@@ -3399,6 +3534,15 @@ func closeAnalysisOpenLots(cfg config.Config, books map[string][]*analysisOpenLo
 		entryFee := lot.feeRemaining * lotRatio
 		entryTurnover := lot.turnoverRemaining * lotRatio
 		realizedPnL := closePnL * closeRatio
+		if trading.NormalizeExchange(trade.Exchange) == trading.ExchangeBinance {
+			if pricePnL, ok := binanceAnalysisPricePnL(lot.side, lot.entryPx, exitPx, matchedQty); ok {
+				// Binance USDⓈ-M symbols used by analysis are linear contracts. The
+				// exchange's realizedPnl can be a synthetic value for ADL fills;
+				// once the execution price is repaired, derive P&L from the matched
+				// entry and exit prices instead of carrying that placeholder value.
+				realizedPnL = pricePnL
+			}
+		}
 		matchedCloseFee := closeFee * closeRatio
 		matchedCloseTurnover := closeTurnover * closeRatio
 		totalFee := entryFee + matchedCloseFee
@@ -3416,6 +3560,20 @@ func closeAnalysisOpenLots(cfg config.Config, books map[string][]*analysisOpenLo
 	}
 	books[key] = lots
 	return remainingCloseQty
+}
+
+func binanceAnalysisPricePnL(positionSide string, entryPx, exitPx, qty float64) (float64, bool) {
+	if entryPx <= 0 || exitPx <= 0 || qty <= 0 {
+		return 0, false
+	}
+	switch normalizeAnalysisPositionSide(positionSide) {
+	case trading.PositionSideLong:
+		return (exitPx - entryPx) * qty, true
+	case trading.PositionSideShort:
+		return (entryPx - exitPx) * qty, true
+	default:
+		return 0, false
+	}
 }
 
 func ensureAnalysisPositionAccumulator(pending map[string]*analysisPositionTradeAccumulator, entryGroupKey string, trade analysisTrade, positionSide string, qty float64) *analysisPositionTradeAccumulator {
@@ -3822,6 +3980,7 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, gateA
 	if err != nil {
 		return analysisResponse{}, err
 	}
+	s.correctBinanceAnalysisADLPrices(binanceAPIID, envName, binanceTrades)
 	trades := make([]analysisTrade, 0, len(fills)+len(binanceTrades)+len(gateTrades))
 	for _, fill := range fills {
 		trade, ok := analysisTradeFromOKXFill(fill)
@@ -3879,6 +4038,7 @@ func (s *Server) analysisFromExternalData(cfg config.Config, apiID, binanceAPIID
 	pnlMinutes = normalizeAnalysisPNLMinutes(pnlMinutes)
 	pnlDays := analysisPNLDaysForMinutes(pnlMinutes)
 	pnlSince := analysisPNLSince(now, pnlMinutes)
+	s.correctBinanceAnalysisADLPrices(binanceAPIID, envName, binanceTrades)
 	trades := make([]analysisTrade, 0, len(binanceTrades)+len(gateTrades))
 	trades = append(trades, binanceTrades...)
 	trades = append(trades, gateTrades...)
