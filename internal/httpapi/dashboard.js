@@ -300,12 +300,26 @@ async function loadHistoricalTradeView() {
   tradeView.historyError = '';
   showFailures(lastFailures);
   try {
-    const packet = await tvbotJSON('analysis?price_days=1&pnl_days=30');
+    const query = 'price_days=1&pnl_days=30';
+    const firstPage = await tvbotJSON('analysis/trades?' + query + '&page=1&page_size=100');
+    const pageCount = Math.max(1, Number(firstPage?.total_pages) || 1);
+    const [openPacket, ...laterPages] = await Promise.all([
+      tvbotJSON('analysis/open-positions?' + query),
+      ...Array.from({ length: Math.min(10, pageCount - 1) }, (_, index) =>
+        tvbotJSON('analysis/trades?' + query + '&page=' + (index + 2) + '&page_size=100')
+      )
+    ]);
+    for (let start = laterPages.length + 1; start < pageCount; start += 10) {
+      const batch = Array.from({ length: Math.min(10, pageCount - start) }, (_, index) =>
+        tvbotJSON('analysis/trades?' + query + '&page=' + (start + index + 1) + '&page_size=100')
+      );
+      laterPages.push(...await Promise.all(batch));
+    }
     // An account with no closed trades is valid: older TVBot responses and
     // cached payloads may encode the empty list as null. Treat both forms as
     // an empty history so the bubble chart remains usable.
-    const closedRows = Array.isArray(packet?.position_trades) ? packet.position_trades : [];
-    const openRows = Array.isArray(packet?.open_position_trades) ? packet.open_position_trades : [];
+    const closedRows = [firstPage, ...laterPages].flatMap(packet => Array.isArray(packet?.trades) ? packet.trades : []);
+    const openRows = Array.isArray(openPacket?.positions) ? openPacket.positions : [];
     const exchangeMatches = row => !tradeView.exchange || normalizeTradeExchange(row?.exchange) === tradeView.exchange;
     const withMarkerKey = (row, kind, index) => Object.assign({}, row, {
       row_key: String(row?.row_key || row?.key || kind + ':' + index),

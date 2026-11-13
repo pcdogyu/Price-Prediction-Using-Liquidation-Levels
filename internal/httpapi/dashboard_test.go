@@ -298,10 +298,10 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 	}
 	for _, marker := range []string{
 		"tvbotAPI",
-		"analysis?price_days=1&pnl_days=30",
-		"position_trades",
-		"open_position_trades",
-		"Array.isArray(packet?.position_trades) ? packet.position_trades : []",
+		"analysis/trades?' + query + '&page=1&page_size=100",
+		"analysis/open-positions?' + query",
+		"Array.isArray(packet?.trades) ? packet.trades : []",
+		"Array.isArray(openPacket?.positions) ? openPacket.positions : []",
 		"历史开平点",
 		"tradeView.historyRows",
 		"tradeView.referenceMarkers",
