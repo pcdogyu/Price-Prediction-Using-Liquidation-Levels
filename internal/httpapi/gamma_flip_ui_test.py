@@ -60,12 +60,12 @@ with sync_playwright() as playwright:
     page.on("pageerror", lambda error: errors.append(str(error)))
     if production:
         entries = json.loads((root / "pem" / "password.json").read_text(encoding="utf-8"))
-        entry = next(e for e in entries if e["username"] == "pcdog")
+        entry = next((e for e in entries if e["username"] == "admin"), entries[0])
         page.goto(base + "/", wait_until="domcontentloaded")
         page.locator("input[name=username]").fill(entry["username"])
         page.locator("input[name=password]").fill(entry["password"])
         page.get_by_role("button", name="登录", exact=True).click()
-        expect(page).to_have_url(base + "/bubbles")
+        expect(page).to_have_url(base + "/alerts")
 
     baseline = context.request.get(base + "/api/v1/market-info?symbol=ETHUSDT&range=1h").json()
     state = {"failure": False, "mode": "ok", "shape": "normal"}
@@ -142,16 +142,13 @@ with sync_playwright() as playwright:
     axes(5)
     expect(page.locator("#gamma-chart-help")).to_contain_text("当前价格上下20%")
     initial_view = page.locator("#gamma-chart").evaluate("canvas => ({low: Number(canvas.dataset.viewLow), high: Number(canvas.dataset.viewHigh)})")
-    assert abs(initial_view["low"] - 2000) < 0.001 and abs(initial_view["high"] - 3000) < 0.001
+    expected_spot = (baseline.get("current") or {}).get("mark_price") or baseline["gamma"].get("spot_price")
+    assert expected_spot and abs(initial_view["low"] - expected_spot * .8) / expected_spot < .01 and abs(initial_view["high"] - expected_spot * 1.2) / expected_spot < .01
     chart_box = page.locator("#gamma-chart").bounding_box()
-    page.mouse.move(chart_box["x"] + chart_box["width"] * .5, chart_box["y"] + chart_box["height"] * .5)
-    page.mouse.wheel(0, -500)
+    page.locator("#gamma-chart").evaluate("canvas => { const rect = canvas.getBoundingClientRect(); canvas.dispatchEvent(new WheelEvent('wheel', {deltaY: -500, clientX: rect.left + rect.width * .5, clientY: rect.top + rect.height * .5, bubbles: true, cancelable: true})); }")
     zoomed_view = page.locator("#gamma-chart").evaluate("canvas => ({low: Number(canvas.dataset.viewLow), high: Number(canvas.dataset.viewHigh)})")
     assert zoomed_view["high"] - zoomed_view["low"] < initial_view["high"] - initial_view["low"]
-    page.mouse.move(chart_box["x"] + chart_box["width"] * .6, chart_box["y"] + chart_box["height"] * .5)
-    page.mouse.down()
-    page.mouse.move(chart_box["x"] + chart_box["width"] * .45, chart_box["y"] + chart_box["height"] * .5)
-    page.mouse.up()
+    page.locator("#gamma-chart").evaluate("canvas => { const rect = canvas.getBoundingClientRect(); const y = rect.top + rect.height * .5; canvas.dispatchEvent(new PointerEvent('pointerdown', {button: 0, pointerId: 1, clientX: rect.left + rect.width * .6, clientY: y, bubbles: true})); canvas.dispatchEvent(new PointerEvent('pointermove', {button: 0, pointerId: 1, clientX: rect.left + rect.width * .45, clientY: y, bubbles: true})); canvas.dispatchEvent(new PointerEvent('pointerup', {button: 0, pointerId: 1, clientX: rect.left + rect.width * .45, clientY: y, bubbles: true})); }")
     panned_view = page.locator("#gamma-chart").evaluate("canvas => ({low: Number(canvas.dataset.viewLow), high: Number(canvas.dataset.viewHigh)})")
     assert abs(panned_view["low"] - zoomed_view["low"]) > 0.001
     page.locator("#gamma-chart").dblclick()

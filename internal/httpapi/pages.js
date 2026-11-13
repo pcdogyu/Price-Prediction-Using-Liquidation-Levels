@@ -238,9 +238,9 @@
     };
     const plotWidth=()=>Math.max(1,chart.getBoundingClientRect().width-left-right),findLevel=offsetX=>{const span=view.high-view.low,priceAt=view.low+(offsetX-left)/plotWidth()*span;return levels.reduce((best,level)=>Math.abs(level.strike-priceAt)<Math.abs(best.strike-priceAt)?level:best,levels[0]);};
     let drag=null;
-    chart.onpointerdown=event=>{if(event.button!==0)return;drag={x:event.offsetX,low:view.low,high:view.high};view.interacted=true;chart.classList.add('gamma-chart-panning');chart.setPointerCapture?.(event.pointerId);event.preventDefault();};
+    chart.onpointerdown=event=>{if(event.button!==0)return;drag={x:event.offsetX,low:view.low,high:view.high};view.interacted=true;chart.classList.add('gamma-chart-panning');try{chart.setPointerCapture?.(event.pointerId);}catch{}event.preventDefault();};
     chart.onpointermove=event=>{if(drag){const delta=(event.offsetX-drag.x)/plotWidth()*(drag.high-drag.low);view.low=drag.low-delta;view.high=drag.high-delta;clampView();draw();return;}const level=findLevel(event.offsetX);chart.title='行权价 '+price(level.strike)+'\n净 GEX USD '+amount(level.net_gex_usd)+'\n绝对 GEX USD '+amount(level.absolute_gex_usd);};
-    chart.onpointerup=event=>{drag=null;chart.classList.remove('gamma-chart-panning');chart.releasePointerCapture?.(event.pointerId);};chart.onpointercancel=chart.onpointerup;
+    chart.onpointerup=event=>{drag=null;chart.classList.remove('gamma-chart-panning');try{chart.releasePointerCapture?.(event.pointerId);}catch{}};chart.onpointercancel=chart.onpointerup;
     chart.onwheel=event=>{event.preventDefault();const ratio=(event.offsetX-left)/plotWidth(),span=view.high-view.low,anchor=view.low+ratio*span,factor=event.deltaY<0?.8:1.25,newSpan=Math.min(maxSpan,Math.max(minSpan,span*factor));view.low=anchor-ratio*newSpan;view.high=view.low+newSpan;view.interacted=true;clampView();draw();};
     chart.ondblclick=event=>{event.preventDefault();view.interacted=false;view.low=center-defaultSpan/2;view.high=center+defaultSpan/2;clampView();draw();};
     if(help)help.textContent=spot?'默认视野：当前价格上下20%（'+price(spot*.8)+'～'+price(spot*1.2)+' USD）；按住鼠标左右拖动，滚轮缩放，双击恢复默认视野。':'按住鼠标左右拖动，滚轮缩放，双击恢复默认视野。';
