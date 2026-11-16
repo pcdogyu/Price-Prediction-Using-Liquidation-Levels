@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/binancerest"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
@@ -371,20 +370,7 @@ func TestAnalysisSplitEndpointsUseCachedSnapshotAndPaginate(t *testing.T) {
 func TestAnalysisTradesPageIncludesAllocatedAndUnallocatedBinanceFunding(t *testing.T) {
 	srv := newTestServer(t)
 	now := srv.now().UTC().Truncate(time.Minute)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/fapi/v1/income" {
-			t.Fatalf("unexpected Binance path %s", r.URL.Path)
-		}
-		_, _ = w.Write([]byte(fmt.Sprintf(`[
-			{"symbol":"BTCUSDT","incomeType":"FUNDING_FEE","income":"8","asset":"USDT","tranId":91,"time":%d},
-			{"symbol":"ETHUSDT","incomeType":"FUNDING_FEE","income":"-0.25","asset":"USDT","tranId":92,"time":%d}
-		]`, now.Add(-30*time.Minute).UnixMilli(), now.Add(-20*time.Minute).UnixMilli())))
-	}))
-	defer upstream.Close()
 	cfg := srv.ConfigStore.Get()
-	cfg.Trading.BinanceDemoBaseURL = upstream.URL
-	srv.ConfigStore = config.NewStore("", cfg)
-	srv.BinanceHTTPClient = upstream.Client()
 	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
 		ID: "binance-main", Active: true,
 		Credentials: binance.Credentials{APIKey: "analysis-key", SecretKey: "analysis-secret"},
@@ -401,6 +387,14 @@ func TestAnalysisTradesPageIncludesAllocatedAndUnallocatedBinanceFunding(t *test
 		t.Fatal(err)
 	}
 	if err := srv.Orders.CachePayload(cacheKey, full, now); err != nil {
+		t.Fatal(err)
+	}
+	since := analysisPositionSince(now, full.PNLMinutes)
+	fundingRows := []storage.BinanceIncomeRecord{
+		{IncomeKey: "FUNDING_FEE|91", Symbol: "BTCUSDT", IncomeType: "FUNDING_FEE", Income: "8", Asset: "USDT", TranID: "91", Time: now.Add(-30 * time.Minute).UnixMilli()},
+		{IncomeKey: "FUNDING_FEE|92", Symbol: "ETHUSDT", IncomeType: "FUNDING_FEE", Income: "-0.25", Asset: "USDT", TranID: "92", Time: now.Add(-20 * time.Minute).UnixMilli()},
+	}
+	if err := srv.Orders.SaveBinanceIncomeSync("binance-main", analysisEnvName(cfg), fundingRows, storage.BinanceIncomeSyncState{CoveredSinceMS: since.UnixMilli(), LastSyncedMS: now.UnixMilli(), UpdatedAt: now}, now); err != nil {
 		t.Fatal(err)
 	}
 	requestPage := func(page int) analysisTradesPageResponse {
@@ -426,10 +420,21 @@ func TestAnalysisTradesPageIncludesAllocatedAndUnallocatedBinanceFunding(t *test
 	}
 }
 
-func TestAnalysisTradesFallsBackToCachedFundingDuringBinanceRESTPause(t *testing.T) {
+func TestAnalysisTradesUsesCachedFundingWithoutBlockingOnBinanceREST(t *testing.T) {
 	srv := newTestServer(t)
 	now := srv.now().UTC().Truncate(time.Minute)
 	cfg := srv.ConfigStore.Get()
+	var incomeCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		incomeCalls++
+		if r.URL.Path != "/fapi/v1/income" {
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer upstream.Close()
+	cfg.Trading.BinanceDemoBaseURL = upstream.URL
+	srv.ConfigStore = config.NewStore("", cfg)
 	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
 		ID: "binance-main", Active: true,
 		Credentials: binance.Credentials{APIKey: "analysis-key", SecretKey: "analysis-secret"},
@@ -452,12 +457,9 @@ func TestAnalysisTradesFallsBackToCachedFundingDuringBinanceRESTPause(t *testing
 	}
 	since := analysisPositionSince(now, full.PNLMinutes)
 	income := storage.BinanceIncomeRecord{IncomeKey: "FUNDING_FEE|91", Symbol: "BTCUSDT", IncomeType: "FUNDING_FEE", Income: "-0.25", Asset: "USDT", TranID: "91", Time: now.Add(-30 * time.Minute).UnixMilli()}
-	if err := srv.Orders.SaveBinanceIncomeSync("binance-main", analysisEnvName(cfg), []storage.BinanceIncomeRecord{income}, storage.BinanceIncomeSyncState{CoveredSinceMS: since.UnixMilli(), LastSyncedMS: now.UnixMilli(), UpdatedAt: now}, now); err != nil {
+	if err := srv.Orders.SaveBinanceIncomeSync("binance-main", analysisEnvName(cfg), []storage.BinanceIncomeRecord{income}, storage.BinanceIncomeSyncState{CoveredSinceMS: since.UnixMilli(), LastSyncedMS: now.Add(-6 * time.Minute).UnixMilli(), UpdatedAt: now.Add(-6 * time.Minute)}, now.Add(-6*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	limiter := binancerest.Default()
-	limiter.PauseUntil(time.Now().UTC().Add(time.Hour))
-	t.Cleanup(func() { limiter.PausedUntil(time.Now().UTC().Add(2 * time.Hour)) })
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/tvbot/analysis/trades?price_days=3&pnl_minutes=4320&binance_api_id=binance-main&exchange=binance&page=1&page_size=20", nil)
 	srv.handleAnalysisTrades(recorder, request)
@@ -470,6 +472,9 @@ func TestAnalysisTradesFallsBackToCachedFundingDuringBinanceRESTPause(t *testing
 	}
 	if !got.FundingStale || len(got.Trades) != 1 || got.Trades[0].FundingFee != "-0.25" || got.Trades[0].NetPnL != "0.75" {
 		t.Fatalf("cached funding should be applied and marked stale: %#v", got)
+	}
+	if incomeCalls != 0 {
+		t.Fatalf("analysis trades request should not call Binance income API; got %d calls", incomeCalls)
 	}
 }
 

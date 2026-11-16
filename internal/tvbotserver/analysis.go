@@ -849,25 +849,22 @@ func (s *Server) handleAnalysisTrades(w http.ResponseWriter, r *http.Request) {
 	fundingStale := false
 	if normalizeAnalysisExchange(r.URL.Query().Get("exchange")) == trading.ExchangeBinance && s.Orders != nil && s.ConfigStore != nil && strings.TrimSpace(resp.BinanceAPIID) != "" {
 		cfg := s.ConfigStore.Get()
-		creds, resolvedAPIID, configured := s.analysisBinanceCredentials(cfg, resp.BinanceAPIID)
+		_, resolvedAPIID, configured := s.analysisBinanceCredentials(cfg, resp.BinanceAPIID)
 		if configured {
 			now := s.now().UTC().Truncate(time.Minute)
 			since := analysisPositionSince(now, resp.PNLMinutes)
-			incomes, incomeErr := syncBinanceAnalysisIncome(r.Context(), s.Orders, s.analysisBinanceClient(cfg, creds), resolvedAPIID, analysisEnvName(cfg), since, now)
-			if incomeErr != nil {
-				var storageErr *analysisIncomeStorageError
-				if errors.As(incomeErr, &storageErr) {
-					writeError(metricWriter, http.StatusInternalServerError, "binance_income_storage_failed", storageErr.Error())
-					return
-				}
-				var listErr error
-				incomes, listErr = s.Orders.ListBinanceIncome(resolvedAPIID, analysisEnvName(cfg), since, now)
-				if listErr != nil {
-					writeError(metricWriter, http.StatusInternalServerError, "binance_income_storage_failed", listErr.Error())
-					return
-				}
-				fundingStale = true
+			env := analysisEnvName(cfg)
+			incomes, listErr := s.Orders.ListBinanceIncome(resolvedAPIID, env, since, now)
+			if listErr != nil {
+				writeError(metricWriter, http.StatusInternalServerError, "binance_income_storage_failed", listErr.Error())
+				return
 			}
+			syncState, stateFound, stateErr := s.Orders.LoadBinanceIncomeSyncState(resolvedAPIID, env)
+			if stateErr != nil {
+				writeError(metricWriter, http.StatusInternalServerError, "binance_income_storage_failed", stateErr.Error())
+				return
+			}
+			fundingStale = !stateFound || now.Sub(syncState.UpdatedAt) > 5*time.Minute || since.UnixMilli() < syncState.CoveredSinceMS
 			funding := make([]binance.Income, 0, len(incomes))
 			for _, row := range incomes {
 				tranID, _ := strconv.ParseInt(row.TranID, 10, 64)
