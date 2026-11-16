@@ -96,6 +96,33 @@ func TestAnalysisTradeOperationMetadataClassifiesOrderAndMonitorActions(t *testi
 	}
 }
 
+func TestAllocateBinanceFundingToCompletePositions(t *testing.T) {
+	base := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	displaySince := base.Add(-3 * 24 * time.Hour)
+	rows := []analysisPositionTrade{
+		{Exchange: trading.ExchangeBinance, APIID: "binance-main", InstID: "BTCUSDT", EntryTS: base.Add(-10 * 24 * time.Hour).UnixMilli(), ExitTS: base.Add(-time.Hour).UnixMilli(), EntryPx: "100", Qty: "1", NetPnL: "2"},
+		{Exchange: trading.ExchangeBinance, APIID: "binance-main", InstID: "BTCUSDT", EntryTS: base.Add(-6 * 24 * time.Hour).UnixMilli(), ExitTS: base.Add(-time.Hour).UnixMilli(), EntryPx: "100", Qty: "3", NetPnL: "4"},
+	}
+	incomes := []binance.Income{
+		{Symbol: "BTCUSDT", IncomeType: "FUNDING_FEE", Income: "8", Asset: "USDT", Time: base.Add(-5 * 24 * time.Hour).UnixMilli()},
+		{Symbol: "ETHUSDT", IncomeType: "FUNDING_FEE", Income: "-0.25", Asset: "USDT", Time: base.Add(-time.Hour).UnixMilli()},
+		{Symbol: "SOLUSDT", IncomeType: "FUNDING_FEE", Income: "0.1", Asset: "BNB", Time: base.Add(-time.Hour).UnixMilli()},
+	}
+	unallocated := allocateBinanceFunding(rows, incomes, "binance-main", displaySince)
+	if got := rows[0].FundingFee; got != "2" {
+		t.Fatalf("first position should receive 25%% of funding by notional, got %q", got)
+	}
+	if got := rows[1].FundingFee; got != "6" {
+		t.Fatalf("second position should receive 75%% of funding by notional, got %q", got)
+	}
+	if rows[0].NetPnL != "4" || rows[1].NetPnL != "10" {
+		t.Fatalf("funding should be included in net PnL, got %q and %q", rows[0].NetPnL, rows[1].NetPnL)
+	}
+	if len(unallocated) != 2 || unallocated[0].Symbol != "ETHUSDT" || unallocated[1].Asset != "BNB" {
+		t.Fatalf("unmatched and non-USDT funding should remain visible: %#v", unallocated)
+	}
+}
+
 func TestBuildAnalysisUsesStaleCacheWhenOKXBalanceIsUnavailable(t *testing.T) {
 	srv := newTestServer(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -337,6 +364,64 @@ func TestAnalysisSplitEndpointsUseCachedSnapshotAndPaginate(t *testing.T) {
 	}
 	if open.Total != 0 || len(open.Positions) != 0 {
 		t.Fatalf("unexpected open positions: %#v", open)
+	}
+}
+
+func TestAnalysisTradesPageIncludesAllocatedAndUnallocatedBinanceFunding(t *testing.T) {
+	srv := newTestServer(t)
+	now := srv.now().UTC().Truncate(time.Minute)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fapi/v1/income" {
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(fmt.Sprintf(`[
+			{"symbol":"BTCUSDT","incomeType":"FUNDING_FEE","income":"8","asset":"USDT","tranId":91,"time":%d},
+			{"symbol":"ETHUSDT","incomeType":"FUNDING_FEE","income":"-0.25","asset":"USDT","tranId":92,"time":%d}
+		]`, now.Add(-30*time.Minute).UnixMilli(), now.Add(-20*time.Minute).UnixMilli())))
+	}))
+	defer upstream.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = upstream.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = upstream.Client()
+	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
+		ID: "binance-main", Active: true,
+		Credentials: binance.Credentials{APIKey: "analysis-key", SecretKey: "analysis-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	positions := []analysisPositionTrade{
+		{Exchange: trading.ExchangeBinance, APIID: "binance-main", InstID: "BTCUSDT", EntryTime: now.Add(-48 * time.Hour), EntryTS: now.Add(-48 * time.Hour).UnixMilli(), ExitTime: now.Add(-10 * time.Minute), ExitTS: now.Add(-10 * time.Minute).UnixMilli(), EntryPx: "100", Qty: "1", NetPnL: "1"},
+		{Exchange: trading.ExchangeBinance, APIID: "binance-main", InstID: "BTCUSDT", EntryTime: now.Add(-24 * time.Hour), EntryTS: now.Add(-24 * time.Hour).UnixMilli(), ExitTime: now.Add(-5 * time.Minute), ExitTS: now.Add(-5 * time.Minute).UnixMilli(), EntryPx: "100", Qty: "3", NetPnL: "2"},
+	}
+	full := analysisResponse{OK: true, BinanceAPIID: "binance-main", Env: analysisEnvName(cfg), PriceDays: 3, PNLMinutes: 3 * 24 * 60, RefreshedAt: now, PositionTrades: positions}
+	cacheKey, err := srv.analysisCacheKeyForRequest(cfg, "", "binance-main", "", 3, full.PNLMinutes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Orders.CachePayload(cacheKey, full, now); err != nil {
+		t.Fatal(err)
+	}
+	requestPage := func(page int) analysisTradesPageResponse {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/tvbot/analysis/trades?price_days=3&pnl_minutes=%d&binance_api_id=binance-main&exchange=binance&page=%d&page_size=1", full.PNLMinutes, page), nil)
+		srv.handleAnalysisTrades(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("analysis trades page %d status=%d body=%s", page, recorder.Code, recorder.Body.String())
+		}
+		var got analysisTradesPageResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	first := requestPage(1)
+	if len(first.Trades) != 1 || first.Trades[0].FundingFee != "6" || first.Trades[0].NetPnL != "8" || len(first.UnallocatedFunding) != 1 || first.UnallocatedFunding[0].TranID != 92 {
+		t.Fatalf("unexpected first Binance analysis page: %#v", first)
+	}
+	second := requestPage(2)
+	if len(second.Trades) != 1 || second.Trades[0].FundingFee != "2" || second.Trades[0].NetPnL != "3" || len(second.UnallocatedFunding) != 0 {
+		t.Fatalf("funding split or unallocated pagination is incorrect: %#v", second)
 	}
 }
 

@@ -3150,6 +3150,7 @@ const tvbotHTML = `<!doctype html>
       { id: "realized_pnl", title: "盈亏", colClass: "analysis-realized-pnl-col", signedField: "realized_pnl", render: (row) => analysisFixed2Text(row.realized_pnl) },
       { id: "pnl_ratio", title: "盈亏比", colClass: "analysis-pnl-ratio-col", toneClass: (row) => signedToneClass(analysisPnLRatioValue(row)), render: (row) => analysisPnLRatioText(row) },
       { id: "fee", title: "手续费", colClass: "analysis-fee-col", render: (row) => tradeFeeText(row) },
+      { id: "funding_fee", title: "资金费", colClass: "analysis-fee-col", signedField: "funding_fee", render: (row) => analysisFixed2Text(row.funding_fee) },
       { id: "net_pnl", title: "净盈亏", colClass: "analysis-net-pnl-col", signedField: "net_pnl", render: (row) => analysisFixed2Text(row.net_pnl) },
       { id: "turnover", title: "成交额", colClass: "analysis-turnover-col", render: (row) => analysisFixed2Text(row.turnover) }
     ];
@@ -4923,7 +4924,7 @@ const tvbotHTML = `<!doctype html>
       });
       let endpoint = "/tvbot/analysis/trades";
       if (exchange === "binance") {
-        endpoint = "/tvbot/analysis/income";
+        qs.set("exchange", exchange);
         if (state.analysis && state.analysis.binance_api_id) qs.set("binance_api_id", state.analysis.binance_api_id);
       } else {
         qs.set("exchange", exchange);
@@ -8131,7 +8132,16 @@ const tvbotHTML = `<!doctype html>
         if (tone) classes.push(tone);
       }
       const classAttr = classes.length ? ' class="' + classes.map(escapeHTML).join(" ") + '"' : "";
-      const content = col.renderHTML ? col.renderHTML(row || {}) : escapeHTML(col.render(row || {}));
+      let content;
+      if (row && row.unallocated_funding) {
+        if (col.id === "entry_time") content = escapeHTML(analysisTimeText(row.entry_time));
+        else if (col.id === "inst_id") content = escapeHTML(row.inst_id || "-");
+        else if (col.id === "side") content = row.funding_id ? ("未分配资金费 · " + escapeHTML(row.funding_id)) : "未分配资金费";
+        else if (col.id === "funding_fee") content = escapeHTML(analysisFixed2Text(row.funding_fee));
+        else content = "-";
+      } else {
+        content = col.renderHTML ? col.renderHTML(row || {}) : escapeHTML(col.render(row || {}));
+      }
       return "<td" + classAttr + ">" + content + "</td>";
     }
 
@@ -8160,40 +8170,24 @@ const tvbotHTML = `<!doctype html>
       if (title) title.textContent = binanceIncome ? ("Binance 资金流水 / 盈亏 · " + balanceWindowLabel(analysisPNLWindowMinutes())) : label + " 下单盈亏分析";
       const aggregateToggle = $("analysis-trade-aggregate-toggle");
       if (aggregateToggle) aggregateToggle.hidden = binanceIncome;
-      if (binanceIncome) {
-        $("analysis-trade-head").innerHTML = '<tr><th>时间</th><th>币对</th><th>流水类型</th><th>金额</th><th>资产</th><th>说明</th><th>流水 ID</th></tr>';
-      } else {
-        renderAnalysisTradeAggregateToggle();
-        renderAnalysisTradeHead();
-      }
+      if (!binanceIncome) renderAnalysisTradeAggregateToggle();
+      renderAnalysisTradeHead();
       if (!rowsEl) return;
       if (errorText) {
-        rowsEl.innerHTML = '<tr><td colspan="' + (binanceIncome ? 7 : analysisTradeColumnCount()) + '" class="muted">' + escapeHTML(errorText) + '</td></tr>';
+        rowsEl.innerHTML = '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">' + escapeHTML(errorText) + '</td></tr>';
         if (status) status.textContent = errorText;
         if (pageInfo) pageInfo.textContent = "-";
         if (prev) prev.disabled = true;
         if (next) next.disabled = true;
         return;
       }
-      if (binanceIncome) {
-        const incomes = state.analysisTrades && Array.isArray(state.analysisTrades.incomes) ? state.analysisTrades.incomes : [];
-        rowsEl.innerHTML = incomes.map((row) => {
-          const time = Number(row.time);
-          const timeText = Number.isFinite(time) && time > 0 ? shanghaiTime(new Date(time).toISOString()) : "-";
-          const amount = asText(row.income || "0");
-          const amountClass = Number(amount) > 0 ? "positive" : (Number(amount) < 0 ? "negative" : "");
-          return "<tr><td>" + escapeHTML(timeText) + "</td><td>" + escapeHTML(row.symbol || "-") + "</td><td>" + escapeHTML(row.incomeType || "-") + "</td><td class=\"" + amountClass + "\">" + escapeHTML(amount) + "</td><td>" + escapeHTML(row.asset || "-") + "</td><td>" + escapeHTML(row.info || "-") + "</td><td>" + escapeHTML(row.tranId || "-") + "</td></tr>";
-        }).join("") || '<tr><td colspan="7" class="muted">当前周期暂无资金流水</td></tr>';
-        const total = Number(state.analysisTrades && state.analysisTrades.total || 0);
-        const totalPages = Math.max(1, Number(state.analysisTrades && state.analysisTrades.total_pages || 0));
-        if (status) status.textContent = total ? ("共 " + total + " 条资金流水") : "-";
-        if (pageInfo) pageInfo.textContent = total ? ("第 " + Number(state.analysisTrades.page || 1) + " / " + totalPages + " 页") : "-";
-        if (prev) prev.disabled = Number(state.analysisTrades && state.analysisTrades.page || 1) <= 1;
-        if (next) next.disabled = Number(state.analysisTrades && state.analysisTrades.page || 1) >= totalPages;
-        return;
-      }
       const rawTrades = analysisTradesForActiveExchange();
-      const trades = analysisTradesForDisplay();
+      const trades = binanceIncome ? rawTrades.slice() : analysisTradesForDisplay();
+      if (binanceIncome && Number(state.analysisTrades && state.analysisTrades.page || 1) === 1) {
+        (Array.isArray(state.analysisTrades && state.analysisTrades.unallocated_funding) ? state.analysisTrades.unallocated_funding : []).forEach((row) => {
+          trades.push({ unallocated_funding: true, entry_time: row.time, inst_id: row.symbol || "-", funding_fee: row.income || "0", funding_id: row.tranId || "" });
+        });
+      }
       const total = state.analysisTrades && Number.isFinite(Number(state.analysisTrades.total))
         ? Number(state.analysisTrades.total)
         : trades.length;
@@ -8204,7 +8198,8 @@ const tvbotHTML = `<!doctype html>
       rowsEl.innerHTML = pageRows.map((row) => {
         return "<tr>" + columns.map((col) => analysisTradeCellHTML(col, row)).join("") + "</tr>";
       }).join("") || '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">暂无 ' + escapeHTML(label) + ' 下单盈亏记录</td></tr>';
-      if (status) status.textContent = total ? (state.analysisTradeAggregate ? ("共 " + total + " 条（当前页 " + trades.length + " 组）") : ("共 " + total + " 条")) : "-";
+      const unallocatedCount = binanceIncome && Number(state.analysisTrades && state.analysisTrades.page || 1) === 1 && Array.isArray(state.analysisTrades.unallocated_funding) ? state.analysisTrades.unallocated_funding.length : 0;
+      if (status) status.textContent = total ? (binanceIncome ? ("共 " + total + " 个完整仓位" + (unallocatedCount ? "，另有 " + unallocatedCount + " 笔未分配资金费" : "")) : (state.analysisTradeAggregate ? ("共 " + total + " 条（当前页 " + trades.length + " 组）") : ("共 " + total + " 条"))) : (unallocatedCount ? ("没有已平仓记录，另有 " + unallocatedCount + " 笔未分配资金费") : "-");
       if (pageInfo) pageInfo.textContent = total ? ("第 " + state.analysisTradePage + " / " + totalPages + " 页") : "-";
       if (prev) prev.disabled = state.analysisTradePage <= 1;
       if (next) next.disabled = state.analysisTradePage >= totalPages;

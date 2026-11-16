@@ -168,7 +168,7 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`function renderAnalysisTradeHistory(errorText)`,
 		`analysisTradesForActiveExchange`,
 		`/tvbot/analysis/trades`,
-		`/tvbot/analysis/income`,
+		`qs.set("exchange", exchange)`,
 		`function loadAnalysisPositions(forceRefresh)`,
 		`暂无 ' + escapeHTML(label) + ' 下单盈亏记录`,
 		`exchange: activeExchange()`,
