@@ -178,6 +178,7 @@ type analysisTradesPageResponse struct {
 	TotalPages         int                     `json:"total_pages"`
 	Trades             []analysisPositionTrade `json:"trades"`
 	UnallocatedFunding []binance.Income        `json:"unallocated_funding,omitempty"`
+	FundingStale       bool                    `json:"funding_stale,omitempty"`
 }
 
 type analysisIncomePageResponse struct {
@@ -845,6 +846,7 @@ func (s *Server) handleAnalysisTrades(w http.ResponseWriter, r *http.Request) {
 	page, pageSize := analysisPageQuery(r)
 	rows := filterAnalysisPositionTrades(resp.PositionTrades, r)
 	var unallocatedFunding []binance.Income
+	fundingStale := false
 	if normalizeAnalysisExchange(r.URL.Query().Get("exchange")) == trading.ExchangeBinance && s.Orders != nil && s.ConfigStore != nil && strings.TrimSpace(resp.BinanceAPIID) != "" {
 		cfg := s.ConfigStore.Get()
 		creds, resolvedAPIID, configured := s.analysisBinanceCredentials(cfg, resp.BinanceAPIID)
@@ -856,10 +858,15 @@ func (s *Server) handleAnalysisTrades(w http.ResponseWriter, r *http.Request) {
 				var storageErr *analysisIncomeStorageError
 				if errors.As(incomeErr, &storageErr) {
 					writeError(metricWriter, http.StatusInternalServerError, "binance_income_storage_failed", storageErr.Error())
-				} else {
-					writeError(metricWriter, http.StatusBadGateway, "binance_income_failed", incomeErr.Error())
+					return
 				}
-				return
+				var listErr error
+				incomes, listErr = s.Orders.ListBinanceIncome(resolvedAPIID, analysisEnvName(cfg), since, now)
+				if listErr != nil {
+					writeError(metricWriter, http.StatusInternalServerError, "binance_income_storage_failed", listErr.Error())
+					return
+				}
+				fundingStale = true
 			}
 			funding := make([]binance.Income, 0, len(incomes))
 			for _, row := range incomes {
@@ -908,6 +915,7 @@ func (s *Server) handleAnalysisTrades(w http.ResponseWriter, r *http.Request) {
 		TotalPages:         totalPages,
 		Trades:             trades,
 		UnallocatedFunding: unallocatedFunding,
+		FundingStale:       fundingStale,
 	})
 }
 

@@ -535,6 +535,7 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 		`title: "资金费"`,
 		`row.unallocated_funding`,
 		`未分配资金费`,
+		`funding_stale`,
 		`id="analysis-trade-aggregate-toggle" aria-pressed="false"`,
 		`type="button"`,
 		`analysis-trade-history-actions`,

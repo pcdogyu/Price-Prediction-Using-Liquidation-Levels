@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/binancerest"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
@@ -422,6 +423,53 @@ func TestAnalysisTradesPageIncludesAllocatedAndUnallocatedBinanceFunding(t *test
 	second := requestPage(2)
 	if len(second.Trades) != 1 || second.Trades[0].FundingFee != "2" || second.Trades[0].NetPnL != "3" || len(second.UnallocatedFunding) != 0 {
 		t.Fatalf("funding split or unallocated pagination is incorrect: %#v", second)
+	}
+}
+
+func TestAnalysisTradesFallsBackToCachedFundingDuringBinanceRESTPause(t *testing.T) {
+	srv := newTestServer(t)
+	now := srv.now().UTC().Truncate(time.Minute)
+	cfg := srv.ConfigStore.Get()
+	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
+		ID: "binance-main", Active: true,
+		Credentials: binance.Credentials{APIKey: "analysis-key", SecretKey: "analysis-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	position := analysisPositionTrade{
+		Exchange: trading.ExchangeBinance, APIID: "binance-main", InstID: "BTCUSDT",
+		EntryTime: now.Add(-time.Hour), EntryTS: now.Add(-time.Hour).UnixMilli(),
+		ExitTime: now.Add(-time.Minute), ExitTS: now.Add(-time.Minute).UnixMilli(),
+		EntryPx: "100", Qty: "1", NetPnL: "1",
+	}
+	full := analysisResponse{OK: true, BinanceAPIID: "binance-main", Env: analysisEnvName(cfg), PriceDays: 3, PNLMinutes: 3 * 24 * 60, RefreshedAt: now, PositionTrades: []analysisPositionTrade{position}}
+	cacheKey, err := srv.analysisCacheKeyForRequest(cfg, "", "binance-main", "", 3, full.PNLMinutes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Orders.CachePayload(cacheKey, full, now); err != nil {
+		t.Fatal(err)
+	}
+	since := analysisPositionSince(now, full.PNLMinutes)
+	income := storage.BinanceIncomeRecord{IncomeKey: "FUNDING_FEE|91", Symbol: "BTCUSDT", IncomeType: "FUNDING_FEE", Income: "-0.25", Asset: "USDT", TranID: "91", Time: now.Add(-30 * time.Minute).UnixMilli()}
+	if err := srv.Orders.SaveBinanceIncomeSync("binance-main", analysisEnvName(cfg), []storage.BinanceIncomeRecord{income}, storage.BinanceIncomeSyncState{CoveredSinceMS: since.UnixMilli(), LastSyncedMS: now.UnixMilli(), UpdatedAt: now}, now); err != nil {
+		t.Fatal(err)
+	}
+	limiter := binancerest.Default()
+	limiter.PauseUntil(time.Now().UTC().Add(time.Hour))
+	t.Cleanup(func() { limiter.PausedUntil(time.Now().UTC().Add(2 * time.Hour)) })
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/tvbot/analysis/trades?price_days=3&pnl_minutes=4320&binance_api_id=binance-main&exchange=binance&page=1&page_size=20", nil)
+	srv.handleAnalysisTrades(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cached funding fallback status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var got analysisTradesPageResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.FundingStale || len(got.Trades) != 1 || got.Trades[0].FundingFee != "-0.25" || got.Trades[0].NetPnL != "0.75" {
+		t.Fatalf("cached funding should be applied and marked stale: %#v", got)
 	}
 }
 
