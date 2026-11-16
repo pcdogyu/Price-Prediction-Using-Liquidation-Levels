@@ -470,7 +470,7 @@ func (c Client) Do(ctx context.Context, method, path string, values url.Values, 
 		Path:     path,
 		Class:    requestClass,
 		Priority: requestPriority,
-		Weight:   binancerest.WeightForPath(path),
+		Weight:   binancerest.WeightForPath(path + "?" + params.Encode()),
 	}
 	release, err := binancerest.Default().Acquire(ctx, scheduledRequest)
 	if err != nil {

@@ -156,8 +156,32 @@ func NormalizeRequest(req Request) Request {
 
 func WeightForPath(path string) int {
 	path = strings.ToLower(strings.TrimSpace(path))
-	if strings.Contains(path, "/ticker/24hr") || strings.HasSuffix(path, "/mark") {
+	parsed, err := url.Parse(path)
+	pathname := path
+	if err == nil {
+		pathname = parsed.Path
+		path = pathname + "?" + parsed.RawQuery
+	}
+	if strings.Contains(pathname, "/ticker/24hr") || strings.HasSuffix(pathname, "/mark") {
 		return 40
+	}
+	if strings.Contains(path, "/depth") {
+		limit := 100
+		if parsed, err := url.Parse(path); err == nil {
+			if value, err := strconv.Atoi(parsed.Query().Get("limit")); err == nil && value > 0 {
+				limit = value
+			}
+		}
+		switch {
+		case limit <= 100:
+			return 5
+		case limit <= 500:
+			return 10
+		case limit <= 1000:
+			return 20
+		default:
+			return 50
+		}
 	}
 	return 1
 }
@@ -249,6 +273,13 @@ func (s *Scheduler) Complete(request Request, status, usedWeight int, requestErr
 	stats.LastStatus = status
 	if usedWeight > 0 {
 		stats.LastResponseWeight = usedWeight
+		// Binance reports the IP-wide weight already consumed in this minute.
+		// Reconcile our estimate with it so traffic from other processes sharing
+		// the IP cannot silently push this scheduler over the exchange limit.
+		s.resetWindowLocked(now)
+		if usedWeight > s.windowUsed {
+			s.windowUsed = usedWeight
+		}
 	}
 	if requestErr != nil || status < 200 || status >= 300 {
 		stats.Errors++

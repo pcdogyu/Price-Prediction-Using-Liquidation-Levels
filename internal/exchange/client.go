@@ -128,7 +128,7 @@ func (h httpClient) get(ctx context.Context, raw string, v any) error {
 			Path:     parsed.Path,
 			Class:    binancerest.ClassBackground,
 			Priority: binancerest.PriorityBackground,
-			Weight:   binancerest.WeightForPath(parsed.Path),
+			Weight:   binancerest.WeightForPath(raw),
 		}
 		release, e = binancerest.Default().Acquire(ctx, request)
 		if e != nil {

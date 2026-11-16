@@ -41,7 +41,7 @@ func (c Client) DoAPIKey(ctx context.Context, method, path string, values url.Va
 		Path:     path,
 		Class:    binancerest.ClassAccount,
 		Priority: binancerest.PriorityAccount,
-		Weight:   binancerest.WeightForPath(path),
+		Weight:   binancerest.WeightForPath(path + "?" + params.Encode()),
 	}
 	release, err := binancerest.Default().Acquire(ctx, scheduledRequest)
 	if err != nil {

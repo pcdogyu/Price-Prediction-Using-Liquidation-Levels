@@ -90,3 +90,30 @@ func TestSchedulerRecordsResponseWeightAndStatus(t *testing.T) {
 		t.Fatalf("unexpected endpoint stats: %+v", snapshot.Endpoints)
 	}
 }
+
+func TestSchedulerReconcilesIPWideResponseWeight(t *testing.T) {
+	s := New(100, 4, 0)
+	request := Request{Host: "fapi.binance.com", Path: "/fapi/v1/account", Class: ClassAccount, Priority: PriorityAccount}
+	release, err := s.Acquire(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	s.Complete(request, 200, 73, nil)
+	if got := s.Snapshot().WindowUsed; got != 73 {
+		t.Fatalf("expected IP-wide response weight 73, got %d", got)
+	}
+}
+
+func TestWeightForDepthQuery(t *testing.T) {
+	for raw, want := range map[string]int{
+		"/fapi/v1/depth?symbol=BTCUSDT&limit=100":  5,
+		"/fapi/v1/depth?limit=500":                 10,
+		"/fapi/v1/depth?limit=1000&symbol=BTCUSDT": 20,
+		"/fapi/v1/depth?limit=5000":                50,
+	} {
+		if got := WeightForPath(raw); got != want {
+			t.Errorf("WeightForPath(%q) = %d, want %d", raw, got, want)
+		}
+	}
+}
