@@ -534,6 +534,8 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 		`Binance 资金流水 / 盈亏`,
 		`title: "资金费"`,
 		`row.unallocated_funding`,
+		`const unallocatedFunding = state.analysisTrades && Array.isArray(state.analysisTrades.unallocated_funding) ? state.analysisTrades.unallocated_funding : [];`,
+		`? unallocatedFunding.length : 0;`,
 		`未分配资金费`,
 		`funding_stale`,
 		`id="analysis-trade-aggregate-toggle" aria-pressed="false"`,

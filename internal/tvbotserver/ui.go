@@ -8198,7 +8198,8 @@ const tvbotHTML = `<!doctype html>
       rowsEl.innerHTML = pageRows.map((row) => {
         return "<tr>" + columns.map((col) => analysisTradeCellHTML(col, row)).join("") + "</tr>";
       }).join("") || '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">暂无 ' + escapeHTML(label) + ' 下单盈亏记录</td></tr>';
-      const unallocatedCount = binanceIncome && Number(state.analysisTrades && state.analysisTrades.page || 1) === 1 && Array.isArray(state.analysisTrades.unallocated_funding) ? state.analysisTrades.unallocated_funding.length : 0;
+      const unallocatedFunding = state.analysisTrades && Array.isArray(state.analysisTrades.unallocated_funding) ? state.analysisTrades.unallocated_funding : [];
+      const unallocatedCount = binanceIncome && Number(state.analysisTrades && state.analysisTrades.page || 1) === 1 ? unallocatedFunding.length : 0;
       const fundingWarning = binanceIncome && state.analysisTrades && state.analysisTrades.funding_stale ? " · 资金费使用本地缓存（Binance REST 限流）" : "";
       if (status) status.textContent = (total ? (binanceIncome ? ("共 " + total + " 个完整仓位" + (unallocatedCount ? "，另有 " + unallocatedCount + " 笔未分配资金费" : "")) : (state.analysisTradeAggregate ? ("共 " + total + " 条（当前页 " + trades.length + " 组）") : ("共 " + total + " 条"))) : (unallocatedCount ? ("没有已平仓记录，另有 " + unallocatedCount + " 笔未分配资金费") : "-")) + fundingWarning;
       if (pageInfo) pageInfo.textContent = total ? ("第 " + state.analysisTradePage + " / " + totalPages + " 页") : "-";
