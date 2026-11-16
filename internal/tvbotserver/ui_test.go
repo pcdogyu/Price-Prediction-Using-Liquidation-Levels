@@ -536,13 +536,11 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 		`Binance 用户数据 WebSocket 已连接`,
 		`15000);`,
 		`qs.set("exchange", exchange)`,
-		`Binance 资金流水 / 盈亏`,
-		`title: "资金费"`,
-		`row.unallocated_funding`,
-		`const unallocatedFunding = state.analysisTrades && Array.isArray(state.analysisTrades.unallocated_funding) ? state.analysisTrades.unallocated_funding : [];`,
-		`? unallocatedFunding.length : 0;`,
-		`未分配资金费`,
-		`funding_stale`,
+		`Binance 订单盈亏`,
+		`result.sync_state === "syncing"`,
+		`本地订单已显示，Binance 增量同步中`,
+		`title: "手续费"`,
+		`id: "net_pnl"`,
 		`id="analysis-trade-aggregate-toggle" aria-pressed="false"`,
 		`type="button"`,
 		`analysis-trade-history-actions`,
@@ -562,6 +560,9 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Fatalf("analysis trade aggregation marker is missing %q", want)
 		}
+	}
+	if strings.Contains(page, `id: "funding_fee"`) || strings.Contains(page, "unallocated_funding") || strings.Contains(page, "未分配资金费") {
+		t.Fatal("Binance analysis table should not show funding fee rows or column")
 	}
 }
 

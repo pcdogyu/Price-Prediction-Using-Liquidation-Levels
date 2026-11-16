@@ -35,12 +35,14 @@ const (
 	usdtSampleInterval         = 5 * time.Minute
 	maxBalanceMinutes          = 90 * 24 * 60
 
-	binanceAnalysisTradeWindow   = 7 * 24 * time.Hour
-	binanceAnalysisTradeLimit    = 1000
-	maxAnalysisConfiguredSymbols = 32
-	defaultAnalysisPageSize      = 20
-	maxAnalysisPageSize          = 100
-	analysisRefreshTimeout       = 3 * time.Minute
+	binanceAnalysisTradeWindow      = 7 * 24 * time.Hour
+	binanceAnalysisTradeLimit       = 1000
+	maxAnalysisConfiguredSymbols    = 32
+	defaultAnalysisPageSize         = 20
+	maxAnalysisPageSize             = 100
+	analysisRefreshTimeout          = 3 * time.Minute
+	binanceAnalysisFillSyncCooldown = time.Minute
+	binanceAnalysisFillSyncOverlap  = time.Minute
 )
 
 type analysisRefreshResult struct {
@@ -54,6 +56,59 @@ type analysisRefreshManager struct {
 }
 
 var globalAnalysisRefreshManager = &analysisRefreshManager{jobs: make(map[string]chan analysisRefreshResult)}
+
+type binanceAnalysisFillSyncStatus struct {
+	State     string
+	StartedAt time.Time
+	UpdatedAt time.Time
+	LastStart time.Time
+	Error     string
+}
+
+type binanceAnalysisFillSyncManager struct {
+	mu      sync.Mutex
+	entries map[string]binanceAnalysisFillSyncStatus
+}
+
+var globalBinanceAnalysisFillSyncManager = &binanceAnalysisFillSyncManager{entries: make(map[string]binanceAnalysisFillSyncStatus)}
+
+func (m *binanceAnalysisFillSyncManager) start(key string, now time.Time, fn func() error) {
+	m.mu.Lock()
+	if m.entries == nil {
+		m.entries = make(map[string]binanceAnalysisFillSyncStatus)
+	}
+	current := m.entries[key]
+	if current.State == "syncing" || (!current.LastStart.IsZero() && now.Sub(current.LastStart) < binanceAnalysisFillSyncCooldown) {
+		m.mu.Unlock()
+		return
+	}
+	current = binanceAnalysisFillSyncStatus{State: "syncing", StartedAt: now, LastStart: now, UpdatedAt: current.UpdatedAt}
+	m.entries[key] = current
+	m.mu.Unlock()
+	go func() {
+		err := fn()
+		m.mu.Lock()
+		finished := m.entries[key]
+		finished.UpdatedAt = time.Now().UTC()
+		if err != nil {
+			finished.State = "failed"
+			finished.Error = err.Error()
+		} else {
+			finished.State = "synced"
+		}
+		m.entries[key] = finished
+		m.mu.Unlock()
+	}()
+}
+
+func (m *binanceAnalysisFillSyncManager) status(key string) binanceAnalysisFillSyncStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if status, ok := m.entries[key]; ok {
+		return status
+	}
+	return binanceAnalysisFillSyncStatus{State: "idle"}
+}
 
 func (m *analysisRefreshManager) start(key string, fn func() (analysisResponse, error)) bool {
 	m.mu.Lock()
@@ -160,25 +215,26 @@ type analysisTradeProjectionCache struct {
 }
 
 type analysisTradesPageResponse struct {
-	OK                 bool                    `json:"ok"`
-	APIID              string                  `json:"api_id"`
-	BinanceAPIID       string                  `json:"binance_api_id,omitempty"`
-	GateAPIID          string                  `json:"gate_api_id,omitempty"`
-	Env                string                  `json:"env"`
-	PriceDays          int                     `json:"price_days"`
-	PNLDays            int                     `json:"pnl_days"`
-	PNLMinutes         int                     `json:"pnl_minutes"`
-	RefreshedAt        time.Time               `json:"refreshed_at"`
-	Cache              analysisCacheStatus     `json:"cache"`
-	Source             analysisSourceStatus    `json:"source"`
-	Exchange           string                  `json:"exchange,omitempty"`
-	Page               int                     `json:"page"`
-	PageSize           int                     `json:"page_size"`
-	Total              int                     `json:"total"`
-	TotalPages         int                     `json:"total_pages"`
-	Trades             []analysisPositionTrade `json:"trades"`
-	UnallocatedFunding []binance.Income        `json:"unallocated_funding,omitempty"`
-	FundingStale       bool                    `json:"funding_stale,omitempty"`
+	OK            bool                    `json:"ok"`
+	APIID         string                  `json:"api_id"`
+	BinanceAPIID  string                  `json:"binance_api_id,omitempty"`
+	GateAPIID     string                  `json:"gate_api_id,omitempty"`
+	Env           string                  `json:"env"`
+	PriceDays     int                     `json:"price_days"`
+	PNLDays       int                     `json:"pnl_days"`
+	PNLMinutes    int                     `json:"pnl_minutes"`
+	RefreshedAt   time.Time               `json:"refreshed_at"`
+	Cache         analysisCacheStatus     `json:"cache"`
+	Source        analysisSourceStatus    `json:"source"`
+	Exchange      string                  `json:"exchange,omitempty"`
+	Page          int                     `json:"page"`
+	PageSize      int                     `json:"page_size"`
+	Total         int                     `json:"total"`
+	TotalPages    int                     `json:"total_pages"`
+	Trades        []analysisPositionTrade `json:"trades"`
+	SyncState     string                  `json:"sync_state,omitempty"`
+	SyncUpdatedAt *time.Time              `json:"sync_updated_at,omitempty"`
+	SyncError     string                  `json:"sync_error,omitempty"`
 }
 
 type analysisIncomePageResponse struct {
@@ -506,7 +562,7 @@ type analysisPositionTrade struct {
 	Fee                  string    `json:"fee,omitempty"`
 	FeeCcy               string    `json:"fee_ccy,omitempty"`
 	NetPnL               string    `json:"net_pnl,omitempty"`
-	FundingFee           string    `json:"funding_fee,omitempty"`
+	FundingFee           string    `json:"-"`
 	Turnover             string    `json:"turnover,omitempty"`
 	GammaDirection       string    `json:"gamma_direction,omitempty"`
 	Strategy             string    `json:"strategy,omitempty"`
@@ -845,8 +901,6 @@ func (s *Server) handleAnalysisTrades(w http.ResponseWriter, r *http.Request) {
 	cacheStatus = resp.Cache
 	page, pageSize := analysisPageQuery(r)
 	rows := filterAnalysisPositionTrades(resp.PositionTrades, r)
-	var unallocatedFunding []binance.Income
-	fundingStale := false
 	if normalizeAnalysisExchange(r.URL.Query().Get("exchange")) == trading.ExchangeBinance && s.Orders != nil && s.ConfigStore != nil && strings.TrimSpace(resp.BinanceAPIID) != "" {
 		cfg := s.ConfigStore.Get()
 		_, resolvedAPIID, configured := s.analysisBinanceCredentials(cfg, resp.BinanceAPIID)
@@ -859,19 +913,26 @@ func (s *Server) handleAnalysisTrades(w http.ResponseWriter, r *http.Request) {
 				writeError(metricWriter, http.StatusInternalServerError, "binance_income_storage_failed", listErr.Error())
 				return
 			}
-			syncState, stateFound, stateErr := s.Orders.LoadBinanceIncomeSyncState(resolvedAPIID, env)
-			if stateErr != nil {
-				writeError(metricWriter, http.StatusInternalServerError, "binance_income_storage_failed", stateErr.Error())
-				return
-			}
-			fundingStale = !stateFound || now.Sub(syncState.UpdatedAt) > 5*time.Minute || since.UnixMilli() < syncState.CoveredSinceMS
 			funding := make([]binance.Income, 0, len(incomes))
 			for _, row := range incomes {
 				tranID, _ := strconv.ParseInt(row.TranID, 10, 64)
 				funding = append(funding, binance.Income{Symbol: row.Symbol, IncomeType: row.IncomeType, Income: row.Income, Asset: row.Asset, Info: row.Info, TranID: tranID, TradeID: row.TradeID, Time: row.Time})
 			}
-			unallocatedFunding = allocateBinanceFunding(rows, funding, resolvedAPIID, analysisPNLSince(now, resp.PNLMinutes))
+			_ = allocateBinanceFunding(rows, funding, resolvedAPIID, analysisPNLSince(now, resp.PNLMinutes))
 		}
+	}
+	syncStatus := binanceAnalysisFillSyncStatus{State: "idle"}
+	if normalizeAnalysisExchange(r.URL.Query().Get("exchange")) == trading.ExchangeBinance && strings.TrimSpace(resp.BinanceAPIID) != "" {
+		if request, requestErr := s.analysisProjectionRequest(r); requestErr == nil {
+			refreshKey := fmt.Sprintf("%p|%s", s.Orders, request.cacheKey)
+			s.startAnalysisRefresh(refreshKey, request.cacheKey, request.cfg, request.requestedAPIID, request.requestedBinanceAPIID, request.requestedGateAPIID, request.priceDays, request.pnlMinutes)
+			syncStatus = globalBinanceAnalysisFillSyncManager.status(binanceAnalysisFillSyncKey(s.Orders, resp.BinanceAPIID, resp.Env))
+		}
+	}
+	var syncUpdatedAt *time.Time
+	if !syncStatus.UpdatedAt.IsZero() {
+		updatedAt := syncStatus.UpdatedAt
+		syncUpdatedAt = &updatedAt
 	}
 	total := len(rows)
 	totalPages := 0
@@ -890,29 +951,27 @@ func (s *Server) handleAnalysisTrades(w http.ResponseWriter, r *http.Request) {
 		end = total
 	}
 	trades := append([]analysisPositionTrade(nil), rows[start:end]...)
-	if page > 1 {
-		unallocatedFunding = nil
-	}
 	writeJSON(metricWriter, http.StatusOK, analysisTradesPageResponse{
-		OK:                 resp.OK,
-		APIID:              resp.APIID,
-		BinanceAPIID:       resp.BinanceAPIID,
-		GateAPIID:          resp.GateAPIID,
-		Env:                resp.Env,
-		PriceDays:          resp.PriceDays,
-		PNLDays:            resp.PNLDays,
-		PNLMinutes:         resp.PNLMinutes,
-		RefreshedAt:        resp.RefreshedAt,
-		Cache:              resp.Cache,
-		Source:             resp.Source,
-		Exchange:           normalizeAnalysisExchange(r.URL.Query().Get("exchange")),
-		Page:               page,
-		PageSize:           pageSize,
-		Total:              total,
-		TotalPages:         totalPages,
-		Trades:             trades,
-		UnallocatedFunding: unallocatedFunding,
-		FundingStale:       fundingStale,
+		OK:            resp.OK,
+		APIID:         resp.APIID,
+		BinanceAPIID:  resp.BinanceAPIID,
+		GateAPIID:     resp.GateAPIID,
+		Env:           resp.Env,
+		PriceDays:     resp.PriceDays,
+		PNLDays:       resp.PNLDays,
+		PNLMinutes:    resp.PNLMinutes,
+		RefreshedAt:   resp.RefreshedAt,
+		Cache:         resp.Cache,
+		Source:        resp.Source,
+		Exchange:      normalizeAnalysisExchange(r.URL.Query().Get("exchange")),
+		Page:          page,
+		PageSize:      pageSize,
+		Total:         total,
+		TotalPages:    totalPages,
+		Trades:        trades,
+		SyncState:     syncStatus.State,
+		SyncUpdatedAt: syncUpdatedAt,
+		SyncError:     syncStatus.Error,
 	})
 }
 
@@ -1156,6 +1215,9 @@ func (s *Server) loadAnalysisTradeSnapshot(ctx context.Context, r *http.Request)
 	if err != nil {
 		return analysisResponse{}, err
 	}
+	if s.primaryExchangeForConfig(request.cfg) == trading.ExchangeBinance {
+		return s.localBinanceAnalysisSnapshot(request.cfg, request.requestedBinanceAPIID, request.priceDays, request.pnlMinutes, s.now().UTC())
+	}
 	if cached, ok, cacheErr := s.Orders.CachedPayload(analysisTradeProjectionKey(request.cacheKey)); cacheErr != nil {
 		return analysisResponse{}, cacheErr
 	} else if ok {
@@ -1293,6 +1355,7 @@ func (s *Server) loadAnalysisSnapshot(ctx context.Context, r *http.Request) (ana
 		return analysisResponse{}, errors.New("order database is not configured")
 	}
 	cfg := s.ConfigStore.Get()
+	now := s.now().UTC()
 	priceDays := positiveIntQuery(r, "price_days", defaultPriceDays)
 	pnlDays := positiveIntQuery(r, "pnl_days", defaultPNLDays)
 	pnlMinutes := analysisPNLMinutesFromQuery(r, pnlDays)
@@ -1320,13 +1383,82 @@ func (s *Server) loadAnalysisSnapshot(ctx context.Context, r *http.Request) (ana
 			}
 		}
 	}
+	if s.primaryExchangeForConfig(cfg) == trading.ExchangeBinance {
+		local, localErr := s.localBinanceAnalysisSnapshot(cfg, requestedBinanceAPIID, priceDays, pnlMinutes, now)
+		if localErr != nil {
+			return analysisResponse{}, localErr
+		}
+		s.cacheAnalysisProjections(cacheKey, local, now)
+		refreshKey := fmt.Sprintf("%p|%s", s.Orders, cacheKey)
+		s.startAnalysisRefresh(refreshKey, cacheKey, cfg, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID, priceDays, pnlMinutes)
+		return local, nil
+	}
 	refreshKey := fmt.Sprintf("%p|%s", s.Orders, cacheKey)
 	return globalAnalysisRefreshManager.run(ctx, refreshKey, func() (analysisResponse, error) {
 		return s.buildAnalysis(ctx, cfg, requestedAPIID, requestedBinanceAPIID, priceDays, pnlMinutes, false, requestedGateAPIID)
 	})
 }
 
+func (s *Server) localBinanceAnalysisSnapshot(cfg config.Config, requestedAPIID string, priceDays, pnlMinutes int, now time.Time) (analysisResponse, error) {
+	_, apiID, configured := s.analysisBinanceCredentials(cfg, requestedAPIID)
+	if !configured {
+		return analysisResponse{}, errors.New("Binance API is not configured for local analysis")
+	}
+	env := analysisEnvName(cfg)
+	since := analysisPNLSince(now, pnlMinutes)
+	fills, err := s.Orders.ListBinanceFills(apiID, since)
+	if err != nil {
+		return analysisResponse{}, err
+	}
+	trades := make([]analysisTrade, 0, len(fills))
+	for _, fill := range fills {
+		if trade, ok := analysisTradeFromBinanceFill(fill); ok {
+			trades = append(trades, trade)
+		}
+	}
+	balancePoints := s.balanceOverviewPoints(trading.ExchangeBinance, apiID, env, priceDays*24*60, now)
+	resp := s.analysisFromExternalData(cfg, "", apiID, "", env, priceDays, pnlMinutes, now,
+		analysisSourceStatus{Balance: "cache", Fills: "local", Funding: "cache", Price: "cache"}, balancePoints, trades, nil, nil)
+	if incomes, incomeErr := s.Orders.ListBinanceIncome(apiID, env, since, now); incomeErr == nil {
+		funding := make([]binance.Income, 0, len(incomes))
+		for _, row := range incomes {
+			tranID, _ := strconv.ParseInt(row.TranID, 10, 64)
+			funding = append(funding, binance.Income{Symbol: row.Symbol, IncomeType: row.IncomeType, Income: row.Income, Asset: row.Asset, Info: row.Info, TranID: tranID, TradeID: row.TradeID, Time: row.Time})
+		}
+		statsPositions := append([]analysisPositionTrade(nil), resp.PositionTrades...)
+		_ = allocateBinanceFunding(statsPositions, funding, apiID, analysisPNLSince(now, pnlMinutes))
+		resp.Summary, resp.ExchangeSummaries, resp.Symbols = computeStats(cfg, statsPositions, resp.Trades, analysisPNLSince(now, pnlMinutes))
+	}
+	if balance, ok := analysisBalanceFromLatestPoint(balancePoints); ok {
+		resp.Balance = balance
+	}
+	return resp, nil
+}
+
 func (s *Server) startAnalysisRefresh(key, cacheKey string, cfg config.Config, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID string, priceDays, pnlMinutes int) {
+	if _, apiID, configured := s.analysisBinanceCredentials(cfg, requestedBinanceAPIID); configured && apiID != "" {
+		env := analysisEnvName(cfg)
+		syncKey := binanceAnalysisFillSyncKey(s.Orders, apiID, env)
+		globalBinanceAnalysisFillSyncManager.start(syncKey, s.now().UTC(), func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), analysisRefreshTimeout)
+			defer cancel()
+			clientCreds, resolvedAPIID, ok := s.analysisBinanceCredentials(cfg, apiID)
+			if !ok {
+				return errors.New("Binance API is not configured for analysis fill sync")
+			}
+			now := s.now().UTC()
+			syncErr := s.syncBinanceAnalysisFills(ctx, cfg, s.analysisBinanceClient(cfg, clientCreds), resolvedAPIID, env, pnlMinutes, now)
+			resp, buildErr := s.localBinanceAnalysisSnapshot(cfg, resolvedAPIID, priceDays, pnlMinutes, s.now().UTC())
+			if buildErr == nil {
+				s.cacheAnalysisProjections(cacheKey, resp, resp.RefreshedAt)
+			}
+			if buildErr != nil {
+				return errors.Join(syncErr, buildErr)
+			}
+			return syncErr
+		})
+		return
+	}
 	globalAnalysisRefreshManager.start(key, func() (analysisResponse, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), analysisRefreshTimeout)
 		defer cancel()
@@ -1339,6 +1471,10 @@ func (s *Server) startAnalysisRefresh(key, cacheKey string, cfg config.Config, r
 		}
 		return resp, err
 	})
+}
+
+func binanceAnalysisFillSyncKey(orders *storage.OrderStore, apiID, env string) string {
+	return fmt.Sprintf("%p|%s|%s", orders, strings.TrimSpace(apiID), strings.TrimSpace(env))
 }
 
 func (s *Server) analysisCacheKeyForRequest(cfg config.Config, requestedAPIID, requestedBinanceAPIID, requestedGateAPIID string, priceDays, pnlMinutes int) (string, error) {
@@ -2366,21 +2502,21 @@ func (s *Server) refreshFillsSince(ctx context.Context, client okx.Client, apiID
 
 func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.Client, apiID string, cfg config.Config, pnlMinutes int, now time.Time) ([]analysisTrade, error) {
 	since := analysisPositionSince(now, pnlMinutes)
-	streamActive := binanceUserStreamIsActive(client, apiID)
-	out := []analysisTrade{}
-	localSymbols := map[string]struct{}{}
-	if s.Orders != nil && streamActive {
-		if fills, err := s.Orders.ListBinanceFills(apiID, since); err == nil && len(fills) > 0 {
-			out = make([]analysisTrade, 0, len(fills))
-			for _, fill := range fills {
-				if row, ok := analysisTradeFromBinanceFill(fill); ok {
-					out = append(out, row)
-					localSymbols[strings.ToUpper(strings.TrimSpace(row.InstID))] = struct{}{}
-				}
+	if s.Orders != nil {
+		fills, err := s.Orders.ListBinanceFills(apiID, since)
+		if err != nil {
+			return nil, err
+		}
+		trades := make([]analysisTrade, 0, len(fills))
+		for _, fill := range fills {
+			if trade, ok := analysisTradeFromBinanceFill(fill); ok {
+				trades = append(trades, trade)
 			}
 		}
+		return aggregateAnalysisTrades(trades), nil
 	}
-	symbols := s.analysisBinanceSymbols(cfg, apiID, analysisEnvName(cfg), since, !streamActive || len(localSymbols) == 0)
+	out := []analysisTrade{}
+	symbols := s.analysisBinanceSymbols(cfg, apiID, analysisEnvName(cfg), since, true)
 	if len(symbols) == 0 {
 		if len(out) > 0 {
 			return aggregateAnalysisTrades(out), nil
@@ -2391,11 +2527,6 @@ func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.
 	invalidSymbols := []string{}
 	successfulSymbols := 0
 	for _, symbol := range symbols {
-		if streamActive {
-			if _, ok := localSymbols[strings.ToUpper(strings.TrimSpace(symbol))]; ok {
-				continue
-			}
-		}
 		if until, blocked := binance.RateLimitPauseUntil(now); blocked {
 			symbolErrs = append(symbolErrs, fmt.Errorf("Binance analysis trades paused until %s after REST rate limiting", until.Format(time.RFC3339)))
 			break
@@ -2427,6 +2558,80 @@ func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.
 		return out, fmt.Errorf("Binance analysis symbols are unavailable: %s", strings.Join(invalidSymbols, ", "))
 	}
 	return out, errors.Join(symbolErrs...)
+}
+
+func (s *Server) syncBinanceAnalysisFills(ctx context.Context, cfg config.Config, client binance.Client, apiID, env string, pnlMinutes int, now time.Time) error {
+	if s.Orders == nil {
+		return errors.New("order database is not configured")
+	}
+	since := analysisPNLSince(now, pnlMinutes)
+	symbols := s.analysisBinanceSymbols(cfg, apiID, env, since, true)
+	var syncErrors []error
+	for _, symbol := range symbols {
+		if until, paused := binance.RateLimitPauseUntil(now); paused {
+			syncErrors = append(syncErrors, fmt.Errorf("Binance fill sync paused until %s after REST rate limiting", until.Format(time.RFC3339)))
+			break
+		}
+		state, found, err := s.Orders.LoadBinanceAnalysisFillSyncState(apiID, symbol)
+		if err != nil {
+			syncErrors = append(syncErrors, fmt.Errorf("load Binance fill sync state for %s: %w", symbol, err))
+			continue
+		}
+		coveredSince := since.UnixMilli()
+		fetchRanges := make([][2]time.Time, 0, 2)
+		incrementalStart := since
+		if found {
+			coveredSince = state.CoveredSinceMS
+			if since.UnixMilli() < state.CoveredSinceMS {
+				fetchRanges = append(fetchRanges, [2]time.Time{since, time.UnixMilli(state.CoveredSinceMS - 1).UTC()})
+				coveredSince = since.UnixMilli()
+			}
+			if state.LastSyncedMS > 0 {
+				incrementalStart = time.UnixMilli(state.LastSyncedMS).UTC().Add(-binanceAnalysisFillSyncOverlap)
+			}
+			if incrementalStart.Before(time.UnixMilli(coveredSince).UTC()) {
+				incrementalStart = time.UnixMilli(coveredSince).UTC()
+			}
+		}
+		if incrementalStart.After(now) {
+			incrementalStart = now
+		}
+		fetchRanges = append(fetchRanges, [2]time.Time{incrementalStart, now})
+		var symbolErr error
+		for _, fetchRange := range fetchRanges {
+			if fetchRange[1].Before(fetchRange[0]) {
+				continue
+			}
+			trades, fetchErr := s.fetchBinanceAnalysisSymbolTrades(ctx, client, apiID, symbol, fetchRange[0], fetchRange[1])
+			fills := make([]storage.BinanceFill, 0, len(trades))
+			for _, trade := range trades {
+				fills = append(fills, storage.BinanceFill{
+					APIID: apiID, Symbol: trade.InstID, TradeID: trade.TradeID, OrderID: trade.OrdID,
+					Side: trade.Side, PositionSide: trade.PosSide, Price: trade.FillPx, Qty: trade.FillSz,
+					RealizedPnl: trade.FillPnl, Commission: trade.Fee, CommissionAsset: trade.FeeCcy,
+					FillTime: trade.FillTS,
+				})
+			}
+			if _, saveErr := s.Orders.UpsertBinanceFills(fills, now); saveErr != nil {
+				symbolErr = errors.Join(fetchErr, fmt.Errorf("save Binance fills for %s: %w", symbol, saveErr))
+				break
+			}
+			if fetchErr != nil {
+				symbolErr = fetchErr
+				break
+			}
+		}
+		if symbolErr != nil {
+			syncErrors = append(syncErrors, fmt.Errorf("Binance %s incremental fills: %w", symbol, symbolErr))
+			continue
+		}
+		if err := s.Orders.SaveBinanceAnalysisFillSyncState(storage.BinanceAnalysisFillSyncState{
+			APIID: apiID, Symbol: symbol, CoveredSinceMS: coveredSince, LastSyncedMS: now.UnixMilli(), UpdatedAt: now,
+		}); err != nil {
+			syncErrors = append(syncErrors, fmt.Errorf("save Binance fill sync state for %s: %w", symbol, err))
+		}
+	}
+	return errors.Join(syncErrors...)
 }
 
 func (s *Server) fetchBinanceAnalysisSymbolTrades(ctx context.Context, client binance.Client, apiID, symbol string, since, until time.Time) ([]analysisTrade, error) {

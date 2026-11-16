@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -371,6 +372,16 @@ func TestAnalysisTradesPageIncludesAllocatedAndUnallocatedBinanceFunding(t *test
 	srv := newTestServer(t)
 	now := srv.now().UTC().Truncate(time.Minute)
 	cfg := srv.ConfigStore.Get()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fapi/v1/userTrades" {
+			t.Fatalf("unexpected Binance path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer upstream.Close()
+	cfg.Trading.BinanceDemoBaseURL = upstream.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = upstream.Client()
 	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
 		ID: "binance-main", Active: true,
 		Credentials: binance.Credentials{APIKey: "analysis-key", SecretKey: "analysis-secret"},
@@ -380,6 +391,15 @@ func TestAnalysisTradesPageIncludesAllocatedAndUnallocatedBinanceFunding(t *test
 	positions := []analysisPositionTrade{
 		{Exchange: trading.ExchangeBinance, APIID: "binance-main", InstID: "BTCUSDT", EntryTime: now.Add(-48 * time.Hour), EntryTS: now.Add(-48 * time.Hour).UnixMilli(), ExitTime: now.Add(-10 * time.Minute), ExitTS: now.Add(-10 * time.Minute).UnixMilli(), EntryPx: "100", Qty: "1", NetPnL: "1"},
 		{Exchange: trading.ExchangeBinance, APIID: "binance-main", InstID: "BTCUSDT", EntryTime: now.Add(-24 * time.Hour), EntryTS: now.Add(-24 * time.Hour).UnixMilli(), ExitTime: now.Add(-5 * time.Minute), ExitTS: now.Add(-5 * time.Minute).UnixMilli(), EntryPx: "100", Qty: "3", NetPnL: "2"},
+	}
+	localFills := []storage.BinanceFill{
+		{APIID: "binance-main", Symbol: "BTCUSDT", TradeID: "entry-1", Side: "BUY", PositionSide: "BOTH", Price: "100", Qty: "1", FillTime: now.Add(-48 * time.Hour).UnixMilli()},
+		{APIID: "binance-main", Symbol: "BTCUSDT", TradeID: "exit-1", Side: "SELL", PositionSide: "BOTH", Price: "101", Qty: "1", RealizedPnl: "1", FillTime: now.Add(-10 * time.Minute).UnixMilli()},
+		{APIID: "binance-main", Symbol: "BTCUSDT", TradeID: "entry-2", Side: "BUY", PositionSide: "BOTH", Price: "100", Qty: "3", FillTime: now.Add(-24 * time.Hour).UnixMilli()},
+		{APIID: "binance-main", Symbol: "BTCUSDT", TradeID: "exit-2", Side: "SELL", PositionSide: "BOTH", Price: "100.66666667", Qty: "3", RealizedPnl: "2", FillTime: now.Add(-5 * time.Minute).UnixMilli()},
+	}
+	if _, err := srv.Orders.UpsertBinanceFills(localFills, now); err != nil {
+		t.Fatal(err)
 	}
 	full := analysisResponse{OK: true, BinanceAPIID: "binance-main", Env: analysisEnvName(cfg), PriceDays: 3, PNLMinutes: 3 * 24 * 60, RefreshedAt: now, PositionTrades: positions}
 	cacheKey, err := srv.analysisCacheKeyForRequest(cfg, "", "binance-main", "", 3, full.PNLMinutes)
@@ -411,11 +431,11 @@ func TestAnalysisTradesPageIncludesAllocatedAndUnallocatedBinanceFunding(t *test
 		return got
 	}
 	first := requestPage(1)
-	if len(first.Trades) != 1 || first.Trades[0].FundingFee != "6" || first.Trades[0].NetPnL != "8" || len(first.UnallocatedFunding) != 1 || first.UnallocatedFunding[0].TranID != 92 {
+	if len(first.Trades) != 1 || math.Abs(parseFloat(first.Trades[0].NetPnL)-8) > 1e-4 {
 		t.Fatalf("unexpected first Binance analysis page: %#v", first)
 	}
 	second := requestPage(2)
-	if len(second.Trades) != 1 || second.Trades[0].FundingFee != "2" || second.Trades[0].NetPnL != "3" || len(second.UnallocatedFunding) != 0 {
+	if len(second.Trades) != 1 || math.Abs(parseFloat(second.Trades[0].NetPnL)-3) > 1e-4 {
 		t.Fatalf("funding split or unallocated pagination is incorrect: %#v", second)
 	}
 }
@@ -426,11 +446,15 @@ func TestAnalysisTradesUsesCachedFundingWithoutBlockingOnBinanceREST(t *testing.
 	cfg := srv.ConfigStore.Get()
 	var incomeCalls int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		incomeCalls++
-		if r.URL.Path != "/fapi/v1/income" {
+		switch r.URL.Path {
+		case "/fapi/v1/userTrades":
+			_, _ = w.Write([]byte("[]"))
+		case "/fapi/v1/income":
+			incomeCalls++
+			_, _ = w.Write([]byte("[]"))
+		default:
 			t.Fatalf("unexpected Binance path %s", r.URL.Path)
 		}
-		_, _ = w.Write([]byte("[]"))
 	}))
 	defer upstream.Close()
 	cfg.Trading.BinanceDemoBaseURL = upstream.URL
@@ -446,6 +470,12 @@ func TestAnalysisTradesUsesCachedFundingWithoutBlockingOnBinanceREST(t *testing.
 		EntryTime: now.Add(-time.Hour), EntryTS: now.Add(-time.Hour).UnixMilli(),
 		ExitTime: now.Add(-time.Minute), ExitTS: now.Add(-time.Minute).UnixMilli(),
 		EntryPx: "100", Qty: "1", NetPnL: "1",
+	}
+	if _, err := srv.Orders.UpsertBinanceFills([]storage.BinanceFill{
+		{APIID: "binance-main", Symbol: "BTCUSDT", TradeID: "entry-cached", Side: "BUY", PositionSide: "BOTH", Price: "100", Qty: "1", FillTime: now.Add(-time.Hour).UnixMilli()},
+		{APIID: "binance-main", Symbol: "BTCUSDT", TradeID: "exit-cached", Side: "SELL", PositionSide: "BOTH", Price: "101", Qty: "1", RealizedPnl: "1", FillTime: now.Add(-time.Minute).UnixMilli()},
+	}, now); err != nil {
+		t.Fatal(err)
 	}
 	full := analysisResponse{OK: true, BinanceAPIID: "binance-main", Env: analysisEnvName(cfg), PriceDays: 3, PNLMinutes: 3 * 24 * 60, RefreshedAt: now, PositionTrades: []analysisPositionTrade{position}}
 	cacheKey, err := srv.analysisCacheKeyForRequest(cfg, "", "binance-main", "", 3, full.PNLMinutes)
@@ -470,15 +500,107 @@ func TestAnalysisTradesUsesCachedFundingWithoutBlockingOnBinanceREST(t *testing.
 	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if !got.FundingStale || len(got.Trades) != 1 || got.Trades[0].FundingFee != "-0.25" || got.Trades[0].NetPnL != "0.75" {
-		t.Fatalf("cached funding should be applied and marked stale: %#v", got)
+	if len(got.Trades) != 1 || got.Trades[0].NetPnL != "0.75" || strings.Contains(recorder.Body.String(), "funding_fee") {
+		t.Fatalf("cached funding should remain in net PnL but stay hidden: %#v body=%s", got, recorder.Body.String())
 	}
 	if incomeCalls != 0 {
 		t.Fatalf("analysis trades request should not call Binance income API; got %d calls", incomeCalls)
 	}
 }
 
-func TestBuildAnalysisDoesNotCacheBinanceUpstreamError(t *testing.T) {
+func TestLoadAnalysisSnapshotReturnsLocalBinanceFillsBeforeBackgroundSync(t *testing.T) {
+	srv := newTestServer(t)
+	now := srv.now().UTC().Truncate(time.Minute)
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.TargetExchange = trading.ExchangeBinance
+	cfg.Trading.TargetAPIID = "binance-local-first"
+	remoteStarted := make(chan struct{}, 1)
+	releaseRemote := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/fapi/v1/userTrades" {
+			select {
+			case remoteStarted <- struct{}{}:
+			default:
+			}
+			<-releaseRemote
+		}
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer upstream.Close()
+	cfg.Trading.BinanceDemoBaseURL = upstream.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
+		ID: "binance-local-first", Active: true,
+		Credentials: binance.Credentials{APIKey: "analysis-key", SecretKey: "analysis-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fills := []storage.BinanceFill{
+		{APIID: "binance-local-first", Symbol: "BTCUSDT", TradeID: "open-1", Side: "BUY", PositionSide: "BOTH", Price: "100", Qty: "1", FillTime: now.Add(-10 * time.Minute).UnixMilli()},
+		{APIID: "binance-local-first", Symbol: "BTCUSDT", TradeID: "close-1", Side: "SELL", PositionSide: "BOTH", Price: "102", Qty: "1", RealizedPnl: "2", FillTime: now.Add(-5 * time.Minute).UnixMilli()},
+	}
+	if _, err := srv.Orders.UpsertBinanceFills(fills, now); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/tvbot/analysis?price_days=3&pnl_minutes=1440&binance_api_id=binance-local-first", nil)
+	started := time.Now()
+	resp, err := srv.loadAnalysisSnapshot(request.Context(), request)
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed > time.Second || resp.Source.Fills != "local" || len(resp.Trades) == 0 {
+		t.Fatalf("local analysis should return promptly before remote sync, elapsed=%s source=%q trades=%d", elapsed, resp.Source.Fills, len(resp.Trades))
+	}
+	select {
+	case <-remoteStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected remote incremental sync to start in the background")
+	}
+	close(releaseRemote)
+}
+
+func TestBinanceAnalysisFillSyncManagerDeduplicatesAndAppliesCooldown(t *testing.T) {
+	manager := &binanceAnalysisFillSyncManager{entries: make(map[string]binanceAnalysisFillSyncStatus)}
+	base := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	var calls atomic.Int32
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	job := func() error {
+		calls.Add(1)
+		started <- struct{}{}
+		<-release
+		return nil
+	}
+	manager.start("account", base, job)
+	manager.start("account", base, job)
+	if status := manager.status("account"); status.State != "syncing" {
+		t.Fatalf("expected one active sync, got %#v", status)
+	}
+	<-started
+	if calls.Load() != 1 {
+		t.Fatalf("concurrent requests should start one job, got %d", calls.Load())
+	}
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for manager.status("account").State == "syncing" && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	manager.start("account", base.Add(30*time.Second), job)
+	if calls.Load() != 1 {
+		t.Fatalf("cooldown should suppress a second job, got %d", calls.Load())
+	}
+	release = make(chan struct{})
+	manager.start("account", base.Add(61*time.Second), job)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("cooldown expiry should allow a new job")
+	}
+	close(release)
+}
+
+func TestBuildAnalysisReadsBinanceFillsFromLocalStorage(t *testing.T) {
 	srv := newTestServer(t)
 	var userTradeCalls int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -520,17 +642,17 @@ func TestBuildAnalysisDoesNotCacheBinanceUpstreamError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build analysis should return a diagnostic response: %v", err)
 	}
-	if got.Source.Fills != "binance_error" {
-		t.Fatalf("expected Binance fill source error, got %#v", got.Source)
+	if got.Source.Fills != "binance" {
+		t.Fatalf("expected local Binance fill source, got %#v", got.Source)
 	}
-	if userTradeCalls == 0 {
-		t.Fatal("Binance user-trades endpoint was not called")
+	if userTradeCalls != 0 {
+		t.Fatalf("analysis build should not call Binance user-trades; got %d calls", userTradeCalls)
 	}
 	cacheKey := analysisCacheKey("", "binance_bot", analysisEnvName(cfg), 3, 1440)
 	if _, ok, err := srv.Orders.CachedPayload(cacheKey); err != nil {
 		t.Fatal(err)
-	} else if ok {
-		t.Fatal("analysis with an upstream error must not be cached")
+	} else if !ok {
+		t.Fatal("local analysis should be cached without waiting for Binance user-trades")
 	}
 }
 
@@ -1063,7 +1185,7 @@ func TestDeriveBinanceAnalysisSymbolSupportsUSDCContracts(t *testing.T) {
 	}
 }
 
-func TestFetchBinanceAnalysisTradesBackfillsSymbolsMissingFromUserStream(t *testing.T) {
+func TestBinanceAnalysisSyncIncrementallyMergesLocalAndRemoteFills(t *testing.T) {
 	srv := newTestServer(t)
 	now := srv.now().UTC()
 	cfg := srv.ConfigStore.Get()
@@ -1089,17 +1211,30 @@ func TestFetchBinanceAnalysisTradesBackfillsSymbolsMissingFromUserStream(t *test
 	}
 
 	var requested []string
-	tradeTime := strconv.FormatInt(now.Add(-30*time.Minute).UnixMilli(), 10)
+	tradeTime := strconv.FormatInt(now.Add(-15*time.Second).UnixMilli(), 10)
+	newTradeTime := strconv.FormatInt(now.Add(15*time.Second).UnixMilli(), 10)
+	syncRound := 0
+	failETH := false
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/fapi/v1/userTrades" {
 			t.Fatalf("unexpected Binance path %s", r.URL.Path)
 		}
 		symbol := r.URL.Query().Get("symbol")
 		requested = append(requested, symbol)
-		if symbol != "ETHUSDC" {
-			t.Fatalf("user stream-covered symbol should not be fetched from REST: %s", symbol)
+		if symbol == "ETHUSDC" {
+			if failETH {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte("temporary failure"))
+				return
+			}
+			body := `[{"symbol":"ETHUSDC","side":"SELL","positionSide":"BOTH","price":"2500","qty":"1","realizedPnl":"3","commission":"0.1","commissionAsset":"USDC","time":` + tradeTime + `,"id":99,"orderId":100}]`
+			if syncRound > 0 {
+				body = strings.TrimSuffix(body, "]") + `,{"symbol":"ETHUSDC","side":"SELL","positionSide":"BOTH","price":"2510","qty":"1","realizedPnl":"4","commission":"0.1","commissionAsset":"USDC","time":` + newTradeTime + `,"id":100,"orderId":101}]`
+			}
+			_, _ = w.Write([]byte(body))
+			return
 		}
-		_, _ = w.Write([]byte(`[{"symbol":"ETHUSDC","side":"SELL","positionSide":"BOTH","price":"2500","qty":"1","realizedPnl":"3","commission":"0.1","commissionAsset":"USDC","time":` + tradeTime + `,"id":99,"orderId":100}]`))
+		_, _ = w.Write([]byte("[]"))
 	}))
 	defer upstream.Close()
 	client := binance.Client{BaseURL: upstream.URL, HTTPClient: upstream.Client(), Credentials: binance.Credentials{APIKey: "key", SecretKey: "secret"}}
@@ -1113,29 +1248,60 @@ func TestFetchBinanceAnalysisTradesBackfillsSymbolsMissingFromUserStream(t *test
 		binanceUserStreamRegistry.Unlock()
 	}()
 
-	trades, err := srv.fetchBinanceAnalysisTrades(context.Background(), client, apiID, cfg, 24*60, now)
+	if err := srv.syncBinanceAnalysisFills(context.Background(), cfg, client, apiID, tradeEnv, 24*60, now); err != nil {
+		t.Fatal(err)
+	}
+	seenSymbols := map[string]bool{}
+	for _, symbol := range requested {
+		seenSymbols[symbol] = true
+	}
+	if !seenSymbols["BTCUSDT"] || !seenSymbols["ETHUSDC"] {
+		t.Fatalf("incremental sync should query every locally known symbol, got %v", requested)
+	}
+	fills, err := srv.Orders.ListBinanceFills(apiID, analysisPositionSince(now, 24*60))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(requested) == 0 {
-		t.Fatal("missing-symbol REST backfill was not requested")
-	}
-	for _, symbol := range requested {
-		if symbol != "ETHUSDC" {
-			t.Fatalf("user stream-covered symbol should not be fetched from REST: %v", requested)
-		}
-	}
 	var foundBTC, foundETH bool
-	for _, trade := range trades {
-		switch trade.InstID {
+	for _, fill := range fills {
+		switch fill.Symbol {
 		case "BTCUSDT":
 			foundBTC = true
 		case "ETHUSDC":
-			foundETH = true
+			if fill.TradeID == "99" {
+				foundETH = true
+			}
 		}
 	}
 	if !foundBTC || !foundETH {
-		t.Fatalf("analysis trades should merge local and USDC REST history: %#v", trades)
+		t.Fatalf("analysis sync should preserve local and insert remote history: %#v", fills)
+	}
+	before, found, err := srv.Orders.LoadBinanceAnalysisFillSyncState(apiID, "ETHUSDC")
+	if err != nil || !found {
+		t.Fatalf("expected persisted ETHUSDC cursor, found=%v err=%v", found, err)
+	}
+	syncRound = 1
+	if err := srv.syncBinanceAnalysisFills(context.Background(), cfg, client, apiID, tradeEnv, 24*60, now.Add(30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	fills, err = srv.Orders.ListBinanceFills(apiID, analysisPositionSince(now.Add(30*time.Second), 24*60))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fills) != 3 {
+		t.Fatalf("overlap sync should deduplicate the repeated fill and insert one new fill; got %d rows: %#v", len(fills), fills)
+	}
+	before, _, err = srv.Orders.LoadBinanceAnalysisFillSyncState(apiID, "ETHUSDC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failETH = true
+	if err := srv.syncBinanceAnalysisFills(context.Background(), cfg, client, apiID, tradeEnv, 24*60, now.Add(2*time.Minute)); err == nil {
+		t.Fatal("expected remote failure to be returned")
+	}
+	after, found, err := srv.Orders.LoadBinanceAnalysisFillSyncState(apiID, "ETHUSDC")
+	if err != nil || !found || after.LastSyncedMS != before.LastSyncedMS {
+		t.Fatalf("failed remote sync must not advance the cursor: before=%#v after=%#v found=%v err=%v", before, after, found, err)
 	}
 }
 

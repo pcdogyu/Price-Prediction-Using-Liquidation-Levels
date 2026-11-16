@@ -1197,6 +1197,14 @@ func (s *OrderStore) migrateSQLite() error {
 			PRIMARY KEY(api_id, symbol, trade_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_binance_fills_time ON binance_fills(api_id, symbol, fill_time)`,
+		`CREATE TABLE IF NOT EXISTS binance_analysis_fill_sync_state (
+			api_id TEXT NOT NULL,
+			symbol TEXT NOT NULL,
+			covered_since_ms INTEGER NOT NULL,
+			last_synced_ms INTEGER NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(api_id, symbol)
+		)`,
 		`CREATE TABLE IF NOT EXISTS binance_income (
 			api_id TEXT NOT NULL,
 			env TEXT NOT NULL,
