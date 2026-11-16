@@ -1164,6 +1164,51 @@ const tvbotHTML = `<!doctype html>
       font-weight: 700;
       overflow-wrap: anywhere;
     }
+    .analysis-account-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+      min-height: 22px;
+    }
+    .analysis-api-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--control-bg);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .analysis-connection-indicator {
+      display: inline-flex;
+      width: 14px;
+      height: 14px;
+      flex: 0 0 14px;
+      border-radius: 50%;
+      background: #8792a2;
+      box-shadow: 0 0 0 2px color-mix(in srgb, #8792a2 18%, transparent);
+    }
+    .analysis-connection-indicator[data-state="connected"] {
+      background: #138a55;
+      box-shadow: 0 0 0 2px color-mix(in srgb, #138a55 18%, transparent);
+    }
+    .analysis-connection-indicator[data-state="connecting"] {
+      background: #d58b00;
+      box-shadow: 0 0 0 2px color-mix(in srgb, #d58b00 18%, transparent);
+    }
+    .analysis-connection-indicator[data-state="disconnected"],
+    .analysis-connection-indicator[data-state="unavailable"] {
+      background: #d64545;
+      box-shadow: 0 0 0 2px color-mix(in srgb, #d64545 18%, transparent);
+    }
+    .analysis-cache-status {
+      color: var(--muted);
+      font-size: 12px;
+    }
     .exchange-summary {
       display: inline-flex;
       align-items: center;
@@ -2409,6 +2454,11 @@ const tvbotHTML = `<!doctype html>
         <div class="analysis-time-status">
           <div class="label">订单时间</div>
           <div class="value" id="analysis-updated">-</div>
+          <div class="analysis-account-row">
+            <span class="analysis-api-badge" id="analysis-api-badge" hidden></span>
+            <span class="analysis-connection-indicator" id="analysis-connection-indicator" data-state="unknown" role="status" aria-live="polite" hidden></span>
+            <span class="analysis-cache-status" id="analysis-cache-status"></span>
+          </div>
         </div>
         <div class="balance-window-toolbar" role="group" aria-label="USDT余额周期">
           <button class="btn small balance-window-btn" type="button" data-balance-minutes="0">当前</button>
@@ -3086,6 +3136,8 @@ const tvbotHTML = `<!doctype html>
     let positionEntryTimeSyncBusy = false;
     let analysisBalanceRefreshTimer = null;
     let analysisBalanceRefreshBusy = false;
+    let analysisConnectionPollTimer = null;
+    let analysisConnectionPollBusy = false;
     let dashboardBalanceRefreshTimer = null;
     let dashboardBalanceRefreshBusy = false;
     const apiKeyLoadPromises = {};
@@ -4501,6 +4553,72 @@ const tvbotHTML = `<!doctype html>
       analysisBalanceRefreshBusy = false;
     }
 
+    function analysisConnectionPollAllowed() {
+      return analysisTabActive() && !document.hidden;
+    }
+
+    function startAnalysisConnectionPolling() {
+      if (analysisConnectionPollTimer) return;
+      refreshAnalysisConnectionStatus();
+      analysisConnectionPollTimer = window.setInterval(() => {
+        refreshAnalysisConnectionStatus();
+      }, 15000);
+    }
+
+    function stopAnalysisConnectionPolling() {
+      if (!analysisConnectionPollTimer) return;
+      window.clearInterval(analysisConnectionPollTimer);
+      analysisConnectionPollTimer = null;
+      analysisConnectionPollBusy = false;
+    }
+
+    async function refreshAnalysisConnectionStatus() {
+      const badge = $("analysis-api-badge");
+      const indicator = $("analysis-connection-indicator");
+      if (!badge || !indicator) return;
+      const exchange = activeExchange();
+      if (exchange !== "binance") {
+        indicator.hidden = true;
+        return;
+      }
+      const env = normalizeTradeEnvironment(state.analysis && state.analysis.env || positionEnvironment());
+      const keyStatus = apiKeyStatusForEnv("binance", env);
+      const apiID = String(state.analysis && state.analysis.binance_api_id || keyStatus && keyStatus.active_id || "").trim();
+      if (!apiID) {
+        indicator.dataset.state = "unknown";
+        indicator.title = "Binance API 未配置";
+        indicator.setAttribute("aria-label", "Binance API 未配置");
+        indicator.hidden = false;
+        return;
+      }
+      if (!analysisConnectionPollAllowed() || analysisConnectionPollBusy) return;
+      analysisConnectionPollBusy = true;
+      try {
+        const qs = new URLSearchParams({ exchange: "binance", env: env, api_id: apiID });
+        const response = await api("/tvbot/exchange-connection?" + qs.toString());
+        const status = String(response && response.status || "unavailable");
+        const labels = {
+          connected: "Binance 用户数据 WebSocket 已连接",
+          connecting: "Binance 用户数据 WebSocket 正在连接",
+          disconnected: "Binance 用户数据 WebSocket 已断开",
+          not_configured: "Binance API 未配置",
+          unavailable: "Binance 连接状态暂不可用"
+        };
+        const label = labels[status] || "Binance 连接状态暂不可用";
+        indicator.dataset.state = ["connected", "connecting", "disconnected", "not_configured"].includes(status) ? status : "unavailable";
+        indicator.title = label;
+        indicator.setAttribute("aria-label", label);
+        indicator.hidden = false;
+      } catch (_) {
+        indicator.dataset.state = "unavailable";
+        indicator.title = "Binance 连接状态暂不可用";
+        indicator.setAttribute("aria-label", "Binance 连接状态暂不可用");
+        indicator.hidden = false;
+      } finally {
+        analysisConnectionPollBusy = false;
+      }
+    }
+
     function dashboardTabActive() {
       const section = $("dashboard");
       return !!(section && section.classList.contains("active"));
@@ -4593,8 +4711,10 @@ const tvbotHTML = `<!doctype html>
       }
       if (target === "analysis") {
         startAnalysisBalanceAutoRefresh();
+        startAnalysisConnectionPolling();
       } else {
         stopAnalysisBalanceAutoRefresh();
+        stopAnalysisConnectionPolling();
       }
       if (target === "dashboard") {
         startDashboardBalanceAutoRefresh();
@@ -7410,6 +7530,9 @@ const tvbotHTML = `<!doctype html>
       renderGlobalExchangeSwitch();
       if (!state.analysis) {
         $("analysis-updated").textContent = state.analysisError || "-";
+        $("analysis-api-badge").hidden = true;
+        $("analysis-connection-indicator").hidden = true;
+        $("analysis-cache-status").textContent = "";
         renderAnalysisExchangeBalances();
         renderAnalysisExchangeStats("okx", state.analysisError || "-");
         renderAnalysisExchangeStats("binance", state.analysisError || "-");
@@ -7420,8 +7543,12 @@ const tvbotHTML = `<!doctype html>
       renderAnalysisExchangeBalances();
       const exchange = activeExchange();
       const apiID = exchange === "binance" ? state.analysis.binance_api_id : (exchange === "gate" ? state.analysis.gate_api_id : state.analysis.api_id);
-      const staleLabel = state.analysis.cache && state.analysis.cache.stale ? " / 缓存数据（上游暂不可用，订单时间可能落后）" : "";
-      $("analysis-updated").textContent = shanghaiTime(state.analysis.refreshed_at) + " / API " + exchangeLabel(exchange) + " " + asText(apiID) + staleLabel;
+      const envName = normalizeTradeEnvironment(state.analysis.env || positionEnvironment()) === "live" ? "实盘" : "模拟盘";
+      $("analysis-updated").textContent = shanghaiTime(state.analysis.refreshed_at);
+      $("analysis-api-badge").textContent = exchangeLabel(exchange) + " " + asText(apiDisplayName(apiID, exchange, state.analysis.env)) + " · " + envName;
+      $("analysis-api-badge").hidden = !apiID;
+      $("analysis-cache-status").textContent = state.analysis.cache && state.analysis.cache.stale ? "缓存数据（上游暂不可用，订单时间可能落后）" : "";
+      refreshAnalysisConnectionStatus();
       renderAnalysisExchangeStats("okx", "");
       renderAnalysisExchangeStats("binance", "");
       renderAnalysisExchangeStats("gate", "");

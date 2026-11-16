@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,6 +94,62 @@ func (s *Server) runBinanceUserDataStream(ctx context.Context, requestedAPIID st
 			backoff *= 2
 		}
 	}
+}
+
+type exchangeConnectionStatusResponse struct {
+	OK        bool      `json:"ok"`
+	Exchange  string    `json:"exchange"`
+	APIID     string    `json:"api_id,omitempty"`
+	Env       string    `json:"env,omitempty"`
+	Status    string    `json:"status"`
+	Transport string    `json:"transport,omitempty"`
+	CheckedAt time.Time `json:"checked_at"`
+}
+
+// handleExchangeConnectionStatus reports the existing Binance user-data
+// WebSocket state. It deliberately performs no exchange request.
+func (s *Server) handleExchangeConnectionStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	exchange := trading.NormalizeExchange(r.URL.Query().Get("exchange"))
+	status := exchangeConnectionStatusResponse{
+		OK: true, Exchange: exchange, Status: "unsupported", CheckedAt: s.now().UTC(),
+	}
+	if exchange != trading.ExchangeBinance {
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	if s.ConfigStore == nil {
+		status.Status = "not_configured"
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	cfg, err := configForRequestedTradeEnv(s.ConfigStore.Get(), r.URL.Query().Get("env"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
+		return
+	}
+	status.Env = string(cfg.Trading.Env)
+	client, apiID, err := s.binanceClientForCredentials(cfg, r.URL.Query().Get("api_id"))
+	if err != nil {
+		status.Status = "not_configured"
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	status.APIID = apiID
+	status.Transport = "user_data_stream"
+	running, connected := binanceUserStreamConnectionState(client, apiID)
+	switch {
+	case connected:
+		status.Status = "connected"
+	case running:
+		status.Status = "connecting"
+	default:
+		status.Status = "disconnected"
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 func (s *Server) runBinanceUserDataConnection(ctx context.Context, cfg tvbotconfig.Config, client tvbotbinance.Client, apiID, streamID string) error {
@@ -286,11 +343,17 @@ func markBinanceUserStreamActive(streamID string, active bool) {
 }
 
 func binanceUserStreamIsActive(client tvbotbinance.Client, apiID string) bool {
+	_, active := binanceUserStreamConnectionState(client, apiID)
+	return active
+}
+
+func binanceUserStreamConnectionState(client tvbotbinance.Client, apiID string) (running, active bool) {
 	streamID := binanceUserStreamID(client, apiID)
 	binanceUserStreamRegistry.Lock()
 	defer binanceUserStreamRegistry.Unlock()
-	_, ok := binanceUserStreamRegistry.active[streamID]
-	return ok
+	_, running = binanceUserStreamRegistry.running[streamID]
+	_, active = binanceUserStreamRegistry.active[streamID]
+	return running, active
 }
 
 func updateBinanceUserStreamPositions(streamID string, updates []tvbotbinance.Position, now time.Time) {

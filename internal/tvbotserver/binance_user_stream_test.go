@@ -84,3 +84,28 @@ func TestBinancePositionMonitorUsesFreshUserStreamSnapshot(t *testing.T) {
 		t.Fatalf("positions = %+v, want BTCUSDT snapshot", positions)
 	}
 }
+
+func TestBinanceUserStreamConnectionStateReportsLifecycle(t *testing.T) {
+	client := binance.Client{BaseURL: "https://example.invalid", Credentials: binance.Credentials{APIKey: "test-key"}}
+	apiID := "connection-state-test"
+	streamID := binanceUserStreamID(client, apiID)
+	binanceUserStreamRegistry.Lock()
+	binanceUserStreamRegistry.running[streamID] = struct{}{}
+	binanceUserStreamRegistry.active[streamID] = struct{}{}
+	binanceUserStreamRegistry.Unlock()
+	t.Cleanup(func() {
+		binanceUserStreamRegistry.Lock()
+		delete(binanceUserStreamRegistry.running, streamID)
+		delete(binanceUserStreamRegistry.active, streamID)
+		binanceUserStreamRegistry.Unlock()
+	})
+	running, connected := binanceUserStreamConnectionState(client, apiID)
+	if !running || !connected {
+		t.Fatalf("connection state = (running %v, connected %v), want both true", running, connected)
+	}
+	markBinanceUserStreamActive(streamID, false)
+	running, connected = binanceUserStreamConnectionState(client, apiID)
+	if !running || connected {
+		t.Fatalf("connecting state = (running %v, connected %v), want running only", running, connected)
+	}
+}

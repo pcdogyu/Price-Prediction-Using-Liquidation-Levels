@@ -814,6 +814,8 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 		s.handleOrderRetry(w, r, path)
 	case path == "/analysis/summary":
 		s.handleAnalysisSummary(w, r)
+	case path == "/exchange-connection":
+		s.handleExchangeConnectionStatus(w, r)
 	case path == "/analysis/trades":
 		s.handleAnalysisTrades(w, r)
 	case path == "/analysis/income":

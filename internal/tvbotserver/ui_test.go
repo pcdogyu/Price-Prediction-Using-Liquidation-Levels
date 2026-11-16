@@ -530,6 +530,11 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 	}
 	for _, want := range []string{
 		`id="analysis-trade-history-section"`,
+		`id="analysis-api-badge"`,
+		`id="analysis-connection-indicator"`,
+		`/tvbot/exchange-connection?`,
+		`Binance 用户数据 WebSocket 已连接`,
+		`15000);`,
 		`qs.set("exchange", exchange)`,
 		`Binance 资金流水 / 盈亏`,
 		`title: "资金费"`,
