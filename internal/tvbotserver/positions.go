@@ -63,6 +63,8 @@ const (
 	// seconds, but refreshing Binance userTrades that often can exhaust the
 	// account/IP request-weight budget.
 	positionEntryCacheTTL       = 5 * time.Minute
+	positionEntryErrorRetryMin  = time.Minute
+	positionEntryErrorRetryMax  = 15 * time.Minute
 	positionEntryHistoryLimit   = 100
 	positionEntryMaxOKXPages    = 90
 	binanceUserTradesWindow     = 7 * 24 * time.Hour
@@ -123,7 +125,10 @@ type positionEntryFillCache struct {
 
 type positionEntryFillCacheItem struct {
 	fetchedAt time.Time
+	retryAt   time.Time
 	fills     []positionEntryFill
+	err       error
+	failures  int
 }
 
 type pendingOrdersResponse struct {
@@ -1354,8 +1359,9 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 			openSymbols[symbol] = struct{}{}
 		}
 	}
-	if err := cancelOrphanBinanceOrders(ctx, client, openSymbols); err != nil && s.Logger != nil {
-		s.Logger.Warn("failed to cancel Binance orders for closed positions", "api_id", apiID, "error", err)
+	openOrders, openAlgoOrders, snapshotReady, sweepErr := cancelOrphanBinanceOrders(ctx, client, openSymbols)
+	if sweepErr != nil && s.Logger != nil {
+		s.Logger.Warn("failed to cancel Binance orders for closed positions", "api_id", apiID, "error", sweepErr)
 	}
 	now := s.now()
 	fillsBySymbol := make(map[string][]positionEntryFill)
@@ -1393,16 +1399,27 @@ func (s *Server) scanBinancePositionMonitorForAPI(ctx context.Context, cfg confi
 			}
 		}
 	}
+	lockedSymbols := make(map[string]struct{})
 	for _, position := range open {
 		symbol := strings.ToUpper(strings.TrimSpace(position.InstID))
 		if locked, lockReason := positionMonitorHoldingLocked(position, monitor, fillsBySymbol[symbol], errorsBySymbol[symbol], false, now); locked {
-			if err := cancelBinancePositionProtectionOrders(ctx, client, symbol); err != nil && s.Logger != nil {
-				s.Logger.Warn("failed to cancel early Binance position protection orders", "api_id", apiID, "symbol", symbol, "error", err)
-			}
+			lockedSymbols[symbol] = struct{}{}
 			if s.Logger != nil {
 				s.Logger.Info("Binance position protection orders deferred during minimum holding time", "api_id", apiID, "symbol", symbol, "reason", lockReason)
 			}
 		}
+	}
+	if len(lockedSymbols) > 0 {
+		if snapshotReady {
+			if err := cancelBinancePositionProtectionOrders(ctx, client, lockedSymbols, openOrders, openAlgoOrders); err != nil && s.Logger != nil {
+				s.Logger.Warn("failed to cancel early Binance position protection orders", "api_id", apiID, "error", err)
+			}
+		} else if s.Logger != nil {
+			s.Logger.Warn("skipping Binance protection order scan because account order snapshot failed", "api_id", apiID)
+		}
+	}
+	for _, position := range open {
+		symbol := strings.ToUpper(strings.TrimSpace(position.InstID))
 		trigger, hit, entryAt, heldFor, entryErr := "", false, time.Time{}, time.Duration(0), ""
 		if negativeGammaClose {
 			trigger, hit, entryAt, heldFor, entryErr = automaticPositionMonitorTrigger(position, monitor, "gamma_negative", now, fillsBySymbol[symbol], errorsBySymbol[symbol], true)
@@ -1666,14 +1683,14 @@ func cancelOrphanOKXOrders(ctx context.Context, client okx.Client, openInstIDs m
 // cancelOrphanBinanceOrders removes all regular and algorithm orders for
 // symbols that no longer have an open position. A successful position-risk
 // response is required before this sweep is attempted by the caller.
-func cancelOrphanBinanceOrders(ctx context.Context, client binance.Client, openSymbols map[string]struct{}) error {
+func cancelOrphanBinanceOrders(ctx context.Context, client binance.Client, openSymbols map[string]struct{}) ([]binance.OpenOrder, []binance.AlgoOpenOrder, bool, error) {
 	orders, err := client.OpenOrders(ctx, "")
 	if err != nil {
-		return fmt.Errorf("inspect Binance open orders for closed positions failed: %w", err)
+		return nil, nil, false, fmt.Errorf("inspect Binance open orders for closed positions failed: %w", err)
 	}
 	algoOrders, err := client.OpenAlgoOrders(ctx, "")
 	if err != nil {
-		return fmt.Errorf("inspect Binance algorithm orders for closed positions failed: %w", err)
+		return nil, nil, false, fmt.Errorf("inspect Binance algorithm orders for closed positions failed: %w", err)
 	}
 	orphanSymbols := make(map[string]struct{})
 	add := func(symbol string) {
@@ -1693,10 +1710,10 @@ func cancelOrphanBinanceOrders(ctx context.Context, client binance.Client, openS
 	}
 	for symbol := range orphanSymbols {
 		if err := cancelAllBinanceSymbolOrders(ctx, client, symbol); err != nil {
-			return fmt.Errorf("cancel Binance orders for closed symbol %s failed: %w", symbol, err)
+			return orders, algoOrders, true, fmt.Errorf("cancel Binance orders for closed symbol %s failed: %w", symbol, err)
 		}
 	}
-	return nil
+	return orders, algoOrders, true, nil
 }
 
 // cancelOrphanGateOrders removes ordinary and price-triggered orders for
@@ -3252,17 +3269,18 @@ func binancePositionCloseClient(client binance.Client) binance.Client {
 	return client
 }
 
-func cancelBinancePositionProtectionOrders(ctx context.Context, client binance.Client, symbol string) error {
-	symbol = strings.ToUpper(strings.TrimSpace(symbol))
-	if symbol == "" {
-		return errors.New("Binance protection symbol is required")
+func cancelBinancePositionProtectionOrders(ctx context.Context, client binance.Client, lockedSymbols map[string]struct{}, regular []binance.OpenOrder, algo []binance.AlgoOpenOrder) error {
+	locked := make(map[string]struct{}, len(lockedSymbols))
+	for symbol := range lockedSymbols {
+		symbol = strings.ToUpper(strings.TrimSpace(symbol))
+		if symbol != "" {
+			locked[symbol] = struct{}{}
+		}
 	}
-	regular, err := client.OpenOrders(ctx, symbol)
-	if err != nil {
-		return err
-	}
+	regularChanged, algoChanged := map[string]struct{}{}, map[string]struct{}{}
 	for _, order := range regular {
-		if !binancePositionProtectionOrder(order) {
+		symbol := strings.ToUpper(strings.TrimSpace(order.Symbol))
+		if _, ok := locked[symbol]; !ok || !binancePositionProtectionOrder(order) {
 			continue
 		}
 		cancelReq := binance.CancelOrderRequest{Symbol: symbol}
@@ -3277,35 +3295,38 @@ func cancelBinancePositionProtectionOrders(ctx context.Context, client binance.C
 		if _, err := client.CancelOrder(ctx, cancelReq); err != nil {
 			return err
 		}
+		regularChanged[symbol] = struct{}{}
 	}
-	remainingRegular, err := client.OpenOrders(ctx, symbol)
-	if err != nil {
-		return err
-	}
-	for _, order := range remainingRegular {
-		if binancePositionProtectionOrder(order) {
-			return fmt.Errorf("Binance regular protection order remains for %s", symbol)
-		}
-	}
-	orders, err := client.OpenAlgoOrders(ctx, symbol)
-	if err != nil {
-		return err
-	}
-	for _, order := range orders {
-		if !binancePositionProtectionAlgo(order) {
+	for _, order := range algo {
+		symbol := strings.ToUpper(strings.TrimSpace(order.Symbol))
+		if _, ok := locked[symbol]; !ok || !binancePositionProtectionAlgo(order) {
 			continue
 		}
 		if _, err := client.CancelAlgoOrder(ctx, order.AlgoID, order.ClientAlgoID); err != nil {
 			return err
 		}
+		algoChanged[symbol] = struct{}{}
 	}
-	remaining, err := client.OpenAlgoOrders(ctx, symbol)
-	if err != nil {
-		return err
+	for symbol := range regularChanged {
+		remaining, err := client.OpenOrders(ctx, symbol)
+		if err != nil {
+			return err
+		}
+		for _, order := range remaining {
+			if binancePositionProtectionOrder(order) {
+				return fmt.Errorf("Binance regular protection order remains for %s", symbol)
+			}
+		}
 	}
-	for _, order := range remaining {
-		if binancePositionProtectionAlgo(order) {
-			return fmt.Errorf("Binance position protection order %d remains for %s", order.AlgoID, symbol)
+	for symbol := range algoChanged {
+		remaining, err := client.OpenAlgoOrders(ctx, symbol)
+		if err != nil {
+			return err
+		}
+		for _, order := range remaining {
+			if binancePositionProtectionAlgo(order) {
+				return fmt.Errorf("Binance position protection order %d remains for %s", order.AlgoID, symbol)
+			}
 		}
 	}
 	return nil
@@ -3846,41 +3867,62 @@ func (s *Server) cachedPositionEntryFills(key string, now time.Time, refresh boo
 		s.positionEntryCache = cache
 	}
 	if !refresh {
-		if fills, ok := cache.get(key, now); ok {
-			return fills, nil
+		if fills, err, ok := cache.get(key, now); ok {
+			return fills, err
 		}
 	}
 	fills, err := fetch()
-	if err != nil {
-		return nil, err
-	}
-	cache.set(key, now, fills)
-	return fills, nil
+	cache.set(key, now, fills, err)
+	return fills, err
 }
 
-func (c *positionEntryFillCache) get(key string, now time.Time) ([]positionEntryFill, bool) {
+func (c *positionEntryFillCache) get(key string, now time.Time) ([]positionEntryFill, error, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.items == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	item, ok := c.items[key]
-	if !ok || now.Sub(item.fetchedAt) > positionEntryCacheTTL {
-		return nil, false
+	if !ok {
+		return nil, nil, false
 	}
-	return clonePositionEntryFills(item.fills), true
+	if item.err != nil {
+		if now.Before(item.retryAt) {
+			return clonePositionEntryFills(item.fills), item.err, true
+		}
+		return nil, nil, false
+	}
+	if now.Sub(item.fetchedAt) > positionEntryCacheTTL {
+		return nil, nil, false
+	}
+	return clonePositionEntryFills(item.fills), nil, true
 }
 
-func (c *positionEntryFillCache) set(key string, now time.Time, fills []positionEntryFill) {
+func (c *positionEntryFillCache) set(key string, now time.Time, fills []positionEntryFill, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.items == nil {
 		c.items = map[string]positionEntryFillCacheItem{}
 	}
-	c.items[key] = positionEntryFillCacheItem{
-		fetchedAt: now,
-		fills:     clonePositionEntryFills(fills),
+	item := c.items[key]
+	item.fetchedAt = now
+	item.fills = clonePositionEntryFills(fills)
+	item.err = err
+	if err == nil {
+		item.failures = 0
+		item.retryAt = time.Time{}
+	} else {
+		item.failures++
+		backoff := positionEntryErrorRetryMin
+		for i := 1; i < item.failures && backoff < positionEntryErrorRetryMax; i++ {
+			backoff *= 2
+		}
+		if backoff > positionEntryErrorRetryMax {
+			backoff = positionEntryErrorRetryMax
+		}
+		item.retryAt = now.Add(backoff)
 	}
+	c.items[key] = item
 }
 
 func clonePositionEntryFills(fills []positionEntryFill) []positionEntryFill {
