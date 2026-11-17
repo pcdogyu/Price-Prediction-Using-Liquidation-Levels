@@ -5125,12 +5125,12 @@ const tvbotHTML = `<!doctype html>
     }
 
     function exchangeOrderSyncStatusText(sync) {
-      if (!sync) return "尚未同步";
+      if (!sync) return "尚未同步 · 自动每 15 分钟";
       const status = String(sync.status || "").toLowerCase();
       if (status === "syncing") return "同步中…";
-      if (status === "failed") return sync.last_error ? "同步失败：" + sync.last_error : "同步失败，可重试";
-      if (sync.last_success_at) return "最近同步 " + shanghaiTime(sync.last_success_at);
-      return status === "synced" ? "已同步" : "尚未同步";
+      if (status === "failed") return (sync.last_error ? "同步失败：" + sync.last_error : "同步失败，可重试") + " · 5 分钟后重试";
+      if (sync.last_success_at) return "最近同步 " + shanghaiTime(sync.last_success_at) + " · 自动每 15 分钟";
+      return status === "synced" ? "已同步 · 自动每 15 分钟" : "尚未同步 · 自动每 15 分钟";
     }
 
     function renderExchangeOrders() {
@@ -5212,6 +5212,8 @@ const tvbotHTML = `<!doctype html>
 
     let exchangeOrderAutoSyncAt = 0;
     let exchangeOrderAutoSyncBusy = false;
+    const exchangeOrderSyncIntervalMs = 15 * 60 * 1000;
+    const exchangeOrderSyncRetryIntervalMs = 5 * 60 * 1000;
     function exchangeOrderSyncIsDue(sync) {
       if (!sync) return true;
       const status = String(sync.status || "").toLowerCase();
@@ -5221,12 +5223,13 @@ const tvbotHTML = `<!doctype html>
         : (sync.last_success_at || sync.last_attempted_at);
       if (!lastActivity) return true;
       const timestamp = Date.parse(lastActivity);
-      return !Number.isFinite(timestamp) || Date.now() - timestamp >= 5 * 60 * 1000;
+      const interval = status === "failed" ? exchangeOrderSyncRetryIntervalMs : exchangeOrderSyncIntervalMs;
+      return !Number.isFinite(timestamp) || Date.now() - timestamp >= interval;
     }
 
     function queueExchangeOrderSync() {
       const now = Date.now();
-      if (!exchangeOrderSyncIsDue(state.exchangeOrderSync) || exchangeOrderAutoSyncBusy || now - exchangeOrderAutoSyncAt < 5 * 60 * 1000) return;
+      if (!exchangeOrderSyncIsDue(state.exchangeOrderSync) || exchangeOrderAutoSyncBusy || now - exchangeOrderAutoSyncAt < exchangeOrderSyncRetryIntervalMs) return;
       exchangeOrderAutoSyncAt = now;
       exchangeOrderAutoSyncBusy = true;
       triggerExchangeOrderSync(null, true).catch((err) => {

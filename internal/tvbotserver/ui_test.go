@@ -362,8 +362,12 @@ func TestRenderTVBotExchangeOrderHistoryIsLocalFirstAndReadOnly(t *testing.T) {
 	}
 	for _, want := range []string{
 		`function exchangeOrderSyncIsDue(sync)`,
+		`const exchangeOrderSyncIntervalMs = 15 * 60 * 1000`,
+		`const exchangeOrderSyncRetryIntervalMs = 5 * 60 * 1000`,
 		`status === "failed"`,
 		`sync.last_attempted_at || sync.last_success_at`,
+		`自动每 15 分钟`,
+		`5 分钟后重试`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("history order auto-sync freshness guard is missing %q", want)

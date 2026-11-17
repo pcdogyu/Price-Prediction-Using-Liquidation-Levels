@@ -299,10 +299,11 @@ func TestExchangeOrderSyncStateDueHonorsFreshAndInFlightStates(t *testing.T) {
 		{name: "missing state", want: true},
 		{name: "in flight", ok: true, state: storage.ExchangeOrderSyncState{Status: "syncing"}, want: true},
 		{name: "fresh success", ok: true, state: storage.ExchangeOrderSyncState{Status: "synced", LastSuccessAt: now.Add(-time.Minute)}, want: false},
+		{name: "successful sync remains fresh after old five minute cadence", ok: true, state: storage.ExchangeOrderSyncState{Status: "synced", LastSuccessAt: now.Add(-5 * time.Minute)}, want: false},
 		{name: "stale success", ok: true, state: storage.ExchangeOrderSyncState{Status: "synced", LastSuccessAt: now.Add(-exchangeOrderSyncInterval)}, want: true},
 		{name: "recent failure", ok: true, state: storage.ExchangeOrderSyncState{Status: "failed", LastAttemptedAt: now.Add(-time.Minute)}, want: false},
 		{name: "recent failure after fresh success", ok: true, state: storage.ExchangeOrderSyncState{Status: "failed", LastSuccessAt: now.Add(-exchangeOrderSyncInterval), LastAttemptedAt: now.Add(-time.Minute)}, want: false},
-		{name: "stale failure", ok: true, state: storage.ExchangeOrderSyncState{Status: "failed", LastAttemptedAt: now.Add(-exchangeOrderSyncInterval)}, want: true},
+		{name: "failure retries after five minutes", ok: true, state: storage.ExchangeOrderSyncState{Status: "failed", LastAttemptedAt: now.Add(-exchangeOrderSyncRetryInterval)}, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

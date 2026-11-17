@@ -20,12 +20,15 @@ import (
 )
 
 const (
-	exchangeOrderSyncInterval  = 5 * time.Minute
-	exchangeOrderInitialWindow = 30 * 24 * time.Hour
-	exchangeOrderOverlap       = 10 * time.Minute
-	exchangeOrderBinanceWindow = 7*24*time.Hour - time.Millisecond
-	exchangeOrderPageLimit     = 1000
-	exchangeOrderMaxPages      = 100
+	// Remote order history is a periodic reconciliation. The separate Binance
+	// fill monitor remains on its shorter polling cadence for recent fills.
+	exchangeOrderSyncInterval      = 15 * time.Minute
+	exchangeOrderSyncRetryInterval = 5 * time.Minute
+	exchangeOrderInitialWindow     = 30 * 24 * time.Hour
+	exchangeOrderOverlap           = 10 * time.Minute
+	exchangeOrderBinanceWindow     = 7*24*time.Hour - time.Millisecond
+	exchangeOrderPageLimit         = 1000
+	exchangeOrderMaxPages          = 100
 )
 
 type exchangeOrderSyncCoordinator struct {
@@ -83,7 +86,7 @@ func (s *Server) StartExchangeOrderSyncer(ctx context.Context) {
 	coordinator.mu.Unlock()
 	go func() {
 		coordinator.trigger(s, false)
-		ticker := time.NewTicker(exchangeOrderSyncInterval)
+		ticker := time.NewTicker(exchangeOrderSyncRetryInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -138,14 +141,19 @@ func exchangeOrderSyncStateDue(state tvbotstorage.ExchangeOrderSyncState, ok boo
 		return true
 	}
 	status := strings.ToLower(strings.TrimSpace(state.Status))
+	interval := exchangeOrderSyncInterval
 	last := state.LastSuccessAt
-	if status == "failed" || last.IsZero() {
+	if status == "failed" {
+		interval = exchangeOrderSyncRetryInterval
+		last = state.LastAttemptedAt
+	} else if last.IsZero() {
+		interval = exchangeOrderSyncRetryInterval
 		last = state.LastAttemptedAt
 	}
 	if last.IsZero() {
 		return true
 	}
-	return !now.UTC().Before(last.UTC().Add(exchangeOrderSyncInterval))
+	return !now.UTC().Before(last.UTC().Add(interval))
 }
 
 func (s *Server) exchangeOrderSyncDue() bool {
