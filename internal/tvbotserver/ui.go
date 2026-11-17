@@ -8334,7 +8334,11 @@ const tvbotHTML = `<!doctype html>
         return "<tr>" + columns.map((col) => analysisTradeCellHTML(col, row)).join("") + "</tr>";
       }).join("") || '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">暂无 ' + escapeHTML(label) + ' 下单盈亏记录</td></tr>';
       const syncNote = binanceIncome && state.analysisTrades ? (state.analysisTrades.sync_state === "syncing" ? " · 本地订单已显示，Binance 增量同步中" : state.analysisTrades.sync_state === "failed" ? " · 增量同步失败，当前显示本地订单" : state.analysisTrades.sync_state === "synced" ? " · 已完成增量同步" : "") : "";
-      if (status) status.textContent = (total ? (binanceIncome ? ("共 " + total + " 个完整仓位") : (state.analysisTradeAggregate ? ("共 " + total + " 条（当前页 " + trades.length + " 组）") : ("共 " + total + " 条"))) : "-") + syncNote;
+      if (status) {
+        const syncError = binanceIncome && state.analysisTrades && state.analysisTrades.sync_state === "failed" ? String(state.analysisTrades.sync_error || "") : "";
+        status.title = syncError ? "Binance 增量同步详情：" + syncError : "";
+        status.textContent = (total ? (binanceIncome ? ("共 " + total + " 个完整仓位") : (state.analysisTradeAggregate ? ("共 " + total + " 条（当前页 " + trades.length + " 组）") : ("共 " + total + " 条"))) : "-") + syncNote;
+      }
       if (pageInfo) pageInfo.textContent = total ? ("第 " + state.analysisTradePage + " / " + totalPages + " 页") : "-";
       if (prev) prev.disabled = state.analysisTradePage <= 1;
       if (next) next.disabled = state.analysisTradePage >= totalPages;

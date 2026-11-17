@@ -1200,6 +1200,14 @@ func TestBinanceAnalysisSyncIncrementallyMergesLocalAndRemoteFills(t *testing.T)
 		InstID:        "ETHUSDC",
 		Status:        "FILLED",
 		CreatedAt:     now.Add(-time.Hour),
+	}, {
+		Exchange:      trading.ExchangeBinance,
+		APIID:         apiID,
+		TradeEnv:      tradeEnv,
+		RemoteOrderID: "delisted-order",
+		InstID:        "BADUSDT",
+		Status:        "FILLED",
+		CreatedAt:     now.Add(-time.Hour),
 	}}, now); err != nil {
 		t.Fatal(err)
 	}
@@ -1221,6 +1229,11 @@ func TestBinanceAnalysisSyncIncrementallyMergesLocalAndRemoteFills(t *testing.T)
 		}
 		symbol := r.URL.Query().Get("symbol")
 		requested = append(requested, symbol)
+		if symbol == "BADUSDT" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"code":-1121,"msg":"Invalid symbol."}`))
+			return
+		}
 		if symbol == "ETHUSDC" {
 			if failETH {
 				w.WriteHeader(http.StatusServiceUnavailable)
@@ -1255,8 +1268,12 @@ func TestBinanceAnalysisSyncIncrementallyMergesLocalAndRemoteFills(t *testing.T)
 	for _, symbol := range requested {
 		seenSymbols[symbol] = true
 	}
-	if !seenSymbols["BTCUSDT"] || !seenSymbols["ETHUSDC"] {
+	if !seenSymbols["BTCUSDT"] || !seenSymbols["ETHUSDC"] || !seenSymbols["BADUSDT"] {
 		t.Fatalf("incremental sync should query every locally known symbol, got %v", requested)
+	}
+	badState, badStateFound, err := srv.Orders.LoadBinanceAnalysisFillSyncState(apiID, "BADUSDT")
+	if err != nil || !badStateFound || badState.LastSyncedMS != now.UnixMilli() {
+		t.Fatalf("delisted symbol should be recorded as skipped without failing sync: state=%#v found=%v err=%v", badState, badStateFound, err)
 	}
 	fills, err := srv.Orders.ListBinanceFills(apiID, analysisPositionSince(now, 24*60))
 	if err != nil {

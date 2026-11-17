@@ -2617,6 +2617,12 @@ func (s *Server) syncBinanceAnalysisFills(ctx context.Context, cfg config.Config
 				break
 			}
 			if fetchErr != nil {
+				// Local order history can contain contracts Binance has since
+				// delisted. Treat -1121 as a completed no-data range so one stale
+				// symbol does not mark the account-wide incremental sync as failed.
+				if binance.IsAPIErrorCode(fetchErr, -1121) {
+					break
+				}
 				symbolErr = fetchErr
 				break
 			}
