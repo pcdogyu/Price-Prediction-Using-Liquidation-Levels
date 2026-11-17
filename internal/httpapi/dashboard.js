@@ -82,10 +82,13 @@ const tradeView = {
   openHistoryCount: 0,
   historyLoaded: false,
   historyLoading: false,
+  historyRetryTimer: 0,
+  historyRetryCount: 0,
   historyError: '',
   enabled: false,
   referenceError: requestedTradeSymbolRaw && !requestedTradeSymbol ? 'URL 中的交易币对格式不受支持' : ''
 };
+const historicalTradeRetryDelays = [2000, 5000, 15000, 30000];
 let refreshing = false;
 let refreshSequence = 0;
 let refreshController;
@@ -235,6 +238,13 @@ function tradeViewError() {
   return [tradeView.referenceError, tradeView.historyError].filter(Boolean).join('；');
 }
 
+function historicalTradeRetryDelay(error) {
+  const message = String(error?.message || '');
+  const retryable = error?.name === 'TypeError' || /HTTP (?:408|429|500|502|503|504)\b/.test(message);
+  if (!retryable || tradeView.historyRetryCount >= historicalTradeRetryDelays.length) return 0;
+  return historicalTradeRetryDelays[tradeView.historyRetryCount++];
+}
+
 function loadTradeView() {
   if (!tradeView.ref) return;
   const storageKey = 'tvbot.analysisChart.' + tradeView.ref;
@@ -331,9 +341,28 @@ async function loadHistoricalTradeView() {
     ].filter(exchangeMatches);
     tradeView.openHistoryCount = openRows.filter(exchangeMatches).length;
     tradeView.historyLoaded = true;
+    tradeView.historyError = '';
+    tradeView.historyRetryCount = 0;
+    if (tradeView.historyRetryTimer) {
+      clearTimeout(tradeView.historyRetryTimer);
+      tradeView.historyRetryTimer = 0;
+    }
     refreshTradeMarkers();
   } catch (error) {
-    if (error?.name !== 'AbortError') tradeView.historyError = error.message || '历史交易数据不可用';
+    if (error?.name !== 'AbortError') {
+      const message = error.message || '历史交易数据不可用';
+      const retryDelay = historicalTradeRetryDelay(error);
+      tradeView.historyError = retryDelay
+        ? message + '（' + Math.ceil(retryDelay / 1000) + ' 秒后自动重试）'
+        : message;
+      if (retryDelay) {
+        clearTimeout(tradeView.historyRetryTimer);
+        tradeView.historyRetryTimer = setTimeout(() => {
+          tradeView.historyRetryTimer = 0;
+          loadHistoricalTradeView();
+        }, retryDelay);
+      }
+    }
   } finally {
     tradeView.historyLoading = false;
     refreshTradeMarkers();
