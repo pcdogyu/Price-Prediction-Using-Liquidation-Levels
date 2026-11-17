@@ -35,7 +35,7 @@ func TestBuildTwentyFourBinsValueAreaAndTopThree(t *testing.T) {
 	session := Session{Start: start, End: start.Add(13*time.Hour + 30*time.Minute), ResetKind: "shanghai_0800"}
 	levels := []Level{{Price: 100, VolumeUSD: 10}, {Price: 101, VolumeUSD: 20}, {Price: 102, VolumeUSD: 70}, {Price: 103, VolumeUSD: 20}, {Price: 104, VolumeUSD: 10}}
 	p := Build("BTCUSDT", session, levels, start.Add(time.Hour), start.Add(time.Hour), true)
-	if p.Rows != 24 || len(p.Bins) != 24 || p.ValueAreaFraction != .68 || p.VAL == nil || p.VAH == nil || *p.VAL > *p.VAH {
+	if p.Rows != 24 || len(p.Bins) != 24 || p.ValueAreaFraction != .69 || p.VAL == nil || p.VAH == nil || *p.VAL > *p.VAH {
 		t.Fatalf("profile=%+v", p)
 	}
 	inside := 0.0
@@ -48,7 +48,7 @@ func TestBuildTwentyFourBinsValueAreaAndTopThree(t *testing.T) {
 			ranks[bin.VolumeRank] = bin.VolumeUSD
 		}
 	}
-	if inside+1e-9 < p.TotalVolumeUSD*.68 {
+	if inside+1e-9 < p.TotalVolumeUSD*.69 {
 		t.Fatalf("value area volume=%v total=%v", inside, p.TotalVolumeUSD)
 	}
 	if len(ranks) != 3 || ranks[1] != 70 || ranks[2] != 20 || ranks[3] != 20 {
@@ -56,16 +56,16 @@ func TestBuildTwentyFourBinsValueAreaAndTopThree(t *testing.T) {
 	}
 }
 
-func TestBuildValueAreaUsesSixtyEightPercentOfTotalVolume(t *testing.T) {
+func TestBuildValueAreaUsesSixtyNinePercentOfTotalVolume(t *testing.T) {
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	session := Session{Start: start, End: start.Add(13*time.Hour + 30*time.Minute), ResetKind: "shanghai_0800"}
 	profile := Build("BTCUSDT", session, []Level{
-		{Price: 100, VolumeUSD: 15},
-		{Price: 101, VolumeUSD: 69},
+		{Price: 100, VolumeUSD: 15.5},
+		{Price: 101, VolumeUSD: 68.5},
 		{Price: 102, VolumeUSD: 16},
 	}, start.Add(time.Hour), start.Add(time.Hour), true)
-	if profile.TotalVolumeUSD != 100 || profile.ValueAreaFraction != .68 {
-		t.Fatalf("total volume/fraction = %v/%v, want 100/.68", profile.TotalVolumeUSD, profile.ValueAreaFraction)
+	if profile.TotalVolumeUSD != 100 || profile.ValueAreaFraction != .69 {
+		t.Fatalf("total volume/fraction = %v/%v, want 100/.69", profile.TotalVolumeUSD, profile.ValueAreaFraction)
 	}
 	var inAreaVolume float64
 	var inAreaBins int
@@ -75,8 +75,8 @@ func TestBuildValueAreaUsesSixtyEightPercentOfTotalVolume(t *testing.T) {
 			inAreaBins++
 		}
 	}
-	if inAreaVolume != 69 || inAreaBins != 1 || profile.VAL == nil || profile.VAH == nil || *profile.VAL != 101 {
-		t.Fatalf("68%% target should be met by the 69%% POC alone: volume=%v bins=%d VAL=%v VAH=%v", inAreaVolume, inAreaBins, profile.VAL, profile.VAH)
+	if inAreaVolume != 84.5 || inAreaBins <= 1 || profile.VAL == nil || profile.VAH == nil || *profile.VAL > 101 || *profile.VAH < 101 {
+		t.Fatalf("69%% target should expand beyond the 68.5%% POC: volume=%v bins=%d VAL=%v VAH=%v", inAreaVolume, inAreaBins, profile.VAL, profile.VAH)
 	}
 }
 
@@ -95,7 +95,7 @@ func TestBuildSinglePriceAndIncomplete(t *testing.T) {
 
 func TestValueAreaExpandsBothEqualAdjacentRows(t *testing.T) {
 	bins := []domain.VolumeProfileBin{{VolumeUSD: 20}, {VolumeUSD: 60}, {VolumeUSD: 20}}
-	low, high := valueArea(bins, 68)
+	low, high := valueArea(bins, 69)
 	if low != 0 || high != 2 {
 		t.Fatalf("equal adjacent rows must expand together, got [%d,%d]", low, high)
 	}

@@ -12,7 +12,7 @@ import (
 
 const (
 	Rows              = 24
-	ValueAreaFraction = .68
+	ValueAreaFraction = .69
 	ArchiveStatus     = "complete_rows24_v1"
 )
 
