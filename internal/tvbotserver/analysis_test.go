@@ -586,12 +586,12 @@ func TestBinanceAnalysisFillSyncManagerDeduplicatesAndAppliesCooldown(t *testing
 	for manager.status("account").State == "syncing" && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	manager.start("account", base.Add(30*time.Second), job)
+	manager.start("account", base.Add(binanceAnalysisFillSyncCooldown-time.Second), job)
 	if calls.Load() != 1 {
 		t.Fatalf("cooldown should suppress a second job, got %d", calls.Load())
 	}
 	release = make(chan struct{})
-	manager.start("account", base.Add(61*time.Second), job)
+	manager.start("account", base.Add(binanceAnalysisFillSyncCooldown), job)
 	select {
 	case <-started:
 	case <-time.After(time.Second):

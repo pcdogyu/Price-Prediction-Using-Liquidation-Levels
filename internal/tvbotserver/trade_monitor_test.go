@@ -18,6 +18,18 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
+func TestBinanceTradeMonitorPollIntervalHasSixtySecondMinimum(t *testing.T) {
+	cfg := config.Default()
+	cfg.Trading.FillMonitor.PollIntervalSeconds = 20
+	if got := binanceTradeMonitorPollInterval(cfg); got != 60*time.Second {
+		t.Fatalf("poll interval = %s, want 60s", got)
+	}
+	cfg.Trading.FillMonitor.PollIntervalSeconds = 120
+	if got := binanceTradeMonitorPollInterval(cfg); got != 120*time.Second {
+		t.Fatalf("configured poll interval = %s, want 120s", got)
+	}
+}
+
 type tradeMonitorExecutor struct {
 	signals []trading.Signal
 }

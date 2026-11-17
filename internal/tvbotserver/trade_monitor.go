@@ -176,7 +176,7 @@ func (s *Server) StartTradeFillMonitor(ctx context.Context) {
 
 func (s *Server) runTradeFillMonitor(ctx context.Context) {
 	s.runTradeFillMonitorOnce(ctx)
-	ticker := time.NewTicker(tradeMonitorDefaultPollInterval)
+	ticker := time.NewTicker(binanceTradeMonitorPollInterval(s.ConfigStore.Get()))
 	defer ticker.Stop()
 	for {
 		select {
@@ -185,13 +185,18 @@ func (s *Server) runTradeFillMonitor(ctx context.Context) {
 		case <-ticker.C:
 			s.runTradeFillMonitorOnce(ctx)
 			cfg := s.ConfigStore.Get()
-			interval := time.Duration(cfg.Trading.FillMonitor.PollIntervalSeconds) * time.Second
-			if interval <= 0 {
-				interval = tradeMonitorDefaultPollInterval
-			}
+			interval := binanceTradeMonitorPollInterval(cfg)
 			ticker.Reset(interval)
 		}
 	}
+}
+
+func binanceTradeMonitorPollInterval(cfg config.Config) time.Duration {
+	interval := time.Duration(cfg.Trading.FillMonitor.PollIntervalSeconds) * time.Second
+	if interval < tradeMonitorDefaultPollInterval {
+		return tradeMonitorDefaultPollInterval
+	}
+	return interval
 }
 
 func (s *Server) runTradeFillMonitorOnce(ctx context.Context) {

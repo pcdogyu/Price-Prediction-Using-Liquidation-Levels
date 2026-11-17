@@ -41,7 +41,7 @@ const (
 	defaultAnalysisPageSize         = 20
 	maxAnalysisPageSize             = 100
 	analysisRefreshTimeout          = 3 * time.Minute
-	binanceAnalysisFillSyncCooldown = time.Minute
+	binanceAnalysisFillSyncCooldown = 5 * time.Minute
 	binanceAnalysisFillSyncOverlap  = time.Minute
 )
 

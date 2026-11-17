@@ -43,6 +43,23 @@ func TestSignalTTLDefaultsToFiveMinutes(t *testing.T) {
 	}
 }
 
+func TestNormalizeFillMonitorPollIntervalUsesSixtySecondMinimum(t *testing.T) {
+	cfg := Default()
+	if cfg.Trading.FillMonitor.PollIntervalSeconds != 60 {
+		t.Fatalf("default fill monitor interval = %d, want 60 seconds", cfg.Trading.FillMonitor.PollIntervalSeconds)
+	}
+	cfg.Trading.FillMonitor.PollIntervalSeconds = 20
+	cfg.Normalize()
+	if cfg.Trading.FillMonitor.PollIntervalSeconds != 60 {
+		t.Fatalf("normalized fill monitor interval = %d, want 60 seconds", cfg.Trading.FillMonitor.PollIntervalSeconds)
+	}
+	cfg.Trading.FillMonitor.PollIntervalSeconds = 120
+	cfg.Normalize()
+	if cfg.Trading.FillMonitor.PollIntervalSeconds != 120 {
+		t.Fatalf("configured fill monitor interval = %d, want 120 seconds", cfg.Trading.FillMonitor.PollIntervalSeconds)
+	}
+}
+
 func TestPositionOpenModesPersistNormalizeAndClone(t *testing.T) {
 	cfg := Default()
 	cfg.UI.PositionOpenModes = map[string]string{

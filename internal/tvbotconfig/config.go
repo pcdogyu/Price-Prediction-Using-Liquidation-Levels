@@ -350,7 +350,7 @@ func Default() Config {
 			},
 			FillMonitor: FillMonitorConfig{
 				Enabled:             true,
-				PollIntervalSeconds: 20,
+				PollIntervalSeconds: 60,
 				LookbackHours:       72,
 				Exchanges:           []string{trading.ExchangeBinance},
 			},
@@ -572,8 +572,8 @@ func (c *Config) Normalize() {
 	// Keep the legacy alias aligned with the per-coinpair scope for older API
 	// consumers while the two new fields remain authoritative.
 	c.Trading.LossCooldown.Hours = c.Trading.LossCooldown.CoinpairHours
-	if c.Trading.FillMonitor.PollIntervalSeconds <= 0 {
-		c.Trading.FillMonitor.PollIntervalSeconds = 20
+	if c.Trading.FillMonitor.PollIntervalSeconds < 60 {
+		c.Trading.FillMonitor.PollIntervalSeconds = 60
 	}
 	if c.Trading.FillMonitor.LookbackHours <= 0 {
 		c.Trading.FillMonitor.LookbackHours = 72

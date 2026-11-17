@@ -26,7 +26,7 @@ var marketWindowSpecs = []struct {
 
 const (
 	marketMetricInterval      = 5 * time.Minute
-	marketInfoDefaultInterval = 5 * time.Minute
+	marketInfoDefaultInterval = 10 * time.Minute
 	marketMetricStaleGrace    = 2 * time.Minute
 )
 

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	marketSyncFreshFor    = 10 * time.Minute
+	marketSyncFreshFor    = 15 * time.Minute
 	marketSyncJobTimeout  = 90 * time.Second
 	marketSyncRetryDelay  = 2 * time.Second
 	marketSyncJobInterval = time.Second
