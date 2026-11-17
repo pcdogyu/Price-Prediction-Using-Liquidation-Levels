@@ -1215,9 +1215,9 @@ func (s *Server) loadAnalysisTradeSnapshot(ctx context.Context, r *http.Request)
 	if err != nil {
 		return analysisResponse{}, err
 	}
-	if s.primaryExchangeForConfig(request.cfg) == trading.ExchangeBinance {
-		return s.localBinanceAnalysisSnapshot(request.cfg, request.requestedBinanceAPIID, request.priceDays, request.pnlMinutes, s.now().UTC())
-	}
+	// Binance history can span thousands of positions. Keep the local-first
+	// snapshot on the shared trade-projection cache so each pagination request
+	// does not recompute the full history and exceed the reverse-proxy timeout.
 	if cached, ok, cacheErr := s.Orders.CachedPayload(analysisTradeProjectionKey(request.cacheKey)); cacheErr != nil {
 		return analysisResponse{}, cacheErr
 	} else if ok {
