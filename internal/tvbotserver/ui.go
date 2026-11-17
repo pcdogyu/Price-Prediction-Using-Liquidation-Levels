@@ -1899,7 +1899,6 @@ const tvbotHTML = `<!doctype html>
     .analysis-trade-table .analysis-inst-id-col { width: 6.4%; }
     .analysis-trade-table .analysis-side-col { width: 5.4%; }
     .analysis-trade-table .analysis-gamma-col { width: 7.2%; }
-    .analysis-trade-table .analysis-gamma-flip-col { width: 17%; }
     .analysis-trade-table .analysis-strategy-col { width: 9.2%; }
     .analysis-trade-table .analysis-exit-source-col { width: 10%; }
     .analysis-trade-table .analysis-entry-px-col { width: 7%; }
@@ -3200,7 +3199,6 @@ const tvbotHTML = `<!doctype html>
       { id: "inst_id", title: "币对", colClass: "analysis-inst-id-col", renderHTML: (row) => analysisTradeSymbolHTML(row) },
       { id: "side", title: "方向", colClass: "analysis-side-col", toneClass: (row) => analysisPositionSideToneClass(row.side), render: (row) => analysisPositionSideText(row.side) },
       { id: "gamma", title: "Gamma", colClass: "analysis-gamma-col", render: (row) => analysisGammaDirectionText(row) },
-      { id: "gamma_flip", title: "GEX / Flip 快照", colClass: "analysis-gamma-flip-col", render: (row) => analysisGammaFlipSnapshotText(row) },
       { id: "strategy", title: "策略", colClass: "analysis-strategy-col", render: (row) => analysisStrategyText(row) },
       { id: "exit_source", title: "平仓来源", colClass: "analysis-exit-source-col", render: (row) => analysisExitSourceText(row) },
       { id: "entry_px", title: "开仓价", colClass: "analysis-entry-px-col", render: (row) => analysisPriceText(row, row.entry_px) },
