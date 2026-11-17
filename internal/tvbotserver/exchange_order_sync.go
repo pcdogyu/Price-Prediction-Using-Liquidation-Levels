@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,13 +23,13 @@ import (
 const (
 	// Remote order history is a periodic reconciliation. The separate Binance
 	// fill monitor remains on its shorter polling cadence for recent fills.
-	exchangeOrderSyncInterval      = 15 * time.Minute
-	exchangeOrderSyncRetryInterval = 5 * time.Minute
-	exchangeOrderInitialWindow     = 30 * 24 * time.Hour
-	exchangeOrderOverlap           = 10 * time.Minute
-	exchangeOrderBinanceWindow     = 7*24*time.Hour - time.Millisecond
-	exchangeOrderPageLimit         = 1000
-	exchangeOrderMaxPages          = 100
+	exchangeOrderSyncInterval         = 15 * time.Minute
+	exchangeOrderSyncRetryInterval    = 5 * time.Minute
+	exchangeOrderInitialWindow        = 30 * 24 * time.Hour
+	exchangeOrderBinanceInitialWindow = 7 * 24 * time.Hour
+	exchangeOrderOverlap              = 10 * time.Minute
+	exchangeOrderPageLimit            = 1000
+	exchangeOrderMaxPages             = 100
 )
 
 type exchangeOrderSyncCoordinator struct {
@@ -357,12 +358,13 @@ func (s *Server) syncExchangeOrders(ctx context.Context) error {
 	if err := s.Orders.UpsertExchangeOrderSyncState(state); err != nil {
 		return err
 	}
-	from := now.Add(-exchangeOrderInitialWindow)
+	initialWindow := exchangeOrderInitialWindowFor(target.Exchange)
+	from := now.Add(-initialWindow)
 	if !state.LastSuccessAt.IsZero() {
 		from = state.LastSuccessAt.Add(-exchangeOrderOverlap)
 	}
-	if from.Before(now.Add(-exchangeOrderInitialWindow)) && state.LastSuccessAt.IsZero() {
-		from = now.Add(-exchangeOrderInitialWindow)
+	if target.Exchange == tvbottrading.ExchangeBinance && from.Before(now.Add(-exchangeOrderBinanceInitialWindow)) {
+		from = now.Add(-exchangeOrderBinanceInitialWindow)
 	}
 	cursor := exchangeOrderSyncCursor{From: from, To: now}
 	var orders []tvbotstorage.ExchangeOrder
@@ -402,6 +404,13 @@ func (s *Server) syncExchangeOrders(ctx context.Context) error {
 	return s.Orders.UpsertExchangeOrderSyncState(state)
 }
 
+func exchangeOrderInitialWindowFor(exchange string) time.Duration {
+	if strings.EqualFold(strings.TrimSpace(exchange), tvbottrading.ExchangeBinance) {
+		return exchangeOrderBinanceInitialWindow
+	}
+	return exchangeOrderInitialWindow
+}
+
 func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchangeOrderTarget, from, to time.Time) ([]tvbotstorage.ExchangeOrder, exchangeOrderSyncCursor, error) {
 	store := s.binanceCredentialStore(target.TradeEnv)
 	creds, apiID, err := store.BinanceCredentials(target.APIID)
@@ -410,93 +419,130 @@ func (s *Server) fetchBinanceExchangeOrders(ctx context.Context, target exchange
 	}
 	client := s.analysisBinanceClient(target.Config, creds)
 	result := []tvbotstorage.ExchangeOrder{}
+	cutoff := to.Add(-exchangeOrderBinanceInitialWindow)
+	if from.Before(cutoff) {
+		from = cutoff
+	}
 	cursor := exchangeOrderSyncCursor{From: from, To: to}
+
+	knownSymbols, err := s.Orders.ListExchangeOrderInstIDs(target.Exchange, apiID, target.TradeEnv)
+	if err != nil {
+		return result, cursor, err
+	}
+	knownSet := make(map[string]struct{}, len(knownSymbols))
+	candidateSet := make(map[string]struct{}, len(knownSymbols))
+	for _, symbol := range knownSymbols {
+		normalized := strings.ToUpper(strings.TrimSpace(symbol))
+		if normalized != "" {
+			knownSet[normalized] = struct{}{}
+			candidateSet[normalized] = struct{}{}
+		}
+	}
+	discovered := s.discoverBinanceOrderSymbols(apiID, target, to)
+	for symbol := range discovered {
+		candidateSet[symbol] = struct{}{}
+	}
+	if len(candidateSet) == 0 {
+		// A cold database must not turn into a sweep of the entire futures
+		// symbol catalog. Local fills/order records will seed symbols later.
+		return result, cursor, nil
+	}
+
 	info, err := client.ExchangeInfo(ctx)
 	if err != nil {
 		return result, cursor, err
 	}
-	symbols := make([]string, 0, len(info.Symbols))
-	symbolQuoteAssets := make(map[string]string, len(info.Symbols))
+	symbols := make([]string, 0, len(candidateSet))
 	for _, symbol := range info.Symbols {
 		symbolName := strings.TrimSpace(symbol.Symbol)
-		if strings.EqualFold(strings.TrimSpace(symbol.Status), "trading") && supportedBinanceExchangeOrderQuoteAsset(symbol.QuoteAsset) && symbolName != "" {
+		normalized := strings.ToUpper(symbolName)
+		if _, locallyPresent := candidateSet[normalized]; locallyPresent && strings.EqualFold(strings.TrimSpace(symbol.Status), "trading") && supportedBinanceExchangeOrderQuoteAsset(symbol.QuoteAsset) && symbolName != "" {
 			symbols = append(symbols, symbolName)
-			symbolQuoteAssets[strings.ToUpper(symbolName)] = strings.ToUpper(strings.TrimSpace(symbol.QuoteAsset))
 		}
 	}
-	if len(symbols) == 0 {
-		return result, cursor, errors.New("Binance exchangeInfo returned no active USDT/USDC symbols")
-	}
-	// Incremental syncs are normally bounded to symbols already present in
-	// exchange_orders. That optimization can hide a newly traded symbol when
-	// its local fill arrived after the exchange-order cursor was last saved.
-	// Discover recent local symbols and backfill them from the initial window;
-	// this keeps the scan bounded while allowing history to catch up.
-	discovered := s.discoverBinanceOrderSymbols(apiID, target, to)
-	knownSet := map[string]struct{}{}
-	if known, err := s.Orders.ListExchangeOrderInstIDs(target.Exchange, apiID, target.TradeEnv); err == nil && len(known) > 0 {
-		for _, symbol := range known {
-			knownSet[strings.ToUpper(strings.TrimSpace(symbol))] = struct{}{}
-		}
-		filtered := symbols[:0]
-		for _, symbol := range symbols {
-			normalized := strings.ToUpper(strings.TrimSpace(symbol))
-			if _, ok := knownSet[normalized]; ok {
-				filtered = append(filtered, symbol)
-				continue
-			}
-			if _, ok := discovered[normalized]; ok || symbolQuoteAssets[normalized] == "USDC" {
-				filtered = append(filtered, symbol)
-			}
-		}
-		if len(filtered) > 0 {
-			symbols = filtered
-		}
-	}
+	sort.Strings(symbols)
 	for _, symbol := range symbols {
 		windowStart := from
 		normalized := strings.ToUpper(strings.TrimSpace(symbol))
 		if _, known := knownSet[normalized]; !known {
-			if _, ok := discovered[normalized]; ok || symbolQuoteAssets[normalized] == "USDC" {
-				windowStart = to.Add(-exchangeOrderInitialWindow)
-			}
+			windowStart = to.Add(-exchangeOrderBinanceInitialWindow)
 		}
-		for {
-			windowEnd := windowStart.Add(exchangeOrderBinanceWindow)
-			if windowEnd.After(to) {
-				windowEnd = to
+		knownIDs, err := s.Orders.ListExchangeOrderRemoteIDs(target.Exchange, apiID, target.TradeEnv, symbol, windowStart, to)
+		if err != nil {
+			return result, cursor, err
+		}
+		knownIDSet := make(map[string]struct{}, len(knownIDs))
+		for _, remoteID := range knownIDs {
+			knownIDSet[remoteID] = struct{}{}
+		}
+
+		pageEnd := to
+		for page := 0; page < exchangeOrderMaxPages; page++ {
+			// With endTime and no orderId Binance returns the most recent page.
+			// Moving endTime behind the oldest row walks older history without
+			// first loading all of the symbol's oldest orders.
+			rows, err := client.AllOrders(ctx, symbol, 0, time.Time{}, pageEnd, exchangeOrderPageLimit)
+			if err != nil {
+				return result, cursor, err
 			}
-			var orderID int64
-			for page := 0; page < exchangeOrderMaxPages; page++ {
-				rows, err := client.AllOrders(ctx, symbol, orderID, windowStart, windowEnd, exchangeOrderPageLimit)
-				if err != nil {
-					return result, cursor, err
-				}
-				pageMaxID := orderID
-				for _, row := range rows {
-					if row.OrderID <= 0 {
-						continue
-					}
-					if row.OrderID > cursor.BinanceMaxID {
-						cursor.BinanceMaxID = row.OrderID
-					}
-					if row.OrderID > pageMaxID {
-						pageMaxID = row.OrderID
-					}
-					result = append(result, exchangeOrderFromBinance(apiID, target.TradeEnv, row))
-				}
-				if len(rows) < exchangeOrderPageLimit {
-					break
-				}
-				if pageMaxID <= orderID {
-					return result, cursor, fmt.Errorf("Binance allOrders pagination did not advance for %s", symbol)
-				}
-				orderID = pageMaxID + 1
-			}
-			if !windowEnd.Before(to) {
+			if len(rows) == 0 {
 				break
 			}
-			windowStart = windowEnd.Add(time.Millisecond)
+			sort.SliceStable(rows, func(i, j int) bool {
+				left := binanceExchangeOrderTime(rows[i])
+				right := binanceExchangeOrderTime(rows[j])
+				if !left.Equal(right) {
+					return left.After(right)
+				}
+				return rows[i].OrderID > rows[j].OrderID
+			})
+
+			oldest := time.Time{}
+			boundaryFound := false
+			outsideRange := false
+			for _, row := range rows {
+				if row.OrderID <= 0 {
+					continue
+				}
+				if row.OrderID > cursor.BinanceMaxID {
+					cursor.BinanceMaxID = row.OrderID
+				}
+				orderTime := binanceExchangeOrderTime(row)
+				if !orderTime.IsZero() {
+					if orderTime.After(to) {
+						continue
+					}
+					if orderTime.Before(windowStart) {
+						outsideRange = true
+						break
+					}
+					if oldest.IsZero() || orderTime.Before(oldest) {
+						oldest = orderTime
+					}
+				}
+				result = append(result, exchangeOrderFromBinance(apiID, target.TradeEnv, row))
+				if _, exists := knownIDSet[strconv.FormatInt(row.OrderID, 10)]; exists {
+					boundaryFound = true
+					break
+				}
+			}
+			if boundaryFound || outsideRange || len(rows) < exchangeOrderPageLimit {
+				break
+			}
+			if page == exchangeOrderMaxPages-1 {
+				return result, cursor, fmt.Errorf("Binance allOrders reached %d page limit for %s", exchangeOrderMaxPages, symbol)
+			}
+			if oldest.IsZero() {
+				return result, cursor, fmt.Errorf("Binance allOrders pagination has no usable time for %s", symbol)
+			}
+			nextEnd := oldest.Add(-time.Millisecond)
+			if !nextEnd.Before(pageEnd) {
+				return result, cursor, fmt.Errorf("Binance allOrders pagination did not advance for %s", symbol)
+			}
+			if nextEnd.Before(windowStart) {
+				break
+			}
+			pageEnd = nextEnd
 		}
 	}
 	return result, cursor, nil
@@ -520,7 +566,7 @@ func (s *Server) discoverBinanceOrderSymbols(apiID string, target exchangeOrderT
 		}
 	}
 
-	if fills, err := s.Orders.ListBinanceFills(apiID, to.Add(-exchangeOrderInitialWindow)); err == nil {
+	if fills, err := s.Orders.ListBinanceFills(apiID, to.Add(-exchangeOrderBinanceInitialWindow)); err == nil {
 		for _, fill := range fills {
 			add(fill.Symbol)
 		}
@@ -624,15 +670,10 @@ func (s *Server) fetchGateExchangeOrders(ctx context.Context, target exchangeOrd
 }
 
 func exchangeOrderFromBinance(apiID, tradeEnv string, row tvbotbinance.OpenOrder) tvbotstorage.ExchangeOrder {
-	var createdAt, updatedAt time.Time
-	if row.Time > 0 {
-		createdAt = time.UnixMilli(row.Time).UTC()
-	}
+	createdAt := binanceExchangeOrderTime(row)
+	var updatedAt time.Time
 	if row.UpdateTime > 0 {
 		updatedAt = time.UnixMilli(row.UpdateTime).UTC()
-	}
-	if createdAt.IsZero() {
-		createdAt = updatedAt
 	}
 	if updatedAt.IsZero() {
 		updatedAt = createdAt
@@ -664,6 +705,16 @@ func exchangeOrderFromBinance(apiID, tradeEnv string, row tvbotbinance.OpenOrder
 		FinishedAt:    finishedOrderTime(row.Status, updatedAt),
 		RawJSON:       string(raw),
 	}
+}
+
+func binanceExchangeOrderTime(row tvbotbinance.OpenOrder) time.Time {
+	if row.Time > 0 {
+		return time.UnixMilli(row.Time).UTC()
+	}
+	if row.UpdateTime > 0 {
+		return time.UnixMilli(row.UpdateTime).UTC()
+	}
+	return time.Time{}
 }
 
 func exchangeOrderFromOKX(apiID, tradeEnv string, row tvbotokx.PendingOrder, createdAt, updatedAt time.Time) tvbotstorage.ExchangeOrder {

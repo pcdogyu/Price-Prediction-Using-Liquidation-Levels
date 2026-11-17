@@ -253,6 +253,57 @@ func (s *OrderStore) ListExchangeOrderInstIDs(exchange, apiID, tradeEnv string) 
 	return out, nil
 }
 
+// ListExchangeOrderRemoteIDs returns known remote order IDs for one account,
+// environment, and instrument within the requested creation-time range. The
+// Binance history sync uses these IDs as a per-symbol boundary while walking
+// recent orders toward older history.
+func (s *OrderStore) ListExchangeOrderRemoteIDs(exchange, apiID, tradeEnv, instID string, from, to time.Time) ([]string, error) {
+	if s.db == nil {
+		return nil, errors.New("sqlite database is not configured")
+	}
+	exchange = strings.ToLower(strings.TrimSpace(exchange))
+	apiID = strings.TrimSpace(apiID)
+	tradeEnv = strings.ToLower(strings.TrimSpace(tradeEnv))
+	instID = strings.TrimSpace(instID)
+	if exchange == "" || apiID == "" || tradeEnv == "" || instID == "" {
+		return nil, errors.New("exchange order scope and instrument are required")
+	}
+	query := `SELECT remote_order_id FROM exchange_orders
+		WHERE exchange = ? AND api_id = ? AND trade_env = ? AND LOWER(inst_id) = LOWER(?)`
+	args := []any{exchange, apiID, tradeEnv, instID}
+	if !from.IsZero() {
+		query += ` AND created_at >= ?`
+		args = append(args, from.UTC().Format(time.RFC3339Nano))
+	}
+	if !to.IsZero() {
+		query += ` AND created_at <= ?`
+		args = append(args, to.UTC().Format(time.RFC3339Nano))
+	}
+	query += ` ORDER BY created_at DESC, remote_order_id DESC`
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var remoteID string
+		if err := rows.Scan(&remoteID); err != nil {
+			return nil, err
+		}
+		if remoteID = strings.TrimSpace(remoteID); remoteID != "" {
+			out = append(out, remoteID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *OrderStore) GetExchangeOrderSyncState(exchange, apiID, tradeEnv string) (ExchangeOrderSyncState, bool, error) {
 	if s.db == nil {
 		return ExchangeOrderSyncState{}, false, errors.New("sqlite database is not configured")

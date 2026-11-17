@@ -724,9 +724,9 @@ func (c Client) RecentUserTrades(ctx context.Context, symbol string, limit int) 
 	return c.UserTrades(ctx, symbol, time.Time{}, time.Time{}, limit)
 }
 
-// AllOrders returns Binance USDⓈ-M order history. Binance accepts either a
-// time window or an order id lower bound; callers should use the order id as
-// the incremental cursor and a time window for the initial backfill.
+// AllOrders returns Binance USDⓈ-M order history. With endTime and no orderID,
+// Binance returns the most recent page up to that time; callers can move
+// endTime backward to traverse older orders without scanning from the oldest.
 func (c Client) AllOrders(ctx context.Context, symbol string, orderID int64, startTime, endTime time.Time, limit int) ([]OpenOrder, error) {
 	q := url.Values{}
 	if strings.TrimSpace(symbol) != "" {

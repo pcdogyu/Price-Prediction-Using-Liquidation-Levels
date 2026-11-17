@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -67,7 +68,16 @@ func TestExchangeOrderSyncEndpointsAreUserAccessibleOnlyForDeclaredMethods(t *te
 	}
 }
 
-func TestFetchBinanceExchangeOrdersSplitsWindowsAtBinanceLimit(t *testing.T) {
+func TestExchangeOrderInitialWindowForExchange(t *testing.T) {
+	if got := exchangeOrderInitialWindowFor(trading.ExchangeBinance); got != 7*24*time.Hour {
+		t.Fatalf("Binance initial history window=%s, want 7 days", got)
+	}
+	if got := exchangeOrderInitialWindowFor(trading.ExchangeOKX); got != 30*24*time.Hour {
+		t.Fatalf("non-Binance initial history window=%s, want existing 30 days", got)
+	}
+}
+
+func TestFetchBinanceExchangeOrdersStopsAtPerSymbolDuplicateAndContinuesOtherSymbols(t *testing.T) {
 	srv := newTestServer(t)
 	if _, err := srv.BinanceCredentials.SaveSingleAccount(binance.CredentialAccountUpdate{
 		ID: "binance-main", Name: "test", Active: true,
@@ -75,32 +85,68 @@ func TestFetchBinanceExchangeOrdersSplitsWindowsAtBinanceLimit(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	to := from.Add(30 * 24 * time.Hour)
-	type orderWindow struct {
-		start time.Time
-		end   time.Time
+	to := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	from := to.Add(-exchangeOrderBinanceInitialWindow)
+	type remoteOrder struct {
+		Symbol  string `json:"symbol"`
+		OrderID int64  `json:"orderId"`
+		Status  string `json:"status"`
+		Time    int64  `json:"time"`
 	}
-	var windows []orderWindow
+	base := to.Add(-24 * time.Hour)
+	btcRows := make([]remoteOrder, exchangeOrderPageLimit)
+	for i := range btcRows {
+		btcRows[i] = remoteOrder{
+			Symbol: "BTCUSDT", OrderID: int64(i + 1), Status: "FILLED",
+			Time: base.Add(time.Duration(i) * time.Second).UnixMilli(),
+		}
+	}
+	btcPayload, err := json.Marshal(btcRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ethPayload, err := json.Marshal([]remoteOrder{{
+		Symbol: "ETHUSDT", OrderID: 20, Status: "FILLED", Time: to.Add(-10 * time.Minute).UnixMilli(),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	localBoundaryTime := base.Add(994 * time.Second)
+	if _, err := srv.Orders.UpsertExchangeOrders([]storage.ExchangeOrder{
+		{Exchange: "binance", APIID: "binance-main", TradeEnv: "demo", RemoteOrderID: "995", InstID: "BTCUSDT", Status: "FILLED", CreatedAt: localBoundaryTime},
+		{Exchange: "binance", APIID: "binance-main", TradeEnv: "demo", RemoteOrderID: "known-eth", InstID: "ETHUSDT", Status: "FILLED", CreatedAt: to.Add(-time.Hour)},
+	}, to); err != nil {
+		t.Fatal(err)
+	}
+	requested := map[string]int{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/fapi/v1/exchangeInfo":
-			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"BTCUSDT","status":"TRADING","quoteAsset":"USDT"}]}`))
+			_, _ = w.Write([]byte(`{"symbols":[
+				{"symbol":"BTCUSDT","status":"TRADING","quoteAsset":"USDT"},
+				{"symbol":"ETHUSDT","status":"TRADING","quoteAsset":"USDT"},
+				{"symbol":"SOLUSDT","status":"TRADING","quoteAsset":"USDT"}
+			]}`))
 		case "/fapi/v1/allOrders":
-			startMS, err := strconv.ParseInt(r.URL.Query().Get("startTime"), 10, 64)
-			if err != nil {
-				t.Fatalf("invalid Binance startTime: %q", r.URL.Query().Get("startTime"))
+			query := r.URL.Query()
+			if query.Get("startTime") != "" || query.Get("orderId") != "" {
+				t.Fatalf("recent-page request should not use forward-only pagination: %s", r.URL.RawQuery)
 			}
-			endMS, err := strconv.ParseInt(r.URL.Query().Get("endTime"), 10, 64)
-			if err != nil {
-				t.Fatalf("invalid Binance endTime: %q", r.URL.Query().Get("endTime"))
+			endMS, err := strconv.ParseInt(query.Get("endTime"), 10, 64)
+			if err != nil || time.UnixMilli(endMS).After(to) {
+				t.Fatalf("invalid Binance endTime: %q", query.Get("endTime"))
 			}
-			windows = append(windows, orderWindow{start: time.UnixMilli(startMS).UTC(), end: time.UnixMilli(endMS).UTC()})
-			if endMS-startMS >= int64((7 * 24 * time.Hour).Milliseconds()) {
-				t.Fatalf("Binance time window is too large: start=%d end=%d", startMS, endMS)
+			symbol := query.Get("symbol")
+			requested[symbol]++
+			switch symbol {
+			case "BTCUSDT":
+				_, _ = w.Write(btcPayload)
+			case "ETHUSDT":
+				_, _ = w.Write(ethPayload)
+			default:
+				t.Fatalf("unexpected symbol request: %s", symbol)
 			}
-			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","orderId":1,"status":"FILLED","time":1790812800000}]`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -110,32 +156,108 @@ func TestFetchBinanceExchangeOrdersSplitsWindowsAtBinanceLimit(t *testing.T) {
 	cfg.Trading.BinanceDemoBaseURL = ts.URL
 	srv.ConfigStore = config.NewStore("", cfg)
 	srv.BinanceHTTPClient = ts.Client()
-	target := exchangeOrderTarget{
-		Exchange: trading.ExchangeBinance,
-		APIID:    "binance-main",
-		TradeEnv: trading.TradeEnvDemo,
-		Config:   cfg,
-	}
+	target := exchangeOrderTarget{Exchange: trading.ExchangeBinance, APIID: "binance-main", TradeEnv: trading.TradeEnvDemo, Config: cfg}
 	orders, cursor, err := srv.fetchBinanceExchangeOrders(context.Background(), target, from, to)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(windows) != 5 {
-		t.Fatalf("Binance 30-day sync should use 5 windows, got %d: %#v", len(windows), windows)
+	if requested["BTCUSDT"] != 1 || requested["ETHUSDT"] != 1 || requested["SOLUSDT"] != 0 {
+		t.Fatalf("expected one request for each locally recorded symbol only, got %#v", requested)
 	}
-	if !windows[0].start.Equal(from) || !windows[len(windows)-1].end.Equal(to) {
-		t.Fatalf("Binance windows do not cover the requested range: %#v", windows)
+	if len(orders) != 7 {
+		t.Fatalf("expected six BTC orders through the duplicate boundary and one ETH order; got %d", len(orders))
 	}
-	for i, window := range windows {
-		if window.end.Sub(window.start) >= 7*24*time.Hour {
-			t.Fatalf("window %d exceeds Binance limit: %#v", i, window)
-		}
-		if i > 0 && window.start.Sub(windows[i-1].end) != time.Millisecond {
-			t.Fatalf("Binance windows are not contiguous at %d: previous=%#v current=%#v", i, windows[i-1], window)
+	btcIDs := make(map[string]bool)
+	for _, order := range orders {
+		if order.InstID == "BTCUSDT" {
+			btcIDs[order.RemoteOrderID] = true
 		}
 	}
-	if len(orders) != len(windows) || cursor.BinanceMaxID != 1 {
-		t.Fatalf("unexpected Binance sync result: orders=%d cursor=%#v", len(orders), cursor)
+	if !btcIDs["1000"] || !btcIDs["995"] || btcIDs["994"] || btcIDs["1"] {
+		t.Fatalf("Binance did not stop at the known BTC boundary: %#v", btcIDs)
+	}
+	if cursor.BinanceMaxID != 1000 {
+		t.Fatalf("unexpected maximum Binance order ID: %#v", cursor)
+	}
+}
+
+func TestFetchBinanceExchangeOrdersMovesPageEndBackwardUntilDuplicate(t *testing.T) {
+	srv := newTestServer(t)
+	if _, err := srv.BinanceCredentials.SaveSingleAccount(binance.CredentialAccountUpdate{
+		ID: "binance-main", Name: "test", Active: true,
+		Credentials: binance.Credentials{APIKey: "fake-key", SecretKey: "fake-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	to := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	from := to.Add(-exchangeOrderBinanceInitialWindow)
+	oldestFirstPage := to.Add(-time.Hour)
+	localBoundaryTime := to.Add(-2 * time.Hour)
+	if _, err := srv.Orders.UpsertExchangeOrders([]storage.ExchangeOrder{{
+		Exchange: "binance", APIID: "binance-main", TradeEnv: "demo", RemoteOrderID: "42",
+		InstID: "BTCUSDT", Status: "FILLED", CreatedAt: localBoundaryTime,
+	}}, to); err != nil {
+		t.Fatal(err)
+	}
+	type remoteOrder struct {
+		Symbol  string `json:"symbol"`
+		OrderID int64  `json:"orderId"`
+		Status  string `json:"status"`
+		Time    int64  `json:"time"`
+	}
+	page := make([]remoteOrder, exchangeOrderPageLimit)
+	for i := range page {
+		page[i] = remoteOrder{
+			Symbol: "BTCUSDT", OrderID: int64(1001 + i), Status: "FILLED",
+			Time: oldestFirstPage.Add(time.Duration(i) * time.Second).UnixMilli(),
+		}
+	}
+	pagePayload, err := json.Marshal(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundaryPayload, err := json.Marshal([]remoteOrder{{
+		Symbol: "BTCUSDT", OrderID: 42, Status: "CANCELED", Time: localBoundaryTime.UnixMilli(),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var endTimes []time.Time
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v1/exchangeInfo":
+			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"BTCUSDT","status":"TRADING","quoteAsset":"USDT"}]}`))
+		case "/fapi/v1/allOrders":
+			endMS, err := strconv.ParseInt(r.URL.Query().Get("endTime"), 10, 64)
+			if err != nil {
+				t.Fatalf("invalid Binance endTime: %q", r.URL.Query().Get("endTime"))
+			}
+			endTimes = append(endTimes, time.UnixMilli(endMS).UTC())
+			if len(endTimes) == 1 {
+				_, _ = w.Write(pagePayload)
+				return
+			}
+			_, _ = w.Write(boundaryPayload)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = ts.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = ts.Client()
+	target := exchangeOrderTarget{Exchange: trading.ExchangeBinance, APIID: "binance-main", TradeEnv: trading.TradeEnvDemo, Config: cfg}
+	orders, _, err := srv.fetchBinanceExchangeOrders(context.Background(), target, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(endTimes) != 2 || !endTimes[0].Equal(to) || !endTimes[1].Equal(oldestFirstPage.Add(-time.Millisecond)) {
+		t.Fatalf("page endTime did not move behind the previous page: %#v", endTimes)
+	}
+	if len(orders) != exchangeOrderPageLimit+1 || orders[len(orders)-1].RemoteOrderID != "42" {
+		t.Fatalf("expected the recent page and one duplicate boundary order, got count=%d last=%#v", len(orders), orders[len(orders)-1])
 	}
 }
 
@@ -160,90 +282,31 @@ func TestFetchBinanceExchangeOrdersDiscoversRecentLocalSymbols(t *testing.T) {
 	}}, to); err != nil {
 		t.Fatal(err)
 	}
+	adaPayload, err := json.Marshal([]struct {
+		Symbol  string `json:"symbol"`
+		OrderID int64  `json:"orderId"`
+		Status  string `json:"status"`
+		Time    int64  `json:"time"`
+	}{{Symbol: "ADAUSDT", OrderID: 42, Status: "FILLED", Time: to.Add(-2 * 24 * time.Hour).UnixMilli()}})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	var starts = map[string][]time.Time{}
+	var endTimes = map[string][]time.Time{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"USDCUSDT","status":"TRADING","quoteAsset":"USDT"},{"symbol":"ADAUSDT","status":"TRADING","quoteAsset":"USDT"}]}`))
 		case "/fapi/v1/allOrders":
-			startMS, err := strconv.ParseInt(r.URL.Query().Get("startTime"), 10, 64)
+			endMS, err := strconv.ParseInt(r.URL.Query().Get("endTime"), 10, 64)
 			if err != nil {
-				t.Fatalf("invalid Binance startTime: %q", r.URL.Query().Get("startTime"))
+				t.Fatalf("invalid Binance endTime: %q", r.URL.Query().Get("endTime"))
 			}
 			symbol := r.URL.Query().Get("symbol")
-			starts[symbol] = append(starts[symbol], time.UnixMilli(startMS).UTC())
-			_, _ = w.Write([]byte(`[]`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer ts.Close()
-	cfg := srv.ConfigStore.Get()
-	cfg.Trading.BinanceDemoBaseURL = ts.URL
-	srv.ConfigStore = config.NewStore("", cfg)
-	srv.BinanceHTTPClient = ts.Client()
-	target := exchangeOrderTarget{
-		Exchange: trading.ExchangeBinance,
-		APIID:    "binance-main",
-		TradeEnv: trading.TradeEnvDemo,
-		Config:   cfg,
-	}
-	if _, _, err := srv.fetchBinanceExchangeOrders(context.Background(), target, from, to); err != nil {
-		t.Fatal(err)
-	}
-	if got := starts["USDCUSDT"]; len(got) == 0 || !got[0].Equal(from) {
-		t.Fatalf("known symbol should use incremental window from=%s, got %#v", from, got)
-	}
-	wantBackfill := to.Add(-exchangeOrderInitialWindow)
-	if got := starts["ADAUSDT"]; len(got) == 0 || !got[0].Equal(wantBackfill) {
-		t.Fatalf("recent local symbol should use backfill window from=%s, got %#v", wantBackfill, got)
-	}
-}
-
-func TestFetchBinanceExchangeOrdersIncludesUSDCQuoteSymbols(t *testing.T) {
-	srv := newTestServer(t)
-	if _, err := srv.BinanceCredentials.SaveSingleAccount(binance.CredentialAccountUpdate{
-		ID: "binance-main", Name: "test", Active: true,
-		Credentials: binance.Credentials{APIKey: "fake-key", SecretKey: "fake-secret"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	from := time.Date(2026, 11, 9, 14, 0, 0, 0, time.UTC)
-	to := from.Add(time.Hour)
-	if _, err := srv.Orders.UpsertExchangeOrders([]storage.ExchangeOrder{{
-		Exchange: "binance", APIID: "binance-main", TradeEnv: "demo", RemoteOrderID: "known-ethusdt",
-		InstID: "ETHUSDT", Status: "FILLED", CreatedAt: from,
-	}}, from); err != nil {
-		t.Fatal(err)
-	}
-	requested := map[string]int{}
-	starts := map[string][]time.Time{}
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/fapi/v1/exchangeInfo":
-			_, _ = w.Write([]byte(`{"symbols":[
-				{"symbol":"ETHUSDC","status":"TRADING","quoteAsset":"USDC"},
-				{"symbol":"ETHUSDT","status":"TRADING","quoteAsset":"USDT"},
-				{"symbol":"ETHUSD","status":"TRADING","quoteAsset":"USD"},
-				{"symbol":"OLDUSDC","status":"BREAK","quoteAsset":"USDC"}
-			]}`))
-		case "/fapi/v1/allOrders":
-			symbol := r.URL.Query().Get("symbol")
-			requested[symbol]++
-			if start := r.URL.Query().Get("startTime"); start != "" {
-				startMillis, err := strconv.ParseInt(start, 10, 64)
-				if err != nil {
-					t.Fatalf("invalid startTime for %s: %v", symbol, err)
-				}
-				starts[symbol] = append(starts[symbol], time.UnixMilli(startMillis).UTC())
-			}
-			if symbol == "ETHUSDC" {
-				_, _ = w.Write([]byte(`[
-					{"symbol":"ETHUSDC","orderId":99,"status":"FILLED","time":1791554400000}
-				]`))
+			endTimes[symbol] = append(endTimes[symbol], time.UnixMilli(endMS).UTC())
+			if symbol == "ADAUSDT" {
+				_, _ = w.Write(adaPayload)
 				return
 			}
 			_, _ = w.Write([]byte(`[]`))
@@ -266,25 +329,118 @@ func TestFetchBinanceExchangeOrdersIncludesUSDCQuoteSymbols(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requested["ETHUSDC"] == 0 {
-		t.Fatal("active USDC-quoted Binance symbol was not queried")
+	if got := endTimes["USDCUSDT"]; len(got) == 0 || !got[0].Equal(to) {
+		t.Fatalf("known symbol should query the newest page first, got %#v", got)
 	}
-	if requested["ETHUSD"] != 0 || requested["OLDUSDC"] != 0 {
-		t.Fatalf("unsupported or inactive symbols were queried: %#v", requested)
+	if got := endTimes["ADAUSDT"]; len(got) == 0 || !got[0].Equal(to) {
+		t.Fatalf("recent fill symbol should query the newest page first, got %#v", got)
 	}
-	found := false
+	foundADA := false
 	for _, order := range orders {
-		if order.InstID == "ETHUSDC" && order.RemoteOrderID == "99" {
-			found = true
-			break
+		if order.InstID == "ADAUSDT" && order.RemoteOrderID == "42" {
+			foundADA = true
 		}
 	}
-	if !found {
-		t.Fatalf("USDC-quoted Binance order was not converted: %#v", orders)
+	if !foundADA {
+		t.Fatalf("new local fill symbol was not backfilled from the recent history window: %#v", orders)
 	}
-	wantBackfill := to.Add(-exchangeOrderInitialWindow)
-	if got := starts["ETHUSDC"]; len(got) == 0 || !got[0].Equal(wantBackfill) {
-		t.Fatalf("unknown USDC-quoted symbol should use backfill window from=%s, got %#v", wantBackfill, got)
+}
+
+func TestFetchBinanceExchangeOrdersDoesNotSweepUnrecordedUSDCQuoteSymbols(t *testing.T) {
+	srv := newTestServer(t)
+	if _, err := srv.BinanceCredentials.SaveSingleAccount(binance.CredentialAccountUpdate{
+		ID: "binance-main", Name: "test", Active: true,
+		Credentials: binance.Credentials{APIKey: "fake-key", SecretKey: "fake-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 11, 9, 14, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	if _, err := srv.Orders.UpsertExchangeOrders([]storage.ExchangeOrder{{
+		Exchange: "binance", APIID: "binance-main", TradeEnv: "demo", RemoteOrderID: "known-ethusdt",
+		InstID: "ETHUSDT", Status: "FILLED", CreatedAt: from,
+	}}, from); err != nil {
+		t.Fatal(err)
+	}
+	knownSymbolPayload, err := json.Marshal([]struct {
+		Symbol  string `json:"symbol"`
+		OrderID int64  `json:"orderId"`
+		Status  string `json:"status"`
+		Time    int64  `json:"time"`
+	}{{Symbol: "ETHUSDT", OrderID: 99, Status: "FILLED", Time: to.Add(-30 * time.Minute).UnixMilli()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested := map[string]int{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/fapi/v1/exchangeInfo":
+			_, _ = w.Write([]byte(`{"symbols":[
+				{"symbol":"ETHUSDC","status":"TRADING","quoteAsset":"USDC"},
+				{"symbol":"ETHUSDT","status":"TRADING","quoteAsset":"USDT"},
+				{"symbol":"ETHUSD","status":"TRADING","quoteAsset":"USD"},
+				{"symbol":"OLDUSDC","status":"BREAK","quoteAsset":"USDC"}
+			]}`))
+		case "/fapi/v1/allOrders":
+			symbol := r.URL.Query().Get("symbol")
+			requested[symbol]++
+			_, _ = w.Write(knownSymbolPayload)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = ts.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = ts.Client()
+	target := exchangeOrderTarget{
+		Exchange: trading.ExchangeBinance,
+		APIID:    "binance-main",
+		TradeEnv: trading.TradeEnvDemo,
+		Config:   cfg,
+	}
+	orders, _, err := srv.fetchBinanceExchangeOrders(context.Background(), target, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested["ETHUSDT"] != 1 {
+		t.Fatalf("locally recorded Binance symbol was not queried: %#v", requested)
+	}
+	if requested["ETHUSDC"] != 0 || requested["ETHUSD"] != 0 || requested["OLDUSDC"] != 0 {
+		t.Fatalf("unrecorded, unsupported, or inactive symbols were queried: %#v", requested)
+	}
+	if len(orders) != 1 || orders[0].InstID != "ETHUSDT" || orders[0].RemoteOrderID != "99" {
+		t.Fatalf("unexpected locally scoped Binance order history: %#v", orders)
+	}
+}
+
+func TestFetchBinanceExchangeOrdersSkipsRemoteDiscoveryWithoutLocalSymbols(t *testing.T) {
+	srv := newTestServer(t)
+	if _, err := srv.BinanceCredentials.SaveSingleAccount(binance.CredentialAccountUpdate{
+		ID: "binance-main", Name: "test", Active: true,
+		Credentials: binance.Credentials{APIKey: "fake-key", SecretKey: "fake-secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	remoteCalls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remoteCalls++
+		t.Fatalf("cold-start sync should not scan Binance symbols, got %s", r.URL.Path)
+	}))
+	defer ts.Close()
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.BinanceDemoBaseURL = ts.URL
+	srv.ConfigStore = config.NewStore("", cfg)
+	srv.BinanceHTTPClient = ts.Client()
+	target := exchangeOrderTarget{Exchange: trading.ExchangeBinance, APIID: "binance-main", TradeEnv: trading.TradeEnvDemo, Config: cfg}
+	from := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	if orders, _, err := srv.fetchBinanceExchangeOrders(context.Background(), target, from, from.Add(time.Hour)); err != nil || len(orders) != 0 {
+		t.Fatalf("empty local symbol set should yield no remote orders, got orders=%#v err=%v", orders, err)
+	}
+	if remoteCalls != 0 {
+		t.Fatalf("cold-start sync made %d remote calls", remoteCalls)
 	}
 }
 
