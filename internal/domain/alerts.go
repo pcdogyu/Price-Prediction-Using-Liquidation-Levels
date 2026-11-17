@@ -385,31 +385,60 @@ type AlertBacktestRow struct {
 	WinRate        float64 `json:"win_rate"`
 	ProfitFactor   float64 `json:"profit_factor"`
 	MaxDrawdown    float64 `json:"max_drawdown_pct"`
+	GrossPnL       float64 `json:"gross_pnl"`
+	Fees           float64 `json:"fees"`
+	Slippage       float64 `json:"slippage"`
+	NetPnL         float64 `json:"net_pnl"`
 	FinalEquity    float64 `json:"final_equity"`
+}
+
+type AlertGammaBacktestRow struct {
+	Signal         string  `json:"signal"`
+	Symbol         string  `json:"symbol"`
+	Side           string  `json:"side"`
+	Regime         string  `json:"regime"`
+	Scenario       string  `json:"scenario"`
+	HoldingMinutes int     `json:"holding_minutes"`
+	Trades         int     `json:"trades"`
+	WinRate        float64 `json:"win_rate"`
+	ProfitFactor   float64 `json:"profit_factor"`
+	GrossPnL       float64 `json:"gross_pnl"`
+	Fees           float64 `json:"fees"`
+	Slippage       float64 `json:"slippage"`
+	NetPnL         float64 `json:"net_pnl"`
 }
 
 // AlertBacktestReport is an ephemeral, tenant-scoped alert replay report. It
 // intentionally does not write rows to the alert audit tables or change live
 // strategy/order settings.
 type AlertBacktestReport struct {
-	WindowDays            int                `json:"window_days"`
-	HoldingMinutes        int                `json:"holding_minutes"`
-	HoldingMinutesOptions []int              `json:"holding_minutes_options"`
-	InitialEquity         float64            `json:"initial_equity"`
-	Leverage              float64            `json:"leverage"`
-	TakeProfitPct         float64            `json:"take_profit_pct"`
-	StopLossPct           float64            `json:"stop_loss_pct"`
-	EntryNotionalUSD      float64            `json:"entry_notional_usd"`
-	AddOnNotionalUSD      float64            `json:"add_on_notional_usd"`
-	MaxAddOns             int                `json:"max_add_ons"`
-	VWAPRangeHours        int                `json:"vwap_range_hours"`
-	VWAPMinDrawdownPct    float64            `json:"vwap_min_drawdown_pct"`
-	VWAPDonchianPct       float64            `json:"vwap_donchian_pct"`
-	From                  time.Time          `json:"from"`
-	To                    time.Time          `json:"to"`
-	GeneratedAt           time.Time          `json:"generated_at"`
-	SymbolCount           int                `json:"symbol_count"`
-	Rows                  []AlertBacktestRow `json:"rows"`
+	WindowDays               int                     `json:"window_days"`
+	HoldingMinutes           int                     `json:"holding_minutes"`
+	HoldingMinutesOptions    []int                   `json:"holding_minutes_options"`
+	InitialEquity            float64                 `json:"initial_equity"`
+	Leverage                 float64                 `json:"leverage"`
+	TakeProfitPct            float64                 `json:"take_profit_pct"`
+	StopLossPct              float64                 `json:"stop_loss_pct"`
+	EntryNotionalUSD         float64                 `json:"entry_notional_usd"`
+	AddOnNotionalUSD         float64                 `json:"add_on_notional_usd"`
+	MaxAddOns                int                     `json:"max_add_ons"`
+	VWAPRangeHours           int                     `json:"vwap_range_hours"`
+	VWAPMinDrawdownPct       float64                 `json:"vwap_min_drawdown_pct"`
+	VWAPDonchianPct          float64                 `json:"vwap_donchian_pct"`
+	FeeBps                   float64                 `json:"fee_bps_per_side"`
+	SlippageBps              float64                 `json:"slippage_bps_per_side"`
+	GammaFlipNearPct         float64                 `json:"gamma_flip_near_pct"`
+	GammaFlipConfirmSamples  int                     `json:"gamma_flip_confirm_samples"`
+	GammaFlipCoverageSignals int                     `json:"gamma_flip_coverage_signals"`
+	GammaFlipTotalSignals    int                     `json:"gamma_flip_total_signals"`
+	GammaFlipHistoryFrom     *time.Time              `json:"gamma_flip_history_from,omitempty"`
+	GammaFlipHistoryTo       *time.Time              `json:"gamma_flip_history_to,omitempty"`
+	From                     time.Time               `json:"from"`
+	To                       time.Time               `json:"to"`
+	GeneratedAt              time.Time               `json:"generated_at"`
+	SymbolCount              int                     `json:"symbol_count"`
+	Rows                     []AlertBacktestRow      `json:"rows"`
+	GammaRows                []AlertGammaBacktestRow `json:"gamma_rows"`
 }
 
 // KlineView backs the per-symbol K-line chart on the alert page. Local candles

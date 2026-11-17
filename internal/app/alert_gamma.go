@@ -13,7 +13,8 @@ const (
 	alertGammaETHAnchor = "ETHUSDT"
 	// Deribit Gamma is collected every minute. Use the same stale window
 	// as the options page so the alert gate and the displayed value agree.
-	alertGammaMaxAge = domain.OptionGammaStaleAfter
+	alertGammaMaxAge      = domain.OptionGammaStaleAfter
+	marketGammaFlipMaxAge = 15 * time.Minute
 )
 
 func alertGammaAnchorForSymbol(symbol string) string {
@@ -33,6 +34,35 @@ func (s *Service) alertGamma(ctx context.Context) domain.AlertGamma {
 // the embedded TVBot without coupling the trading package to the alert store.
 func (s *Service) CurrentETHGamma(ctx context.Context) domain.AlertGamma {
 	return s.alertGamma(ctx)
+}
+
+// CurrentGammaFlipSnapshot exposes the freshness-checked Binance options GEX
+// snapshot used by TVBot entry guards. BTC trades use BTC options; other pairs
+// use the ETH market anchor, matching the alert and value-area convention.
+func (s *Service) CurrentGammaFlipSnapshot(ctx context.Context, symbol string) domain.GammaFlipSnapshot {
+	anchor := alertGammaAnchorForSymbol(symbol)
+	out := domain.GammaFlipSnapshot{Symbol: anchor, State: "unavailable", FlipState: "unavailable"}
+	if s == nil || s.store == nil {
+		return out
+	}
+	view, err := s.store.LatestGamma(ctx, anchor)
+	if err != nil {
+		return out
+	}
+	out = domain.GammaFlipSnapshotFromView(view)
+	if out.Time.IsZero() || out.Time.After(time.Now().UTC().Add(2*time.Minute)) || time.Since(out.Time) > marketGammaFlipMaxAge {
+		out.State = "stale"
+	}
+	return out
+}
+
+// GammaFlipHistory returns the compact snapshots used for auditable trades
+// and regime confirmation in live execution and historical analysis.
+func (s *Service) GammaFlipHistory(ctx context.Context, symbol string, from, to time.Time) ([]domain.GammaFlipSnapshot, error) {
+	if s == nil || s.store == nil {
+		return nil, nil
+	}
+	return s.store.GammaFlipHistory(ctx, alertGammaAnchorForSymbol(symbol), from, to)
 }
 
 func (s *Service) alertGammaForSymbol(ctx context.Context, symbol string) domain.AlertGamma {

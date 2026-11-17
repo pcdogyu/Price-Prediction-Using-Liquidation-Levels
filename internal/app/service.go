@@ -522,6 +522,12 @@ func (s *Service) runDailyMaintenance(ctx context.Context) {
 	} else if optionCleanup.Expired > 0 || optionCleanup.Downsampled > 0 {
 		s.log.Info("option Gamma cleanup", "expired", optionCleanup.Expired, "downsampled", optionCleanup.Downsampled, "dense_hours", domain.OptionGammaDenseHours, "retention_days", domain.OptionGammaRetentionDays)
 	}
+	if removed, err := s.store.PruneGammaFlipHistory(ctx, started); err != nil && ctx.Err() == nil {
+		failed = true
+		s.log.Warn("Gamma Flip history cleanup failed", "error", err)
+	} else if removed > 0 {
+		s.log.Info("Gamma Flip history cleanup", "removed", removed, "retention_days", 30)
+	}
 	if err := s.store.PruneAlerts(ctx, started.AddDate(0, 0, -domain.AlertRetentionDays)); err != nil && ctx.Err() == nil {
 		failed = true
 		s.log.Warn("alert retention cleanup failed", "error", err)

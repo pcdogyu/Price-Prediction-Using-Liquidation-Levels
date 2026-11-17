@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 )
 
 type Side string
@@ -146,18 +148,21 @@ type Signal struct {
 	// TVBot apply the negative-Gamma opening gate to the signal's decision
 	// time instead of silently changing the decision while a webhook waits in
 	// the delivery queue.
-	GammaValue     *float64      `json:"gamma_value,omitempty"`
-	GammaState     string        `json:"gamma_state,omitempty"`
-	Leverage       int           `json:"leverage"`
-	Amount         FlexibleFloat `json:"amount"`
-	Risk           Risk          `json:"risk,omitempty"`
-	TokenNonce     string        `json:"token_nonce,omitempty"`
-	Token          string        `json:"token"`
-	ADX            *float64      `json:"-"`
-	MarketStrategy string        `json:"-"`
-	RawJSON        string        `json:"-"`
-	PyramidLevel   int           `json:"-"`
-	PyramidEnabled bool          `json:"-"`
+	GammaValue *float64 `json:"gamma_value,omitempty"`
+	GammaState string   `json:"gamma_state,omitempty"`
+	// GammaFlipSnapshot is attached by the authenticated TVBot intake after
+	// request validation, so callers cannot spoof the market snapshot.
+	GammaFlipSnapshot *domain.GammaFlipSnapshot `json:"-"`
+	Leverage          int                       `json:"leverage"`
+	Amount            FlexibleFloat             `json:"amount"`
+	Risk              Risk                      `json:"risk,omitempty"`
+	TokenNonce        string                    `json:"token_nonce,omitempty"`
+	Token             string                    `json:"token"`
+	ADX               *float64                  `json:"-"`
+	MarketStrategy    string                    `json:"-"`
+	RawJSON           string                    `json:"-"`
+	PyramidLevel      int                       `json:"-"`
+	PyramidEnabled    bool                      `json:"-"`
 }
 
 type OrderSettings struct {

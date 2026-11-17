@@ -31,36 +31,38 @@ import (
 )
 
 type Server struct {
-	ConfigStore            *config.Store
-	Orders                 *storage.OrderStore
-	Token                  security.TokenService
-	Executor               trading.Executor
-	OKXCredentials         *okx.CredentialStore
-	OKXLiveCredentials     *okx.CredentialStore
-	BinanceCredentials     *binance.CredentialStore
-	BinanceLiveCredentials *binance.CredentialStore
-	GateCredentials        *gate.CredentialStore
-	GateLiveCredentials    *gate.CredentialStore
-	OKXHTTPClient          *http.Client
-	BinanceHTTPClient      *http.Client
-	GateHTTPClient         *http.Client
-	AdminToken             string
-	AdminUser              string
-	AdminPass              string
-	Logger                 *slog.Logger
-	Now                    func() time.Time
-	Upgrade                *upgrade.Manager
-	BuildInfo              BuildInfo
-	RequireUnifiedUser     func(http.ResponseWriter, *http.Request) bool
-	RequireUnifiedAdmin    func(http.ResponseWriter, *http.Request) bool
-	CurrentUser            func(*http.Request) (string, bool)
-	UserCredentialResolver UserCredentialResolver
-	TenantID               string
-	TenantRouter           TenantRouter
-	RedirectUnifiedLogin   func(http.ResponseWriter, *http.Request)
-	LogoutUnified          func(http.ResponseWriter, *http.Request)
-	TopMenuProvider        func(*http.Request) []TopMenuItem
-	GammaProvider          GammaProvider
+	ConfigStore              *config.Store
+	Orders                   *storage.OrderStore
+	Token                    security.TokenService
+	Executor                 trading.Executor
+	OKXCredentials           *okx.CredentialStore
+	OKXLiveCredentials       *okx.CredentialStore
+	BinanceCredentials       *binance.CredentialStore
+	BinanceLiveCredentials   *binance.CredentialStore
+	GateCredentials          *gate.CredentialStore
+	GateLiveCredentials      *gate.CredentialStore
+	OKXHTTPClient            *http.Client
+	BinanceHTTPClient        *http.Client
+	GateHTTPClient           *http.Client
+	AdminToken               string
+	AdminUser                string
+	AdminPass                string
+	Logger                   *slog.Logger
+	Now                      func() time.Time
+	Upgrade                  *upgrade.Manager
+	BuildInfo                BuildInfo
+	RequireUnifiedUser       func(http.ResponseWriter, *http.Request) bool
+	RequireUnifiedAdmin      func(http.ResponseWriter, *http.Request) bool
+	CurrentUser              func(*http.Request) (string, bool)
+	UserCredentialResolver   UserCredentialResolver
+	TenantID                 string
+	TenantRouter             TenantRouter
+	RedirectUnifiedLogin     func(http.ResponseWriter, *http.Request)
+	LogoutUnified            func(http.ResponseWriter, *http.Request)
+	TopMenuProvider          func(*http.Request) []TopMenuItem
+	GammaProvider            GammaProvider
+	GammaFlipProvider        GammaFlipSnapshotProvider
+	GammaFlipHistoryProvider GammaFlipHistoryProvider
 	// valueAreaOpenConflictChecker is injectable for deterministic webhook
 	// tests. Production uses the exchange-backed checker in
 	// value_area_order_gate.go when this is nil.
@@ -215,6 +217,10 @@ func (s *Server) handleTVOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	signal.SourceAction = signal.Action
+	if s.GammaFlipProvider != nil {
+		snapshot := s.GammaFlipProvider(r.Context(), firstNonEmptyString(signal.Ticker, signal.Coinpair))
+		signal.GammaFlipSnapshot = &snapshot
+	}
 	classErr := applyTVOrderPositionSemantics(&signal)
 	if classErr == nil {
 		adxDecision, adxErr := applyTVOrderADXRouting(&signal)
@@ -233,6 +239,20 @@ func (s *Server) handleTVOrder(w http.ResponseWriter, r *http.Request) {
 				"status":    "ignored",
 				"signal_id": record.SignalID,
 				"reason":    "adx_transition",
+			})
+			return
+		}
+		if reason := s.applyTVOrderGammaFlipGuard(r.Context(), &signal, cfg, now); reason != "" {
+			message := "Gamma Flip 附近或方向尚未确认，已跳过自动开仓"
+			record, err := s.Orders.RecordIgnoredReason(signal, reason, message, now)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"status":    "ignored",
+				"signal_id": record.SignalID,
+				"reason":    reason,
 			})
 			return
 		}
@@ -3146,6 +3166,9 @@ type tradingPatch struct {
 	PositionMode              *string                       `json:"position_mode"`
 	MarketTurnoverScope       *string                       `json:"market_turnover_scope"`
 	GammaNegativePolicy       *string                       `json:"gamma_negative_policy"`
+	GammaFlipGuardEnabled     *bool                         `json:"gamma_flip_guard_enabled"`
+	GammaFlipNearPct          *float64                      `json:"gamma_flip_near_pct"`
+	GammaFlipConfirmSamples   *int                          `json:"gamma_flip_confirm_samples"`
 	SignalTTLSeconds          *int                          `json:"signal_ttl_seconds"`
 	IgnoredCoinpair           *string                       `json:"ignored_coinpair"`
 	IgnoredCoinpairs          *[]string                     `json:"ignored_coinpairs"`
@@ -3252,6 +3275,15 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 	}
 	if patch.Trading.GammaNegativePolicy != nil {
 		c.Trading.GammaNegativePolicy = *patch.Trading.GammaNegativePolicy
+	}
+	if patch.Trading.GammaFlipGuardEnabled != nil {
+		c.Trading.GammaFlipGuardEnabled = *patch.Trading.GammaFlipGuardEnabled
+	}
+	if patch.Trading.GammaFlipNearPct != nil {
+		c.Trading.GammaFlipNearPct = *patch.Trading.GammaFlipNearPct
+	}
+	if patch.Trading.GammaFlipConfirmSamples != nil {
+		c.Trading.GammaFlipConfirmSamples = *patch.Trading.GammaFlipConfirmSamples
 	}
 	if patch.Trading.SignalTTLSeconds != nil {
 		c.Trading.SignalTTLSeconds = *patch.Trading.SignalTTLSeconds

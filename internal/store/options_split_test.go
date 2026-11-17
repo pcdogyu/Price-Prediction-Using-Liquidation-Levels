@@ -22,7 +22,8 @@ func TestOpenWithOptionsDatabaseRoutesGammaWrites(t *testing.T) {
 	defer st.Close()
 
 	ctx := context.Background()
-	if err := st.SaveGamma(ctx, domain.GammaView{Symbol: "BTCUSDT", State: "ok"}); err != nil {
+	flip := 65000.0
+	if err := st.SaveGamma(ctx, domain.GammaView{Symbol: "BTCUSDT", State: "ok", Time: time.UnixMilli(1_700_000_000_000).UTC(), SpotPrice: 64000, NetGEXUSD: 12.5, GammaFlip: &flip, FlipState: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 	value := 0.25
@@ -40,7 +41,7 @@ func TestOpenWithOptionsDatabaseRoutesGammaWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer optionsDB.Close()
-	for _, table := range []string{"gamma_latest", "deribit_gamma_history"} {
+	for _, table := range []string{"gamma_latest", "gamma_flip_history", "deribit_gamma_history"} {
 		var mainCount, optionsCount int
 		if err := mainDB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&mainCount); err != nil {
 			t.Fatal(err)

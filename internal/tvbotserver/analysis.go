@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotbinance"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotgate"
@@ -517,66 +518,68 @@ type analysisSymbolStats struct {
 }
 
 type analysisTrade struct {
-	Exchange        string    `json:"exchange"`
-	APIID           string    `json:"api_id,omitempty"`
-	InstID          string    `json:"inst_id"`
-	TradeID         string    `json:"trade_id"`
-	OrdID           string    `json:"ord_id,omitempty"`
-	Side            string    `json:"side,omitempty"`
-	PosSide         string    `json:"pos_side,omitempty"`
-	PositionEffect  string    `json:"position_effect,omitempty"`
-	FillPx          string    `json:"fill_px,omitempty"`
-	FillSz          string    `json:"fill_sz,omitempty"`
-	Turnover        string    `json:"turnover,omitempty"`
-	FillPnl         string    `json:"fill_pnl,omitempty"`
-	Fee             string    `json:"fee,omitempty"`
-	FeeCcy          string    `json:"fee_ccy,omitempty"`
-	Margin          string    `json:"margin"`
-	Leverage        int       `json:"leverage"`
-	FundingFee      string    `json:"funding_fee"`
-	NetPnL          string    `json:"net_pnl"`
-	Operation       string    `json:"operation,omitempty"`
-	OperationSource string    `json:"operation_source,omitempty"`
-	Strategy        string    `json:"strategy,omitempty"`
-	SourceAction    string    `json:"-"`
-	FillTime        time.Time `json:"fill_time"`
-	FillTS          int64     `json:"fill_ts"`
-	FillCount       int       `json:"fill_count"`
+	Exchange          string                    `json:"exchange"`
+	APIID             string                    `json:"api_id,omitempty"`
+	InstID            string                    `json:"inst_id"`
+	TradeID           string                    `json:"trade_id"`
+	OrdID             string                    `json:"ord_id,omitempty"`
+	Side              string                    `json:"side,omitempty"`
+	PosSide           string                    `json:"pos_side,omitempty"`
+	PositionEffect    string                    `json:"position_effect,omitempty"`
+	FillPx            string                    `json:"fill_px,omitempty"`
+	FillSz            string                    `json:"fill_sz,omitempty"`
+	Turnover          string                    `json:"turnover,omitempty"`
+	FillPnl           string                    `json:"fill_pnl,omitempty"`
+	Fee               string                    `json:"fee,omitempty"`
+	FeeCcy            string                    `json:"fee_ccy,omitempty"`
+	Margin            string                    `json:"margin"`
+	Leverage          int                       `json:"leverage"`
+	FundingFee        string                    `json:"funding_fee"`
+	NetPnL            string                    `json:"net_pnl"`
+	Operation         string                    `json:"operation,omitempty"`
+	OperationSource   string                    `json:"operation_source,omitempty"`
+	Strategy          string                    `json:"strategy,omitempty"`
+	SourceAction      string                    `json:"-"`
+	GammaFlipSnapshot *domain.GammaFlipSnapshot `json:"gamma_flip_snapshot,omitempty"`
+	FillTime          time.Time                 `json:"fill_time"`
+	FillTS            int64                     `json:"fill_ts"`
+	FillCount         int                       `json:"fill_count"`
 }
 
 type analysisPositionTrade struct {
-	Exchange             string    `json:"exchange"`
-	APIID                string    `json:"api_id,omitempty"`
-	InstID               string    `json:"inst_id"`
-	Side                 string    `json:"side"`
-	EntryTime            time.Time `json:"entry_time"`
-	EntryTS              int64     `json:"entry_ts"`
-	ExitTime             time.Time `json:"exit_time"`
-	ExitTS               int64     `json:"exit_ts"`
-	EntryPx              string    `json:"entry_px,omitempty"`
-	ExitPx               string    `json:"exit_px,omitempty"`
-	Qty                  string    `json:"qty,omitempty"`
-	Margin               string    `json:"margin,omitempty"`
-	Leverage             int       `json:"leverage,omitempty"`
-	RealizedPnL          string    `json:"realized_pnl,omitempty"`
-	Fee                  string    `json:"fee,omitempty"`
-	FeeCcy               string    `json:"fee_ccy,omitempty"`
-	NetPnL               string    `json:"net_pnl,omitempty"`
-	FundingFee           string    `json:"-"`
-	Turnover             string    `json:"turnover,omitempty"`
-	GammaDirection       string    `json:"gamma_direction,omitempty"`
-	Strategy             string    `json:"strategy,omitempty"`
-	EntryOperation       string    `json:"entry_operation,omitempty"`
-	EntryOperationSource string    `json:"entry_operation_source,omitempty"`
-	ExitOperation        string    `json:"exit_operation,omitempty"`
-	ExitOperationSource  string    `json:"exit_operation_source,omitempty"`
-	ExitSource           string    `json:"exit_source,omitempty"`
-	MinHoldingViolation  bool      `json:"min_holding_violation,omitempty"`
-	EntryOrdID           string    `json:"entry_ord_id,omitempty"`
-	ExitOrdID            string    `json:"exit_ord_id,omitempty"`
-	FillCount            int       `json:"fill_count"`
-	PricePrecision       *int      `json:"price_precision,omitempty"`
-	QuantityPrecision    *int      `json:"quantity_precision,omitempty"`
+	Exchange             string                    `json:"exchange"`
+	APIID                string                    `json:"api_id,omitempty"`
+	InstID               string                    `json:"inst_id"`
+	Side                 string                    `json:"side"`
+	EntryTime            time.Time                 `json:"entry_time"`
+	EntryTS              int64                     `json:"entry_ts"`
+	ExitTime             time.Time                 `json:"exit_time"`
+	ExitTS               int64                     `json:"exit_ts"`
+	EntryPx              string                    `json:"entry_px,omitempty"`
+	ExitPx               string                    `json:"exit_px,omitempty"`
+	Qty                  string                    `json:"qty,omitempty"`
+	Margin               string                    `json:"margin,omitempty"`
+	Leverage             int                       `json:"leverage,omitempty"`
+	RealizedPnL          string                    `json:"realized_pnl,omitempty"`
+	Fee                  string                    `json:"fee,omitempty"`
+	FeeCcy               string                    `json:"fee_ccy,omitempty"`
+	NetPnL               string                    `json:"net_pnl,omitempty"`
+	FundingFee           string                    `json:"-"`
+	Turnover             string                    `json:"turnover,omitempty"`
+	GammaDirection       string                    `json:"gamma_direction,omitempty"`
+	GammaFlipSnapshot    *domain.GammaFlipSnapshot `json:"gamma_flip_snapshot,omitempty"`
+	Strategy             string                    `json:"strategy,omitempty"`
+	EntryOperation       string                    `json:"entry_operation,omitempty"`
+	EntryOperationSource string                    `json:"entry_operation_source,omitempty"`
+	ExitOperation        string                    `json:"exit_operation,omitempty"`
+	ExitOperationSource  string                    `json:"exit_operation_source,omitempty"`
+	ExitSource           string                    `json:"exit_source,omitempty"`
+	MinHoldingViolation  bool                      `json:"min_holding_violation,omitempty"`
+	EntryOrdID           string                    `json:"entry_ord_id,omitempty"`
+	ExitOrdID            string                    `json:"exit_ord_id,omitempty"`
+	FillCount            int                       `json:"fill_count"`
+	PricePrecision       *int                      `json:"price_precision,omitempty"`
+	QuantityPrecision    *int                      `json:"quantity_precision,omitempty"`
 }
 
 type analysisGateContractMeta struct {
@@ -3167,13 +3170,14 @@ func mergeAnalysisTradeText(dst *analysisTrade, src analysisTrade) {
 }
 
 type analysisOrderMeta struct {
-	Leverage        int
-	PositionEffect  string
-	PositionSide    string
-	Operation       string
-	OperationSource string
-	Strategy        string
-	SourceAction    string
+	Leverage          int
+	PositionEffect    string
+	PositionSide      string
+	Operation         string
+	OperationSource   string
+	Strategy          string
+	SourceAction      string
+	GammaFlipSnapshot *domain.GammaFlipSnapshot
 }
 
 func enrichAnalysisTrades(cfg config.Config, trades []analysisTrade, records []storage.OrderRecord) {
@@ -3217,6 +3221,9 @@ func enrichAnalysisTradesWithEvents(cfg config.Config, trades []analysisTrade, r
 			}
 			if meta.SourceAction != "" {
 				trade.SourceAction = meta.SourceAction
+			}
+			if meta.GammaFlipSnapshot != nil {
+				trade.GammaFlipSnapshot = meta.GammaFlipSnapshot
 			}
 		}
 		if meta, ok := eventIndex[analysisOrderKey(trade.Exchange, trade.APIID, trade.InstID, trade.OrdID)]; ok {
@@ -3285,19 +3292,39 @@ func analysisOrderMetaIndex(records []storage.OrderRecord) map[string]analysisOr
 				}
 				if _, exists := out[key]; !exists {
 					out[key] = analysisOrderMeta{
-						Leverage:        leverage,
-						PositionEffect:  positionEffect,
-						PositionSide:    positionSide,
-						Operation:       operation,
-						OperationSource: operationSource,
-						Strategy:        analysisOrderStrategy(rec),
-						SourceAction:    string(rec.SourceAction),
+						Leverage:          leverage,
+						PositionEffect:    positionEffect,
+						PositionSide:      positionSide,
+						Operation:         operation,
+						OperationSource:   operationSource,
+						Strategy:          analysisOrderStrategy(rec),
+						SourceAction:      string(rec.SourceAction),
+						GammaFlipSnapshot: rec.GammaFlipSnapshot,
 					}
 				}
 			}
 		}
 	}
 	return out
+}
+
+func enrichAnalysisPositionTradesWithGamma(positions []analysisPositionTrade, trades []analysisTrade) {
+	byEntryOrder := make(map[string]*domain.GammaFlipSnapshot)
+	for _, trade := range trades {
+		if trade.GammaFlipSnapshot == nil || normalizeAnalysisPositionEffect(trade.PositionEffect) != trading.PositionEffectOpen {
+			continue
+		}
+		key := analysisOrderKey(trade.Exchange, trade.APIID, trade.InstID, trade.OrdID)
+		if key != "" && byEntryOrder[key] == nil {
+			byEntryOrder[key] = trade.GammaFlipSnapshot
+		}
+	}
+	for i := range positions {
+		key := analysisOrderKey(positions[i].Exchange, positions[i].APIID, positions[i].InstID, positions[i].EntryOrdID)
+		if snapshot := byEntryOrder[key]; snapshot != nil {
+			positions[i].GammaFlipSnapshot = snapshot
+		}
+	}
 }
 
 func analysisOrderStrategy(rec storage.OrderRecord) string {
@@ -4567,6 +4594,9 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, gateA
 	_, gateOpenPositionTrades := buildAnalysisPositionTradesWithOpen(cfg, gateTrades, pnlSince)
 	openPositionTrades = append(openPositionTrades, gateOpenPositionTrades...)
 	positionTrades = append(positionTrades, gatePositions...)
+	positionGammaTrades := append(append([]analysisTrade(nil), positionTradesInput...), gateTrades...)
+	enrichAnalysisPositionTradesWithGamma(positionTrades, positionGammaTrades)
+	enrichAnalysisPositionTradesWithGamma(openPositionTrades, positionGammaTrades)
 	sortAnalysisPositionTrades(positionTrades)
 	summary, exchangeSummaries, symbols := computeStats(cfg, positionTrades, trades, pnlSince)
 	return analysisResponse{
@@ -4619,6 +4649,9 @@ func (s *Server) analysisFromExternalData(cfg config.Config, apiID, binanceAPIID
 	_, gateOpenPositionTrades := buildAnalysisPositionTradesWithOpen(cfg, gateTrades, pnlSince)
 	openPositionTrades = append(openPositionTrades, gateOpenPositionTrades...)
 	positionTrades = append(positionTrades, gatePositions...)
+	positionGammaTrades := append(append([]analysisTrade(nil), positionTradesInput...), gateTrades...)
+	enrichAnalysisPositionTradesWithGamma(positionTrades, positionGammaTrades)
+	enrichAnalysisPositionTradesWithGamma(openPositionTrades, positionGammaTrades)
 	sortAnalysisPositionTrades(positionTrades)
 	summary, exchangeSummaries, symbols := computeStats(cfg, positionTrades, trades, pnlSince)
 	return analysisResponse{

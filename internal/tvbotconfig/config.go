@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,9 @@ const (
 	// GammaNegativePolicyFlip is retained as a read-compatibility alias for
 	// configurations written before option 3 became adaptive.
 	GammaNegativePolicyFlip = "flip"
+
+	DefaultGammaFlipNearPct        = 1.0
+	DefaultGammaFlipConfirmSamples = 2
 )
 
 type Config struct {
@@ -62,30 +66,33 @@ type TradingConfig struct {
 	// alert webhooks and all tenant trading/monitoring paths. It is intentionally
 	// independent from the process-wide default webhook environment so one
 	// user's API-key selection cannot route another user's orders.
-	TargetExchange      string   `json:"target_exchange,omitempty"`
-	TargetAPIID         string   `json:"target_api_id,omitempty"`
-	TargetTradeEnv      string   `json:"target_trade_env,omitempty"`
-	AllowLiveTrading    bool     `json:"allow_live_trading"`
-	BaseURL             string   `json:"base_url"`
-	BinanceBaseURL      string   `json:"binance_base_url"`
-	BinanceDemoBaseURL  string   `json:"binance_demo_base_url"`
-	GateBaseURL         string   `json:"gate_base_url"`
-	GateDemoBaseURL     string   `json:"gate_demo_base_url"`
-	DefaultMarginMode   string   `json:"default_margin_mode"`
-	PositionMode        string   `json:"position_mode"`
-	MarketTurnoverScope string   `json:"market_turnover_scope"`
-	GammaNegativePolicy string   `json:"gamma_negative_policy"`
-	SignalTTLSeconds    int      `json:"signal_ttl_seconds"`
-	IgnoredCoinpair     string   `json:"ignored_coinpair"`
-	IgnoredCoinpairs    []string `json:"ignored_coinpairs"`
-	CoinpairWhitelist   []string `json:"coinpair_whitelist"`
-	OrderAmountUSDT     float64  `json:"order_amount_usdt"`
-	OrderAmountMode     string   `json:"order_amount_mode"`
-	OrderAmountPct      float64  `json:"order_amount_pct"`
-	MaxOpenCoinpairs    int      `json:"max_open_coinpairs"`
-	Leverage            int      `json:"leverage"`
-	OrderType           string   `json:"order_type"`
-	RiskType            string   `json:"risk_type"`
+	TargetExchange          string   `json:"target_exchange,omitempty"`
+	TargetAPIID             string   `json:"target_api_id,omitempty"`
+	TargetTradeEnv          string   `json:"target_trade_env,omitempty"`
+	AllowLiveTrading        bool     `json:"allow_live_trading"`
+	BaseURL                 string   `json:"base_url"`
+	BinanceBaseURL          string   `json:"binance_base_url"`
+	BinanceDemoBaseURL      string   `json:"binance_demo_base_url"`
+	GateBaseURL             string   `json:"gate_base_url"`
+	GateDemoBaseURL         string   `json:"gate_demo_base_url"`
+	DefaultMarginMode       string   `json:"default_margin_mode"`
+	PositionMode            string   `json:"position_mode"`
+	MarketTurnoverScope     string   `json:"market_turnover_scope"`
+	GammaNegativePolicy     string   `json:"gamma_negative_policy"`
+	GammaFlipGuardEnabled   bool     `json:"gamma_flip_guard_enabled"`
+	GammaFlipNearPct        float64  `json:"gamma_flip_near_pct"`
+	GammaFlipConfirmSamples int      `json:"gamma_flip_confirm_samples"`
+	SignalTTLSeconds        int      `json:"signal_ttl_seconds"`
+	IgnoredCoinpair         string   `json:"ignored_coinpair"`
+	IgnoredCoinpairs        []string `json:"ignored_coinpairs"`
+	CoinpairWhitelist       []string `json:"coinpair_whitelist"`
+	OrderAmountUSDT         float64  `json:"order_amount_usdt"`
+	OrderAmountMode         string   `json:"order_amount_mode"`
+	OrderAmountPct          float64  `json:"order_amount_pct"`
+	MaxOpenCoinpairs        int      `json:"max_open_coinpairs"`
+	Leverage                int      `json:"leverage"`
+	OrderType               string   `json:"order_type"`
+	RiskType                string   `json:"risk_type"`
 	// ProtectionOrdersEnabled is the single policy switch for exchange-side
 	// TP/SL/trailing orders. It is disabled by default; legacy risk fields remain
 	// readable but cannot create protection while this switch is false.
@@ -326,6 +333,9 @@ func Default() Config {
 			PositionMode:              PositionNet,
 			MarketTurnoverScope:       DefaultMarketTurnoverScope,
 			GammaNegativePolicy:       GammaNegativePolicyIgnore,
+			GammaFlipGuardEnabled:     true,
+			GammaFlipNearPct:          DefaultGammaFlipNearPct,
+			GammaFlipConfirmSamples:   DefaultGammaFlipConfirmSamples,
 			SignalTTLSeconds:          300,
 			OrderAmountUSDT:           100,
 			OrderAmountMode:           trading.OrderAmountModeFixedUSDT,
@@ -500,6 +510,12 @@ func (c *Config) Normalize() {
 	}
 	if c.Trading.GammaNegativePolicy == "" {
 		c.Trading.GammaNegativePolicy = GammaNegativePolicyIgnore
+	}
+	if c.Trading.GammaFlipNearPct <= 0 {
+		c.Trading.GammaFlipNearPct = DefaultGammaFlipNearPct
+	}
+	if c.Trading.GammaFlipConfirmSamples <= 0 {
+		c.Trading.GammaFlipConfirmSamples = DefaultGammaFlipConfirmSamples
 	}
 	if c.Trading.SignalTTLSeconds <= 0 {
 		c.Trading.SignalTTLSeconds = 300
@@ -690,6 +706,12 @@ func (c Config) validate(validateSymbols bool) error {
 	case GammaNegativePolicyIgnore, GammaNegativePolicyPassthrough, GammaNegativePolicyAdaptive:
 	default:
 		return fmt.Errorf("unsupported gamma negative policy %q", c.Trading.GammaNegativePolicy)
+	}
+	if math.IsNaN(c.Trading.GammaFlipNearPct) || math.IsInf(c.Trading.GammaFlipNearPct, 0) || c.Trading.GammaFlipNearPct < 0.1 || c.Trading.GammaFlipNearPct > 10 {
+		return errors.New("gamma_flip_near_pct must be between 0.1 and 10")
+	}
+	if c.Trading.GammaFlipConfirmSamples < 1 || c.Trading.GammaFlipConfirmSamples > 12 {
+		return errors.New("gamma_flip_confirm_samples must be between 1 and 12")
 	}
 	switch trading.RiskType(c.Trading.RiskType) {
 	case trading.RiskNone, trading.RiskTPSL, trading.RiskTrailing:

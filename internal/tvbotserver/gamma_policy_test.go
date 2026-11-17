@@ -3,10 +3,76 @@ package server
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	tvbottrading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
+
+func TestTVOrderGammaFlipGuardUsesNearZoneAndConsecutiveConfirmation(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	cfg := tvbotconfig.Default()
+	makeSnapshot := func(at time.Time, spot, gamma, flip float64) domain.GammaFlipSnapshot {
+		return domain.GammaFlipSnapshot{Symbol: "BTCUSDT", State: "ok", FlipState: "ok", Time: at, SpotPrice: spot, GammaValue: gamma, GammaFlip: &flip}
+	}
+	openSignal := func() tvbottrading.Signal {
+		return tvbottrading.Signal{Action: tvbottrading.ActionLong, PositionEffect: tvbottrading.PositionEffectOpen, PositionSide: tvbottrading.PositionSideLong, Ticker: "BTCUSDT"}
+	}
+
+	t.Run("near flip is ignored", func(t *testing.T) {
+		current := makeSnapshot(now, 100, 10, 100.5)
+		srv := &Server{
+			GammaFlipProvider: func(context.Context, string) domain.GammaFlipSnapshot { return current },
+			GammaFlipHistoryProvider: func(context.Context, string, time.Time, time.Time) ([]domain.GammaFlipSnapshot, error) {
+				return []domain.GammaFlipSnapshot{current}, nil
+			},
+		}
+		signal := openSignal()
+		if got := srv.applyTVOrderGammaFlipGuard(context.Background(), &signal, cfg, now); got != "gamma_flip_near" {
+			t.Fatalf("reason=%q, want near-flip guard", got)
+		}
+	})
+
+	t.Run("single sample is unconfirmed", func(t *testing.T) {
+		current := makeSnapshot(now, 100, 10, 105)
+		srv := &Server{
+			GammaFlipProvider: func(context.Context, string) domain.GammaFlipSnapshot { return current },
+			GammaFlipHistoryProvider: func(context.Context, string, time.Time, time.Time) ([]domain.GammaFlipSnapshot, error) {
+				return []domain.GammaFlipSnapshot{current}, nil
+			},
+		}
+		signal := openSignal()
+		if got := srv.applyTVOrderGammaFlipGuard(context.Background(), &signal, cfg, now); got != "gamma_flip_unconfirmed" {
+			t.Fatalf("reason=%q, want confirmation guard", got)
+		}
+	})
+
+	t.Run("two samples confirm", func(t *testing.T) {
+		current := makeSnapshot(now, 100, 10, 105)
+		prior := makeSnapshot(now.Add(-5*time.Minute), 100, 20, 105)
+		srv := &Server{
+			GammaFlipProvider: func(context.Context, string) domain.GammaFlipSnapshot { return current },
+			GammaFlipHistoryProvider: func(context.Context, string, time.Time, time.Time) ([]domain.GammaFlipSnapshot, error) {
+				return []domain.GammaFlipSnapshot{prior, current}, nil
+			},
+		}
+		signal := openSignal()
+		if got := srv.applyTVOrderGammaFlipGuard(context.Background(), &signal, cfg, now); got != "" {
+			t.Fatalf("confirmed regime should pass, reason=%q", got)
+		}
+	})
+
+	t.Run("unavailable data fails open", func(t *testing.T) {
+		srv := &Server{GammaFlipProvider: func(context.Context, string) domain.GammaFlipSnapshot {
+			return domain.GammaFlipSnapshot{Symbol: "BTCUSDT", State: "unavailable", FlipState: "unavailable"}
+		}}
+		signal := openSignal()
+		if got := srv.applyTVOrderGammaFlipGuard(context.Background(), &signal, cfg, now); got != "" {
+			t.Fatalf("unavailable Gamma should pass through, reason=%q", got)
+		}
+	})
+}
 
 func TestTVOrderGammaPolicyFailsOpenForPositiveUnavailableAndStaleGamma(t *testing.T) {
 	negative := -0.25

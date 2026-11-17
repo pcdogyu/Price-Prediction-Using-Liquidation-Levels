@@ -8,9 +8,16 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/valuearea"
 )
 
+func noCostAlertBacktestParams() AlertBacktestParameters {
+	params := DefaultAlertBacktestParameters()
+	params.FeeBps = 0
+	params.SlippageBps = 0
+	return params
+}
+
 func TestScoreAlertBacktestUsesNextCloseAndCapsAddOns(t *testing.T) {
 	base := time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)
-	params := DefaultAlertBacktestParameters()
+	params := noCostAlertBacktestParams()
 	params.InitialEquity = 10000
 	params.Leverage = 2
 	metrics := scoreAlertBacktest([]alertBacktestEntry{
@@ -46,7 +53,7 @@ func TestScoreAlertBacktestUsesNextCloseAndCapsAddOns(t *testing.T) {
 
 func TestScoreAlertBacktestStopLossAndMissingNextCandle(t *testing.T) {
 	base := time.Date(2026, 10, 26, 1, 0, 0, 0, time.UTC)
-	params := DefaultAlertBacktestParameters()
+	params := noCostAlertBacktestParams()
 	metrics := scoreAlertBacktest([]alertBacktestEntry{
 		{
 			at:    base,
@@ -73,7 +80,7 @@ func TestScoreAlertBacktestStopLossAndMissingNextCandle(t *testing.T) {
 
 func TestScoreAlertBacktestUsesWeightedAverageAndLeverage(t *testing.T) {
 	base := time.Date(2026, 10, 26, 2, 0, 0, 0, time.UTC)
-	params := DefaultAlertBacktestParameters()
+	params := noCostAlertBacktestParams()
 	params.InitialEquity = 10000
 	params.EntryNotionalUSD = 1000
 	params.Leverage = 3
@@ -98,7 +105,7 @@ func TestScoreAlertBacktestUsesWeightedAverageAndLeverage(t *testing.T) {
 
 func TestScoreAlertBacktestUsesRequestedHoldingDeadline(t *testing.T) {
 	base := time.Date(2026, 10, 26, 4, 0, 0, 0, time.UTC)
-	params := DefaultAlertBacktestParameters()
+	params := noCostAlertBacktestParams()
 	params.TakeProfitPct = 10
 	params.StopLossPct = 10
 	entry := alertBacktestEntry{
@@ -118,6 +125,47 @@ func TestScoreAlertBacktestUsesRequestedHoldingDeadline(t *testing.T) {
 	}
 	if longHolding.trades != 1 || longHolding.finalEquity != params.InitialEquity+10 {
 		t.Fatalf("1h holding should exit at the next profitable candle: %+v", longHolding)
+	}
+}
+
+func TestScoreAlertBacktestSubtractsRoundTripFeesAndSlippage(t *testing.T) {
+	base := time.Date(2026, 10, 26, 6, 0, 0, 0, time.UTC)
+	params := DefaultAlertBacktestParameters()
+	params.TakeProfitPct = 10
+	params.StopLossPct = 10
+	metrics := scoreAlertBacktest([]alertBacktestEntry{{
+		at: base, price: 100, side: "long",
+		candles: []domain.Candle{
+			{Time: base.Add(15 * time.Minute), Close: 100},
+			{Time: base.Add(16 * time.Minute), Close: 101},
+		},
+	}}, params)
+	// $1,000 entry turnover and $1,010 exit turnover, each charged once per side.
+	if metrics.trades != 1 || metrics.grossPnL != 10 || metrics.fees < 1.004 || metrics.fees > 1.006 || metrics.slippage < 0.401 || metrics.slippage > 0.403 || metrics.netPnL < 8.592 || metrics.netPnL > 8.594 || metrics.finalEquity < 10008.592 || metrics.finalEquity > 10008.594 {
+		t.Fatalf("unexpected net cost accounting: %+v", metrics)
+	}
+}
+
+func TestScoreAlertGammaBreakdownKeepsBaselineAndSplitsBySymbolAndRegime(t *testing.T) {
+	base := time.Date(2026, 10, 26, 7, 0, 0, 0, time.UTC)
+	params := noCostAlertBacktestParams()
+	entries := []alertBacktestEntry{
+		{at: base, price: 100, side: "long", symbol: "BTCUSDT", gammaAvailable: true, gammaRegime: "positive", gammaConfirmed: true, candles: []domain.Candle{{Time: base.Add(time.Minute), Close: 101}, {Time: base.Add(2 * time.Minute), Close: 102}}},
+		{at: base.Add(time.Second), price: 100, side: "short", symbol: "ETHUSDT", gammaAvailable: false, candles: []domain.Candle{{Time: base.Add(time.Minute), Close: 100}, {Time: base.Add(2 * time.Minute), Close: 98}, {Time: base.Add(3 * time.Minute), Close: 97}}},
+	}
+	rows, coverage := scoreAlertGammaBreakdown(entries, params, time.Minute, "alert")
+	if coverage != 1 {
+		t.Fatalf("Gamma coverage=%d, want one covered signal", coverage)
+	}
+	counts := map[string]int{}
+	for _, row := range rows {
+		if row.Signal != "alert" {
+			t.Fatalf("row lost originating signal: %+v", row)
+		}
+		counts[row.Scenario+"/"+row.Symbol+"/"+row.Regime] = row.Trades
+	}
+	if counts["baseline/BTCUSDT/positive"] != 1 || counts["baseline/ETHUSDT/unknown"] != 1 || counts["confirmed_regime/BTCUSDT/positive"] != 1 || counts["confirmed_regime/ETHUSDT/unknown"] != 0 {
+		t.Fatalf("unexpected symbol/regime scenario groups: %+v", counts)
 	}
 }
 

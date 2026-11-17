@@ -509,15 +509,19 @@ func alertBacktestParameters(r *http.Request) (app.AlertBacktestParameters, erro
 		return params, nil
 	}
 	var requested struct {
-		InitialEquity      *float64 `json:"initial_equity"`
-		Leverage           *float64 `json:"leverage"`
-		TakeProfitPct      *float64 `json:"take_profit_pct"`
-		StopLossPct        *float64 `json:"stop_loss_pct"`
-		EntryNotionalUSD   *float64 `json:"entry_notional_usd"`
-		MaxAddOns          *int     `json:"max_add_ons"`
-		VWAPRangeHours     *int     `json:"vwap_range_hours"`
-		VWAPMinDrawdownPct *float64 `json:"vwap_min_drawdown_pct"`
-		VWAPDonchianPct    *float64 `json:"vwap_donchian_pct"`
+		InitialEquity           *float64 `json:"initial_equity"`
+		Leverage                *float64 `json:"leverage"`
+		TakeProfitPct           *float64 `json:"take_profit_pct"`
+		StopLossPct             *float64 `json:"stop_loss_pct"`
+		EntryNotionalUSD        *float64 `json:"entry_notional_usd"`
+		MaxAddOns               *int     `json:"max_add_ons"`
+		VWAPRangeHours          *int     `json:"vwap_range_hours"`
+		VWAPMinDrawdownPct      *float64 `json:"vwap_min_drawdown_pct"`
+		VWAPDonchianPct         *float64 `json:"vwap_donchian_pct"`
+		FeeBps                  *float64 `json:"fee_bps_per_side"`
+		SlippageBps             *float64 `json:"slippage_bps_per_side"`
+		GammaFlipNearPct        *float64 `json:"gamma_flip_near_pct"`
+		GammaFlipConfirmSamples *int     `json:"gamma_flip_confirm_samples"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -557,6 +561,18 @@ func alertBacktestParameters(r *http.Request) (app.AlertBacktestParameters, erro
 	}
 	if requested.VWAPDonchianPct != nil {
 		params.VWAPDonchianPct = *requested.VWAPDonchianPct
+	}
+	if requested.FeeBps != nil {
+		params.FeeBps = *requested.FeeBps
+	}
+	if requested.SlippageBps != nil {
+		params.SlippageBps = *requested.SlippageBps
+	}
+	if requested.GammaFlipNearPct != nil {
+		params.GammaFlipNearPct = *requested.GammaFlipNearPct
+	}
+	if requested.GammaFlipConfirmSamples != nil {
+		params.GammaFlipConfirmSamples = *requested.GammaFlipConfirmSamples
 	}
 	if err := params.Validate(); err != nil {
 		return app.AlertBacktestParameters{}, err

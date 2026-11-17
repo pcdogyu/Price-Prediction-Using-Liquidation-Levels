@@ -236,6 +236,9 @@ func TestGammaNegativePolicyDefaultsPersistsAndValidates(t *testing.T) {
 	if cfg.Trading.GammaNegativePolicy != GammaNegativePolicyIgnore {
 		t.Fatalf("default gamma negative policy=%q", cfg.Trading.GammaNegativePolicy)
 	}
+	if !cfg.Trading.GammaFlipGuardEnabled || cfg.Trading.GammaFlipNearPct != DefaultGammaFlipNearPct || cfg.Trading.GammaFlipConfirmSamples != DefaultGammaFlipConfirmSamples {
+		t.Fatalf("unexpected Gamma Flip guard defaults: %+v", cfg.Trading)
+	}
 
 	legacyPath := filepath.Join(t.TempDir(), "legacy-gamma.json")
 	if err := os.WriteFile(legacyPath, []byte(`{"trading":{"order_amount_usdt":100}}`), 0o600); err != nil {

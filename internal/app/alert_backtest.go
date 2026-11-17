@@ -31,30 +31,38 @@ type AlertBacktestStatus struct {
 // AlertBacktestParameters are ephemeral parameters for one backtest run. They
 // deliberately do not overlap with the persisted live alert settings.
 type AlertBacktestParameters struct {
-	InitialEquity      float64 `json:"initial_equity"`
-	Leverage           float64 `json:"leverage"`
-	TakeProfitPct      float64 `json:"take_profit_pct"`
-	StopLossPct        float64 `json:"stop_loss_pct"`
-	EntryNotionalUSD   float64 `json:"entry_notional_usd"`
-	MaxAddOns          int     `json:"max_add_ons"`
-	VWAPRangeHours     int     `json:"vwap_range_hours"`
-	VWAPMinDrawdownPct float64 `json:"vwap_min_drawdown_pct"`
-	VWAPDonchianPct    float64 `json:"vwap_donchian_pct"`
+	InitialEquity           float64 `json:"initial_equity"`
+	Leverage                float64 `json:"leverage"`
+	TakeProfitPct           float64 `json:"take_profit_pct"`
+	StopLossPct             float64 `json:"stop_loss_pct"`
+	EntryNotionalUSD        float64 `json:"entry_notional_usd"`
+	MaxAddOns               int     `json:"max_add_ons"`
+	VWAPRangeHours          int     `json:"vwap_range_hours"`
+	VWAPMinDrawdownPct      float64 `json:"vwap_min_drawdown_pct"`
+	VWAPDonchianPct         float64 `json:"vwap_donchian_pct"`
+	FeeBps                  float64 `json:"fee_bps_per_side"`
+	SlippageBps             float64 `json:"slippage_bps_per_side"`
+	GammaFlipNearPct        float64 `json:"gamma_flip_near_pct"`
+	GammaFlipConfirmSamples int     `json:"gamma_flip_confirm_samples"`
 }
 
 // DefaultAlertBacktestParameters returns the page/API defaults. The fixed
 // 14-day window and holding-period comparison set are not request parameters.
 func DefaultAlertBacktestParameters() AlertBacktestParameters {
 	return AlertBacktestParameters{
-		InitialEquity:      10000,
-		Leverage:           1,
-		TakeProfitPct:      1.2,
-		StopLossPct:        1.5,
-		EntryNotionalUSD:   1000,
-		MaxAddOns:          1,
-		VWAPRangeHours:     24,
-		VWAPMinDrawdownPct: 2,
-		VWAPDonchianPct:    35,
+		InitialEquity:           10000,
+		Leverage:                1,
+		TakeProfitPct:           1.2,
+		StopLossPct:             1.5,
+		EntryNotionalUSD:        1000,
+		MaxAddOns:               1,
+		VWAPRangeHours:          24,
+		VWAPMinDrawdownPct:      2,
+		VWAPDonchianPct:         35,
+		FeeBps:                  5,
+		SlippageBps:             2,
+		GammaFlipNearPct:        1,
+		GammaFlipConfirmSamples: 2,
 	}
 }
 
@@ -84,6 +92,17 @@ func (p AlertBacktestParameters) Validate() error {
 	}
 	if math.IsNaN(p.VWAPDonchianPct) || math.IsInf(p.VWAPDonchianPct, 0) || p.VWAPDonchianPct < minVWAPDonchianPct || p.VWAPDonchianPct > maxVWAPDonchianPct {
 		return fmt.Errorf("vwap_donchian_pct must be between %d and %d", minVWAPDonchianPct, maxVWAPDonchianPct)
+	}
+	for name, value := range map[string]float64{"fee_bps_per_side": p.FeeBps, "slippage_bps_per_side": p.SlippageBps} {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 100 {
+			return fmt.Errorf("%s must be between 0 and 100", name)
+		}
+	}
+	if math.IsNaN(p.GammaFlipNearPct) || math.IsInf(p.GammaFlipNearPct, 0) || p.GammaFlipNearPct < 0.1 || p.GammaFlipNearPct > 10 {
+		return errors.New("gamma_flip_near_pct must be between 0.1 and 10")
+	}
+	if p.GammaFlipConfirmSamples < 1 || p.GammaFlipConfirmSamples > 12 {
+		return errors.New("gamma_flip_confirm_samples must be between 1 and 12")
 	}
 	return nil
 }
@@ -230,11 +249,16 @@ var alertBacktestSignals = []struct {
 }
 
 type alertBacktestEntry struct {
-	at        time.Time
-	price     float64
-	side      string
-	additions int
-	candles   []domain.Candle
+	symbol         string
+	at             time.Time
+	price          float64
+	side           string
+	additions      int
+	candles        []domain.Candle
+	gammaRegime    string
+	gammaNearFlip  bool
+	gammaConfirmed bool
+	gammaAvailable bool
 	// addOnPrices is only useful to deterministic unit tests. Historical
 	// records leave it empty, which deliberately makes every add-on use price.
 	addOnPrices []float64
@@ -277,6 +301,15 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 	// Donchian gates remain active in the replay.
 	cfg.SkipPeakDecay = true
 	symbols := s.alertReplaySymbols(rtm)
+	gammaFlipHistory := make(map[string][]domain.GammaFlipSnapshot, 2)
+	gammaFlipFrom := from.Add(-2 * time.Hour)
+	for _, anchor := range []string{alertGammaBTCAnchor, alertGammaETHAnchor} {
+		points, historyErr := s.store.GammaFlipHistory(ctx, anchor, gammaFlipFrom, to.Add(time.Minute))
+		if historyErr != nil {
+			return domain.AlertBacktestReport{}, historyErr
+		}
+		gammaFlipHistory[anchor] = points
+	}
 	buckets := make(map[string]*alertBacktestBucket, len(alertBacktestSignals)*len(alertBacktestFilters))
 	for _, signal := range alertBacktestSignals {
 		for _, filter := range backtestFiltersForSignal(signal.key) {
@@ -319,14 +352,18 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 					continue
 				}
 				bucket := buckets[alertBacktestBucketKey("alert", result.filter)]
-				bucket.entries = append(bucket.entries, alertBacktestEntry{at: row.TriggeredAt, price: row.ReferencePrice, side: row.TradeSide, additions: row.FollowUps, candles: candles})
+				entry := alertBacktestEntry{at: row.TriggeredAt, price: row.ReferencePrice, side: row.TradeSide, additions: row.FollowUps, candles: candles}
+				enrichAlertBacktestEntryGamma(&entry, symbol, gammaFlipHistory, params)
+				bucket.entries = append(bucket.entries, entry)
 			}
 			for _, row := range result.view.Signals {
 				if !backtestEntryAllowed(row.FilterApplied, row.OpenAllowed) {
 					continue
 				}
 				bucket := buckets[alertBacktestBucketKey(row.Kind, result.filter)]
-				bucket.entries = append(bucket.entries, alertBacktestEntry{at: row.CreatedAt, price: row.ReferencePrice, side: row.Side, additions: row.FollowUps, candles: candles})
+				entry := alertBacktestEntry{at: row.CreatedAt, price: row.ReferencePrice, side: row.Side, additions: row.FollowUps, candles: candles}
+				enrichAlertBacktestEntryGamma(&entry, symbol, gammaFlipHistory, params)
+				bucket.entries = append(bucket.entries, entry)
 			}
 		}
 		valueAreaEntries, valueAreaErr := rtm.valueAreaBacktestEntries(ctx, symbol, from, to, candles)
@@ -334,28 +371,51 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 			return domain.AlertBacktestReport{}, valueAreaErr
 		}
 		valueAreaBucket := buckets[alertBacktestBucketKey(domain.SignalValueArea, "none")]
+		for i := range valueAreaEntries {
+			enrichAlertBacktestEntryGamma(&valueAreaEntries[i], symbol, gammaFlipHistory, params)
+		}
 		valueAreaBucket.entries = append(valueAreaBucket.entries, valueAreaEntries...)
 	}
 
 	report := domain.AlertBacktestReport{
-		WindowDays:            int(alertBacktestWindow / (24 * time.Hour)),
-		HoldingMinutes:        int(alertBacktestLegacyHolding / time.Minute),
-		HoldingMinutesOptions: alertBacktestHoldingOptions(),
-		InitialEquity:         params.InitialEquity,
-		Leverage:              params.Leverage,
-		TakeProfitPct:         params.TakeProfitPct,
-		StopLossPct:           params.StopLossPct,
-		EntryNotionalUSD:      params.EntryNotionalUSD,
-		AddOnNotionalUSD:      params.EntryNotionalUSD,
-		MaxAddOns:             params.MaxAddOns,
-		VWAPRangeHours:        params.VWAPRangeHours,
-		VWAPMinDrawdownPct:    params.VWAPMinDrawdownPct,
-		VWAPDonchianPct:       params.VWAPDonchianPct,
-		From:                  from,
-		To:                    to,
-		GeneratedAt:           to,
-		SymbolCount:           len(symbols),
-		Rows:                  make([]domain.AlertBacktestRow, 0, len(alertBacktestSignals)*len(alertBacktestFilters)*len(alertBacktestHoldingDurations)),
+		WindowDays:              int(alertBacktestWindow / (24 * time.Hour)),
+		HoldingMinutes:          int(alertBacktestLegacyHolding / time.Minute),
+		HoldingMinutesOptions:   alertBacktestHoldingOptions(),
+		InitialEquity:           params.InitialEquity,
+		Leverage:                params.Leverage,
+		TakeProfitPct:           params.TakeProfitPct,
+		StopLossPct:             params.StopLossPct,
+		EntryNotionalUSD:        params.EntryNotionalUSD,
+		AddOnNotionalUSD:        params.EntryNotionalUSD,
+		MaxAddOns:               params.MaxAddOns,
+		VWAPRangeHours:          params.VWAPRangeHours,
+		VWAPMinDrawdownPct:      params.VWAPMinDrawdownPct,
+		VWAPDonchianPct:         params.VWAPDonchianPct,
+		FeeBps:                  params.FeeBps,
+		SlippageBps:             params.SlippageBps,
+		GammaFlipNearPct:        params.GammaFlipNearPct,
+		GammaFlipConfirmSamples: params.GammaFlipConfirmSamples,
+		From:                    from,
+		To:                      to,
+		GeneratedAt:             to,
+		SymbolCount:             len(symbols),
+		Rows:                    make([]domain.AlertBacktestRow, 0, len(alertBacktestSignals)*len(alertBacktestFilters)*len(alertBacktestHoldingDurations)),
+		GammaRows:               []domain.AlertGammaBacktestRow{},
+	}
+	for _, points := range gammaFlipHistory {
+		for _, point := range points {
+			if point.Time.IsZero() {
+				continue
+			}
+			if report.GammaFlipHistoryFrom == nil || point.Time.Before(*report.GammaFlipHistoryFrom) {
+				value := point.Time
+				report.GammaFlipHistoryFrom = &value
+			}
+			if report.GammaFlipHistoryTo == nil || point.Time.After(*report.GammaFlipHistoryTo) {
+				value := point.Time
+				report.GammaFlipHistoryTo = &value
+			}
+		}
 	}
 	for _, signal := range alertBacktestSignals {
 		for _, filter := range backtestFiltersForSignal(signal.key) {
@@ -365,6 +425,11 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 				report.Rows = append(report.Rows, backtestRowForHolding(signal.key, filter.key, holding, metrics))
 			}
 		}
+		gammaEntries := buckets[alertBacktestBucketKey(signal.key, "none")].entries
+		gammaRows, coverage := scoreAlertGammaBreakdown(gammaEntries, params, alertBacktestLegacyHolding, signal.key)
+		report.GammaRows = append(report.GammaRows, gammaRows...)
+		report.GammaFlipCoverageSignals += coverage
+		report.GammaFlipTotalSignals += len(gammaEntries)
 	}
 	return report, nil
 }
@@ -497,12 +562,99 @@ func backtestEntryAllowed(applied, openAllowed bool) bool {
 	return !applied || openAllowed
 }
 
+func enrichAlertBacktestEntryGamma(entry *alertBacktestEntry, symbol string, history map[string][]domain.GammaFlipSnapshot, params AlertBacktestParameters) {
+	if entry == nil {
+		return
+	}
+	entry.symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	anchor := alertGammaAnchorForSymbol(entry.symbol)
+	decision := domain.EvaluateGammaFlip(history[anchor], entry.at, params.GammaFlipNearPct, params.GammaFlipConfirmSamples)
+	entry.gammaAvailable = decision.Available
+	entry.gammaNearFlip = decision.NearFlip
+	entry.gammaConfirmed = decision.Confirmed
+	entry.gammaRegime = decision.Regime
+	if decision.NearFlip {
+		entry.gammaRegime = "near_flip"
+	}
+}
+
+func scoreAlertGammaBreakdown(entries []alertBacktestEntry, params AlertBacktestParameters, holding time.Duration, signal string) ([]domain.AlertGammaBacktestRow, int) {
+	type group struct {
+		signal, symbol, side, regime, scenario string
+		entries                                []alertBacktestEntry
+	}
+	scenarios := []string{"baseline", "skip_near_flip", "confirmed_regime"}
+	coverage := 0
+	groups := map[string]*group{}
+	for _, entry := range entries {
+		if entry.gammaAvailable {
+			coverage++
+		}
+		for _, scenario := range scenarios {
+			if scenario != "baseline" && !entry.gammaAvailable {
+				continue
+			}
+			if scenario == "skip_near_flip" && entry.gammaNearFlip {
+				continue
+			}
+			if scenario == "confirmed_regime" && !entry.gammaConfirmed {
+				continue
+			}
+			regime := entry.gammaRegime
+			if regime == "" {
+				regime = "unknown"
+			}
+			side := strings.ToLower(strings.TrimSpace(entry.side))
+			key := strings.Join([]string{signal, entry.symbol, side, regime, scenario}, "\x00")
+			current := groups[key]
+			if current == nil {
+				current = &group{symbol: entry.symbol, side: side, regime: regime, signal: signal, scenario: scenario}
+				groups[key] = current
+			}
+			current.entries = append(current.entries, entry)
+		}
+	}
+	rows := make([]domain.AlertGammaBacktestRow, 0, len(groups))
+	for _, current := range groups {
+		metrics := scoreAlertBacktestForHolding(current.entries, params, holding)
+		row := domain.AlertGammaBacktestRow{
+			Signal: current.signal, Symbol: current.symbol, Side: current.side, Regime: current.regime, Scenario: current.scenario,
+			HoldingMinutes: int(holding / time.Minute), Trades: metrics.trades,
+			GrossPnL: metrics.grossPnL, Fees: metrics.fees, Slippage: metrics.slippage, NetPnL: metrics.netPnL,
+		}
+		if metrics.trades > 0 {
+			row.WinRate = float64(metrics.wins) / float64(metrics.trades) * 100
+		}
+		if metrics.grossLoss > 0 {
+			row.ProfitFactor = metrics.grossProfit / metrics.grossLoss
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Symbol != rows[j].Symbol {
+			return rows[i].Symbol < rows[j].Symbol
+		}
+		if rows[i].Side != rows[j].Side {
+			return rows[i].Side < rows[j].Side
+		}
+		if rows[i].Regime != rows[j].Regime {
+			return rows[i].Regime < rows[j].Regime
+		}
+		return rows[i].Scenario < rows[j].Scenario
+	})
+	return rows, coverage
+}
+
 type alertBacktestMetrics struct {
 	trades      int
 	additions   int
 	wins        int
 	grossProfit float64
 	grossLoss   float64
+	grossPnL    float64
+	fees        float64
+	slippage    float64
+	netPnL      float64
 	maxDrawdown float64
 	finalEquity float64
 }
@@ -546,11 +698,12 @@ func scoreAlertBacktestForHolding(entries []alertBacktestEntry, params AlertBack
 			}
 			prices = append(prices, price)
 		}
-		var totalQuantity, weightedEntry float64
+		var totalQuantity, weightedEntry, entryTurnover float64
 		for _, price := range prices {
 			quantity := params.EntryNotionalUSD * params.Leverage / price
 			totalQuantity += quantity
 			weightedEntry += quantity * price
+			entryTurnover += quantity * price
 		}
 		if totalQuantity <= 0 {
 			continue
@@ -587,15 +740,23 @@ func scoreAlertBacktestForHolding(entries []alertBacktestEntry, params AlertBack
 		if entry.side == "short" {
 			pnl = -pnl
 		}
+		turnover := entryTurnover + totalQuantity*exitPrice
+		fees := turnover * params.FeeBps / 10000
+		slippage := turnover * params.SlippageBps / 10000
+		netPnL := pnl - fees - slippage
 		metrics.trades++
 		metrics.additions += additions
-		if pnl > 0 {
+		metrics.grossPnL += pnl
+		metrics.fees += fees
+		metrics.slippage += slippage
+		metrics.netPnL += netPnL
+		if netPnL > 0 {
 			metrics.wins++
-			metrics.grossProfit += pnl
-		} else if pnl < 0 {
-			metrics.grossLoss -= pnl
+			metrics.grossProfit += netPnL
+		} else if netPnL < 0 {
+			metrics.grossLoss -= netPnL
 		}
-		metrics.finalEquity += pnl
+		metrics.finalEquity += netPnL
 		if metrics.finalEquity > peak {
 			peak = metrics.finalEquity
 		}
@@ -621,6 +782,10 @@ func backtestRowForHolding(signal, filter string, holding time.Duration, metrics
 		Trades:         metrics.trades,
 		Additions:      metrics.additions,
 		MaxDrawdown:    metrics.maxDrawdown,
+		GrossPnL:       metrics.grossPnL,
+		Fees:           metrics.fees,
+		Slippage:       metrics.slippage,
+		NetPnL:         metrics.netPnL,
 		FinalEquity:    metrics.finalEquity,
 	}
 	if metrics.trades > 0 {

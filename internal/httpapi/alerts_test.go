@@ -63,6 +63,11 @@ func TestAlertPageAndAssets(t *testing.T) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
 	}
+	for _, want := range []string{"alerts-backtest-gamma-rows", "alerts-backtest-gamma-coverage", "alerts-backtest-fee-bps", "alerts-backtest-slippage-bps", "alerts-backtest-gamma-near-pct", "alerts-backtest-gamma-confirm-samples", "手续费（bps / 单边）", "滑点（bps / 单边）", "Gamma 连续确认样本", "净盈亏（USD）"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the alerts backtest must expose %q", want)
+		}
+	}
 	for _, gone := range []string{"最新信号", "alerts-signal-rows", "alerts-signal-status", "alerts-alert-rows", "alerts-limit"} {
 		if strings.Contains(body, gone) {
 			t.Fatalf("the alerts page must not contain %q", gone)
@@ -121,7 +126,7 @@ func TestAlertPageAndAssets(t *testing.T) {
 	if !strings.Contains(script, "api/v1/alerts/order-settings") || !strings.Contains(script, "保存下单信号设置") || !strings.Contains(script, "orderSignalSaveBusy") || !strings.Contains(script, "button.setAttribute('aria-busy', 'true')") || !strings.Contains(script, "button.textContent = '保存中…'") || !strings.Contains(script, "showToast('策略开关已保存并立即生效')") {
 		t.Fatal("the alerts script must expose order signal category settings")
 	}
-	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "api/v1/alerts/backtest") || !strings.Contains(script, "runBacktest") || !strings.Contains(script, "backtestParamsBody") || !strings.Contains(script, "JSON.stringify(backtestParamsBody())") || !strings.Contains(script, "Content-Type': 'application/json'") || !strings.Contains(script, "alerts-backtest-leverage") || !strings.Contains(script, "alerts-backtest-vwap-donchian") || !strings.Contains(script, "alerts-filter').value") || !strings.Contains(script, "filter: $('alerts-filter').value") || !strings.Contains(script, "params.set('replay', '1')") || !strings.Contains(script, "historyReplayed") || !strings.Contains(script, "过去 7 天") || !strings.Contains(script, "signal-recalculate") || !strings.Contains(script, "startSignalProgress") || !strings.Contains(script, "finishSignalProgress") || !strings.Contains(script, "Math.min(99") || !strings.Contains(script, "setSignalProgress(100") {
+	if !strings.Contains(script, "api/v1/alerts/recalculate") || !strings.Contains(script, "api/v1/alerts/backtest") || !strings.Contains(script, "runBacktest") || !strings.Contains(script, "backtestParamsBody") || !strings.Contains(script, "JSON.stringify(backtestParamsBody())") || !strings.Contains(script, "Content-Type': 'application/json'") || !strings.Contains(script, "alerts-backtest-leverage") || !strings.Contains(script, "alerts-backtest-vwap-donchian") || !strings.Contains(script, "fee_bps_per_side") || !strings.Contains(script, "gamma_flip_confirm_samples") || !strings.Contains(script, "alerts-filter').value") || !strings.Contains(script, "filter: $('alerts-filter').value") || !strings.Contains(script, "params.set('replay', '1')") || !strings.Contains(script, "historyReplayed") || !strings.Contains(script, "过去 7 天") || !strings.Contains(script, "signal-recalculate") || !strings.Contains(script, "startSignalProgress") || !strings.Contains(script, "finishSignalProgress") || !strings.Contains(script, "Math.min(99") || !strings.Contains(script, "setSignalProgress(100") {
 		t.Fatal("the alerts script must expose the 7-day signal recalculation")
 	}
 	if !strings.Contains(script, "sortBacktest") || !strings.Contains(script, "alerts-backtest-sort") || !strings.Contains(script, "backtestSortDirection") {
@@ -445,7 +450,7 @@ func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
 	status := waitForReport(nil)
 	report := *status.Report
 	expectedHoldingMinutes := []int{15, 60, 240, 480, 720, 1440}
-	if report.WindowDays != 14 || report.HoldingMinutes != 15 || len(report.HoldingMinutesOptions) != len(expectedHoldingMinutes) || len(report.Rows) != 78 || report.InitialEquity != 10000 || report.Leverage != 1 || report.TakeProfitPct != 1.2 || report.StopLossPct != 1.5 || report.EntryNotionalUSD != 1000 || report.AddOnNotionalUSD != 1000 || report.MaxAddOns != 1 || report.VWAPRangeHours != 24 || report.VWAPMinDrawdownPct != 2 || report.VWAPDonchianPct != 35 {
+	if report.WindowDays != 14 || report.HoldingMinutes != 15 || len(report.HoldingMinutesOptions) != len(expectedHoldingMinutes) || len(report.Rows) != 78 || report.InitialEquity != 10000 || report.Leverage != 1 || report.TakeProfitPct != 1.2 || report.StopLossPct != 1.5 || report.EntryNotionalUSD != 1000 || report.AddOnNotionalUSD != 1000 || report.MaxAddOns != 1 || report.VWAPRangeHours != 24 || report.VWAPMinDrawdownPct != 2 || report.VWAPDonchianPct != 35 || report.FeeBps != 5 || report.SlippageBps != 2 || report.GammaFlipNearPct != 1 || report.GammaFlipConfirmSamples != 2 || report.GammaRows == nil {
 		t.Fatalf("unexpected default backtest report: %+v", report)
 	}
 	for index, holding := range expectedHoldingMinutes {
@@ -477,10 +482,10 @@ func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
 	if beforeSettings.Code != http.StatusOK {
 		t.Fatalf("live strategy settings before custom backtest status=%d body=%s", beforeSettings.Code, beforeSettings.Body.String())
 	}
-	customBody := `{"initial_equity":25000,"leverage":3,"take_profit_pct":2.5,"stop_loss_pct":4,"entry_notional_usd":750,"max_add_ons":3,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30}`
+	customBody := `{"initial_equity":25000,"leverage":3,"take_profit_pct":2.5,"stop_loss_pct":4,"entry_notional_usd":750,"max_add_ons":3,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30,"fee_bps_per_side":7.5,"slippage_bps_per_side":3.5,"gamma_flip_near_pct":1.5,"gamma_flip_confirm_samples":3}`
 	custom := waitForReport(strings.NewReader(customBody))
 	customReport := *custom.Report
-	if customReport.InitialEquity != 25000 || customReport.Leverage != 3 || customReport.TakeProfitPct != 2.5 || customReport.StopLossPct != 4 || customReport.EntryNotionalUSD != 750 || customReport.AddOnNotionalUSD != 750 || customReport.MaxAddOns != 3 || customReport.VWAPRangeHours != 18 || customReport.VWAPMinDrawdownPct != 2.5 || customReport.VWAPDonchianPct != 30 || len(customReport.Rows) != 78 {
+	if customReport.InitialEquity != 25000 || customReport.Leverage != 3 || customReport.TakeProfitPct != 2.5 || customReport.StopLossPct != 4 || customReport.EntryNotionalUSD != 750 || customReport.AddOnNotionalUSD != 750 || customReport.MaxAddOns != 3 || customReport.VWAPRangeHours != 18 || customReport.VWAPMinDrawdownPct != 2.5 || customReport.VWAPDonchianPct != 30 || customReport.FeeBps != 7.5 || customReport.SlippageBps != 3.5 || customReport.GammaFlipNearPct != 1.5 || customReport.GammaFlipConfirmSamples != 3 || len(customReport.Rows) != 78 {
 		t.Fatalf("unexpected custom backtest report: %+v", customReport)
 	}
 	afterSettings := serveAlert(srv, http.MethodGet, "/api/v1/alerts/strategy-settings", nil)
@@ -504,6 +509,10 @@ func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
 		`{"initial_equity":1,"leverage":1,"take_profit_pct":1,"stop_loss_pct":1,"entry_notional_usd":1,"max_add_ons":0,"vwap_range_hours":24,"vwap_min_drawdown_pct":0.05,"vwap_donchian_pct":35}`,
 		`{"initial_equity":1,"leverage":1,"take_profit_pct":1,"stop_loss_pct":1,"entry_notional_usd":1,"max_add_ons":0,"vwap_range_hours":24,"vwap_min_drawdown_pct":2,"vwap_donchian_pct":50}`,
 		`{"initial_equity":1,"leverage":1,"take_profit_pct":1,"stop_loss_pct":1,"entry_notional_usd":1,"max_add_ons":0.5,"vwap_range_hours":24,"vwap_min_drawdown_pct":2,"vwap_donchian_pct":35}`,
+		`{"fee_bps_per_side":101}`,
+		`{"slippage_bps_per_side":-1}`,
+		`{"gamma_flip_near_pct":11}`,
+		`{"gamma_flip_confirm_samples":13}`,
 	} {
 		invalidResponse := serveAlert(srv, http.MethodPost, "/api/v1/alerts/backtest", strings.NewReader(invalid))
 		if invalidResponse.Code != http.StatusBadRequest {

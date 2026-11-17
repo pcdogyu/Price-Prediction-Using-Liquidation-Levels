@@ -27,6 +27,8 @@ CREATE INDEX IF NOT EXISTS book_snapshots_retention_time ON book_snapshots(ts);
 CREATE TABLE IF NOT EXISTS market_metrics(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
 CREATE INDEX IF NOT EXISTS market_metrics_retention_time ON market_metrics(ts);
 CREATE TABLE IF NOT EXISTS gamma_latest(symbol TEXT PRIMARY KEY,payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS gamma_flip_history(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
+CREATE INDEX IF NOT EXISTS gamma_flip_history_retention_time ON gamma_flip_history(ts);
 CREATE TABLE IF NOT EXISTS deribit_gamma_history(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
 CREATE INDEX IF NOT EXISTS deribit_gamma_retention_time ON deribit_gamma_history(ts);`)
 	return err
@@ -385,8 +387,57 @@ func (s *Store) SaveGamma(ctx context.Context, g domain.GammaView) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.options().ExecContext(ctx, `INSERT INTO gamma_latest(symbol,payload) VALUES(?,?) ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload`, g.Symbol, b)
-	return err
+	tx, err := s.options().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO gamma_latest(symbol,payload) VALUES(?,?) ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload`, g.Symbol, b); err != nil {
+		return err
+	}
+	snapshot := domain.GammaFlipSnapshotFromView(g)
+	if !snapshot.Time.IsZero() {
+		snapshotJSON, marshalErr := json.Marshal(snapshot)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO gamma_flip_history(symbol,ts,payload) VALUES(?,?,?) ON CONFLICT(symbol,ts) DO UPDATE SET payload=excluded.payload`, snapshot.Symbol, snapshot.Time.UnixMilli(), snapshotJSON); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) GammaFlipHistory(ctx context.Context, symbol string, from, to time.Time) ([]domain.GammaFlipSnapshot, error) {
+	rows, err := s.options().QueryContext(ctx, `SELECT payload FROM gamma_flip_history WHERE symbol=? AND ts>=? AND ts<? ORDER BY ts`, strings.ToUpper(strings.TrimSpace(symbol)), from.UTC().UnixMilli(), to.UTC().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.GammaFlipSnapshot{}
+	for rows.Next() {
+		var payload []byte
+		var snapshot domain.GammaFlipSnapshot
+		if err = rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(payload, &snapshot); err != nil {
+			return nil, err
+		}
+		out = append(out, snapshot)
+	}
+	return out, rows.Err()
+}
+
+const gammaFlipHistoryRetentionDays = 30
+
+func (s *Store) PruneGammaFlipHistory(ctx context.Context, now time.Time) (int64, error) {
+	cutoff := now.UTC().AddDate(0, 0, -gammaFlipHistoryRetentionDays).UnixMilli()
+	result, err := s.options().ExecContext(ctx, `DELETE FROM gamma_flip_history WHERE rowid IN (SELECT rowid FROM gamma_flip_history WHERE ts<? LIMIT 5000)`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 func (s *Store) LatestGamma(ctx context.Context, symbol string) (domain.GammaView, error) {
 	var g domain.GammaView

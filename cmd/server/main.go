@@ -20,6 +20,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authn"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/dbcleanup"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/httpapi"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/marketmigration"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/modelsmigration"
@@ -143,6 +144,12 @@ func main() {
 		gamma := svc.CurrentETHGamma(ctx)
 		return tvbotserver.GammaSnapshot{State: gamma.State, Value: gamma.Gamma}
 	})
+	bridge.Handler.SetGammaFlipProviders(
+		func(ctx context.Context, symbol string) domain.GammaFlipSnapshot {
+			return svc.CurrentGammaFlipSnapshot(ctx, symbol)
+		},
+		svc.GammaFlipHistory,
+	)
 	bridge.Start(ctx)
 	svc.Start(ctx)
 	srv, err := httpapi.New(cfg, svc, log, logStore, st)

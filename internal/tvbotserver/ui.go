@@ -1899,6 +1899,7 @@ const tvbotHTML = `<!doctype html>
     .analysis-trade-table .analysis-inst-id-col { width: 6.4%; }
     .analysis-trade-table .analysis-side-col { width: 5.4%; }
     .analysis-trade-table .analysis-gamma-col { width: 7.2%; }
+    .analysis-trade-table .analysis-gamma-flip-col { width: 17%; }
     .analysis-trade-table .analysis-strategy-col { width: 9.2%; }
     .analysis-trade-table .analysis-exit-source-col { width: 10%; }
     .analysis-trade-table .analysis-entry-px-col { width: 7%; }
@@ -2781,6 +2782,12 @@ const tvbotHTML = `<!doctype html>
             <label class="gamma-policy-option"><input type="radio" name="gamma-negative-policy" value="adaptive"><span><strong>选项 3：自适应 Gamma</strong>仅 VAL/VAH 刷单按 Gamma 选择均值回归或突破顺势，普通信号保持原方向。</span></label>
           </div>
           <div class="muted">使用共享的最新 ETHUSDT Deribit Gamma；Gamma 不可用或过期时普通信号放行，VAL/VAH 自适应按正 Gamma 回归规则执行。</div>
+          <div class="grid three" style="margin-top:10px">
+            <label><span><input id="gamma-flip-guard-enabled" type="checkbox"> 启用 Gamma Flip 开仓保护</span></label>
+            <label>Flip 观望区（%）<input id="gamma-flip-near-pct" type="number" min="0.1" max="10" step="0.1"></label>
+            <label>连续确认样本数<input id="gamma-flip-confirm-samples" type="number" min="1" max="12" step="1"></label>
+          </div>
+          <div class="muted">价格进入 Flip 观望区时跳过自动开仓；离开观望区后仍需连续样本保持同一 Gamma 正负状态。数据过期或缺失时按现有信号流程执行，快照仍写入订单记录。</div>
         </div>
       </div>
       <div id="layered-order-fields" style="display:none;margin-top:14px">
@@ -3193,6 +3200,7 @@ const tvbotHTML = `<!doctype html>
       { id: "inst_id", title: "币对", colClass: "analysis-inst-id-col", renderHTML: (row) => analysisTradeSymbolHTML(row) },
       { id: "side", title: "方向", colClass: "analysis-side-col", toneClass: (row) => analysisPositionSideToneClass(row.side), render: (row) => analysisPositionSideText(row.side) },
       { id: "gamma", title: "Gamma", colClass: "analysis-gamma-col", render: (row) => analysisGammaDirectionText(row) },
+      { id: "gamma_flip", title: "GEX / Flip 快照", colClass: "analysis-gamma-flip-col", render: (row) => analysisGammaFlipSnapshotText(row) },
       { id: "strategy", title: "策略", colClass: "analysis-strategy-col", render: (row) => analysisStrategyText(row) },
       { id: "exit_source", title: "平仓来源", colClass: "analysis-exit-source-col", render: (row) => analysisExitSourceText(row) },
       { id: "entry_px", title: "开仓价", colClass: "analysis-entry-px-col", render: (row) => analysisPriceText(row, row.entry_px) },
@@ -6308,6 +6316,9 @@ const tvbotHTML = `<!doctype html>
       document.querySelectorAll('input[name="gamma-negative-policy"]').forEach((input) => {
         input.checked = input.value === gammaPolicy;
       });
+      $("gamma-flip-guard-enabled").checked = trading.gamma_flip_guard_enabled !== false;
+      $("gamma-flip-near-pct").value = trading.gamma_flip_near_pct || 1;
+      $("gamma-flip-confirm-samples").value = trading.gamma_flip_confirm_samples || 2;
       $("order-risk-type").value = trading.risk_type || "tp_sl";
       $("order-risk-type").value = "none";
       updateOrderRiskFields();
@@ -6463,6 +6474,7 @@ const tvbotHTML = `<!doctype html>
         ["最多持仓币对数", asText($("order-max-open-coinpairs").value || 0) + (Number($("order-max-open-coinpairs").value || 0) === 0 ? "（不限）" : "")],
         ["24h 交易额排名限制", orderTurnoverScopeLabel($("order-turnover-scope").value)],
         ["ETH Gamma<0", gammaNegativePolicyLabel(selectedGammaNegativePolicy())],
+        ["Gamma Flip 保护", $("gamma-flip-guard-enabled").checked ? ("观望 " + asText($("gamma-flip-near-pct").value) + "% / 连续确认 " + asText($("gamma-flip-confirm-samples").value) + " 个样本") : "关闭"],
         [orderType === "limit" ? "多单限价单价格" : "市价单估算价格", orderType === "limit" ? "TradingView 当前价格 x " + asText($("order-long-multiplier").value) : "TradingView 当前价格"],
         [orderType === "limit" ? "空单限价单价格" : "OKX 下单价格", orderType === "limit" ? "TradingView 当前价格 x " + asText($("order-short-multiplier").value) : "市价"],
         ["固定止盈止损", asText($("order-tp").value) + "% / " + asText($("order-sl").value) + "%"],
@@ -8207,6 +8219,18 @@ const tvbotHTML = `<!doctype html>
       return "-";
     }
 
+    function analysisGammaFlipSnapshotText(row) {
+      const members = row && row.aggregate_count && Array.isArray(row.aggregate_members) ? row.aggregate_members : [row || {}];
+      const snapshots = members.map((member) => member && member.gamma_flip_snapshot).filter((snapshot) => snapshot && snapshot.time);
+      if (!snapshots.length) return "-";
+      const signature = (snapshot) => [snapshot.symbol, snapshot.time, snapshot.gamma_value, snapshot.gamma_flip, snapshot.flip_state].join("|");
+      if (snapshots.length !== members.length || new Set(snapshots.map(signature)).size > 1) return "多时点";
+      const snapshot = snapshots[0];
+      const gamma = formatUSD(snapshot.gamma_value);
+      const flip = snapshot.gamma_flip === null || snapshot.gamma_flip === undefined ? "Flip —" : "Flip " + formatNumber(snapshot.gamma_flip);
+      return (snapshot.symbol || "Gamma") + " " + gamma + " / " + flip + " / " + analysisTimeText(snapshot.time);
+    }
+
     function analysisStrategyText(row) {
       const value = String(row && row.strategy || "").trim().toLowerCase();
       if (value === "trend") return "趋势策略";
@@ -9510,6 +9534,9 @@ const tvbotHTML = `<!doctype html>
             order_type: $("order-type").value,
             market_turnover_scope: $("order-turnover-scope").value,
             gamma_negative_policy: selectedGammaNegativePolicy(),
+            gamma_flip_guard_enabled: $("gamma-flip-guard-enabled").checked,
+            gamma_flip_near_pct: Number($("gamma-flip-near-pct").value),
+            gamma_flip_confirm_samples: Number($("gamma-flip-confirm-samples").value),
             risk_type: "none",
             protection_orders_enabled: false,
             take_profit_pct: Number($("order-tp").value),
@@ -10244,10 +10271,11 @@ const tvbotHTML = `<!doctype html>
     document.querySelectorAll('input[name="gamma-negative-policy"]').forEach((input) => {
       input.addEventListener("change", () => renderOrderSettingsPreview());
     });
-    ["order-amount", "order-amount-mode", "order-amount-pct", "order-max-open-coinpairs", "order-leverage", "order-type", "order-turnover-scope", "order-risk-type", "order-tp", "order-sl", "order-trailing", "order-long-multiplier", "order-short-multiplier", "order-layered-market-pct", "order-layered-signal-pct", "order-layered-layer-0-amount", "order-layered-layer-0-offset", "order-layered-layer-1-amount", "order-layered-layer-1-offset", "order-layered-layer-2-amount", "order-layered-layer-2-offset", "order-layered-layer-3-amount", "order-layered-layer-3-offset", "order-pyramid-threshold"].forEach((id) => {
+    ["order-amount", "order-amount-mode", "order-amount-pct", "order-max-open-coinpairs", "order-leverage", "order-type", "order-turnover-scope", "order-risk-type", "order-tp", "order-sl", "order-trailing", "order-long-multiplier", "order-short-multiplier", "order-layered-market-pct", "order-layered-signal-pct", "order-layered-layer-0-amount", "order-layered-layer-0-offset", "order-layered-layer-1-amount", "order-layered-layer-1-offset", "order-layered-layer-2-amount", "order-layered-layer-2-offset", "order-layered-layer-3-amount", "order-layered-layer-3-offset", "order-pyramid-threshold", "gamma-flip-near-pct", "gamma-flip-confirm-samples"].forEach((id) => {
       $(id).addEventListener("input", () => renderOrderSettingsPreview());
       $(id).addEventListener("change", () => renderOrderSettingsPreview());
     });
+    $("gamma-flip-guard-enabled").addEventListener("change", () => renderOrderSettingsPreview());
     $("order-amount-mode").addEventListener("change", () => { updateOrderAmountFields(); renderOrderSettingsPreview(); });
     $("order-type").addEventListener("change", () => { updateLayeredOrderFields(); renderOrderSettingsPreview(); });
     $("order-risk-type").addEventListener("change", () => { updateOrderRiskFields(); renderOrderSettingsPreview(); });

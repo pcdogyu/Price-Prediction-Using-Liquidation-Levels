@@ -202,7 +202,7 @@
   let backtestHoldingOptions = BACKTEST_HOLDING_OPTIONS.slice(), backtestHoldingDefault = BACKTEST_HOLDING_OPTIONS[0];
   const backtestSignalOrder = { alert: 0, aggressive: 1, steady: 2, value_area: 3 };
   const backtestFilterOrder = { none: 0, vwap: 1, donchian: 2, vwap_donchian: 3 };
-  const backtestNumericSortKeys = new Set(['holding_minutes', 'trades', 'additions', 'win_rate', 'profit_factor', 'max_drawdown_pct', 'final_equity']);
+  const backtestNumericSortKeys = new Set(['holding_minutes', 'trades', 'additions', 'win_rate', 'profit_factor', 'max_drawdown_pct', 'net_pnl', 'final_equity']);
   const backtestPercent = value => Number.isFinite(Number(value)) ? Number(value).toFixed(2) + '%' : '—';
   const backtestFactor = value => Number(value) > 0 ? Number(value).toFixed(2) : '—';
   const backtestEquity = value => Number.isFinite(Number(value)) ? '$' + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
@@ -267,8 +267,12 @@
       '<td>' + escape(backtestPercent(row.win_rate)) + '</td>' +
       '<td>' + escape(backtestFactor(row.profit_factor)) + '</td>' +
       '<td>' + escape(backtestPercent(row.max_drawdown_pct)) + '</td>' +
+      '<td>' + escape(backtestEquity(row.gross_pnl)) + '</td>' +
+      '<td>' + escape(backtestEquity(row.fees)) + '</td>' +
+      '<td>' + escape(backtestEquity(row.slippage)) + '</td>' +
+      '<td>' + escape(backtestEquity(row.net_pnl)) + '</td>' +
       '<td>' + escape(backtestEquity(row.final_equity)) + '</td>' +
-      '</tr>').join('') : '<tr><td colspan="8">没有可评分的历史信号</td></tr>';
+      '</tr>').join('') : '<tr><td colspan="13">没有可评分的历史信号</td></tr>';
     updateBacktestSortControls();
   }
 
@@ -290,6 +294,23 @@
     backtestHoldingOptions = reportedOptions.length ? reportedOptions : [Number(report && report.holding_minutes) || BACKTEST_HOLDING_OPTIONS[0]];
     backtestHoldingDefault = backtestHoldingOptions[0];
     renderBacktestRows();
+    const gammaRows = Array.isArray(report && report.gamma_rows) ? report.gamma_rows : [];
+    const gammaScenarioLabels = { baseline: '全部样本', skip_near_flip: '翻转区观望', confirmed_regime: '连续确认后开仓' };
+    const gammaRegimeLabels = { positive: '正 Gamma', negative: '负 Gamma', near_flip: '翻转区', unknown: '数据不足' };
+    $('alerts-backtest-gamma-rows').innerHTML = gammaRows.length ? gammaRows.map(row => '<tr>' +
+      '<td>' + escape(backtestSignalLabels[row.signal] || row.signal || '—') + '</td>' +
+      '<td>' + escape(row.symbol || '—') + '</td>' +
+      '<td>' + escape(row.side === 'long' ? '多' : row.side === 'short' ? '空' : '—') + '</td>' +
+      '<td>' + escape(gammaRegimeLabels[row.regime] || row.regime || '—') + '</td>' +
+      '<td>' + escape(gammaScenarioLabels[row.scenario] || row.scenario || '—') + '</td>' +
+      '<td>' + escape(String(row.trades ?? 0)) + '</td>' +
+      '<td>' + escape(backtestPercent(row.win_rate)) + '</td>' +
+      '<td>' + escape(backtestFactor(row.profit_factor)) + '</td>' +
+      '<td>' + escape(backtestEquity(row.gross_pnl)) + '</td>' +
+      '<td>' + escape(backtestEquity(row.fees)) + '</td>' +
+      '<td>' + escape(backtestEquity(row.slippage)) + '</td>' +
+      '<td>' + escape(backtestEquity(row.net_pnl)) + '</td>' +
+      '</tr>').join('') : '<tr><td colspan="12">没有可用的 Gamma 分层交易</td></tr>';
     const symbols = Number(report && report.symbol_count) || 0;
     const days = Number(report && report.window_days) || 14;
     const holdingText = backtestHoldingOptions.map(backtestHoldingLabel).join('、');
@@ -302,9 +323,16 @@
     const vwapRangeHours = Number(report && report.vwap_range_hours) || 24;
     const vwapMinDrawdown = Number(report && report.vwap_min_drawdown_pct) || 2;
     const vwapDonchian = Number(report && report.vwap_donchian_pct) || 35;
+    const feeBps = Number(report && report.fee_bps_per_side) || 0;
+    const slippageBps = Number(report && report.slippage_bps_per_side) || 0;
+    const gammaNearPct = Number(report && report.gamma_flip_near_pct) || 1;
+    const gammaConfirmSamples = Number(report && report.gamma_flip_confirm_samples) || 2;
     const moneyValue = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     $('alerts-backtest-status').textContent = '过去 ' + days + ' 天回测完成 · ' + symbols + ' 个币对 · 持有 ' + holdingText + ' · 生成 ' + when(report && report.generated_at);
-    $('alerts-backtest-note').textContent = '本次回测参数：持有时间 ' + holdingText + '（最长持有期限，止盈或止损先触发则提前退出）· 本金 $' + moneyValue(initial) + ' · 杠杆 ' + leverage + 'x · 止盈 ' + takeProfit + '% · 止损 ' + stopLoss + '% · 每次下单保证金 $' + moneyValue(orderSize) + ' · 最多加仓 ' + maxAddOns + ' 次 · VWAP Donchian 窗口 ' + vwapRangeHours + ' 小时 · 最小回撤 ' + vwapMinDrawdown + '% · 分位 ' + vwapDonchian + '%。采用收盘触发、到期后下一根完整 K 线收盘成交；不计手续费、滑点和资金费；没有下一根完整 K 线的末端信号不计入交易数。';
+    const covered = Number(report && report.gamma_flip_coverage_signals) || 0;
+    const total = Number(report && report.gamma_flip_total_signals) || 0;
+    $('alerts-backtest-gamma-coverage').textContent = 'Gamma 覆盖 ' + covered + ' / ' + total + ' 个候选信号';
+    $('alerts-backtest-note').textContent = '本次回测参数：持有时间 ' + holdingText + '（最长持有期限，止盈或止损先触发则提前退出）· 本金 $' + moneyValue(initial) + ' · 杠杆 ' + leverage + 'x · 止盈 ' + takeProfit + '% · 止损 ' + stopLoss + '% · 每次下单保证金 $' + moneyValue(orderSize) + ' · 最多加仓 ' + maxAddOns + ' 次 · VWAP Donchian 窗口 ' + vwapRangeHours + ' 小时 · 最小回撤 ' + vwapMinDrawdown + '% · 分位 ' + vwapDonchian + '% · 手续费 ' + feeBps + ' bps/单边 · 滑点 ' + slippageBps + ' bps/单边 · 翻转观望区 ±' + gammaNearPct + '% · 连续确认 ' + gammaConfirmSamples + ' 个样本。手续费和滑点按开平仓成交额扣除，资金费未计入；Gamma 覆盖 ' + covered + ' / ' + total + ' 个候选信号；没有下一根完整 K 线的末端信号不计入交易数。';
   }
 
   function backtestParamsBody() {
@@ -317,7 +345,11 @@
       max_add_ons: Number($('alerts-backtest-max-add-ons').value),
       vwap_range_hours: Number($('alerts-backtest-vwap-range-hours').value),
       vwap_min_drawdown_pct: Number($('alerts-backtest-vwap-min-drawdown').value),
-      vwap_donchian_pct: Number($('alerts-backtest-vwap-donchian').value)
+      vwap_donchian_pct: Number($('alerts-backtest-vwap-donchian').value),
+      fee_bps_per_side: Number($('alerts-backtest-fee-bps').value),
+      slippage_bps_per_side: Number($('alerts-backtest-slippage-bps').value),
+      gamma_flip_near_pct: Number($('alerts-backtest-gamma-near-pct').value),
+      gamma_flip_confirm_samples: Number($('alerts-backtest-gamma-confirm-samples').value)
     };
   }
 
@@ -326,6 +358,7 @@
     const button = $('alerts-backtest-run');
     backtestBusy = true;
     button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
     button.textContent = '回测中…';
     $('alerts-backtest-status').textContent = '正在读取过去 2 周报警并计算…';
     try {
@@ -358,6 +391,7 @@
     } finally {
       backtestBusy = false;
       button.disabled = false;
+      button.removeAttribute('aria-busy');
       button.textContent = '回测 2 周';
     }
   }

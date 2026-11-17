@@ -4,7 +4,9 @@ import (
 	"context"
 	"math"
 	"strings"
+	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 	tvbottrading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
@@ -18,11 +20,60 @@ type GammaSnapshot struct {
 
 type GammaProvider func(context.Context) GammaSnapshot
 
+type GammaFlipSnapshotProvider func(context.Context, string) domain.GammaFlipSnapshot
+
+type GammaFlipHistoryProvider func(context.Context, string, time.Time, time.Time) ([]domain.GammaFlipSnapshot, error)
+
+func (s *Server) applyTVOrderGammaFlipGuard(ctx context.Context, signal *tvbottrading.Signal, cfg tvbotconfig.Config, at time.Time) string {
+	if signal == nil || signal.PositionEffect != tvbottrading.PositionEffectOpen ||
+		!cfg.Trading.GammaFlipGuardEnabled || s == nil || (s.GammaFlipProvider == nil && signal.GammaFlipSnapshot == nil) ||
+		manualAlertOrderBypassesGamma(*signal) {
+		return ""
+	}
+	if signal.GammaFlipSnapshot == nil && s.GammaFlipProvider != nil {
+		snapshot := s.GammaFlipProvider(ctx, firstNonEmptyString(signal.Ticker, signal.Coinpair))
+		signal.GammaFlipSnapshot = &snapshot
+	}
+	from := at.Add(-2 * time.Hour)
+	history := []domain.GammaFlipSnapshot{}
+	if s.GammaFlipHistoryProvider != nil {
+		if rows, err := s.GammaFlipHistoryProvider(ctx, firstNonEmptyString(signal.Ticker, signal.Coinpair), from, at.Add(time.Millisecond)); err == nil {
+			history = rows
+		}
+	}
+	if signal.GammaFlipSnapshot != nil && !signal.GammaFlipSnapshot.Time.IsZero() {
+		found := false
+		for i := range history {
+			if history[i].Time.Equal(signal.GammaFlipSnapshot.Time) {
+				history[i] = *signal.GammaFlipSnapshot
+				found = true
+				break
+			}
+		}
+		if !found {
+			history = append(history, *signal.GammaFlipSnapshot)
+		}
+	}
+	decision := domain.EvaluateGammaFlip(history, at, cfg.Trading.GammaFlipNearPct, cfg.Trading.GammaFlipConfirmSamples)
+	if !decision.Available {
+		return ""
+	}
+	return decision.Reason
+}
+
 func (s *Server) SetGammaProvider(provider GammaProvider) {
 	if s == nil {
 		return
 	}
 	s.GammaProvider = provider
+}
+
+func (s *Server) SetGammaFlipProviders(snapshot GammaFlipSnapshotProvider, history GammaFlipHistoryProvider) {
+	if s == nil {
+		return
+	}
+	s.GammaFlipProvider = snapshot
+	s.GammaFlipHistoryProvider = history
 }
 
 func (s *Server) applyTVOrderGammaPolicy(ctx context.Context, signal *tvbottrading.Signal, cfg tvbotconfig.Config) bool {

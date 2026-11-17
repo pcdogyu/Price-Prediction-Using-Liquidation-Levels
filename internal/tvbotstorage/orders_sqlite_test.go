@@ -12,9 +12,43 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	appstore "github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
+
+func TestOrderRecordPersistsGammaFlipSnapshot(t *testing.T) {
+	for _, backend := range []string{"memory", "sqlite"} {
+		t.Run(backend, func(t *testing.T) {
+			var orders *OrderStore
+			var err error
+			if backend == "memory" {
+				orders, err = NewOrderStore("")
+			} else {
+				orders, err = NewSQLiteOrderStore(filepath.Join(t.TempDir(), "orders.db"), "")
+				if err == nil {
+					t.Cleanup(func() { _ = orders.Close() })
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			flip := 65000.0
+			signal := trading.Signal{
+				Action: trading.ActionLong, Coinpair: "BTCUSDT", Ticker: "BTCUSDT",
+				GammaFlipSnapshot: &domain.GammaFlipSnapshot{Symbol: "BTCUSDT", State: "ok", Time: time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC), SpotPrice: 64000, GammaValue: 123.5, GammaFlip: &flip, FlipState: "ok"},
+			}
+			record, _, err := orders.RecordAccepted(signal, "gamma-dedupe", time.Date(2026, 11, 17, 12, 0, 1, 0, time.UTC))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, ok := orders.Get(record.SignalID)
+			if !ok || got.GammaFlipSnapshot == nil || got.GammaFlipSnapshot.GammaFlip == nil || *got.GammaFlipSnapshot.GammaFlip != flip || got.GammaFlipSnapshot.GammaValue != 123.5 {
+				t.Fatalf("Gamma Flip snapshot was not persisted: ok=%v snapshot=%+v", ok, got.GammaFlipSnapshot)
+			}
+		})
+	}
+}
 
 func TestSQLiteOrderStoreCanShareApplicationDatabase(t *testing.T) {
 	appDB, err := appstore.Open(filepath.Join(t.TempDir(), "liquidation.db"))

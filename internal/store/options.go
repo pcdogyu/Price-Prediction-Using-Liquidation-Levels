@@ -16,6 +16,8 @@ import (
 func (s *Store) migrateOptionGamma(ctx context.Context) error {
 	_, err := s.options().ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS gamma_latest(symbol TEXT PRIMARY KEY,payload BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS gamma_flip_history(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
+CREATE INDEX IF NOT EXISTS gamma_flip_history_retention_time ON gamma_flip_history(ts);
 CREATE TABLE IF NOT EXISTS deribit_gamma_history(symbol TEXT NOT NULL,ts INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(symbol,ts));
 CREATE INDEX IF NOT EXISTS deribit_gamma_retention_time ON deribit_gamma_history(ts);`)
 	return err

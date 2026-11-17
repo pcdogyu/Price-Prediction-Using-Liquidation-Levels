@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type LiquidationFilter struct {
 	Symbol, Side, Field, Cursor string
@@ -198,6 +201,42 @@ type GammaView struct {
 	Method                string            `json:"method"`
 	Warnings              []string          `json:"warnings"`
 }
+
+// GammaFlipSnapshot is the compact, time-indexed part of a Binance options
+// Gamma view needed to explain and replay trading decisions. It intentionally
+// omits the full strike/expiry arrays so retaining a month of snapshots stays
+// small.
+type GammaFlipSnapshot struct {
+	Symbol            string    `json:"symbol"`
+	State             string    `json:"state"`
+	Time              time.Time `json:"time"`
+	SpotPrice         float64   `json:"spot_price"`
+	GammaValue        float64   `json:"gamma_value"`
+	GammaFlip         *float64  `json:"gamma_flip,omitempty"`
+	FlipState         string    `json:"flip_state"`
+	Contracts         int       `json:"contracts"`
+	ExpectedContracts int       `json:"expected_contracts"`
+}
+
+func GammaFlipSnapshotFromView(view GammaView) GammaFlipSnapshot {
+	var flip *float64
+	if view.GammaFlip != nil {
+		value := *view.GammaFlip
+		flip = &value
+	}
+	return GammaFlipSnapshot{
+		Symbol:            strings.ToUpper(strings.TrimSpace(view.Symbol)),
+		State:             strings.ToLower(strings.TrimSpace(view.State)),
+		Time:              view.Time.UTC(),
+		SpotPrice:         view.SpotPrice,
+		GammaValue:        view.NetGEXUSD,
+		GammaFlip:         flip,
+		FlipState:         strings.ToLower(strings.TrimSpace(view.FlipState)),
+		Contracts:         view.Contracts,
+		ExpectedContracts: view.ExpectedContracts,
+	}
+}
+
 type MarketInfo struct {
 	Symbol     string           `json:"symbol"`
 	State      string           `json:"state"`

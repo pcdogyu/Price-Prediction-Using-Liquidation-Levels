@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 	_ "modernc.org/sqlite"
 )
@@ -32,33 +33,34 @@ const (
 )
 
 type OrderRecord struct {
-	SignalID       string              `json:"signal_id"`
-	DedupeKey      string              `json:"dedupe_key"`
-	Status         OrderStatus         `json:"status"`
-	Action         trading.Side        `json:"action"`
-	SourceAction   trading.Side        `json:"source_action,omitempty"`
-	APIID          string              `json:"api_id,omitempty"`
-	SourceExchange string              `json:"source_exchange,omitempty"`
-	TargetExchange string              `json:"target_exchange,omitempty"`
-	TradeEnv       string              `json:"trade_env,omitempty"`
-	Coinpair       string              `json:"coinpair"`
-	Ticker         string              `json:"ticker"`
-	Price          string              `json:"price"`
-	Leverage       int                 `json:"leverage"`
-	Amount         string              `json:"amount"`
-	ADX            *float64            `json:"adx,omitempty"`
-	MarketStrategy string              `json:"market_strategy,omitempty"`
-	Risk           trading.Risk        `json:"risk,omitempty"`
-	OrderIntent    string              `json:"order_intent,omitempty"`
-	PositionEffect string              `json:"position_effect,omitempty"`
-	PositionSide   string              `json:"position_side,omitempty"`
-	TokenHash      string              `json:"token_hash"`
-	AcceptedAt     time.Time           `json:"accepted_at"`
-	UpdatedAt      time.Time           `json:"updated_at"`
-	Result         trading.OrderResult `json:"result,omitempty"`
-	ErrorCode      string              `json:"error_code,omitempty"`
-	Error          string              `json:"error,omitempty"`
-	RawJSON        string              `json:"raw_json,omitempty"`
+	SignalID          string                    `json:"signal_id"`
+	DedupeKey         string                    `json:"dedupe_key"`
+	Status            OrderStatus               `json:"status"`
+	Action            trading.Side              `json:"action"`
+	SourceAction      trading.Side              `json:"source_action,omitempty"`
+	APIID             string                    `json:"api_id,omitempty"`
+	SourceExchange    string                    `json:"source_exchange,omitempty"`
+	TargetExchange    string                    `json:"target_exchange,omitempty"`
+	TradeEnv          string                    `json:"trade_env,omitempty"`
+	Coinpair          string                    `json:"coinpair"`
+	Ticker            string                    `json:"ticker"`
+	Price             string                    `json:"price"`
+	Leverage          int                       `json:"leverage"`
+	Amount            string                    `json:"amount"`
+	ADX               *float64                  `json:"adx,omitempty"`
+	MarketStrategy    string                    `json:"market_strategy,omitempty"`
+	GammaFlipSnapshot *domain.GammaFlipSnapshot `json:"gamma_flip_snapshot,omitempty"`
+	Risk              trading.Risk              `json:"risk,omitempty"`
+	OrderIntent       string                    `json:"order_intent,omitempty"`
+	PositionEffect    string                    `json:"position_effect,omitempty"`
+	PositionSide      string                    `json:"position_side,omitempty"`
+	TokenHash         string                    `json:"token_hash"`
+	AcceptedAt        time.Time                 `json:"accepted_at"`
+	UpdatedAt         time.Time                 `json:"updated_at"`
+	Result            trading.OrderResult       `json:"result,omitempty"`
+	ErrorCode         string                    `json:"error_code,omitempty"`
+	Error             string                    `json:"error,omitempty"`
+	RawJSON           string                    `json:"raw_json,omitempty"`
 }
 
 type PyramidState struct {
@@ -1045,7 +1047,8 @@ func (s *OrderStore) migrateSQLite() error {
 			result_json TEXT,
 			error_code TEXT,
 			error TEXT,
-			raw_json TEXT
+			raw_json TEXT,
+			gamma_snapshot_json TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_orders_dedupe ON orders(dedupe_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_orders_accepted_at ON orders(accepted_at)`,
@@ -1366,6 +1369,11 @@ func (s *OrderStore) ensureOrderExchangeColumns() error {
 	}
 	if !columns["raw_json"] {
 		if _, err := s.db.Exec(`ALTER TABLE orders ADD COLUMN raw_json TEXT`); err != nil {
+			return err
+		}
+	}
+	if !columns["gamma_snapshot_json"] {
+		if _, err := s.db.Exec(`ALTER TABLE orders ADD COLUMN gamma_snapshot_json TEXT`); err != nil {
 			return err
 		}
 	}
@@ -1789,10 +1797,18 @@ func (s *OrderStore) insertOrderSQLiteLocked(rec OrderRecord) error {
 		}
 		riskJSON = string(b)
 	}
+	gammaSnapshotJSON := ""
+	if rec.GammaFlipSnapshot != nil {
+		b, err := json.Marshal(rec.GammaFlipSnapshot)
+		if err != nil {
+			return err
+		}
+		gammaSnapshotJSON = string(b)
+	}
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO orders (
 		signal_id, dedupe_key, status, action, source_action, api_id, source_exchange, target_exchange, trade_env, coinpair, ticker, price,
-		leverage, amount, adx, market_strategy, risk_json, order_intent, position_effect, position_side, token_hash, accepted_at, updated_at, result_json, error_code, error, raw_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		leverage, amount, adx, market_strategy, risk_json, order_intent, position_effect, position_side, token_hash, accepted_at, updated_at, result_json, error_code, error, raw_json, gamma_snapshot_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.SignalID,
 		rec.DedupeKey,
 		string(rec.Status),
@@ -1820,6 +1836,7 @@ func (s *OrderStore) insertOrderSQLiteLocked(rec OrderRecord) error {
 		rec.ErrorCode,
 		rec.Error,
 		rec.RawJSON,
+		gammaSnapshotJSON,
 	)
 	return err
 }
@@ -1871,7 +1888,7 @@ func (s *OrderStore) listSQLiteActiveOpeningOrdersLocked(filter ActiveOpeningOrd
 		}
 	}
 	rows, err := s.db.Query(`SELECT signal_id, dedupe_key, status, action, source_action, api_id, source_exchange, target_exchange, trade_env, coinpair, ticker, price,
-		leverage, amount, adx, market_strategy, risk_json, order_intent, position_effect, position_side, token_hash, accepted_at, updated_at, result_json, error_code, error, raw_json
+		leverage, amount, adx, market_strategy, risk_json, order_intent, position_effect, position_side, token_hash, accepted_at, updated_at, result_json, error_code, error, raw_json, gamma_snapshot_json
 		FROM orders WHERE `+strings.Join(where, " AND ")+` ORDER BY accepted_at DESC, signal_id DESC`, args...)
 	if err != nil {
 		return nil, err
@@ -1916,7 +1933,7 @@ func (s *OrderStore) listSQLiteFilteredPageWithSignalFiltersLocked(exchange stri
 	}
 	where, args := orderSQLiteFilterWhereWithSignalFilters(exchange, status, sourceExchange, signalFilter, coinpair, query)
 	sql := `SELECT signal_id, dedupe_key, status, action, source_action, api_id, source_exchange, target_exchange, trade_env, coinpair, ticker, price,
-		leverage, amount, adx, market_strategy, risk_json, order_intent, position_effect, position_side, token_hash, accepted_at, updated_at, result_json, error_code, error, raw_json
+		leverage, amount, adx, market_strategy, risk_json, order_intent, position_effect, position_side, token_hash, accepted_at, updated_at, result_json, error_code, error, raw_json, gamma_snapshot_json
 		FROM orders`
 	if where != "" {
 		sql += " WHERE " + where
@@ -2265,7 +2282,7 @@ func isOrderSymbolSubsequence(text, term string) bool {
 
 func (s *OrderStore) findSQLiteLocked(signalID string) (OrderRecord, error) {
 	row := s.db.QueryRow(`SELECT signal_id, dedupe_key, status, action, source_action, api_id, source_exchange, target_exchange, trade_env, coinpair, ticker, price,
-		leverage, amount, adx, market_strategy, risk_json, order_intent, position_effect, position_side, token_hash, accepted_at, updated_at, result_json, error_code, error, raw_json
+		leverage, amount, adx, market_strategy, risk_json, order_intent, position_effect, position_side, token_hash, accepted_at, updated_at, result_json, error_code, error, raw_json, gamma_snapshot_json
 		FROM orders WHERE signal_id = ?`, signalID)
 	return scanOrder(row)
 }
@@ -2291,7 +2308,7 @@ func scanOrder(scanner orderScanner) (OrderRecord, error) {
 	var status, acceptedAt, updatedAt string
 	var action, sourceAction sql.NullString
 	var adx sql.NullFloat64
-	var apiID, sourceExchange, targetExchange, tradeEnv, coinpair, ticker, price, amount, marketStrategy, riskJSON, orderIntent, positionEffect, positionSide, tokenHash, resultJSON, errorCode, errorText, rawJSON sql.NullString
+	var apiID, sourceExchange, targetExchange, tradeEnv, coinpair, ticker, price, amount, marketStrategy, riskJSON, orderIntent, positionEffect, positionSide, tokenHash, resultJSON, errorCode, errorText, rawJSON, gammaSnapshotJSON sql.NullString
 	if err := scanner.Scan(
 		&rec.SignalID,
 		&rec.DedupeKey,
@@ -2320,6 +2337,7 @@ func scanOrder(scanner orderScanner) (OrderRecord, error) {
 		&errorCode,
 		&errorText,
 		&rawJSON,
+		&gammaSnapshotJSON,
 	); err != nil {
 		return OrderRecord{}, err
 	}
@@ -2354,6 +2372,13 @@ func scanOrder(scanner orderScanner) (OrderRecord, error) {
 	rec.ErrorCode = nullableString(errorCode)
 	rec.Error = nullableString(errorText)
 	rec.RawJSON = nullableString(rawJSON)
+	if snapshotJSON := nullableString(gammaSnapshotJSON); snapshotJSON != "" {
+		var snapshot domain.GammaFlipSnapshot
+		if err := json.Unmarshal([]byte(snapshotJSON), &snapshot); err != nil {
+			return OrderRecord{}, err
+		}
+		rec.GammaFlipSnapshot = &snapshot
+	}
 	rec.TargetExchange = trading.NormalizeExchange(rec.TargetExchange)
 	if acceptedAt != "" {
 		parsed, err := time.Parse(time.RFC3339Nano, acceptedAt)
@@ -2523,26 +2548,27 @@ func collisionSeed(seed string, index int) string {
 func newOrderRecord(signal trading.Signal, dedupeKey string, status OrderStatus, now time.Time) OrderRecord {
 	signal.Normalize()
 	rec := OrderRecord{
-		DedupeKey:      dedupeKey,
-		Status:         status,
-		Action:         signal.Action,
-		SourceAction:   signal.SourceAction,
-		APIID:          signal.APIID,
-		SourceExchange: strings.TrimSpace(signal.Exchange),
-		TargetExchange: trading.NormalizeExchange(signal.TargetExchange),
-		TradeEnv:       trading.NormalizeTradeEnv(signal.TradeEnv),
-		Coinpair:       signal.Coinpair,
-		Ticker:         signal.Ticker,
-		Leverage:       signal.Leverage,
-		ADX:            cloneFloat64Pointer(signal.ADX),
-		MarketStrategy: strings.TrimSpace(signal.MarketStrategy),
-		Risk:           signal.Risk,
-		OrderIntent:    strings.TrimSpace(signal.OrderIntent),
-		PositionEffect: strings.TrimSpace(signal.PositionEffect),
-		PositionSide:   strings.TrimSpace(signal.PositionSide),
-		RawJSON:        strings.TrimSpace(signal.RawJSON),
-		AcceptedAt:     now.UTC(),
-		UpdatedAt:      now.UTC(),
+		DedupeKey:         dedupeKey,
+		Status:            status,
+		Action:            signal.Action,
+		SourceAction:      signal.SourceAction,
+		APIID:             signal.APIID,
+		SourceExchange:    strings.TrimSpace(signal.Exchange),
+		TargetExchange:    trading.NormalizeExchange(signal.TargetExchange),
+		TradeEnv:          trading.NormalizeTradeEnv(signal.TradeEnv),
+		Coinpair:          signal.Coinpair,
+		Ticker:            signal.Ticker,
+		Leverage:          signal.Leverage,
+		ADX:               cloneFloat64Pointer(signal.ADX),
+		MarketStrategy:    strings.TrimSpace(signal.MarketStrategy),
+		GammaFlipSnapshot: cloneGammaFlipSnapshot(signal.GammaFlipSnapshot),
+		Risk:              signal.Risk,
+		OrderIntent:       strings.TrimSpace(signal.OrderIntent),
+		PositionEffect:    strings.TrimSpace(signal.PositionEffect),
+		PositionSide:      strings.TrimSpace(signal.PositionSide),
+		RawJSON:           strings.TrimSpace(signal.RawJSON),
+		AcceptedAt:        now.UTC(),
+		UpdatedAt:         now.UTC(),
 	}
 	if rec.TradeEnv == "" {
 		rec.TradeEnv = trading.TradeEnvDemo
@@ -2564,6 +2590,15 @@ func cloneFloat64Pointer(value *float64) *float64 {
 		return nil
 	}
 	cloned := *value
+	return &cloned
+}
+
+func cloneGammaFlipSnapshot(value *domain.GammaFlipSnapshot) *domain.GammaFlipSnapshot {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	cloned.GammaFlip = cloneFloat64Pointer(value.GammaFlip)
 	return &cloned
 }
 
