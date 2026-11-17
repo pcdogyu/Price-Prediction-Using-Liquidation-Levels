@@ -107,9 +107,6 @@ func minimumReversePositionHoldingMinutes(configured int) int {
 }
 
 func reversePositionHoldingMinutes(signal trading.Signal) int {
-	if trading.IsValueAreaOpeningSignal(signal) {
-		return 0
-	}
 	return minimumReversePositionHoldingMinutes(signal.Risk.StopLossMinHoldingMinutes)
 }
 
