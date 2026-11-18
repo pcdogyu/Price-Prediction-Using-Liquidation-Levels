@@ -30,9 +30,11 @@ func (s *Service) startVolumeProfiles(ctx context.Context) {
 		s.volumeStreamSymbols[symbol] = struct{}{}
 	}
 	s.volumeLiveInput = make(chan domain.AggregateTrade, 100000)
+	s.marketLiveInput = make(chan domain.AggregateTrade, 100000)
 	s.volumeMu.Unlock()
 	go s.volumeProfileLoop(ctx)
 	go s.volumeBackfillLoop(ctx)
+	go s.marketCandleLoop(ctx)
 }
 
 func (s *Service) registerVolumeSymbols(symbols []string) {
@@ -288,9 +290,6 @@ func (s *Service) volumeBootstrapSymbols() []string {
 }
 
 func (s *Service) applyLiveAggregateTrades(ctx context.Context, trades []domain.AggregateTrade) error {
-	if err := s.persistLiveCandles(ctx, trades); err != nil {
-		return err
-	}
 	type groupKey struct {
 		symbol string
 		start  int64
@@ -298,6 +297,9 @@ func (s *Service) applyLiveAggregateTrades(ctx context.Context, trades []domain.
 	groups := make(map[groupKey][]domain.AggregateTrade)
 	sessions := make(map[groupKey]volumeprofile.Session)
 	for _, trade := range trades {
+		if !s.volumeRequestedSymbol(trade.Symbol) {
+			continue
+		}
 		session, err := volumeprofile.SessionAt(trade.Time)
 		if err != nil {
 			return err
@@ -334,6 +336,46 @@ func (s *Service) applyLiveAggregateTrades(ctx context.Context, trades []domain.
 		}
 	}
 	return nil
+}
+
+// marketCandleLoop persists live candles independently from the volume-profile
+// worker. A long aggregate-trade replay must not stop chart candles or block
+// the shared market-collector connection that also carries liquidation events.
+func (s *Service) marketCandleLoop(ctx context.Context) {
+	s.volumeMu.Lock()
+	input := s.marketLiveInput
+	if input == nil {
+		input = make(chan domain.AggregateTrade, 100000)
+		s.marketLiveInput = input
+	}
+	s.volumeMu.Unlock()
+
+	flush := time.NewTicker(500 * time.Millisecond)
+	defer flush.Stop()
+	batch := make([]domain.AggregateTrade, 0, 2000)
+	flushBatch := func(writeCtx context.Context) {
+		if len(batch) == 0 {
+			return
+		}
+		if err := s.persistLiveCandles(writeCtx, batch); err != nil && writeCtx.Err() == nil && s.log != nil {
+			s.log.Warn("live market candle batch failed", "error", err)
+		}
+		batch = batch[:0]
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			flushBatch(context.Background())
+			return
+		case trade := <-input:
+			batch = append(batch, trade)
+			if len(batch) >= 2000 {
+				flushBatch(ctx)
+			}
+		case <-flush.C:
+			flushBatch(ctx)
+		}
+	}
 }
 
 func (s *Service) syncVolumeSession(ctx context.Context, symbol string, target time.Time) error {

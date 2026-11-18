@@ -92,6 +92,7 @@ type Service struct {
 	volumeMu               sync.Mutex
 	volumeContext          context.Context
 	volumeLiveInput        chan domain.AggregateTrade
+	marketLiveInput        chan domain.AggregateTrade
 	volumeRequested        map[string]struct{}
 	volumeStreamSymbols    map[string]struct{}
 	volumePending          map[string]struct{}

@@ -17,9 +17,10 @@ func (s *Service) startMarketCollector(ctx context.Context) {
 		return
 	}
 	s.volumeMu.Lock()
-	input := s.volumeLiveInput
+	volumeInput := s.volumeLiveInput
+	marketInput := s.marketLiveInput
 	s.volumeMu.Unlock()
-	if input == nil {
+	if volumeInput == nil || marketInput == nil {
 		if s.log != nil {
 			s.log.Error("market collector disabled: aggregate trade input is not initialized")
 		}
@@ -36,16 +37,35 @@ func (s *Service) startMarketCollector(ctx context.Context) {
 	}, marketcollector.Handler{
 		Liquidation: s.RecordLiquidation,
 		AggregateTrade: func(ctx context.Context, trade domain.AggregateTrade) error {
-			s.RecordAggregateTrade(trade)
-			select {
-			case input <- trade:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+			return s.enqueueAggregateTrade(ctx, marketInput, volumeInput, trade)
 		},
 		Book: s.recordBook,
 	})
+}
+
+// enqueueAggregateTrade keeps the collector reader non-blocking. Candle
+// persistence is isolated from volume-profile backfills, and only symbols
+// with an active profile request enter the profile queue. If that queue is
+// temporarily full, the next aggregate-trade ID gap triggers REST repair.
+func (s *Service) enqueueAggregateTrade(ctx context.Context, marketInput, volumeInput chan domain.AggregateTrade, trade domain.AggregateTrade) error {
+	s.RecordAggregateTrade(trade)
+	select {
+	case marketInput <- trade:
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	if !s.volumeRequestedSymbol(trade.Symbol) {
+		return nil
+	}
+	select {
+	case volumeInput <- trade:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
 }
 
 func (s *Service) updateMarketCollectorAggregateSymbols() {
