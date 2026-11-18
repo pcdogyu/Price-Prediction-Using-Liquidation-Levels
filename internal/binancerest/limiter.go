@@ -73,50 +73,65 @@ type Snapshot struct {
 }
 
 type Scheduler struct {
-	mu             sync.Mutex
-	budget         int
-	reserved       int
-	maxInFlight    int
-	minInterval    time.Duration
-	now            func() time.Time
-	windowStarted  time.Time
-	windowUsed     int
-	lastBackground time.Time
-	inFlight       int
-	queued         int
-	blocked        uint64
-	pausedUntil    time.Time
-	endpoints      map[string]EndpointStats
+	mu                    sync.Mutex
+	budget                int
+	reserved              int
+	maxInFlight           int
+	minInterval           time.Duration
+	backgroundMinInterval time.Duration
+	now                   func() time.Time
+	windowStarted         time.Time
+	windowUsed            int
+	lastBackground        time.Time
+	lastAccount           time.Time
+	inFlight              int
+	queued                int
+	blocked               uint64
+	pausedUntil           time.Time
+	endpoints             map[string]EndpointStats
 }
 
 var defaultScheduler = NewFromEnv()
 
 func NewFromEnv() *Scheduler {
-	return New(
+	accountInterval := envDuration("APP_BINANCE_REST_MIN_INTERVAL", 100*time.Millisecond)
+	backgroundInterval := envDuration("APP_BINANCE_REST_BACKGROUND_MIN_INTERVAL", accountInterval)
+	return NewWithIntervals(
 		envInt("APP_BINANCE_REST_WEIGHT_BUDGET_PER_MIN", 1200),
 		envInt("APP_BINANCE_REST_MAX_INFLIGHT", 4),
-		envDuration("APP_BINANCE_REST_MIN_INTERVAL", 100*time.Millisecond),
+		accountInterval,
+		backgroundInterval,
 	)
 }
 
 func New(budgetPerMinute, maxInFlight int, minInterval time.Duration) *Scheduler {
+	return NewWithIntervals(budgetPerMinute, maxInFlight, minInterval, minInterval)
+}
+
+// NewWithIntervals creates a scheduler with independent pacing for account
+// and background requests. A zero interval disables pacing for that class.
+func NewWithIntervals(budgetPerMinute, maxInFlight int, accountMinInterval, backgroundMinInterval time.Duration) *Scheduler {
 	if budgetPerMinute <= 0 {
 		budgetPerMinute = 1200
 	}
 	if maxInFlight <= 0 {
 		maxInFlight = 4
 	}
-	if minInterval < 0 {
-		minInterval = 100 * time.Millisecond
+	if accountMinInterval < 0 {
+		accountMinInterval = 100 * time.Millisecond
+	}
+	if backgroundMinInterval < 0 {
+		backgroundMinInterval = accountMinInterval
 	}
 	reserved := budgetPerMinute / 4
 	return &Scheduler{
-		budget:      budgetPerMinute,
-		reserved:    reserved,
-		maxInFlight: maxInFlight,
-		minInterval: minInterval,
-		now:         time.Now,
-		endpoints:   make(map[string]EndpointStats),
+		budget:                budgetPerMinute,
+		reserved:              reserved,
+		maxInFlight:           maxInFlight,
+		minInterval:           accountMinInterval,
+		backgroundMinInterval: backgroundMinInterval,
+		now:                   time.Now,
+		endpoints:             make(map[string]EndpointStats),
 	}
 }
 
@@ -222,7 +237,11 @@ func (s *Scheduler) Acquire(ctx context.Context, request Request) (func(), error
 			s.windowUsed += request.Weight
 			s.inFlight++
 			if request.Priority < PriorityExecution {
-				s.lastBackground = now
+				if request.Class == ClassAccount {
+					s.lastAccount = now
+				} else {
+					s.lastBackground = now
+				}
 			}
 			s.bumpRequestLocked(key, request)
 			s.mu.Unlock()
@@ -374,7 +393,7 @@ func (s *Scheduler) canAcquireLocked(now time.Time, request Request) bool {
 	if s.windowUsed+request.Weight > limit {
 		return false
 	}
-	if request.Priority < PriorityExecution && !s.lastBackground.IsZero() && now.Before(s.lastBackground.Add(s.minInterval)) {
+	if last, interval, limited := s.intervalForRequest(request); limited && !last.IsZero() && now.Before(last.Add(interval)) {
 		return false
 	}
 	return true
@@ -391,10 +410,20 @@ func (s *Scheduler) waitDurationLocked(now time.Time, request Request) time.Dura
 	if s.windowUsed+request.Weight > limit {
 		return s.windowStarted.Add(time.Minute).Sub(now)
 	}
-	if request.Priority < PriorityExecution && !s.lastBackground.IsZero() {
-		return s.lastBackground.Add(s.minInterval).Sub(now)
+	if last, interval, limited := s.intervalForRequest(request); limited && !last.IsZero() {
+		return last.Add(interval).Sub(now)
 	}
 	return 0
+}
+
+func (s *Scheduler) intervalForRequest(request Request) (time.Time, time.Duration, bool) {
+	if request.Priority >= PriorityExecution {
+		return time.Time{}, 0, false
+	}
+	if request.Class == ClassAccount {
+		return s.lastAccount, s.minInterval, true
+	}
+	return s.lastBackground, s.backgroundMinInterval, true
 }
 
 func (s *Scheduler) bumpRequestLocked(key string, request Request) {

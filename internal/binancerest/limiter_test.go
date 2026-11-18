@@ -29,6 +29,64 @@ func TestSchedulerReservesWeightForExecution(t *testing.T) {
 	release()
 }
 
+func TestSchedulerPacesBackgroundAndAccountRequestsSeparately(t *testing.T) {
+	s := NewWithIntervals(1200, 4, 100*time.Millisecond, 500*time.Millisecond)
+	now := time.Date(2026, time.November, 18, 0, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	background := Request{Host: "fapi.binance.com", Path: "/futures/data/openInterestHist", Class: ClassBackground, Priority: PriorityBackground}
+	account := Request{Host: "demo-fapi.binance.com", Path: "/fapi/v1/openOrders", Class: ClassAccount, Priority: PriorityAccount}
+
+	release, err := s.Acquire(context.Background(), background)
+	if err != nil {
+		t.Fatalf("acquire background request: %v", err)
+	}
+	release()
+	release, err = s.Acquire(context.Background(), account)
+	if err != nil {
+		t.Fatalf("account request should not wait for background pacing: %v", err)
+	}
+	release()
+
+	canAcquire := func(at time.Time, request Request) bool {
+		t.Helper()
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.canAcquireLocked(at, request)
+	}
+	if canAcquire(now.Add(99*time.Millisecond), account) {
+		t.Fatal("account request acquired before its 100ms interval")
+	}
+	if !canAcquire(now.Add(100*time.Millisecond), account) {
+		t.Fatal("account request should acquire at its 100ms interval")
+	}
+	if canAcquire(now.Add(499*time.Millisecond), background) {
+		t.Fatal("background request acquired before its 500ms interval")
+	}
+	if !canAcquire(now.Add(500*time.Millisecond), background) {
+		t.Fatal("background request should acquire at its 500ms interval")
+	}
+	if !canAcquire(now, Request{Host: "demo-fapi.binance.com", Path: "/fapi/v1/order", Class: ClassExecution, Priority: PriorityExecution}) {
+		t.Fatal("execution request should bypass class pacing")
+	}
+}
+
+func TestNewFromEnvUsesBackgroundMinIntervalWithExistingFallback(t *testing.T) {
+	t.Setenv("APP_BINANCE_REST_WEIGHT_BUDGET_PER_MIN", "900")
+	t.Setenv("APP_BINANCE_REST_MAX_INFLIGHT", "3")
+	t.Setenv("APP_BINANCE_REST_MIN_INTERVAL", "100ms")
+	t.Setenv("APP_BINANCE_REST_BACKGROUND_MIN_INTERVAL", "500ms")
+	s := NewFromEnv()
+	if s.minInterval != 100*time.Millisecond || s.backgroundMinInterval != 500*time.Millisecond {
+		t.Fatalf("unexpected class intervals: account=%s background=%s", s.minInterval, s.backgroundMinInterval)
+	}
+
+	t.Setenv("APP_BINANCE_REST_BACKGROUND_MIN_INTERVAL", "")
+	s = NewFromEnv()
+	if s.backgroundMinInterval != s.minInterval {
+		t.Fatalf("background interval should fall back to account interval: account=%s background=%s", s.minInterval, s.backgroundMinInterval)
+	}
+}
+
 func TestSchedulerLimitsConcurrencyAndHonorsCancellation(t *testing.T) {
 	s := New(1200, 2, 0)
 	request := Request{Host: "fapi.binance.com", Path: "/fapi/v1/account", Class: ClassAccount, Priority: PriorityAccount}
