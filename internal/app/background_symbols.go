@@ -141,7 +141,7 @@ func (s *Service) applyBackgroundCandidateSnapshot(snapshot domain.BackgroundSym
 	}
 	// Keep the alert watch list live in the resident aggregate-trade feed. The
 	// collector changes subscriptions without rebuilding existing connections.
-	s.registerVolumeSymbols(current)
+	s.registerVolumeStreamSymbols(current)
 	s.updateMarketCollectorAggregateSymbols()
 	if s.alerts != nil {
 		rows := append([]domain.WatchSymbol(nil), copySnapshot.Symbols...)

@@ -25,6 +25,17 @@ func TestCollectorAggregateSymbolsIncludesAlertWatchList(t *testing.T) {
 	}
 }
 
+func TestRegisterVolumeStreamSymbolsDoesNotRequestProfiles(t *testing.T) {
+	svc := &Service{}
+	svc.registerVolumeStreamSymbols([]string{"solusdt", "invalid", "ETHUSDT"})
+	if svc.volumeRequestedSymbol("SOLUSDT") || svc.volumeRequestedSymbol("ETHUSDT") {
+		t.Fatal("stream-only symbols must not request historical volume profiles")
+	}
+	if len(svc.volumeStreamSymbols) != 2 {
+		t.Fatalf("stream symbols=%v, want SOLUSDT and ETHUSDT", svc.volumeStreamSymbols)
+	}
+}
+
 func TestEnqueueAggregateTradeOnlyQueuesRequestedProfiles(t *testing.T) {
 	svc := &Service{
 		latestPrices:    make(map[string]domain.PriceTick),

@@ -56,6 +56,21 @@ func (s *Service) registerVolumeSymbols(symbols []string) {
 	}
 }
 
+// registerVolumeStreamSymbols subscribes alert candidates to live aggregate
+// trades without scheduling expensive historical profile backfills.
+func (s *Service) registerVolumeStreamSymbols(symbols []string) {
+	s.volumeMu.Lock()
+	defer s.volumeMu.Unlock()
+	if s.volumeStreamSymbols == nil {
+		s.volumeStreamSymbols = make(map[string]struct{})
+	}
+	for _, raw := range symbols {
+		if symbol := normalizeVolumeSymbol(raw); symbol != "" {
+			s.volumeStreamSymbols[symbol] = struct{}{}
+		}
+	}
+}
+
 func (s *Service) volumeProfileLoop(ctx context.Context) {
 	// The resident alert watch list receives live aggregate trades, but only the
 	// deliberately small bootstrap set is replayed at startup. Replaying exact
