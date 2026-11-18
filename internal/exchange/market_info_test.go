@@ -90,6 +90,32 @@ func TestBinanceMarketMetricUsesBulkCaches(t *testing.T) {
 	}
 }
 
+func TestBinanceOpenInterestHistoryFetchesLatestFiveMinutePoint(t *testing.T) {
+	originalBase := binanceFuturesBase
+	t.Cleanup(func() { binanceFuturesBase = originalBase })
+	timestamp := time.Date(2026, time.November, 18, 12, 35, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/futures/data/openInterestHist" || r.URL.Query().Get("symbol") != "ETHUSDT" || r.URL.Query().Get("period") != "5m" || r.URL.Query().Get("limit") != "1" {
+			t.Errorf("unexpected request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"timestamp":            timestamp.UnixMilli(),
+			"sumOpenInterestValue": "1250000.5",
+			"sumOpenInterest":      "500",
+		}})
+	}))
+	defer server.Close()
+	binanceFuturesBase = server.URL
+
+	metric, found, err := BinanceOpenInterestHistory(context.Background(), " ethusdt ")
+	if err != nil || !found {
+		t.Fatalf("fetch latest OI history: found=%v err=%v", found, err)
+	}
+	if metric.Symbol != "ETHUSDT" || !metric.Time.Equal(timestamp) || metric.OIUSD == nil || *metric.OIUSD != 1250000.5 || metric.OIQuantity == nil || *metric.OIQuantity != 500 {
+		t.Fatalf("unexpected OI history point: %+v", metric)
+	}
+}
+
 func TestBinanceCurrentReusesBulkPremiumCache(t *testing.T) {
 	originalBase := binanceFuturesBase
 	resetBinanceMarketInfoCaches()

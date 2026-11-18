@@ -126,7 +126,7 @@ func (h httpClient) get(ctx context.Context, raw string, v any) error {
 		request = binancerest.Request{
 			Host:     parsed.Hostname(),
 			Path:     parsed.Path,
-			Class:    binancerest.ClassBackground,
+			Class:    binancerest.ClassForRequest(raw),
 			Priority: binancerest.PriorityBackground,
 			Weight:   binancerest.WeightForPath(raw),
 		}

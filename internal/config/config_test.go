@@ -35,7 +35,7 @@ func TestLoadUsesSeparateBackfillAndRetentionDefaults(t *testing.T) {
 	if cfg.BackfillDays != 1 || cfg.RetentionDays != 180 {
 		t.Fatalf("backfill=%d retention=%d", cfg.BackfillDays, cfg.RetentionDays)
 	}
-	if cfg.MarketPollInterval != 10*time.Minute || cfg.MarketInfoInterval != 10*time.Minute || cfg.MarketFetchConcurrency != 5 {
+	if cfg.MarketPollInterval != 10*time.Minute || cfg.MarketInfoInterval != time.Minute || cfg.MarketFetchConcurrency != 5 {
 		t.Fatalf("market poll=%s info=%s concurrency=%d", cfg.MarketPollInterval, cfg.MarketInfoInterval, cfg.MarketFetchConcurrency)
 	}
 }

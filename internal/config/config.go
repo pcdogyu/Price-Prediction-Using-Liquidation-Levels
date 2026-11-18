@@ -133,7 +133,7 @@ func Load() Config {
 		BackfillDays:     envInt("APP_BACKFILL_DAYS", 1), RetentionDays: envInt("APP_RETENTION_DAYS", 180), TrainingDays: envInt("APP_TRAINING_DAYS", 30), SnapshotInterval: envDuration("APP_SNAPSHOT_INTERVAL", 5*time.Minute),
 		StaleAfter:               envDuration("APP_STALE_AFTER", 90*time.Second),
 		MarketPollInterval:       envDuration("APP_MARKET_POLL_INTERVAL", 10*time.Minute),
-		MarketInfoInterval:       envDuration("APP_MARKET_INFO_INTERVAL", 10*time.Minute),
+		MarketInfoInterval:       envDuration("APP_MARKET_INFO_INTERVAL", time.Minute),
 		MarketFetchConcurrency:   envInt("APP_MARKET_FETCH_CONCURRENCY", 5),
 		AlertTopSymbols:          envInt("APP_ALERT_TOP_SYMBOLS", domain.AlertTopSymbolsDefault),
 		AlertWindow:              envDuration("APP_ALERT_WINDOW", 3*time.Minute),

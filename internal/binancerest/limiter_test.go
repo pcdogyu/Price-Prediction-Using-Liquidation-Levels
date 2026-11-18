@@ -30,10 +30,11 @@ func TestSchedulerReservesWeightForExecution(t *testing.T) {
 }
 
 func TestSchedulerPacesBackgroundAndAccountRequestsSeparately(t *testing.T) {
-	s := NewWithIntervals(1200, 4, 100*time.Millisecond, 500*time.Millisecond)
+	s := NewWithClassIntervals(1200, 4, 100*time.Millisecond, 500*time.Millisecond, 100*time.Millisecond)
 	now := time.Date(2026, time.November, 18, 0, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	background := Request{Host: "fapi.binance.com", Path: "/futures/data/openInterestHist", Class: ClassBackground, Priority: PriorityBackground}
+	marketInfo := Request{Host: "fapi.binance.com", Path: "/fapi/v1/openInterest", Class: ClassMarketInfo, Priority: PriorityBackground}
 	account := Request{Host: "demo-fapi.binance.com", Path: "/fapi/v1/openOrders", Class: ClassAccount, Priority: PriorityAccount}
 
 	release, err := s.Acquire(context.Background(), background)
@@ -44,6 +45,11 @@ func TestSchedulerPacesBackgroundAndAccountRequestsSeparately(t *testing.T) {
 	release, err = s.Acquire(context.Background(), account)
 	if err != nil {
 		t.Fatalf("account request should not wait for background pacing: %v", err)
+	}
+	release()
+	release, err = s.Acquire(context.Background(), marketInfo)
+	if err != nil {
+		t.Fatalf("market-info request should have an independent pacing clock: %v", err)
 	}
 	release()
 
@@ -59,6 +65,12 @@ func TestSchedulerPacesBackgroundAndAccountRequestsSeparately(t *testing.T) {
 	if !canAcquire(now.Add(100*time.Millisecond), account) {
 		t.Fatal("account request should acquire at its 100ms interval")
 	}
+	if canAcquire(now.Add(99*time.Millisecond), marketInfo) {
+		t.Fatal("market-info request acquired before its 100ms interval")
+	}
+	if !canAcquire(now.Add(100*time.Millisecond), marketInfo) {
+		t.Fatal("market-info request should acquire at its 100ms interval")
+	}
 	if canAcquire(now.Add(499*time.Millisecond), background) {
 		t.Fatal("background request acquired before its 500ms interval")
 	}
@@ -70,20 +82,43 @@ func TestSchedulerPacesBackgroundAndAccountRequestsSeparately(t *testing.T) {
 	}
 }
 
+func TestClassForRequestSeparatesLiveMarketInfoFromHistoricalPages(t *testing.T) {
+	cases := []struct {
+		request string
+		want    string
+	}{
+		{"https://fapi.binance.com/fapi/v1/openInterest?symbol=ETHUSDT", ClassMarketInfo},
+		{"https://fapi.binance.com/futures/data/openInterestHist?symbol=ETHUSDT&period=5m&limit=1", ClassMarketInfo},
+		{"https://fapi.binance.com/futures/data/openInterestHist?symbol=ETHUSDT&period=5m&limit=500&startTime=1", ClassBackground},
+		{"https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=ETHUSDT&period=5m&limit=1", ClassMarketInfo},
+		{"https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=ETHUSDT&period=5m&limit=500", ClassBackground},
+	}
+	for _, tc := range cases {
+		if got := ClassForRequest(tc.request); got != tc.want {
+			t.Errorf("ClassForRequest(%q) = %q, want %q", tc.request, got, tc.want)
+		}
+	}
+}
+
 func TestNewFromEnvUsesBackgroundMinIntervalWithExistingFallback(t *testing.T) {
 	t.Setenv("APP_BINANCE_REST_WEIGHT_BUDGET_PER_MIN", "900")
 	t.Setenv("APP_BINANCE_REST_MAX_INFLIGHT", "3")
 	t.Setenv("APP_BINANCE_REST_MIN_INTERVAL", "100ms")
 	t.Setenv("APP_BINANCE_REST_BACKGROUND_MIN_INTERVAL", "500ms")
+	t.Setenv("APP_BINANCE_REST_MARKET_INFO_MIN_INTERVAL", "100ms")
 	s := NewFromEnv()
-	if s.minInterval != 100*time.Millisecond || s.backgroundMinInterval != 500*time.Millisecond {
-		t.Fatalf("unexpected class intervals: account=%s background=%s", s.minInterval, s.backgroundMinInterval)
+	if s.minInterval != 100*time.Millisecond || s.backgroundMinInterval != 500*time.Millisecond || s.marketInfoMinInterval != 100*time.Millisecond {
+		t.Fatalf("unexpected class intervals: account=%s background=%s market_info=%s", s.minInterval, s.backgroundMinInterval, s.marketInfoMinInterval)
 	}
 
 	t.Setenv("APP_BINANCE_REST_BACKGROUND_MIN_INTERVAL", "")
+	t.Setenv("APP_BINANCE_REST_MARKET_INFO_MIN_INTERVAL", "")
 	s = NewFromEnv()
 	if s.backgroundMinInterval != s.minInterval {
 		t.Fatalf("background interval should fall back to account interval: account=%s background=%s", s.minInterval, s.backgroundMinInterval)
+	}
+	if s.marketInfoMinInterval != s.minInterval {
+		t.Fatalf("market-info interval should fall back to account interval: account=%s market_info=%s", s.minInterval, s.marketInfoMinInterval)
 	}
 }
 

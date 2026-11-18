@@ -26,7 +26,7 @@ var marketWindowSpecs = []struct {
 
 const (
 	marketMetricInterval      = 5 * time.Minute
-	marketInfoDefaultInterval = 10 * time.Minute
+	marketInfoDefaultInterval = time.Minute
 	marketMetricStaleGrace    = 2 * time.Minute
 )
 
@@ -76,8 +76,8 @@ func (s *Service) marketInfoLoop(ctx context.Context) {
 		started := time.Now()
 		results := s.runMarketTasks(ctx, s.bootstrapSymbols(), func(ctx context.Context, sym string) error {
 			cc, cancel := context.WithTimeout(ctx, 45*time.Second)
+			defer cancel()
 			m := exchange.BinanceMarketMetric(cc, sym)
-			cancel()
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -87,6 +87,13 @@ func (s *Service) marketInfoLoop(ctx context.Context) {
 			if err := s.store.SaveMarketMetric(ctx, m); err != nil {
 				s.log.Error("save market metrics", "error", err)
 				return err
+			}
+			if point, found, err := exchange.BinanceOpenInterestHistory(cc, sym); err != nil {
+				s.log.Warn("fetch recent Binance open interest history", "symbol", sym, "error", err)
+			} else if found {
+				if err := s.store.SaveMarketMetric(ctx, point); err != nil {
+					s.log.Error("save historical Binance open interest", "symbol", sym, "error", err)
+				}
 			}
 			if m.MarkPrice == nil {
 				err := errors.New("mark price unavailable")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -280,6 +281,34 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 	}
 	m.NetPositionUSD = EstimateNetPosition(m.OIUSD, m.TopPositionRatio)
 	return m
+}
+
+// BinanceOpenInterestHistory fetches the latest available 5-minute OI history
+// point for one symbol. The market-info collector calls it once per minute;
+// Binance may return the same point until the next 5-minute bucket closes.
+func BinanceOpenInterestHistory(ctx context.Context, symbol string) (domain.MarketMetric, bool, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return domain.MarketMetric{}, false, fmt.Errorf("symbol is required")
+	}
+	var rows []struct {
+		Timestamp int64  `json:"timestamp"`
+		OIUSD     string `json:"sumOpenInterestValue"`
+		Quantity  string `json:"sumOpenInterest"`
+	}
+	endpoint := binanceFuturesBase + "/futures/data/openInterestHist?symbol=" + url.QueryEscape(symbol) + "&period=5m&limit=1"
+	if err := newHTTP().get(ctx, endpoint, &rows); err != nil {
+		return domain.MarketMetric{}, false, err
+	}
+	if len(rows) == 0 {
+		return domain.MarketMetric{}, false, nil
+	}
+	return domain.MarketMetric{
+		Symbol:     symbol,
+		Time:       time.UnixMilli(rows[0].Timestamp).UTC(),
+		OIUSD:      number(rows[0].OIUSD),
+		OIQuantity: number(rows[0].Quantity),
+	}, true, nil
 }
 
 func BinanceMetricHistory(ctx context.Context, symbol string, from, until time.Time, sink func(context.Context, domain.MarketMetric) error) (int, error) {

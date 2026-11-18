@@ -43,6 +43,11 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 			t.Fatal(path, w.Code, w.Body.String())
 		}
 	}
+	w = httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/market-info?symbol=ETHUSDT", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"range":"24h"`) {
+		t.Fatalf("market-info default range status=%d body=%s", w.Code, w.Body.String())
+	}
 	at := time.Now().UTC().Add(-time.Second)
 	e := domain.LiquidationEvent{ID: "small-sol", Exchange: "binance", Symbol: "SOLUSDT", PositionSide: "short", EventTime: at, ReceivedAt: at, Quantity: 1, Price: 1, NotionalUSD: 1, Coverage: "sampled"}
 	if err := st.InsertLiquidation(context.Background(), e); err != nil {

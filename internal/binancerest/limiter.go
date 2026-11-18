@@ -13,6 +13,7 @@ import (
 
 const (
 	ClassBackground = "background"
+	ClassMarketInfo = "market_info"
 	ClassAccount    = "account"
 	ClassExecution  = "execution"
 )
@@ -79,10 +80,12 @@ type Scheduler struct {
 	maxInFlight           int
 	minInterval           time.Duration
 	backgroundMinInterval time.Duration
+	marketInfoMinInterval time.Duration
 	now                   func() time.Time
 	windowStarted         time.Time
 	windowUsed            int
 	lastBackground        time.Time
+	lastMarketInfo        time.Time
 	lastAccount           time.Time
 	inFlight              int
 	queued                int
@@ -96,11 +99,13 @@ var defaultScheduler = NewFromEnv()
 func NewFromEnv() *Scheduler {
 	accountInterval := envDuration("APP_BINANCE_REST_MIN_INTERVAL", 100*time.Millisecond)
 	backgroundInterval := envDuration("APP_BINANCE_REST_BACKGROUND_MIN_INTERVAL", accountInterval)
-	return NewWithIntervals(
+	marketInfoInterval := envDuration("APP_BINANCE_REST_MARKET_INFO_MIN_INTERVAL", accountInterval)
+	return NewWithClassIntervals(
 		envInt("APP_BINANCE_REST_WEIGHT_BUDGET_PER_MIN", 1200),
 		envInt("APP_BINANCE_REST_MAX_INFLIGHT", 4),
 		accountInterval,
 		backgroundInterval,
+		marketInfoInterval,
 	)
 }
 
@@ -111,6 +116,13 @@ func New(budgetPerMinute, maxInFlight int, minInterval time.Duration) *Scheduler
 // NewWithIntervals creates a scheduler with independent pacing for account
 // and background requests. A zero interval disables pacing for that class.
 func NewWithIntervals(budgetPerMinute, maxInFlight int, accountMinInterval, backgroundMinInterval time.Duration) *Scheduler {
+	return NewWithClassIntervals(budgetPerMinute, maxInFlight, accountMinInterval, backgroundMinInterval, backgroundMinInterval)
+}
+
+// NewWithClassIntervals creates a scheduler with independent pacing for
+// account, market-info, and other background requests. A zero interval
+// disables pacing for that class.
+func NewWithClassIntervals(budgetPerMinute, maxInFlight int, accountMinInterval, backgroundMinInterval, marketInfoMinInterval time.Duration) *Scheduler {
 	if budgetPerMinute <= 0 {
 		budgetPerMinute = 1200
 	}
@@ -123,6 +135,9 @@ func NewWithIntervals(budgetPerMinute, maxInFlight int, accountMinInterval, back
 	if backgroundMinInterval < 0 {
 		backgroundMinInterval = accountMinInterval
 	}
+	if marketInfoMinInterval < 0 {
+		marketInfoMinInterval = accountMinInterval
+	}
 	reserved := budgetPerMinute / 4
 	return &Scheduler{
 		budget:                budgetPerMinute,
@@ -130,6 +145,7 @@ func NewWithIntervals(budgetPerMinute, maxInFlight int, accountMinInterval, back
 		maxInFlight:           maxInFlight,
 		minInterval:           accountMinInterval,
 		backgroundMinInterval: backgroundMinInterval,
+		marketInfoMinInterval: marketInfoMinInterval,
 		now:                   time.Now,
 		endpoints:             make(map[string]EndpointStats),
 	}
@@ -237,9 +253,12 @@ func (s *Scheduler) Acquire(ctx context.Context, request Request) (func(), error
 			s.windowUsed += request.Weight
 			s.inFlight++
 			if request.Priority < PriorityExecution {
-				if request.Class == ClassAccount {
+				switch request.Class {
+				case ClassAccount:
 					s.lastAccount = now
-				} else {
+				case ClassMarketInfo:
+					s.lastMarketInfo = now
+				default:
 					s.lastBackground = now
 				}
 			}
@@ -420,10 +439,33 @@ func (s *Scheduler) intervalForRequest(request Request) (time.Time, time.Duratio
 	if request.Priority >= PriorityExecution {
 		return time.Time{}, 0, false
 	}
-	if request.Class == ClassAccount {
+	switch request.Class {
+	case ClassAccount:
 		return s.lastAccount, s.minInterval, true
+	case ClassMarketInfo:
+		return s.lastMarketInfo, s.marketInfoMinInterval, true
+	default:
+		return s.lastBackground, s.backgroundMinInterval, true
 	}
-	return s.lastBackground, s.backgroundMinInterval, true
+}
+
+// ClassForRequest puts only live market-info queries on their own pacing
+// clock. Larger historical pages stay in the general background class.
+func ClassForRequest(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ClassBackground
+	}
+	path := parsed.Path
+	switch path {
+	case "/fapi/v1/openInterest":
+		return ClassMarketInfo
+	case "/futures/data/openInterestHist", "/futures/data/globalLongShortAccountRatio", "/futures/data/topLongShortPositionRatio":
+		if parsed.Query().Get("limit") == "1" {
+			return ClassMarketInfo
+		}
+	}
+	return ClassBackground
 }
 
 func (s *Scheduler) bumpRequestLocked(key string, request Request) {
