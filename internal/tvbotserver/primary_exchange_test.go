@@ -149,8 +149,8 @@ func TestNonPrimaryPositionsAndBalanceRowsAreStoppedBeforeExchangeCalls(t *testi
 		if row.Exchange == tvbottrading.ExchangeOKX {
 			continue
 		}
-		if row.Status != "non_trading" || row.Configured || row.Balance.TotalEq != "" {
-			t.Fatalf("non-primary balance row should be disabled and empty: %#v", row)
+		if row.Status != "read_only" || row.Balance.TotalEq != "" {
+			t.Fatalf("non-primary balance row should expose stored history without exchange calls: %#v", row)
 		}
 	}
 }

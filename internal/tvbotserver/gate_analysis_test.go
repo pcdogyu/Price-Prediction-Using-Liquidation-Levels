@@ -27,6 +27,8 @@ func TestBuildAnalysisSupportsGateWithoutOKX(t *testing.T) {
 			_, _ = w.Write([]byte(`[{"name":"BTC_USDT","order_price_round":"0.1","quanto_multiplier":"0.0001","enable_decimal":false}]`))
 		case "/api/v4/futures/usdt/accounts":
 			_, _ = w.Write([]byte(`{"currency":"USDT","total":"1000","available":"900"}`))
+		case "/api/v4/futures/usdt/positions":
+			_, _ = w.Write([]byte(`[]`))
 		case "/api/v4/futures/usdt/my_trades_timerange":
 			_, _ = w.Write([]byte(`[
                 {"id":101,"contract":"BTC_USDT","order_id":1001,"size":2,"price":100,"create_time":` + formatGateTestTime(entryTime) + `,"close_size":0,"trade_value":20,"fee":-0.1},
@@ -155,6 +157,8 @@ func TestHandleAnalysisReturnsGateDataWhenOKXIsNotConfigured(t *testing.T) {
 			_, _ = w.Write([]byte(`[]`))
 		case "/api/v4/futures/usdt/accounts":
 			_, _ = w.Write([]byte(`{"currency":"USDT","total":"1000","available":"900"}`))
+		case "/api/v4/futures/usdt/positions":
+			_, _ = w.Write([]byte(`[]`))
 		case "/api/v4/futures/usdt/my_trades_timerange":
 			_, _ = w.Write([]byte(`[]`))
 		case "/api/v4/futures/usdt/position_close":

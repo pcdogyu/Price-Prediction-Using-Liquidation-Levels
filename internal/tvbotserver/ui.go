@@ -1776,6 +1776,60 @@ const tvbotHTML = `<!doctype html>
       padding-top: 10px;
       min-height: 0;
     }
+    .analysis-peak-snapshots {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .analysis-peak-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: var(--panel);
+    }
+    .analysis-peak-card h4 {
+      margin: 0 0 8px;
+      font-size: 13px;
+    }
+    .analysis-peak-value {
+      font-size: 16px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .analysis-peak-meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+      overflow-wrap: anywhere;
+    }
+    .analysis-peak-card details {
+      border-top: 1px solid var(--line);
+      margin-top: 8px;
+      padding-top: 8px;
+    }
+    .analysis-peak-card summary {
+      cursor: pointer;
+      color: var(--text);
+      font-size: 12px;
+    }
+    .analysis-peak-table-wrap {
+      margin-top: 8px;
+      overflow-x: auto;
+    }
+    .analysis-peak-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .analysis-peak-table th,
+    .analysis-peak-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 6px;
+      text-align: left;
+    }
     .analysis-exchange-block + .analysis-exchange-block {
       margin-top: 14px;
     }
@@ -2191,6 +2245,7 @@ const tvbotHTML = `<!doctype html>
       .mini-usdt-chart { height: 240px; }
       .dashboard-balance-grid .mini-usdt-chart { height: 343px; }
       #analysis .mini-usdt-chart { height: 346px; }
+      .analysis-peak-snapshots { grid-template-columns: minmax(0, 1fr); }
       .exchange-balance-metrics { min-height: 0; }
       .dashboard-balance-grid .analysis-metrics.symbol-metrics {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2514,8 +2569,10 @@ const tvbotHTML = `<!doctype html>
           <div class="analysis-usdt-chart-card">
             <div class="section-head" style="margin:0 0 8px">
               <h3 id="analysis-okx-usdt-title">USDT 权益图</h3>
+              <label class="position-environment-control">API账户<select id="analysis-okx-account" aria-label="OKX 权益账户"></select></label>
             </div>
             <svg id="usdt-chart" class="mini-usdt-chart" role="img" aria-label="OKX USDT equity chart"></svg>
+            <div id="analysis-okx-peak-snapshots" class="analysis-peak-snapshots"></div>
           </div>
         </div>
         <div class="balance-chart-card exchange-balance-card" data-exchange-view="binance">
@@ -2551,8 +2608,10 @@ const tvbotHTML = `<!doctype html>
           <div class="analysis-usdt-chart-card">
             <div class="section-head" style="margin:0 0 8px">
               <h3 id="analysis-binance-usdt-title">USDT 权益图</h3>
+              <label class="position-environment-control">API账户<select id="analysis-binance-account" aria-label="Binance 权益账户"></select></label>
             </div>
             <svg id="analysis-binance-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Binance USDT equity chart"></svg>
+            <div id="analysis-binance-peak-snapshots" class="analysis-peak-snapshots"></div>
           </div>
         </div>
         <div class="balance-chart-card exchange-balance-card" data-exchange-view="gate">
@@ -2584,8 +2643,12 @@ const tvbotHTML = `<!doctype html>
             </div>
           </div>
           <div class="analysis-usdt-chart-card">
-            <div class="section-head" style="margin:0 0 8px"><h3 id="analysis-gate-usdt-title">USDT 权益图</h3></div>
+            <div class="section-head" style="margin:0 0 8px">
+              <h3 id="analysis-gate-usdt-title">USDT 权益图</h3>
+              <label class="position-environment-control">API账户<select id="analysis-gate-account" aria-label="Gate 权益账户"></select></label>
+            </div>
             <svg id="analysis-gate-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Gate USDT equity chart"></svg>
+            <div id="analysis-gate-peak-snapshots" class="analysis-peak-snapshots"></div>
           </div>
         </div>
       </div>
@@ -3108,6 +3171,9 @@ const tvbotHTML = `<!doctype html>
       symbolPrecisions: {},
       balanceOverview: null,
       balanceOverviewError: "",
+      analysisBalanceOverview: null,
+      analysisBalanceOverviewError: "",
+      analysisBalanceAPIIDs: { demo: { okx: "", binance: "", gate: "" }, live: { okx: "", binance: "", gate: "" } },
       dashboardBalanceWindowMinutes: 1440,
       dashboardAnalysis: null,
       dashboardAnalysisError: "",
@@ -4099,6 +4165,21 @@ const tvbotHTML = `<!doctype html>
       return "/tvbot/balances/overview?" + qs.toString();
     }
 
+    function analysisBalanceOverviewPath(forceRefresh, minutes) {
+      const selectedMinutes = minutes === undefined ? state.balanceWindowMinutes : minutes;
+      const qs = new URLSearchParams({ minutes: String(Math.max(0, Number(selectedMinutes || 0))) });
+      const env = positionEnvironment();
+      qs.set("env", env);
+      const selectedAccounts = state.analysisBalanceAPIIDs && state.analysisBalanceAPIIDs[env] ? state.analysisBalanceAPIIDs[env] : {};
+      const params = { okx: "api_id", binance: "binance_api_id", gate: "gate_api_id" };
+      Object.keys(params).forEach((exchange) => {
+        const apiID = String(selectedAccounts[exchange] || activeAPIID(exchange, env) || "").trim();
+        if (apiID) qs.set(params[exchange], apiID);
+      });
+      if (forceRefresh) qs.set("refresh", "true");
+      return "/tvbot/balances/overview?" + qs.toString();
+    }
+
     function updateBalanceWindowButtons() {
       document.querySelectorAll("[data-balance-minutes]").forEach((button) => {
         const selected = Number(button.dataset.balanceMinutes || "0") === Number(state.balanceWindowMinutes || 0);
@@ -4666,7 +4747,7 @@ const tvbotHTML = `<!doctype html>
       if (analysisBalanceRefreshBusy || !analysisBalanceAutoRefreshAllowed()) return;
       analysisBalanceRefreshBusy = true;
       try {
-        await Promise.all([loadBalanceOverview(true, state.balanceWindowMinutes), loadAnalysisPositions(true)]);
+        await Promise.all([loadAnalysisBalanceOverview(true, state.balanceWindowMinutes), loadAnalysisPositions(true)]);
         renderAnalysis();
       } finally {
         analysisBalanceRefreshBusy = false;
@@ -4872,6 +4953,17 @@ const tvbotHTML = `<!doctype html>
       renderBalanceOverview();
     }
 
+    async function loadAnalysisBalanceOverview(forceRefresh, minutes) {
+      try {
+        state.analysisBalanceOverview = await api(analysisBalanceOverviewPath(!!forceRefresh, minutes));
+        state.analysisBalanceOverviewError = "";
+      } catch (err) {
+        state.analysisBalanceOverview = null;
+        state.analysisBalanceOverviewError = err.message;
+      }
+      renderAnalysisExchangeBalances();
+    }
+
     async function loadDashboardOrderAnalysis(refresh) {
       const minutes = Math.max(0, Number(state.dashboardBalanceWindowMinutes || 0));
       const pnlMinutes = Number.isFinite(minutes) && minutes > 0 ? Math.min(minutes, 90 * 24 * 60) : 5;
@@ -5012,7 +5104,7 @@ const tvbotHTML = `<!doctype html>
         try {
           const [summary] = await Promise.all([
             summaryPromise,
-            loadBalanceOverview(!!refresh, state.balanceWindowMinutes),
+            loadAnalysisBalanceOverview(!!refresh, state.balanceWindowMinutes),
             loadAnalysisPositions(!!refresh),
             tradesPromise
           ]);
@@ -5896,6 +5988,11 @@ const tvbotHTML = `<!doctype html>
 
     function balanceOverviewExchange(exchange) {
       const rows = state.balanceOverview && Array.isArray(state.balanceOverview.exchanges) ? state.balanceOverview.exchanges : [];
+      return rows.find((row) => normalizeExchange(row.exchange) === normalizeExchange(exchange)) || null;
+    }
+
+    function analysisBalanceOverviewExchange(exchange) {
+      const rows = state.analysisBalanceOverview && Array.isArray(state.analysisBalanceOverview.exchanges) ? state.analysisBalanceOverview.exchanges : [];
       return rows.find((row) => normalizeExchange(row.exchange) === normalizeExchange(exchange)) || null;
     }
 
@@ -8438,11 +8535,104 @@ const tvbotHTML = `<!doctype html>
     }
 
     function renderAnalysisExchangeBalances() {
-      const okxItem = balanceOverviewExchange("okx");
+      const okxItem = analysisBalanceOverviewExchange("okx");
       const okxBalance = okxItem && okxItem.balance ? okxItem.balance : (state.analysis ? state.analysis.balance : null);
+      renderAnalysisBalanceAccountSelectors();
       renderAnalysisOKXBalance(okxItem, okxBalance);
-      renderAnalysisBinanceBalance(balanceOverviewExchange("binance"));
-      renderAnalysisGateBalance(balanceOverviewExchange("gate"));
+      renderAnalysisBinanceBalance(analysisBalanceOverviewExchange("binance"));
+      renderAnalysisGateBalance(analysisBalanceOverviewExchange("gate"));
+    }
+
+    function renderAnalysisBalanceAccountSelectors() {
+      const env = positionEnvironment();
+      if (!state.analysisBalanceAPIIDs[env]) state.analysisBalanceAPIIDs[env] = { okx: "", binance: "", gate: "" };
+      ["okx", "binance", "gate"].forEach((exchange) => {
+        const select = $("analysis-" + exchange + "-account");
+        if (!select) return;
+        const status = apiKeyStatusForEnv(exchange, env);
+        const accounts = (Array.isArray(status.credentials) ? status.credentials : []).filter((account) => account && account.id && account.configured !== false);
+        const activeID = String(status.active_id || "").trim();
+        if (!state.analysisBalanceAPIIDs[env][exchange] || !accounts.some((account) => account.id === state.analysisBalanceAPIIDs[env][exchange])) {
+          state.analysisBalanceAPIIDs[env][exchange] = accounts.some((account) => account.id === activeID)
+            ? activeID
+            : (accounts.length ? accounts[0].id : "");
+        }
+        const selectedID = state.analysisBalanceAPIIDs[env][exchange];
+        if (!accounts.length) {
+          select.innerHTML = '<option value="">未配置账户</option>';
+          select.disabled = true;
+          return;
+        }
+        select.innerHTML = accounts.map((account) => {
+          const label = String(account.name || account.id);
+          return '<option value="' + escapeHTML(account.id) + '">' + escapeHTML(label) + '</option>';
+        }).join("");
+        select.value = selectedID;
+        select.disabled = accounts.length < 2;
+      });
+    }
+
+    function analysisPeakPositionStatusText(peak) {
+      if (!peak) return "暂无峰值记录";
+      if (peak.position_status === "missing") return "该权益点没有同时刻的持仓快照";
+      if (peak.position_status !== "ok") return "该时刻持仓读取失败，盈亏不可用";
+      const positions = Array.isArray(peak.positions) ? peak.positions : [];
+      return positions.length ? ("持仓 " + positions.length + " 个") : "该时刻无持仓";
+    }
+
+    function analysisPeakPnLText(peak) {
+      const totals = peak && Array.isArray(peak.pnl_totals) ? peak.pnl_totals : [];
+      if (!peak || peak.position_status !== "ok") return "-";
+      if (!totals.length) return "0";
+      return totals.map((row) => formatUSDTAmount(row.value) + " " + asText(row.currency)).join(" / ");
+    }
+
+    function analysisPeakPositionRows(peak) {
+      const positions = peak && Array.isArray(peak.positions) ? peak.positions : [];
+      if (!positions.length) return "";
+      const rows = positions.map((position) => {
+        const ratio = Number(position.pnl_ratio);
+        const ratioText = Number.isFinite(ratio) ? formatPct(ratio) : "-";
+        return "<tr>" +
+          "<td>" + escapeHTML(position.symbol || "-") + "</td>" +
+          "<td>" + escapeHTML(positionSideText(position.side, position.size)) + "</td>" +
+          "<td>" + escapeHTML(position.size || "-") + "</td>" +
+          "<td>" + escapeHTML(position.entry_price || "-") + "</td>" +
+          "<td>" + escapeHTML(position.mark_price || "-") + "</td>" +
+          "<td>" + escapeHTML(formatUSDTAmount(position.unrealized_pnl) + (position.pnl_currency ? " " + position.pnl_currency : "")) + "</td>" +
+          "<td>" + escapeHTML(ratioText) + "</td>" +
+          "<td>" + escapeHTML(position.leverage || "-") + "</td>" +
+          "<td>" + escapeHTML(position.liquidation_price || "-") + "</td>" +
+          "</tr>";
+      }).join("");
+      return '<div class="analysis-peak-table-wrap"><table class="analysis-peak-table"><thead><tr><th>币对</th><th>方向</th><th>数量</th><th>开仓价</th><th>标记价</th><th>浮动盈亏</th><th>盈亏比例</th><th>杠杆</th><th>清算价</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+    }
+
+    function renderAnalysisPeakCard(title, peak) {
+      if (!peak) return '<article class="analysis-peak-card"><h4>' + escapeHTML(title) + '</h4><div class="analysis-peak-meta">暂无权益采样</div></article>';
+      const timeText = peak.time ? shanghaiTime(peak.time) : "-";
+      const equityText = formatUSDTAmount(peak.equity) + " " + asText(peak.currency || "USDT");
+      const detail = peak.position_status === "ok"
+        ? analysisPeakPositionRows(peak) || '<div class="analysis-peak-meta">该时刻没有开放仓位</div>'
+        : '<div class="analysis-peak-meta">' + escapeHTML(analysisPeakPositionStatusText(peak)) + '</div>';
+      const count = Array.isArray(peak.positions) ? peak.positions.length : 0;
+      return '<article class="analysis-peak-card">' +
+        '<h4>' + escapeHTML(title) + '</h4>' +
+        '<div class="analysis-peak-value">' + escapeHTML(equityText) + '</div>' +
+        '<div class="analysis-peak-meta">' + escapeHTML(timeText) + '</div>' +
+        '<div class="analysis-peak-meta">持仓总浮盈：' + escapeHTML(analysisPeakPnLText(peak)) + '</div>' +
+        '<div class="analysis-peak-meta">' + escapeHTML(analysisPeakPositionStatusText(peak)) + '</div>' +
+        '<details><summary>查看当时持仓明细 (' + count + ')</summary>' + detail + '</details>' +
+        '</article>';
+    }
+
+    function renderAnalysisPeakSnapshots(exchange, item) {
+      const container = $("analysis-" + exchange + "-peak-snapshots");
+      if (!container) return;
+      container.innerHTML = [
+        renderAnalysisPeakCard("图表周期最高", item && item.period_peak),
+        renderAnalysisPeakCard("账户历史最高", item && item.all_time_peak)
+      ].join("");
     }
 
     function renderAnalysisOKXBalance(item, balance) {
@@ -8456,6 +8646,7 @@ const tvbotHTML = `<!doctype html>
       const fallbackPoints = state.analysis ? (state.analysis.balance_points || []) : [];
       const points = usdtBalancePoints(overviewPoints.length ? overviewPoints : fallbackPoints, balance);
       drawUSDTChart(points, "usdt-chart", "暂无 OKX USDT 权益数据", "#1f6feb");
+      renderAnalysisPeakSnapshots("okx", item);
     }
 
     function renderAnalysisBinanceBalance(item) {
@@ -8472,6 +8663,7 @@ const tvbotHTML = `<!doctype html>
       const liveUpdatedAt = item && item.status === "ok" ? (item.refreshed_at || (balance && balance.updated_at)) : "";
       const points = usdtBalancePoints(item ? (item.balance_points || []) : [], balance, liveUpdatedAt);
       drawUSDTChart(points, "analysis-binance-usdt-chart", item && item.configured ? "暂无 Binance " + currency + " 权益数据" : "Binance 未配置", "#138a55");
+      renderAnalysisPeakSnapshots("binance", item);
     }
 
     function renderAnalysisGateBalance(item) {
@@ -8484,6 +8676,7 @@ const tvbotHTML = `<!doctype html>
       $("analysis-gate-usdt-title").textContent = "USDT 权益图（含资金流） " + balanceWindowLabel(state.balanceWindowMinutes);
       const points = usdtBalancePoints(item ? (item.balance_points || []) : [], balance);
       drawUSDTChart(points, "analysis-gate-usdt-chart", item && item.configured ? "暂无 Gate USDT 权益数据" : "Gate 未配置", "#1a9b8a");
+      renderAnalysisPeakSnapshots("gate", item);
     }
 
     function renderAnalysisBalanceWindow(prefix, item) {
@@ -8517,12 +8710,13 @@ const tvbotHTML = `<!doctype html>
 
     function exchangeBalanceStatusText(item, balance, label) {
       if (!item) {
-        if (state.balanceOverviewError) return state.balanceOverviewError;
+        if (state.analysisBalanceOverviewError) return state.analysisBalanceOverviewError;
         return balance ? "已更新" : "-";
       }
       if (item.status === "non_trading") return item.error || label + " 非交易交易所，已停用";
       if (!item.configured) return label + " 未配置";
       if (item.status === "ok") return "已更新";
+      if (item.status === "read_only") return item.balance_points && item.balance_points.length ? "本地采样历史（只读）" : "尚无本地采样历史";
       if (item.status === "stale") return "缓存数据（上游暂不可用）";
       if (balance && usdtBalanceDetail(balance)) return "缓存数据（上游暂不可用）";
       return item.error || item.status || "读取失败";
@@ -10406,6 +10600,16 @@ const tvbotHTML = `<!doctype html>
         setPositionEnvironment(event.target.value).catch((err) => toast(err.message));
       });
     }
+    ["okx", "binance", "gate"].forEach((exchange) => {
+      const select = $("analysis-" + exchange + "-account");
+      if (!select) return;
+      select.addEventListener("change", () => {
+        const env = positionEnvironment();
+        if (!state.analysisBalanceAPIIDs[env]) state.analysisBalanceAPIIDs[env] = { okx: "", binance: "", gate: "" };
+        state.analysisBalanceAPIIDs[env][exchange] = select.value;
+        loadAnalysisBalanceOverview(false, state.balanceWindowMinutes).catch((err) => toast(err.message));
+      });
+    });
     $("refresh-positions").addEventListener("click", () => refreshPositionView().catch((err) => toast(err.message)));
     document.querySelectorAll("[data-pending-order-group]").forEach((button) => {
       button.addEventListener("click", () => {

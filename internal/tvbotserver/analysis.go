@@ -477,6 +477,7 @@ type balanceOverviewResponse struct {
 type exchangeBalanceOverview struct {
 	Exchange      string                 `json:"exchange"`
 	Label         string                 `json:"label"`
+	Env           string                 `json:"env"`
 	Configured    bool                   `json:"configured"`
 	Status        string                 `json:"status"`
 	APIID         string                 `json:"api_id,omitempty"`
@@ -484,6 +485,8 @@ type exchangeBalanceOverview struct {
 	Balance       analysisBalance        `json:"balance"`
 	BalancePoints []analysisBalancePoint `json:"balance_points"`
 	Window        analysisBalanceWindow  `json:"window"`
+	PeriodPeak    *analysisEquityPeak    `json:"period_peak,omitempty"`
+	AllTimePeak   *analysisEquityPeak    `json:"all_time_peak,omitempty"`
 	RefreshedAt   time.Time              `json:"refreshed_at,omitempty"`
 }
 
@@ -612,44 +615,78 @@ func (s *Server) runUSDTBalanceSampler(ctx context.Context, interval time.Durati
 }
 
 func (s *Server) sampleConfiguredUSDTBalances(ctx context.Context) {
+	if s.ConfigStore == nil {
+		return
+	}
 	cfg := s.ConfigStore.Get()
-	envName := analysisEnvName(cfg)
 	now := s.now()
-	switch s.primaryExchangeForConfig(cfg) {
-	case trading.ExchangeOKX:
-		if store := s.okxCredentialStore(cfg.Trading.Env); store != nil {
-			for _, requestedAPIID := range configuredAPIIDs(store.Status()) {
-				sampleCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-				err := s.sampleUSDTBalance(sampleCtx, cfg, requestedAPIID, envName, now)
-				cancel()
-				if err != nil && s.Logger != nil {
-					s.Logger.Warn("failed to sample USDT balance", "exchange", trading.ExchangeOKX, "api_id", requestedAPIID, "env", envName, "error", err)
+	for _, envName := range []string{config.EnvDemo, config.EnvLive} {
+		envCfg := configForTradeEnv(cfg, envName)
+		for _, exchange := range []string{trading.ExchangeOKX, trading.ExchangeBinance, trading.ExchangeGate} {
+			var apiIDs []string
+			switch exchange {
+			case trading.ExchangeOKX:
+				if store := s.okxCredentialsForSampling(envName); store != nil {
+					apiIDs = configuredAPIIDs(store.Status())
+				}
+			case trading.ExchangeBinance:
+				if store := s.binanceCredentialsForSampling(envName); store != nil {
+					apiIDs = configuredBinanceAPIIDs(store.Status())
+				}
+			case trading.ExchangeGate:
+				if store := s.gateCredentialsForSampling(envName); store != nil {
+					apiIDs = configuredGateAPIIDs(store.Status())
 				}
 			}
-		}
-	case trading.ExchangeBinance:
-		if store := s.binanceCredentialStore(cfg.Trading.Env); store != nil {
-			for _, requestedAPIID := range configuredBinanceAPIIDs(store.Status()) {
+			for _, requestedAPIID := range apiIDs {
 				sampleCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-				err := s.sampleBinanceUSDTBalance(sampleCtx, cfg, requestedAPIID, envName, now)
+				err := s.sampleConfiguredAccount(sampleCtx, envCfg, exchange, requestedAPIID, envName, now)
 				cancel()
 				if err != nil && s.Logger != nil {
-					s.Logger.Warn("failed to sample USDT balance", "exchange", trading.ExchangeBinance, "api_id", requestedAPIID, "env", envName, "error", err)
-				}
-			}
-		}
-	case trading.ExchangeGate:
-		if store := s.gateCredentialStore(cfg.Trading.Env); store != nil {
-			for _, requestedAPIID := range configuredGateAPIIDs(store.Status()) {
-				sampleCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-				err := s.sampleGateUSDTBalance(sampleCtx, cfg, requestedAPIID, envName, now)
-				cancel()
-				if err != nil && s.Logger != nil {
-					s.Logger.Warn("failed to sample USDT balance", "exchange", trading.ExchangeGate, "api_id", requestedAPIID, "env", envName, "error", err)
+					s.Logger.Warn("failed to sample account equity and positions", "exchange", exchange, "api_id", requestedAPIID, "env", envName, "error", err)
 				}
 			}
 		}
 	}
+}
+
+func (s *Server) sampleConfiguredAccount(ctx context.Context, cfg config.Config, exchange, apiID, envName string, now time.Time) error {
+	var err error
+	switch exchange {
+	case trading.ExchangeOKX:
+		err = s.sampleUSDTBalance(ctx, cfg, apiID, envName, now)
+	case trading.ExchangeBinance:
+		err = s.sampleBinanceUSDTBalance(ctx, cfg, apiID, envName, now)
+	case trading.ExchangeGate:
+		err = s.sampleGateUSDTBalance(ctx, cfg, apiID, envName, now)
+	default:
+		return fmt.Errorf("unsupported exchange %q", exchange)
+	}
+	if err != nil {
+		return err
+	}
+	return s.capturePositionSnapshot(ctx, cfg, exchange, apiID, envName, now)
+}
+
+func (s *Server) okxCredentialsForSampling(env string) *okx.CredentialStore {
+	if env == config.EnvLive {
+		return s.OKXLiveCredentials
+	}
+	return s.OKXCredentials
+}
+
+func (s *Server) binanceCredentialsForSampling(env string) *binance.CredentialStore {
+	if env == config.EnvLive {
+		return s.BinanceLiveCredentials
+	}
+	return s.BinanceCredentials
+}
+
+func (s *Server) gateCredentialsForSampling(env string) *gate.CredentialStore {
+	if env == config.EnvLive {
+		return s.GateLiveCredentials
+	}
+	return s.GateCredentials
 }
 
 func configuredAPIIDs(status okx.CredentialStatus) []string {
@@ -715,7 +752,7 @@ func configuredGateAPIIDs(status gate.CredentialStatus) []string {
 }
 
 func (s *Server) sampleUSDTBalance(ctx context.Context, cfg config.Config, requestedAPIID, envName string, now time.Time) error {
-	store := s.okxCredentialStore(cfg.Trading.Env)
+	store := s.okxCredentialsForSampling(envName)
 	if store == nil {
 		return errors.New("OKX credential store is not configured")
 	}
@@ -729,7 +766,7 @@ func (s *Server) sampleUSDTBalance(ctx context.Context, cfg config.Config, reque
 }
 
 func (s *Server) sampleBinanceUSDTBalance(ctx context.Context, cfg config.Config, requestedAPIID, envName string, now time.Time) error {
-	store := s.binanceCredentialStore(cfg.Trading.Env)
+	store := s.binanceCredentialsForSampling(envName)
 	if store == nil {
 		return errors.New("Binance credential store is not configured")
 	}
@@ -743,7 +780,7 @@ func (s *Server) sampleBinanceUSDTBalance(ctx context.Context, cfg config.Config
 }
 
 func (s *Server) sampleGateUSDTBalance(ctx context.Context, cfg config.Config, requestedAPIID, envName string, now time.Time) error {
-	store := s.gateCredentialStore(cfg.Trading.Env)
+	store := s.gateCredentialsForSampling(envName)
 	if store == nil {
 		return errors.New("Gate credential store is not configured")
 	}
@@ -798,17 +835,7 @@ func (s *Server) handleBalanceOverview(w http.ResponseWriter, r *http.Request) {
 
 func balanceOverviewForExchange(ctx context.Context, s *Server, cfg config.Config, primary, exchange, envName, requestedAPIID string, minutes int, now time.Time) exchangeBalanceOverview {
 	if exchange != primary {
-		message := "当前未选择主交易所，所有交易所均为只读"
-		if primary != "" {
-			message = primaryExchangeLabel(primary) + "为主交易所，" + primaryExchangeLabel(exchange) + "已停用交易功能"
-		}
-		return exchangeBalanceOverview{
-			Exchange:    exchange,
-			Label:       primaryExchangeLabel(exchange),
-			Status:      "non_trading",
-			Error:       message,
-			RefreshedAt: now.UTC(),
-		}
+		return s.storedBalanceOverviewForExchange(exchange, envName, requestedAPIID, minutes, now)
 	}
 	switch exchange {
 	case trading.ExchangeOKX:
@@ -818,6 +845,93 @@ func balanceOverviewForExchange(ctx context.Context, s *Server, cfg config.Confi
 	default:
 		return s.balanceOverviewForGate(ctx, cfg, envName, requestedAPIID, minutes, now)
 	}
+}
+
+func (s *Server) storedBalanceOverviewForExchange(exchange, envName, requestedAPIID string, minutes int, now time.Time) exchangeBalanceOverview {
+	out := exchangeBalanceOverview{
+		Exchange:    exchange,
+		Label:       primaryExchangeLabel(exchange),
+		Env:         envName,
+		Status:      "read_only",
+		RefreshedAt: now.UTC(),
+	}
+	requestedAPIID = strings.TrimSpace(requestedAPIID)
+	switch exchange {
+	case trading.ExchangeOKX:
+		store := s.okxCredentialsForSampling(envName)
+		if store == nil {
+			return out
+		}
+		status := store.Status()
+		out.Configured = status.Configured
+		out.APIID = requestedAPIID
+		if out.APIID == "" {
+			out.APIID = strings.TrimSpace(status.ActiveID)
+		}
+		if out.APIID == "" && len(configuredAPIIDs(status)) > 0 {
+			out.APIID = configuredAPIIDs(status)[0]
+		}
+		if out.Configured {
+			if _, _, err := store.OKXCredentials(out.APIID); err != nil {
+				out.Status = "error"
+				out.Error = "指定 OKX 账户未配置"
+				return out
+			}
+		}
+	case trading.ExchangeBinance:
+		store := s.binanceCredentialsForSampling(envName)
+		if store == nil {
+			return out
+		}
+		status := store.Status()
+		out.Configured = status.Configured
+		out.APIID = requestedAPIID
+		if out.APIID == "" {
+			out.APIID = strings.TrimSpace(status.ActiveID)
+		}
+		if out.APIID == "" && len(configuredBinanceAPIIDs(status)) > 0 {
+			out.APIID = configuredBinanceAPIIDs(status)[0]
+		}
+		if out.Configured {
+			if _, _, err := store.BinanceCredentials(out.APIID); err != nil {
+				out.Status = "error"
+				out.Error = "指定 Binance 账户未配置"
+				return out
+			}
+		}
+	case trading.ExchangeGate:
+		store := s.gateCredentialsForSampling(envName)
+		if store == nil {
+			return out
+		}
+		status := store.Status()
+		out.Configured = status.Configured
+		out.APIID = requestedAPIID
+		if out.APIID == "" {
+			out.APIID = strings.TrimSpace(status.ActiveID)
+		}
+		if out.APIID == "" && len(configuredGateAPIIDs(status)) > 0 {
+			out.APIID = configuredGateAPIIDs(status)[0]
+		}
+		if out.Configured {
+			if _, _, err := store.GateCredentials(out.APIID); err != nil {
+				out.Status = "error"
+				out.Error = "指定 Gate 账户未配置"
+				return out
+			}
+		}
+	}
+	if !out.Configured || out.APIID == "" {
+		out.Status = "not_configured"
+		return out
+	}
+	out.BalancePoints = s.balanceOverviewPoints(exchange, out.APIID, envName, minutes, now)
+	if cached, ok := analysisBalanceFromLatestPoint(out.BalancePoints); ok {
+		out.Balance = cached
+	}
+	out.Window = balanceWindowStats(out.BalancePoints, out.Balance)
+	s.attachBalancePeaks(&out, minutes, now)
+	return out
 }
 
 func balanceWindowQuery(r *http.Request) (int, int) {
@@ -1684,6 +1798,9 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 		} else {
 			setBalance(balanceValue, "okx")
 			source.Balance = "okx"
+			if snapshotErr := s.capturePositionSnapshot(ctx, cfg, trading.ExchangeOKX, apiID, envName, now); snapshotErr != nil && s.Logger != nil {
+				s.Logger.Warn("failed to capture OKX analysis position snapshot", "api_id", apiID, "env", envName, "error", snapshotErr)
+			}
 		}
 		if _, fundingErr := s.fetchOKXAnalysisFunding(ctx, okxClient, pnlMinutes, now); fundingErr != nil {
 			source.Funding = "okx_error"
@@ -1739,6 +1856,9 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 		if !balanceReady {
 			if balanceValue, balanceErr := s.fetchBinanceAnalysisBalance(ctx, binanceClient, binanceAPIID, envName, now); balanceErr == nil {
 				setBalance(balanceValue, "binance")
+				if snapshotErr := s.capturePositionSnapshot(ctx, cfg, trading.ExchangeBinance, binanceAPIID, envName, now); snapshotErr != nil && s.Logger != nil {
+					s.Logger.Warn("failed to capture Binance analysis position snapshot", "api_id", binanceAPIID, "env", envName, "error", snapshotErr)
+				}
 			} else if s.Logger != nil {
 				s.Logger.Warn("failed to fetch Binance analysis balance", "api_id", binanceAPIID, "env", envName, "error", balanceErr)
 			}
@@ -1764,6 +1884,9 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 			}
 			if snapshotErr := s.recordGateUSDTBalanceSnapshot(gateAPIID, envName, balanceValue, now); snapshotErr != nil && s.Logger != nil {
 				s.Logger.Warn("failed to write Gate analysis balance snapshot", "api_id", gateAPIID, "env", envName, "error", snapshotErr)
+			}
+			if snapshotErr := s.capturePositionSnapshot(ctx, cfg, trading.ExchangeGate, gateAPIID, envName, now); snapshotErr != nil && s.Logger != nil {
+				s.Logger.Warn("failed to capture Gate analysis position snapshot", "api_id", gateAPIID, "env", envName, "error", snapshotErr)
 			}
 			if source.Balance == "" {
 				source.Balance = "gate"
@@ -4678,8 +4801,8 @@ func (s *Server) analysisFromExternalData(cfg config.Config, apiID, binanceAPIID
 }
 
 func (s *Server) balanceOverviewForOKX(ctx context.Context, cfg config.Config, envName, requestedAPIID string, minutes int, now time.Time) exchangeBalanceOverview {
-	out := exchangeBalanceOverview{Exchange: trading.ExchangeOKX, Label: "OKX", Status: "not_configured", RefreshedAt: now.UTC()}
-	okxStore := s.okxCredentialStore(cfg.Trading.Env)
+	out := exchangeBalanceOverview{Exchange: trading.ExchangeOKX, Label: "OKX", Env: envName, Status: "not_configured", RefreshedAt: now.UTC()}
+	okxStore := s.okxCredentialsForSampling(envName)
 	if okxStore == nil {
 		out.Error = "OKX credential store is not configured"
 		return out
@@ -4702,6 +4825,11 @@ func (s *Server) balanceOverviewForOKX(ctx context.Context, cfg config.Config, e
 	out.APIID = apiID
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	balance, err := s.fetchAnalysisBalance(fetchCtx, s.analysisOKXClient(cfg, creds), apiID, envName, now)
+	if err == nil {
+		if snapshotErr := s.capturePositionSnapshot(fetchCtx, cfg, trading.ExchangeOKX, apiID, envName, now); snapshotErr != nil && s.Logger != nil {
+			s.Logger.Warn("failed to capture OKX position snapshot", "api_id", apiID, "env", envName, "error", snapshotErr)
+		}
+	}
 	cancel()
 	out.BalancePoints = s.balanceOverviewPoints(trading.ExchangeOKX, apiID, envName, minutes, now)
 	if err != nil {
@@ -4716,12 +4844,13 @@ func (s *Server) balanceOverviewForOKX(ctx context.Context, cfg config.Config, e
 		out.Balance = balance
 	}
 	out.Window = balanceWindowStats(out.BalancePoints, out.Balance)
+	s.attachBalancePeaks(&out, minutes, now)
 	return out
 }
 
 func (s *Server) balanceOverviewForBinance(ctx context.Context, cfg config.Config, envName, requestedAPIID string, minutes int, now time.Time) exchangeBalanceOverview {
-	out := exchangeBalanceOverview{Exchange: trading.ExchangeBinance, Label: "Binance", Status: "not_configured", RefreshedAt: now.UTC()}
-	binanceStore := s.binanceCredentialStore(cfg.Trading.Env)
+	out := exchangeBalanceOverview{Exchange: trading.ExchangeBinance, Label: "Binance", Env: envName, Status: "not_configured", RefreshedAt: now.UTC()}
+	binanceStore := s.binanceCredentialsForSampling(envName)
 	if binanceStore == nil {
 		out.Error = "Binance credential store is not configured"
 		return out
@@ -4744,6 +4873,11 @@ func (s *Server) balanceOverviewForBinance(ctx context.Context, cfg config.Confi
 	out.APIID = apiID
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	balance, err := s.fetchBinanceAnalysisBalance(fetchCtx, s.analysisBinanceClient(cfg, creds), apiID, envName, now)
+	if err == nil {
+		if snapshotErr := s.capturePositionSnapshot(fetchCtx, cfg, trading.ExchangeBinance, apiID, envName, now); snapshotErr != nil && s.Logger != nil {
+			s.Logger.Warn("failed to capture Binance position snapshot", "api_id", apiID, "env", envName, "error", snapshotErr)
+		}
+	}
 	cancel()
 	out.BalancePoints = s.balanceOverviewPoints(trading.ExchangeBinance, apiID, envName, minutes, now)
 	if err != nil {
@@ -4758,12 +4892,13 @@ func (s *Server) balanceOverviewForBinance(ctx context.Context, cfg config.Confi
 		out.Balance = balance
 	}
 	out.Window = balanceWindowStats(out.BalancePoints, out.Balance)
+	s.attachBalancePeaks(&out, minutes, now)
 	return out
 }
 
 func (s *Server) balanceOverviewForGate(ctx context.Context, cfg config.Config, envName, requestedAPIID string, minutes int, now time.Time) exchangeBalanceOverview {
-	out := exchangeBalanceOverview{Exchange: trading.ExchangeGate, Label: "Gate", Status: "not_configured", RefreshedAt: now.UTC()}
-	gateStore := s.gateCredentialStore(cfg.Trading.Env)
+	out := exchangeBalanceOverview{Exchange: trading.ExchangeGate, Label: "Gate", Env: envName, Status: "not_configured", RefreshedAt: now.UTC()}
+	gateStore := s.gateCredentialsForSampling(envName)
 	if gateStore == nil {
 		out.Error = "Gate credential store is not configured"
 		return out
@@ -4785,7 +4920,18 @@ func (s *Server) balanceOverviewForGate(ctx context.Context, cfg config.Config, 
 	}
 	out.APIID = apiID
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	account, err := (gate.Client{BaseURL: cfg.GateBaseURL(), Credentials: creds, HTTPClient: s.GateHTTPClient}).Account(fetchCtx)
+	client := gate.Client{BaseURL: cfg.GateBaseURL(), Credentials: creds, HTTPClient: s.GateHTTPClient}
+	var balance analysisBalance
+	account, err := client.Account(fetchCtx)
+	if err == nil {
+		balance = analysisBalanceFromGate(account, now)
+		if snapshotErr := s.recordGateUSDTBalanceSnapshot(apiID, envName, balance, now); snapshotErr != nil && s.Logger != nil {
+			s.Logger.Warn("failed to write Gate balance snapshot", "api_id", apiID, "env", envName, "error", snapshotErr)
+		}
+		if snapshotErr := s.capturePositionSnapshot(fetchCtx, cfg, trading.ExchangeGate, apiID, envName, now); snapshotErr != nil && s.Logger != nil {
+			s.Logger.Warn("failed to capture Gate position snapshot", "api_id", apiID, "env", envName, "error", snapshotErr)
+		}
+	}
 	cancel()
 	out.BalancePoints = s.balanceOverviewPoints(trading.ExchangeGate, apiID, envName, minutes, now)
 	if err != nil {
@@ -4797,9 +4943,10 @@ func (s *Server) balanceOverviewForGate(ctx context.Context, cfg config.Config, 
 		}
 	} else {
 		out.Status = "ok"
-		out.Balance = analysisBalanceFromGate(account, now)
+		out.Balance = balance
 	}
 	out.Window = balanceWindowStats(out.BalancePoints, out.Balance)
+	s.attachBalancePeaks(&out, minutes, now)
 	return out
 }
 

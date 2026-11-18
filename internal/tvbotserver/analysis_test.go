@@ -616,6 +616,8 @@ func TestBuildAnalysisReadsBinanceFillsFromLocalStorage(t *testing.T) {
 			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v3/account":
 			_, _ = w.Write([]byte(`{"totalWalletBalance":"100","totalMarginBalance":"100","availableBalance":"100","updateTime":1784862000000,"assets":[{"asset":"USDT","walletBalance":"100","marginBalance":"100","availableBalance":"100","updateTime":1784862000000}]}`))
+		case "/fapi/v3/positionRisk":
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Fatalf("unexpected Binance path %s", r.URL.Path)
 		}

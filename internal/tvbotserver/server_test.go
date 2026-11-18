@@ -3579,6 +3579,8 @@ func TestTVBotAnalysisRequiresAdminAndReturnsExchangeSeparatedStats(t *testing.T
 				t.Fatalf("bad bills query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
+		case "/api/v5/account/positions":
+			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
 		case "/api/v5/public/instruments":
 			sawInstruments = true
 			if r.URL.Query().Get("instType") != "SWAP" || r.Header.Get("OK-ACCESS-KEY") != "" {
@@ -3808,11 +3810,20 @@ func TestUSDTBalanceSamplerStoresConfiguredAccounts(t *testing.T) {
 	srv.Now = func() time.Time { return observedAt }
 	seen := map[string]bool{}
 	okxServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v5/account/balance" {
-			t.Fatalf("unexpected OKX path %s", r.URL.Path)
-		}
 		if r.Header.Get("x-simulated-trading") != "1" {
 			t.Fatalf("missing demo header")
+		}
+		if r.URL.Path == "/api/v5/account/positions" {
+			w.Header().Set("Content-Type", "application/json")
+			if r.Header.Get("OK-ACCESS-KEY") == "main-key" {
+				_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","posSide":"long","pos":"1","avgPx":"65000","markPx":"66000","upl":"12.5","uplRatio":"0.02","lever":"5","liqPx":"50000","ccy":"USDT"}]}`))
+			} else {
+				_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[]}`))
+			}
+			return
+		}
+		if r.URL.Path != "/api/v5/account/balance" {
+			t.Fatalf("unexpected OKX path %s", r.URL.Path)
 		}
 		apiKey := r.Header.Get("OK-ACCESS-KEY")
 		seen[apiKey] = true
@@ -3862,6 +3873,24 @@ func TestUSDTBalanceSamplerStoresConfiguredAccounts(t *testing.T) {
 		if len(snapshots) != 1 || snapshots[0].EqUsd != eqUSD || snapshots[0].BucketTS != observedAt.Truncate(time.Minute).UnixMilli() {
 			t.Fatalf("bad %s snapshots: %#v", apiID, snapshots)
 		}
+		positionSnapshot, err := srv.Orders.GetUSDTPositionSnapshot(trading.ExchangeOKX, apiID, config.EnvDemo, snapshots[0].BucketTS)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if positionSnapshot.Status != "ok" {
+			t.Fatalf("position snapshot should be paired with the balance point: %#v", positionSnapshot)
+		}
+		var payload analysisPositionSnapshotPayload
+		if err := json.Unmarshal([]byte(positionSnapshot.PayloadJSON), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if apiID == "main" {
+			if len(payload.Positions) != 1 || payload.Positions[0].Symbol != "BTC-USDT-SWAP" || len(payload.PnLTotals) != 1 || payload.PnLTotals[0].Currency != "USDT" || payload.PnLTotals[0].Value != "12.5" {
+				t.Fatalf("bad paired OKX position snapshot: %#v", payload)
+			}
+		} else if len(payload.Positions) != 0 {
+			t.Fatalf("empty account should have no open positions: %#v", payload)
+		}
 	}
 }
 
@@ -3869,11 +3898,16 @@ func TestUSDTBalanceSamplerStoresConfiguredGateAccount(t *testing.T) {
 	srv := newTestServer(t)
 	var calls int
 	gateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v4/futures/usdt/accounts" {
-			t.Fatalf("unexpected Gate path %s", r.URL.Path)
-		}
 		if r.Header.Get("KEY") != "gate-key" {
 			t.Fatalf("missing Gate API key")
+		}
+		if r.URL.Path == "/api/v4/futures/usdt/positions" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		if r.URL.Path != "/api/v4/futures/usdt/accounts" {
+			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}
 		calls++
 		w.Header().Set("Content-Type", "application/json")
@@ -3913,6 +3947,70 @@ func TestUSDTBalanceSamplerStoresConfiguredGateAccount(t *testing.T) {
 	}
 	if len(snapshots) != 1 || snapshots[0].Eq != "320.25" || snapshots[0].EqUsd != "320.25" || snapshots[0].AvailBal != "300.25" || snapshots[0].BucketTS != observedAt.Truncate(time.Minute).UnixMilli() {
 		t.Fatalf("bad Gate balance snapshot: %#v", snapshots)
+	}
+}
+
+func TestBalanceOverviewIncludesPositionStateAtEquityPeaks(t *testing.T) {
+	srv := newTestServer(t)
+	if _, err := srv.BinanceCredentials.UpdateAccount(binance.CredentialAccountUpdate{
+		ID: "peak-account", Active: true, Credentials: binance.Credentials{APIKey: "key", SecretKey: "secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := srv.ConfigStore.Get()
+	cfg.Trading.TargetExchange = trading.ExchangeOKX
+	srv.ConfigStore = config.NewStore("", cfg)
+	now := time.Date(2026, 11, 18, 4, 0, 0, 0, time.UTC)
+	srv.Now = func() time.Time { return now }
+	peakTime := now.Add(-time.Hour).Truncate(time.Minute)
+	for _, row := range []struct {
+		at  time.Time
+		eq  string
+		pnl string
+	}{{now.Add(-2 * time.Hour).Truncate(time.Minute), "1200.50", "2"}, {peakTime, "1300", "7.25"}} {
+		if err := srv.Orders.UpsertUSDTBalanceSnapshot(storage.USDTBalanceSnapshot{
+			Exchange: trading.ExchangeBinance, APIID: "peak-account", Env: config.EnvDemo, ObservedAt: row.at, Eq: row.eq, EqUsd: row.eq, Currency: "USDT",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		payload, err := json.Marshal(positionSnapshotPayload([]analysisPositionPnL{{
+			Symbol: "BTCUSDT", Side: "long", Size: "0.1", EntryPrice: "65000", MarkPrice: "66000",
+			UnrealizedPnL: row.pnl, PnLCurrency: "USDT", PnLRatio: "0.02", Leverage: "5", LiquidationPrice: "50000",
+		}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.Orders.UpsertUSDTPositionSnapshot(storage.USDTPositionSnapshot{
+			Exchange: trading.ExchangeBinance, APIID: "peak-account", Env: config.EnvDemo, ObservedAt: row.at, Status: "ok", PayloadJSON: string(payload),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/tvbot/balances/overview?env=demo&minutes=1440&binance_api_id=peak-account", nil)
+	request.SetBasicAuth("admin", "Admin123")
+	response := httptest.NewRecorder()
+	srv.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("balance overview code=%d body=%s", response.Code, response.Body.String())
+	}
+	var overview balanceOverviewResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &overview); err != nil {
+		t.Fatal(err)
+	}
+	var binanceRow *exchangeBalanceOverview
+	for i := range overview.Exchanges {
+		if overview.Exchanges[i].Exchange == trading.ExchangeBinance {
+			binanceRow = &overview.Exchanges[i]
+			break
+		}
+	}
+	if binanceRow == nil || binanceRow.Status != "read_only" || binanceRow.PeriodPeak == nil || binanceRow.AllTimePeak == nil {
+		t.Fatalf("expected read-only Binance history and both peaks: %#v", overview.Exchanges)
+	}
+	for label, peak := range map[string]*analysisEquityPeak{"period": binanceRow.PeriodPeak, "all-time": binanceRow.AllTimePeak} {
+		if peak.Equity != "1300" || peak.Time.UnixMilli() != peakTime.UnixMilli() || peak.PositionStatus != "ok" || len(peak.Positions) != 1 || len(peak.PnLTotals) != 1 || peak.PnLTotals[0].Value != "7.25" {
+			t.Fatalf("bad %s peak response: %#v", label, peak)
+		}
 	}
 }
 

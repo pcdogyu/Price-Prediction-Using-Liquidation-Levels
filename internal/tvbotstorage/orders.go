@@ -1179,6 +1179,17 @@ func (s *OrderStore) migrateSQLite() error {
 			PRIMARY KEY(exchange, api_id, env, bucket_ts)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_usdt_balance_snapshots_time ON usdt_balance_snapshots(exchange, api_id, env, bucket_ts)`,
+		`CREATE TABLE IF NOT EXISTS usdt_position_snapshots (
+			exchange TEXT NOT NULL,
+			api_id TEXT NOT NULL,
+			env TEXT NOT NULL,
+			bucket_ts INTEGER NOT NULL,
+			observed_at TEXT NOT NULL,
+			status TEXT NOT NULL,
+			payload_json TEXT NOT NULL DEFAULT '[]',
+			PRIMARY KEY(exchange, api_id, env, bucket_ts)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_usdt_position_snapshots_time ON usdt_position_snapshots(exchange, api_id, env, bucket_ts)`,
 		`CREATE TABLE IF NOT EXISTS binance_fills (
 			api_id TEXT NOT NULL,
 			symbol TEXT NOT NULL,
