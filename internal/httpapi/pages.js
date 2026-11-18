@@ -134,7 +134,13 @@
     else $('liq-symbol-search').removeAttribute('aria-activedescendant');
   }
   function chooseSymbol(value) {
-    liqSymbol = value; closeSymbolOptions(); resetLiquidations();
+    liqSymbol = value;
+    document.querySelectorAll('[data-liq-symbol-shortcut]').forEach(button => {
+      const selected = button.dataset.liqSymbolShortcut === value;
+      button.classList.toggle('selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+    closeSymbolOptions(); resetLiquidations();
   }
   function wallRows(events, side) {
     const labels = {disappeared:'已消失',disconnected:'连接中断',restart:'服务重启'};
@@ -282,6 +288,12 @@
   $('symbol').addEventListener('change',()=>{liqCursor='';liqStack=[];frozenBook=null;historyRows=[];$('history-results').innerHTML='';$('history-more').disabled=true;load();});
   if(page==='liquidations'){
     renderLiquidationAnalysis(null, '');
+    document.querySelectorAll('[data-liq-symbol-shortcut]').forEach(button => {
+      const selected = button.dataset.liqSymbolShortcut === liqSymbol;
+      button.classList.toggle('selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+      button.addEventListener('click', () => chooseSymbol(button.dataset.liqSymbolShortcut));
+    });
     const input = $('liq-symbol-search'), list = $('liq-symbol-options');
     input.addEventListener('focus', () => { input.select(); renderSymbolOptions(); });
     input.addEventListener('click', () => { if (list.hidden) renderSymbolOptions(); });

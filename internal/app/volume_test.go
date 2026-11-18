@@ -11,6 +11,7 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/config"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumeprofile"
 )
 
 func TestVolumeBootstrapSymbolsUsesBoundedConfiguredSet(t *testing.T) {
@@ -90,6 +91,41 @@ func TestEnsureVolumeProfileDeduplicatesPendingRequest(t *testing.T) {
 	}
 	if got := len(svc.volumeBackfillQueue); got != 1 {
 		t.Fatalf("queued backfills=%d, want one", got)
+	}
+	if got := <-svc.volumeBackfillQueue; got != "SOLUSDT" {
+		t.Fatalf("queued symbol=%s, want SOLUSDT", got)
+	}
+}
+
+func TestEnsureVolumeProfileForceQueuesCompletedSession(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "volume-force.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	session, err := volumeprofile.SessionAt(time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetVolumeProfileComplete(context.Background(), "SOLUSDT", session.Start, true); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{
+		store:               st,
+		volumeContext:       context.Background(),
+		volumeRequested:     make(map[string]struct{}),
+		volumeStreamSymbols: make(map[string]struct{}),
+		volumePending:       make(map[string]struct{}),
+		volumeBackfillError: make(map[string]string),
+		volumeBackfillQueue: make(chan string, 4),
+	}
+
+	if err := svc.EnsureVolumeProfile(context.Background(), "SOLUSDT", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(svc.volumeBackfillQueue); got != 1 {
+		t.Fatalf("forced completed-session backfills=%d, want 1", got)
 	}
 	if got := <-svc.volumeBackfillQueue; got != "SOLUSDT" {
 		t.Fatalf("queued symbol=%s, want SOLUSDT", got)

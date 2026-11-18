@@ -239,7 +239,7 @@ func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force 
 		s.volumeBackfillError = make(map[string]string)
 	}
 	s.volumeRequested[symbol] = struct{}{}
-	if complete || s.volumeContext == nil || s.volumeBackfillQueue == nil {
+	if (complete && !force) || s.volumeContext == nil || s.volumeBackfillQueue == nil {
 		s.volumeMu.Unlock()
 		return nil
 	}
