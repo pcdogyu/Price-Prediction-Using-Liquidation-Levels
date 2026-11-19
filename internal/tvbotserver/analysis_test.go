@@ -1018,6 +1018,25 @@ func TestAnalysisBalanceFromBinanceIncludesUnrealizedPnLWhenMarginBalanceMissing
 	}
 }
 
+func TestAnalysisBalanceRejectsNegativeEquityWithPositiveAvailableBalance(t *testing.T) {
+	invalid := analysisBalance{
+		TotalEq: "-480412.61430803",
+		AvailEq: "300435.25984907",
+		Details: []analysisBalanceDetail{{Ccy: "USDT", Eq: "-480412.61430803", AvailEq: "300435.25984907"}},
+	}
+	if !analysisBalanceHasNegativeEquityWithPositiveAvailable(invalid) {
+		t.Fatal("negative equity with a positive available balance should be rejected")
+	}
+	valid := analysisBalance{
+		TotalEq: "-10",
+		AvailEq: "-10",
+		Details: []analysisBalanceDetail{{Ccy: "USDT", Eq: "-10", AvailEq: "-10"}},
+	}
+	if analysisBalanceHasNegativeEquityWithPositiveAvailable(valid) {
+		t.Fatal("negative equity without a positive available balance should not match this invalid sample condition")
+	}
+}
+
 func TestAnalysisBalanceFromBinanceMarksMultiAssetsAsUSD(t *testing.T) {
 	got := analysisBalanceFromBinanceAccount(binance.AccountInformation{
 		TotalWalletBalance: "1200",
@@ -1929,6 +1948,27 @@ func TestBalanceWindowStatsComputesChangeAndMaxDrawdown(t *testing.T) {
 	}
 	if got.MaxDrawdown != 30 || math.Abs(got.MaxDrawdownPct-0.25) > 0.0000001 {
 		t.Fatalf("bad max drawdown: %#v", got)
+	}
+}
+
+func TestBalanceWindowStatsIgnoresInconsistentNegativeEquitySample(t *testing.T) {
+	base := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+	points := []analysisBalancePoint{
+		{Time: base, TS: base.UnixMilli(), Value: 100, Eq: "100", AvailEq: "90"},
+		{Time: base.Add(time.Hour), TS: base.Add(time.Hour).UnixMilli(), Value: 120, Eq: "120", AvailEq: "110"},
+		{Time: base.Add(2 * time.Hour), TS: base.Add(2 * time.Hour).UnixMilli(), Value: -480412.61430803, Eq: "-480412.61430803", AvailEq: "300435.25984907"},
+		{Time: base.Add(3 * time.Hour), TS: base.Add(3 * time.Hour).UnixMilli(), Value: 110, Eq: "110", AvailEq: "100"},
+	}
+	valid, ignored := filterInvalidBalancePoints(points)
+	if len(valid) != 3 || ignored != 1 {
+		t.Fatalf("invalid equity sample filtering = (%d valid, %d ignored), want (3, 1)", len(valid), ignored)
+	}
+	got := balanceWindowStats(points, analysisBalance{})
+	if got.StartValue != 100 || got.CurrentValue != 110 || got.Change != 10 || got.MaxDrawdown != 10 || math.Abs(got.MaxDrawdownPct-(10.0/120.0)) > 0.0000001 {
+		t.Fatalf("bad window stats after invalid equity sample filtering: %#v", got)
+	}
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "已从曲线和回撤统计中忽略") {
+		t.Fatalf("missing invalid equity sample warning: %#v", got.Warnings)
 	}
 }
 

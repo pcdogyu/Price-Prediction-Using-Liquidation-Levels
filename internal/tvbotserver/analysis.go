@@ -925,11 +925,13 @@ func (s *Server) storedBalanceOverviewForExchange(exchange, envName, requestedAP
 		out.Status = "not_configured"
 		return out
 	}
-	out.BalancePoints = s.balanceOverviewPoints(exchange, out.APIID, envName, minutes, now)
+	var ignoredBalancePoints int
+	out.BalancePoints, ignoredBalancePoints = s.balanceOverviewPoints(exchange, out.APIID, envName, minutes, now)
 	if cached, ok := analysisBalanceFromLatestPoint(out.BalancePoints); ok {
 		out.Balance = cached
 	}
 	out.Window = balanceWindowStats(out.BalancePoints, out.Balance)
+	appendIgnoredBalancePointWarning(&out.Window, ignoredBalancePoints)
 	s.attachBalancePeaks(&out, minutes, now)
 	return out
 }
@@ -1533,7 +1535,7 @@ func (s *Server) localBinanceAnalysisSnapshot(cfg config.Config, requestedAPIID 
 			trades = append(trades, trade)
 		}
 	}
-	balancePoints := s.balanceOverviewPoints(trading.ExchangeBinance, apiID, env, priceDays*24*60, now)
+	balancePoints, _ := s.balanceOverviewPoints(trading.ExchangeBinance, apiID, env, priceDays*24*60, now)
 	resp := s.analysisFromExternalData(cfg, "", apiID, "", env, priceDays, pnlMinutes, now,
 		analysisSourceStatus{Balance: "cache", Fills: "local", Funding: "cache", Price: "cache"}, balancePoints, trades, nil, nil)
 	if incomes, incomeErr := s.Orders.ListBinanceIncome(apiID, env, since, now); incomeErr == nil {
@@ -1943,7 +1945,7 @@ func (s *Server) buildAnalysis(ctx context.Context, cfg config.Config, requested
 					primaryExchange, primaryAPIID = trading.ExchangeGate, gateAPIID
 				}
 			}
-			balancePoints = s.balanceOverviewPoints(primaryExchange, primaryAPIID, envName, priceDays*24*60, now)
+			balancePoints, _ = s.balanceOverviewPoints(primaryExchange, primaryAPIID, envName, priceDays*24*60, now)
 		}
 		resp = s.analysisFromExternalData(analysisCfg, apiID, binanceAPIID, gateAPIID, envName, priceDays, pnlMinutes, now, source, balancePoints, binanceTrades, gateTrades, gatePositions)
 	}
@@ -2221,6 +2223,9 @@ func (s *Server) fetchBinanceAnalysisBalance(ctx context.Context, client binance
 		return analysisBalance{}, err
 	}
 	out := analysisBalanceFromBinanceAccount(account)
+	if analysisBalanceHasNegativeEquityWithPositiveAvailable(out) {
+		return analysisBalance{}, errors.New("Binance returned negative equity with positive available balance")
+	}
 	if err := s.recordBinanceUSDTBalanceSnapshot(apiID, envName, out, now); err != nil && s.Logger != nil {
 		s.Logger.Warn("failed to write USDT balance snapshot", "exchange", trading.ExchangeBinance, "api_id", apiID, "env", envName, "error", err)
 	}
@@ -2473,6 +2478,9 @@ func (s *Server) recordUSDTBalanceSnapshot(apiID, envName string, balance okx.Ac
 func (s *Server) recordBinanceUSDTBalanceSnapshot(apiID, envName string, balance analysisBalance, observedAt time.Time) error {
 	if s.Orders == nil {
 		return nil
+	}
+	if analysisBalanceHasNegativeEquityWithPositiveAvailable(balance) {
+		return errors.New("refusing Binance equity snapshot with negative equity and positive available balance")
 	}
 	detail, ok := analysisBalanceDetailForCurrency(balance)
 	if !ok {
@@ -4831,7 +4839,8 @@ func (s *Server) balanceOverviewForOKX(ctx context.Context, cfg config.Config, e
 		}
 	}
 	cancel()
-	out.BalancePoints = s.balanceOverviewPoints(trading.ExchangeOKX, apiID, envName, minutes, now)
+	var ignoredBalancePoints int
+	out.BalancePoints, ignoredBalancePoints = s.balanceOverviewPoints(trading.ExchangeOKX, apiID, envName, minutes, now)
 	if err != nil {
 		out.Status = "error"
 		out.Error = err.Error()
@@ -4844,6 +4853,7 @@ func (s *Server) balanceOverviewForOKX(ctx context.Context, cfg config.Config, e
 		out.Balance = balance
 	}
 	out.Window = balanceWindowStats(out.BalancePoints, out.Balance)
+	appendIgnoredBalancePointWarning(&out.Window, ignoredBalancePoints)
 	s.attachBalancePeaks(&out, minutes, now)
 	return out
 }
@@ -4879,7 +4889,8 @@ func (s *Server) balanceOverviewForBinance(ctx context.Context, cfg config.Confi
 		}
 	}
 	cancel()
-	out.BalancePoints = s.balanceOverviewPoints(trading.ExchangeBinance, apiID, envName, minutes, now)
+	var ignoredBalancePoints int
+	out.BalancePoints, ignoredBalancePoints = s.balanceOverviewPoints(trading.ExchangeBinance, apiID, envName, minutes, now)
 	if err != nil {
 		out.Status = "error"
 		out.Error = err.Error()
@@ -4892,6 +4903,7 @@ func (s *Server) balanceOverviewForBinance(ctx context.Context, cfg config.Confi
 		out.Balance = balance
 	}
 	out.Window = balanceWindowStats(out.BalancePoints, out.Balance)
+	appendIgnoredBalancePointWarning(&out.Window, ignoredBalancePoints)
 	s.attachBalancePeaks(&out, minutes, now)
 	return out
 }
@@ -4933,7 +4945,8 @@ func (s *Server) balanceOverviewForGate(ctx context.Context, cfg config.Config, 
 		}
 	}
 	cancel()
-	out.BalancePoints = s.balanceOverviewPoints(trading.ExchangeGate, apiID, envName, minutes, now)
+	var ignoredBalancePoints int
+	out.BalancePoints, ignoredBalancePoints = s.balanceOverviewPoints(trading.ExchangeGate, apiID, envName, minutes, now)
 	if err != nil {
 		out.Status = "error"
 		out.Error = err.Error()
@@ -4946,6 +4959,7 @@ func (s *Server) balanceOverviewForGate(ctx context.Context, cfg config.Config, 
 		out.Balance = balance
 	}
 	out.Window = balanceWindowStats(out.BalancePoints, out.Balance)
+	appendIgnoredBalancePointWarning(&out.Window, ignoredBalancePoints)
 	s.attachBalancePeaks(&out, minutes, now)
 	return out
 }
@@ -5030,8 +5044,9 @@ func analysisBalanceFromLatestPoint(points []analysisBalancePoint) (analysisBala
 }
 
 func balanceWindowStats(points []analysisBalancePoint, balance analysisBalance) analysisBalanceWindow {
-	values := make([]analysisBalancePoint, 0, len(points)+1)
-	for _, point := range points {
+	validPoints, ignoredBalancePoints := filterInvalidBalancePoints(points)
+	values := make([]analysisBalancePoint, 0, len(validPoints)+1)
+	for _, point := range validPoints {
 		if !math.IsNaN(point.Value) && !math.IsInf(point.Value, 0) {
 			values = append(values, point)
 		}
@@ -5043,7 +5058,9 @@ func balanceWindowStats(points []analysisBalancePoint, balance analysisBalance) 
 		}
 	}
 	if len(values) == 0 {
-		return analysisBalanceWindow{}
+		window := analysisBalanceWindow{}
+		appendIgnoredBalancePointWarning(&window, ignoredBalancePoints)
+		return window
 	}
 	start := values[0]
 	current := values[len(values)-1]
@@ -5055,6 +5072,7 @@ func balanceWindowStats(points []analysisBalancePoint, balance analysisBalance) 
 		CurrentTime:  balancePointTime(current),
 		Warnings:     balanceWindowWarnings(values),
 	}
+	appendIgnoredBalancePointWarning(&window, ignoredBalancePoints)
 	if start.Value != 0 {
 		window.ChangePct = window.Change / math.Abs(start.Value)
 	}
@@ -5079,6 +5097,38 @@ const (
 	balanceCashJumpMinUSDT = 1000.0
 	balanceCashJumpMinPct  = 0.05
 )
+
+func balancePointHasNegativeEquityWithPositiveAvailable(point analysisBalancePoint) bool {
+	if point.Value >= 0 {
+		return false
+	}
+	available, ok := parseAnyFloat(point.AvailEq)
+	if !ok {
+		available, ok = parseAnyFloat(point.AvailBal)
+	}
+	return ok && available > 0
+}
+
+func filterInvalidBalancePoints(points []analysisBalancePoint) ([]analysisBalancePoint, int) {
+	validPoints := make([]analysisBalancePoint, 0, len(points))
+	ignored := 0
+	for _, point := range points {
+		if balancePointHasNegativeEquityWithPositiveAvailable(point) {
+			ignored++
+			continue
+		}
+		validPoints = append(validPoints, point)
+	}
+	return validPoints, ignored
+}
+
+func appendIgnoredBalancePointWarning(window *analysisBalanceWindow, count int) {
+	if window == nil || count <= 0 {
+		return
+	}
+	warning := fmt.Sprintf("检测到 %d 条权益为负、可用余额为正的异常采样，已从曲线和回撤统计中忽略", count)
+	window.Warnings = append(window.Warnings, warning)
+}
 
 func balanceWindowWarnings(points []analysisBalancePoint) []string {
 	if len(points) < 2 {
@@ -5138,6 +5188,26 @@ func analysisCurrentBalanceValue(balance analysisBalance) (float64, bool) {
 	return value, ok
 }
 
+func analysisBalanceHasNegativeEquityWithPositiveAvailable(balance analysisBalance) bool {
+	equity, ok := analysisCurrentBalanceValue(balance)
+	if !ok || equity >= 0 {
+		return false
+	}
+	available, ok := parseAnyFloat(balance.AvailEq)
+	if !ok {
+		for _, detail := range balance.Details {
+			available, ok = parseAnyFloat(detail.AvailEq)
+			if !ok {
+				available, ok = parseAnyFloat(detail.AvailBal)
+			}
+			if ok {
+				break
+			}
+		}
+	}
+	return ok && available > 0
+}
+
 func parseAnalysisBalanceUpdatedAt(balance analysisBalance) time.Time {
 	if strings.TrimSpace(balance.UpdatedAt) != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(balance.UpdatedAt)); err == nil {
@@ -5157,9 +5227,9 @@ func balancePointTime(point analysisBalancePoint) time.Time {
 	return time.Time{}
 }
 
-func (s *Server) balanceOverviewPoints(exchange, apiID, envName string, minutes int, now time.Time) []analysisBalancePoint {
+func (s *Server) balanceOverviewPoints(exchange, apiID, envName string, minutes int, now time.Time) ([]analysisBalancePoint, int) {
 	if s.Orders == nil || strings.TrimSpace(apiID) == "" {
-		return nil
+		return nil, 0
 	}
 	if minutes < 0 {
 		minutes = 0
@@ -5178,9 +5248,11 @@ func (s *Server) balanceOverviewPoints(exchange, apiID, envName string, minutes 
 		if s.Logger != nil {
 			s.Logger.Warn("failed to list USDT balance snapshots", "exchange", exchange, "api_id", apiID, "env", envName, "error", err)
 		}
-		return nil
+		return nil, 0
 	}
-	return compactBalancePoints(balancePointsFromSnapshots(snapshots), minutes)
+	points := balancePointsFromSnapshots(snapshots)
+	validPoints, ignoredBalancePoints := filterInvalidBalancePoints(points)
+	return compactBalancePoints(validPoints, minutes), ignoredBalancePoints
 }
 
 func balancePointsFromSnapshots(snapshots []storage.USDTBalanceSnapshot) []analysisBalancePoint {

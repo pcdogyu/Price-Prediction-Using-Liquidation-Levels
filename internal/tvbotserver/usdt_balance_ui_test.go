@@ -60,6 +60,8 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`id="analysis-okx-net-pnl"`,
 		`id="analysis-binance-net-pnl"`,
 		`id="analysis-gate-net-pnl"`,
+		`周期已平仓净盈亏`,
+		`峰值时持仓总浮盈：`,
 		`id="analysis-gate-usdt-eq"`,
 		`id="analysis-okx-turnover"`,
 		`id="analysis-okx-fees"`,

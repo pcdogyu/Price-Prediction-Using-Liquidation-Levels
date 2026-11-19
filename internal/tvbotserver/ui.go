@@ -2561,7 +2561,7 @@ const tvbotHTML = `<!doctype html>
           </div>
           <div class="analysis-exchange-block balance-pnl-block">
             <div class="analysis-metrics">
-              <div class="analysis-card"><div class="label">已平仓净盈亏</div><div class="value" id="analysis-okx-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">周期已平仓净盈亏</div><div class="value" id="analysis-okx-net-pnl">-</div></div>
               <div class="analysis-card"><div class="label">胜率</div><div class="value" id="analysis-okx-win-rate">-</div></div>
               <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="analysis-okx-profit-factor">-</div></div>
               <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="analysis-okx-payoff-ratio">-</div></div>
@@ -2619,7 +2619,7 @@ const tvbotHTML = `<!doctype html>
           </div>
           <div class="analysis-exchange-block balance-pnl-block">
             <div class="analysis-metrics">
-              <div class="analysis-card"><div class="label">已平仓净盈亏</div><div class="value" id="analysis-binance-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">周期已平仓净盈亏</div><div class="value" id="analysis-binance-net-pnl">-</div></div>
               <div class="analysis-card"><div class="label">胜率</div><div class="value" id="analysis-binance-win-rate">-</div></div>
               <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="analysis-binance-profit-factor">-</div></div>
               <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="analysis-binance-payoff-ratio">-</div></div>
@@ -2656,7 +2656,7 @@ const tvbotHTML = `<!doctype html>
           </div>
           <div class="analysis-exchange-block balance-pnl-block">
             <div class="analysis-metrics">
-              <div class="analysis-card"><div class="label">已平仓净盈亏</div><div class="value" id="analysis-gate-net-pnl">-</div></div>
+              <div class="analysis-card"><div class="label">周期已平仓净盈亏</div><div class="value" id="analysis-gate-net-pnl">-</div></div>
               <div class="analysis-card"><div class="label">胜率</div><div class="value" id="analysis-gate-win-rate">-</div></div>
               <div class="analysis-card"><div class="label">盈利因子</div><div class="value" id="analysis-gate-profit-factor">-</div></div>
               <div class="analysis-card"><div class="label">盈亏比</div><div class="value" id="analysis-gate-payoff-ratio">-</div></div>
@@ -8703,7 +8703,7 @@ const tvbotHTML = `<!doctype html>
         '<h4>' + escapeHTML(title) + '</h4>' +
         '<div class="analysis-peak-value">' + escapeHTML(equityText) + '</div>' +
         '<div class="analysis-peak-meta">' + escapeHTML(timeText) + '</div>' +
-        '<div class="analysis-peak-meta">持仓总浮盈：' + escapeHTML(analysisPeakPnLText(peak)) + '</div>' +
+        '<div class="analysis-peak-meta">峰值时持仓总浮盈：' + escapeHTML(analysisPeakPnLText(peak)) + '</div>' +
         '<div class="analysis-peak-meta">' + escapeHTML(analysisPeakPositionStatusText(peak)) + '</div>' +
         '<details open><summary>查看当时持仓明细 (' + count + ')</summary>' + detail + '</details>' +
         '</article>';
