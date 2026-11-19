@@ -590,6 +590,16 @@ func TestRenderTVBotAnalysisAddsPerSymbolPnLTable(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotPeakSnapshotsOnlyShowChartPeriodPeak(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
+	if !strings.Contains(page, `container.innerHTML = renderAnalysisPeakCard("图表周期最高", item && item.period_peak);`) {
+		t.Fatal("analysis peak snapshots should keep the chart-period peak card")
+	}
+	if strings.Contains(page, `renderAnalysisPeakCard("账户历史最高"`) || strings.Contains(page, `item && item.all_time_peak`) {
+		t.Fatal("analysis peak snapshots should not render the account-history peak card")
+	}
+}
+
 func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{

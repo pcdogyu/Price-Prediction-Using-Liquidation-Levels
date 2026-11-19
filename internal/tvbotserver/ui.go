@@ -8696,10 +8696,7 @@ const tvbotHTML = `<!doctype html>
     function renderAnalysisPeakSnapshots(exchange, item) {
       const container = $("analysis-" + exchange + "-peak-snapshots");
       if (!container) return;
-      container.innerHTML = [
-        renderAnalysisPeakCard("图表周期最高", item && item.period_peak),
-        renderAnalysisPeakCard("账户历史最高", item && item.all_time_peak)
-      ].join("");
+      container.innerHTML = renderAnalysisPeakCard("图表周期最高", item && item.period_peak);
     }
 
     function renderAnalysisOKXBalance(item, balance) {
