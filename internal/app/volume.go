@@ -352,10 +352,16 @@ func (s *Service) applyLiveAggregateTrades(ctx context.Context, trades []domain.
 			return err
 		}
 		if !complete || lastID == 0 || aggregateTradeGap(rows, lastID) {
-			_ = s.store.SetVolumeProfileComplete(ctx, key.symbol, sessions[key].Start, false)
-			if err = s.syncVolumeSessionExclusive(ctx, key.symbol, rows[len(rows)-1].Time); err != nil {
+			if err = s.store.SetVolumeProfileComplete(ctx, key.symbol, sessions[key].Start, false); err != nil {
 				return err
 			}
+			if err = s.EnsureVolumeProfile(ctx, key.symbol, false); err != nil {
+				return err
+			}
+			// Historical replay runs on the backfill worker. Keeping this live
+			// consumer moving lets it continue draining other symbols while the
+			// requested session catches up through the exchange REST endpoint.
+			continue
 		}
 		if err = s.store.ApplyAggregateTrades(ctx, key.symbol, sessions[key].Start, rows, true); err != nil {
 			return err

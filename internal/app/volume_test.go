@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -140,6 +141,45 @@ func TestEnsureVolumeProfileRetriesAfterBackoffAndForceBypassesIt(t *testing.T) 
 	}
 	if got := len(svc.volumeBackfillQueue); got != 1 {
 		t.Fatalf("automatic retries after cooldown=%d, want 1", got)
+	}
+}
+
+func TestApplyLiveAggregateTradesQueuesBackfillWithoutBlocking(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "volume-live-queue.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	originalFetch := fetchAggregateTrades
+	t.Cleanup(func() { fetchAggregateTrades = originalFetch })
+	called := false
+	fetchAggregateTrades = func(context.Context, string, int64, time.Time, time.Time) ([]domain.AggregateTrade, error) {
+		called = true
+		return nil, errors.New("live path must not synchronously fetch history")
+	}
+
+	svc := &Service{
+		store:               st,
+		volumeContext:       context.Background(),
+		volumeRequested:     map[string]struct{}{"SOLUSDT": {}},
+		volumeStreamSymbols: make(map[string]struct{}),
+		volumePending:       make(map[string]struct{}),
+		volumeBackfillError: make(map[string]string),
+		volumeBackfillQueue: make(chan string, 4),
+	}
+	trade := domain.AggregateTrade{ID: 100, Symbol: "SOLUSDT", Time: time.Now().UTC(), Price: 100, Quantity: 1}
+	if err := svc.applyLiveAggregateTrades(context.Background(), []domain.AggregateTrade{trade}); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("live consumer fetched history synchronously")
+	}
+	if got := len(svc.volumeBackfillQueue); got != 1 {
+		t.Fatalf("queued backfills=%d, want 1", got)
+	}
+	if got := <-svc.volumeBackfillQueue; got != "SOLUSDT" {
+		t.Fatalf("queued symbol=%s, want SOLUSDT", got)
 	}
 }
 
