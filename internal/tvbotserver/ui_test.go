@@ -570,6 +570,26 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotAnalysisAddsPerSymbolPnLTable(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
+	for _, want := range []string{
+		`id="analysis-symbol-stats-section"`,
+		`class="symbol-table analysis-symbol-stats-table"`,
+		`<th>币对</th><th>仓位数</th><th>胜 / 负</th><th>胜率</th><th>毛利</th><th>毛损</th><th>手续费</th><th>净盈亏</th><th>成交额</th>`,
+		`id="analysis-symbol-stats-rows"`,
+		`function renderAnalysisSymbolStats(errorText)`,
+		`Array.isArray(state.analysis.symbols) ? state.analysis.symbols : []`,
+		`normalizeExchange(row && row.exchange) === exchange`,
+		`row && row.net_pnl`,
+		`balanceWindowLabel(analysisPNLWindowMinutes()) + " · 已平仓 · "`,
+		`所选周期内暂无已平仓币对盈亏`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("analysis per-symbol PnL table is missing %q", want)
+		}
+	}
+}
+
 func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{

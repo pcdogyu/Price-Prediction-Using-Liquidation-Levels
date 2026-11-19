@@ -1851,6 +1851,16 @@ const tvbotHTML = `<!doctype html>
       flex-wrap: wrap;
       justify-content: flex-end;
     }
+    .analysis-symbol-stats-card {
+      margin-top: 14px;
+    }
+    .analysis-symbol-stats-table {
+      min-width: 900px;
+    }
+    .analysis-symbol-stats-table th,
+    .analysis-symbol-stats-table td {
+      white-space: nowrap;
+    }
     .exchange-order-history-card {
       margin-top: 16px;
     }
@@ -2650,6 +2660,20 @@ const tvbotHTML = `<!doctype html>
             <svg id="analysis-gate-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Gate USDT equity chart"></svg>
             <div id="analysis-gate-peak-snapshots" class="analysis-peak-snapshots"></div>
           </div>
+        </div>
+      </div>
+      <div class="analysis-trade-history-card analysis-symbol-stats-card" id="analysis-symbol-stats-section">
+        <div class="section-head" style="margin-bottom:10px">
+          <h3 id="analysis-symbol-stats-title">币对已平仓盈亏</h3>
+          <span class="muted" id="analysis-symbol-stats-status">-</span>
+        </div>
+        <div class="symbol-table-wrap">
+          <table class="symbol-table analysis-symbol-stats-table">
+            <thead>
+              <tr><th>币对</th><th>仓位数</th><th>胜 / 负</th><th>胜率</th><th>毛利</th><th>毛损</th><th>手续费</th><th>净盈亏</th><th>成交额</th></tr>
+            </thead>
+            <tbody id="analysis-symbol-stats-rows"></tbody>
+          </table>
         </div>
       </div>
       <div class="analysis-trade-history-card" id="analysis-trade-history-section">
@@ -7660,6 +7684,7 @@ const tvbotHTML = `<!doctype html>
         renderAnalysisExchangeStats("okx", state.analysisError || "-");
         renderAnalysisExchangeStats("binance", state.analysisError || "-");
         renderAnalysisExchangeStats("gate", state.analysisError || "-");
+        renderAnalysisSymbolStats(state.analysisError || "-");
         renderAnalysisTradeHistory(state.analysisError || "-");
         return;
       }
@@ -7675,7 +7700,49 @@ const tvbotHTML = `<!doctype html>
       renderAnalysisExchangeStats("okx", "");
       renderAnalysisExchangeStats("binance", "");
       renderAnalysisExchangeStats("gate", "");
+      renderAnalysisSymbolStats("");
       renderAnalysisTradeHistory("");
+    }
+
+    function renderAnalysisSymbolStats(errorText) {
+      const rowsEl = $("analysis-symbol-stats-rows");
+      const status = $("analysis-symbol-stats-status");
+      if (!rowsEl) return;
+      const colspan = 9;
+      if (errorText) {
+        rowsEl.innerHTML = '<tr><td colspan="' + colspan + '" class="muted">' + escapeHTML(errorText) + '</td></tr>';
+        if (status) status.textContent = "-";
+        return;
+      }
+      if (!state.analysis) {
+        rowsEl.innerHTML = '<tr><td colspan="' + colspan + '" class="muted">正在加载币对盈亏分析…</td></tr>';
+        if (status) status.textContent = "正在加载…";
+        return;
+      }
+      const exchange = activeExchange();
+      const rows = (Array.isArray(state.analysis.symbols) ? state.analysis.symbols : [])
+        .filter((row) => normalizeExchange(row && row.exchange) === exchange)
+        .slice()
+        .sort((left, right) => {
+          const pnlDifference = Number(right && right.net_pnl || 0) - Number(left && left.net_pnl || 0);
+          if (Number.isFinite(pnlDifference) && pnlDifference !== 0) return pnlDifference;
+          return String(left && left.inst_id || "").localeCompare(String(right && right.inst_id || ""));
+        });
+      if (status) status.textContent = exchangeLabel(exchange) + " · " + balanceWindowLabel(analysisPNLWindowMinutes()) + " · 已平仓 · " + rows.length + " 个币对";
+      rowsEl.innerHTML = rows.map((row) => {
+        const tone = signedToneClass(row && row.net_pnl);
+        return "<tr>" +
+          "<td>" + escapeHTML(asText(row && row.inst_id)) + "</td>" +
+          "<td>" + escapeHTML(asText(row && row.trade_count || 0)) + "</td>" +
+          "<td>" + escapeHTML(asText(row && row.wins || 0)) + " / " + escapeHTML(asText(row && row.losses || 0)) + "</td>" +
+          "<td>" + escapeHTML(formatPct(row && row.win_rate)) + "</td>" +
+          "<td>" + escapeHTML(formatUSDTAmount(row && row.gross_profit)) + "</td>" +
+          "<td>" + escapeHTML(formatUSDTAmount(row && row.gross_loss)) + "</td>" +
+          "<td>" + escapeHTML(formatUSDTAmount(row && row.fees)) + "</td>" +
+          "<td" + (tone ? ' class="' + tone + '"' : "") + ">" + escapeHTML(formatUSDTAmount(row && row.net_pnl)) + "</td>" +
+          "<td>" + escapeHTML(formatUSDTAmount(row && row.turnover)) + "</td>" +
+          "</tr>";
+      }).join("") || '<tr><td colspan="' + colspan + '" class="muted">所选周期内暂无已平仓币对盈亏</td></tr>';
     }
 
     function renderAnalysisExchangeStats(exchange, errorText) {
