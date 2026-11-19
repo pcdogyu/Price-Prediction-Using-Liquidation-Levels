@@ -241,16 +241,20 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 	analysisUpdated := strings.Index(tvbotHTML, `id="analysis-updated"`)
 	windowToolbar := strings.Index(tvbotHTML, `id="analysis-balance-window-toolbar"`)
 	analysisGrid := strings.Index(tvbotHTML, `class="analysis-balance-grid"`)
-	okxChartInPeriodPanel := strings.Index(tvbotHTML, `id="usdt-chart" class="mini-usdt-chart"`)
 	okxPeak := strings.Index(tvbotHTML, `id="analysis-okx-peak-snapshots"`)
-	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 || okxChartInPeriodPanel < 0 || okxPeak < 0 {
+	okxChartTitle := strings.Index(tvbotHTML, `id="analysis-okx-usdt-title"`)
+	okxChartInPeriodPanel := strings.Index(tvbotHTML, `id="usdt-chart" class="mini-usdt-chart"`)
+	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 || okxPeak < 0 || okxChartTitle < 0 || okxChartInPeriodPanel < 0 {
 		t.Fatal("analysis balance toolbar layout markers are missing")
 	}
-	if !(analysisUpdated < analysisGrid && analysisGrid < okxChartInPeriodPanel && okxChartInPeriodPanel < windowToolbar && windowToolbar < okxPeak) {
-		t.Fatal("analysis should place the period switch directly above the chart-period peak card")
+	if !(analysisUpdated < analysisGrid && analysisGrid < windowToolbar && windowToolbar < okxPeak && okxPeak < okxChartTitle && okxChartTitle < okxChartInPeriodPanel) {
+		t.Fatal("analysis should place the period switch and full-width chart-period peak card above the equity chart")
 	}
 	if !strings.Contains(tvbotHTML, ".analysis-balance-window-toolbar {\n      width: 100%;\n      justify-content: flex-start;") {
 		t.Fatal("analysis balance period switch should use full card width")
+	}
+	if !strings.Contains(tvbotHTML, ".analysis-peak-snapshots {\n      display: grid;\n      width: 100%;\n      grid-template-columns: minmax(0, 1fr);") {
+		t.Fatal("chart-period peak card should use the full analysis width")
 	}
 	for _, marker := range []string{
 		`id="analysis-balance-window-toolbar" class="balance-window-toolbar analysis-balance-window-toolbar" role="group" aria-label="USDT余额周期" hidden`,
@@ -289,6 +293,23 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 	}
 	if !(gateValuation < gatePNL && gatePNL < gateChart) {
 		t.Fatal("Gate column should show USDT valuation cards, pnl summary, then equity chart")
+	}
+	for _, layout := range []struct {
+		name  string
+		peak  string
+		title string
+		chart string
+	}{
+		{name: "OKX", peak: `id="analysis-okx-peak-snapshots"`, title: `id="analysis-okx-usdt-title"`, chart: `id="usdt-chart" class="mini-usdt-chart"`},
+		{name: "Binance", peak: `id="analysis-binance-peak-snapshots"`, title: `id="analysis-binance-usdt-title"`, chart: `id="analysis-binance-usdt-chart" class="mini-usdt-chart"`},
+		{name: "Gate", peak: `id="analysis-gate-peak-snapshots"`, title: `id="analysis-gate-usdt-title"`, chart: `id="analysis-gate-usdt-chart" class="mini-usdt-chart"`},
+	} {
+		peak := strings.Index(tvbotHTML, layout.peak)
+		title := strings.Index(tvbotHTML, layout.title)
+		chart := strings.Index(tvbotHTML, layout.chart)
+		if peak < 0 || title < 0 || chart < 0 || !(peak < title && title < chart) {
+			t.Fatalf("%s chart-period peak should span the panel above the complete equity chart", layout.name)
+		}
 	}
 	tradeHistory := strings.Index(tvbotHTML, `id="analysis-trade-history-section"`)
 	tradeRows := strings.Index(tvbotHTML, `id="analysis-trade-rows"`)

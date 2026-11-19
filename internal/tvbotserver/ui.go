@@ -1792,9 +1792,10 @@ const tvbotHTML = `<!doctype html>
     }
     .analysis-peak-snapshots {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 100%;
+      grid-template-columns: minmax(0, 1fr);
       gap: 8px;
-      margin-top: 10px;
+      margin: 10px 0;
     }
     .analysis-peak-card {
       min-width: 0;
@@ -2572,11 +2573,6 @@ const tvbotHTML = `<!doctype html>
             </div>
           </div>
           <div class="analysis-usdt-chart-card">
-            <div class="section-head" style="margin:0 0 8px">
-              <h3 id="analysis-okx-usdt-title">USDT 权益图</h3>
-              <label class="position-environment-control">API账户<select id="analysis-okx-account" aria-label="OKX 权益账户"></select></label>
-            </div>
-            <svg id="usdt-chart" class="mini-usdt-chart" role="img" aria-label="OKX USDT equity chart"></svg>
             <div id="analysis-balance-window-toolbar" class="balance-window-toolbar analysis-balance-window-toolbar" role="group" aria-label="USDT余额周期" hidden>
               <button class="btn small balance-window-btn" type="button" data-balance-minutes="0">当前</button>
               <button class="btn small balance-window-btn" type="button" data-balance-minutes="5">5m</button>
@@ -2597,6 +2593,11 @@ const tvbotHTML = `<!doctype html>
               <button class="btn small" type="button" id="sync-balance-history">同步历史</button>
             </div>
             <div id="analysis-okx-peak-snapshots" class="analysis-peak-snapshots"></div>
+            <div class="section-head" style="margin:12px 0 8px">
+              <h3 id="analysis-okx-usdt-title">USDT 权益图</h3>
+              <label class="position-environment-control">API账户<select id="analysis-okx-account" aria-label="OKX 权益账户"></select></label>
+            </div>
+            <svg id="usdt-chart" class="mini-usdt-chart" role="img" aria-label="OKX USDT equity chart"></svg>
           </div>
         </div>
         <div class="balance-chart-card exchange-balance-card" data-exchange-view="binance">
@@ -2630,12 +2631,12 @@ const tvbotHTML = `<!doctype html>
             </div>
           </div>
           <div class="analysis-usdt-chart-card">
-            <div class="section-head" style="margin:0 0 8px">
+            <div id="analysis-binance-peak-snapshots" class="analysis-peak-snapshots"></div>
+            <div class="section-head" style="margin:12px 0 8px">
               <h3 id="analysis-binance-usdt-title">USDT 权益图</h3>
               <label class="position-environment-control">API账户<select id="analysis-binance-account" aria-label="Binance 权益账户"></select></label>
             </div>
             <svg id="analysis-binance-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Binance USDT equity chart"></svg>
-            <div id="analysis-binance-peak-snapshots" class="analysis-peak-snapshots"></div>
           </div>
         </div>
         <div class="balance-chart-card exchange-balance-card" data-exchange-view="gate">
@@ -2667,12 +2668,12 @@ const tvbotHTML = `<!doctype html>
             </div>
           </div>
           <div class="analysis-usdt-chart-card">
-            <div class="section-head" style="margin:0 0 8px">
+            <div id="analysis-gate-peak-snapshots" class="analysis-peak-snapshots"></div>
+            <div class="section-head" style="margin:12px 0 8px">
               <h3 id="analysis-gate-usdt-title">USDT 权益图</h3>
               <label class="position-environment-control">API账户<select id="analysis-gate-account" aria-label="Gate 权益账户"></select></label>
             </div>
             <svg id="analysis-gate-usdt-chart" class="mini-usdt-chart" role="img" aria-label="Gate USDT equity chart"></svg>
-            <div id="analysis-gate-peak-snapshots" class="analysis-peak-snapshots"></div>
           </div>
         </div>
       </div>
