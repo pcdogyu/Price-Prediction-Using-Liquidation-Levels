@@ -592,6 +592,9 @@ func TestRenderTVBotAnalysisAddsPerSymbolPnLTable(t *testing.T) {
 
 func TestRenderTVBotPeakSnapshotsOnlyShowChartPeriodPeak(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
+	if !strings.Contains(page, `'<details open><summary>查看当时持仓明细 (' + count + ')</summary>' + detail + '</details>' +`) {
+		t.Fatal("chart-period peak position details should be expanded by default")
+	}
 	if !strings.Contains(page, `container.innerHTML = renderAnalysisPeakCard("图表周期最高", item && item.period_peak);`) {
 		t.Fatal("analysis peak snapshots should keep the chart-period peak card")
 	}

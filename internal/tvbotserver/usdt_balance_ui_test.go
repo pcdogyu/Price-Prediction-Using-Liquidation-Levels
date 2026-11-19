@@ -239,28 +239,29 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		}
 	}
 	analysisUpdated := strings.Index(tvbotHTML, `id="analysis-updated"`)
-	windowToolbarOffset := -1
-	if analysisUpdated >= 0 {
-		windowToolbarOffset = strings.Index(tvbotHTML[analysisUpdated:], `class="balance-window-toolbar analysis-balance-window-toolbar"`)
-	}
-	windowToolbar := -1
-	if windowToolbarOffset >= 0 {
-		windowToolbar = analysisUpdated + windowToolbarOffset
-	}
+	windowToolbar := strings.Index(tvbotHTML, `id="analysis-balance-window-toolbar"`)
 	analysisGrid := strings.Index(tvbotHTML, `class="analysis-balance-grid"`)
-	analysisPeriodRow := strings.Index(tvbotHTML, `<div class="analysis-period-row analysis-order-period-row">`)
-	periodRowEnd := -1
-	if analysisPeriodRow >= 0 {
-		periodRowEnd = strings.Index(tvbotHTML[analysisPeriodRow:], "\n      </div>\n      <div class=\"balance-window-toolbar analysis-balance-window-toolbar\"")
+	okxChartInPeriodPanel := strings.Index(tvbotHTML, `id="usdt-chart" class="mini-usdt-chart"`)
+	okxPeak := strings.Index(tvbotHTML, `id="analysis-okx-peak-snapshots"`)
+	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 || okxChartInPeriodPanel < 0 || okxPeak < 0 {
+		t.Fatal("analysis balance toolbar layout markers are missing")
 	}
-	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 || analysisPeriodRow < 0 || periodRowEnd < 0 {
-		t.Fatal("analysis top layout markers are missing")
-	}
-	if !(analysisUpdated < analysisPeriodRow+periodRowEnd && analysisPeriodRow+periodRowEnd < windowToolbar && windowToolbar < analysisGrid) {
-		t.Fatal("analysis should show a full-width period switch below order status and above the balance graph")
+	if !(analysisUpdated < analysisGrid && analysisGrid < okxChartInPeriodPanel && okxChartInPeriodPanel < windowToolbar && windowToolbar < okxPeak) {
+		t.Fatal("analysis should place the period switch directly above the chart-period peak card")
 	}
 	if !strings.Contains(tvbotHTML, ".analysis-balance-window-toolbar {\n      width: 100%;\n      justify-content: flex-start;") {
-		t.Fatal("analysis balance period switch should use full content width")
+		t.Fatal("analysis balance period switch should use full card width")
+	}
+	for _, marker := range []string{
+		`id="analysis-balance-window-toolbar" class="balance-window-toolbar analysis-balance-window-toolbar" role="group" aria-label="USDT余额周期" hidden`,
+		`function placeAnalysisBalanceWindowToolbar(exchange)`,
+		`normalizeExchange(exchange) !== activeExchange()`,
+		`snapshots.parentNode.insertBefore(toolbar, snapshots);`,
+		`toolbar.hidden = false;`,
+	} {
+		if !strings.Contains(tvbotHTML, marker) {
+			t.Fatalf("analysis balance period switch placement marker missing %q", marker)
+		}
 	}
 	okxOrder := strings.Index(tvbotHTML, `OKX 订单`)
 	binanceOrder := strings.Index(tvbotHTML, `Binance 订单`)

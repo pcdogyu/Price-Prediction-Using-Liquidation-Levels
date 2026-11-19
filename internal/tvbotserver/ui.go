@@ -1616,7 +1616,13 @@ const tvbotHTML = `<!doctype html>
     .analysis-balance-window-toolbar {
       width: 100%;
       justify-content: flex-start;
-      margin-bottom: 14px;
+      margin: 10px 0 8px;
+    }
+    .analysis-balance-window-toolbar[hidden] {
+      display: none;
+    }
+    .analysis-balance-window-toolbar + .analysis-peak-snapshots {
+      margin-top: 0;
     }
     .balance-window-toolbar .balance-window-btn {
       font-size: 16px;
@@ -2534,25 +2540,6 @@ const tvbotHTML = `<!doctype html>
           </div>
         </div>
       </div>
-      <div class="balance-window-toolbar analysis-balance-window-toolbar" role="group" aria-label="USDT余额周期">
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="0">当前</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="5">5m</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="10">10m</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="15">15m</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="30">30m</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="60">1h</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="240">4h</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="480">8h</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="720">12h</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="1440">24h</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="2880">48h</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="4320">3d</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="10080">7d</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="43200">30d</button>
-        <button class="btn small balance-window-btn" type="button" data-balance-minutes="129600">90d</button>
-        <button class="btn small" type="button" id="reset-balance-baseline">重置基准</button>
-        <button class="btn small" type="button" id="sync-balance-history">同步历史</button>
-      </div>
       <div class="analysis-balance-grid">
         <div class="balance-chart-card exchange-balance-card" data-exchange-view="okx">
           <div class="section-head" style="margin-bottom:0">
@@ -2590,6 +2577,25 @@ const tvbotHTML = `<!doctype html>
               <label class="position-environment-control">API账户<select id="analysis-okx-account" aria-label="OKX 权益账户"></select></label>
             </div>
             <svg id="usdt-chart" class="mini-usdt-chart" role="img" aria-label="OKX USDT equity chart"></svg>
+            <div id="analysis-balance-window-toolbar" class="balance-window-toolbar analysis-balance-window-toolbar" role="group" aria-label="USDT余额周期" hidden>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="0">当前</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="5">5m</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="10">10m</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="15">15m</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="30">30m</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="60">1h</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="240">4h</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="480">8h</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="720">12h</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="1440">24h</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="2880">48h</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="4320">3d</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="10080">7d</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="43200">30d</button>
+              <button class="btn small balance-window-btn" type="button" data-balance-minutes="129600">90d</button>
+              <button class="btn small" type="button" id="reset-balance-baseline">重置基准</button>
+              <button class="btn small" type="button" id="sync-balance-history">同步历史</button>
+            </div>
             <div id="analysis-okx-peak-snapshots" class="analysis-peak-snapshots"></div>
           </div>
         </div>
@@ -3756,6 +3762,7 @@ const tvbotHTML = `<!doctype html>
         const exchange = normalizeExchange(panel.dataset.exchangeView);
         panel.hidden = primary ? exchange !== primary : exchange !== selected;
       });
+      placeAnalysisBalanceWindowToolbar(selected);
       renderPositionAPIs();
     }
 
@@ -8697,14 +8704,23 @@ const tvbotHTML = `<!doctype html>
         '<div class="analysis-peak-meta">' + escapeHTML(timeText) + '</div>' +
         '<div class="analysis-peak-meta">持仓总浮盈：' + escapeHTML(analysisPeakPnLText(peak)) + '</div>' +
         '<div class="analysis-peak-meta">' + escapeHTML(analysisPeakPositionStatusText(peak)) + '</div>' +
-        '<details><summary>查看当时持仓明细 (' + count + ')</summary>' + detail + '</details>' +
+        '<details open><summary>查看当时持仓明细 (' + count + ')</summary>' + detail + '</details>' +
         '</article>';
+    }
+
+    function placeAnalysisBalanceWindowToolbar(exchange) {
+      const toolbar = $("analysis-balance-window-toolbar");
+      const snapshots = $("analysis-" + exchange + "-peak-snapshots");
+      if (!toolbar || !snapshots || !snapshots.parentNode || normalizeExchange(exchange) !== activeExchange()) return;
+      snapshots.parentNode.insertBefore(toolbar, snapshots);
+      toolbar.hidden = false;
     }
 
     function renderAnalysisPeakSnapshots(exchange, item) {
       const container = $("analysis-" + exchange + "-peak-snapshots");
       if (!container) return;
       container.innerHTML = renderAnalysisPeakCard("图表周期最高", item && item.period_peak);
+      placeAnalysisBalanceWindowToolbar(exchange);
     }
 
     function renderAnalysisOKXBalance(item, balance) {
