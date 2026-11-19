@@ -1144,6 +1144,9 @@ const tvbotHTML = `<!doctype html>
       flex-wrap: wrap;
       margin-bottom: 14px;
     }
+    .analysis-order-period-row {
+      margin-bottom: 8px;
+    }
     .analysis-time-status {
       display: grid;
       align-content: center;
@@ -1609,6 +1612,11 @@ const tvbotHTML = `<!doctype html>
       flex: 1 1 560px;
       justify-content: flex-end;
       margin: 0;
+    }
+    .analysis-balance-window-toolbar {
+      width: 100%;
+      justify-content: flex-start;
+      margin-bottom: 14px;
     }
     .balance-window-toolbar .balance-window-btn {
       font-size: 16px;
@@ -2515,7 +2523,7 @@ const tvbotHTML = `<!doctype html>
     </section>
 
     <section id="analysis" aria-label="订单分析">
-      <div class="analysis-period-row">
+      <div class="analysis-period-row analysis-order-period-row">
         <div class="analysis-time-status">
           <div class="label">订单时间</div>
           <div class="value" id="analysis-updated">-</div>
@@ -2525,25 +2533,25 @@ const tvbotHTML = `<!doctype html>
             <span class="analysis-cache-status" id="analysis-cache-status"></span>
           </div>
         </div>
-        <div class="balance-window-toolbar" role="group" aria-label="USDT余额周期">
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="0">当前</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="5">5m</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="10">10m</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="15">15m</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="30">30m</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="60">1h</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="240">4h</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="480">8h</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="720">12h</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="1440">24h</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="2880">48h</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="4320">3d</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="10080">7d</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="43200">30d</button>
-          <button class="btn small balance-window-btn" type="button" data-balance-minutes="129600">90d</button>
-          <button class="btn small" type="button" id="reset-balance-baseline">重置基准</button>
-          <button class="btn small" type="button" id="sync-balance-history">同步历史</button>
-        </div>
+      </div>
+      <div class="balance-window-toolbar analysis-balance-window-toolbar" role="group" aria-label="USDT余额周期">
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="0">当前</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="5">5m</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="10">10m</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="15">15m</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="30">30m</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="60">1h</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="240">4h</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="480">8h</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="720">12h</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="1440">24h</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="2880">48h</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="4320">3d</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="10080">7d</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="43200">30d</button>
+        <button class="btn small balance-window-btn" type="button" data-balance-minutes="129600">90d</button>
+        <button class="btn small" type="button" id="reset-balance-baseline">重置基准</button>
+        <button class="btn small" type="button" id="sync-balance-history">同步历史</button>
       </div>
       <div class="analysis-balance-grid">
         <div class="balance-chart-card exchange-balance-card" data-exchange-view="okx">

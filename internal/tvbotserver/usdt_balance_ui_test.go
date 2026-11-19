@@ -16,6 +16,8 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`.exchange-balance-metrics`,
 		`.balance-pnl-block`,
 		`.analysis-period-row`,
+		`.analysis-order-period-row`,
+		`.analysis-balance-window-toolbar`,
 		`.analysis-time-status`,
 		`.analysis-usdt-chart-card`,
 		`.global-exchange-switch`,
@@ -239,18 +241,26 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 	analysisUpdated := strings.Index(tvbotHTML, `id="analysis-updated"`)
 	windowToolbarOffset := -1
 	if analysisUpdated >= 0 {
-		windowToolbarOffset = strings.Index(tvbotHTML[analysisUpdated:], `class="balance-window-toolbar"`)
+		windowToolbarOffset = strings.Index(tvbotHTML[analysisUpdated:], `class="balance-window-toolbar analysis-balance-window-toolbar"`)
 	}
 	windowToolbar := -1
 	if windowToolbarOffset >= 0 {
 		windowToolbar = analysisUpdated + windowToolbarOffset
 	}
 	analysisGrid := strings.Index(tvbotHTML, `class="analysis-balance-grid"`)
-	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 {
+	analysisPeriodRow := strings.Index(tvbotHTML, `<div class="analysis-period-row analysis-order-period-row">`)
+	periodRowEnd := -1
+	if analysisPeriodRow >= 0 {
+		periodRowEnd = strings.Index(tvbotHTML[analysisPeriodRow:], "\n      </div>\n      <div class=\"balance-window-toolbar analysis-balance-window-toolbar\"")
+	}
+	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 || analysisPeriodRow < 0 || periodRowEnd < 0 {
 		t.Fatal("analysis top layout markers are missing")
 	}
-	if !(analysisUpdated < windowToolbar && windowToolbar < analysisGrid) {
-		t.Fatal("analysis should show order time and period switch before exchange columns")
+	if !(analysisUpdated < analysisPeriodRow+periodRowEnd && analysisPeriodRow+periodRowEnd < windowToolbar && windowToolbar < analysisGrid) {
+		t.Fatal("analysis should show a full-width period switch below order status and above the balance graph")
+	}
+	if !strings.Contains(tvbotHTML, ".analysis-balance-window-toolbar {\n      width: 100%;\n      justify-content: flex-start;") {
+		t.Fatal("analysis balance period switch should use full content width")
 	}
 	okxOrder := strings.Index(tvbotHTML, `OKX 订单`)
 	binanceOrder := strings.Index(tvbotHTML, `Binance 订单`)
