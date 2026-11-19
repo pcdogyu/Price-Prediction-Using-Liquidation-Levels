@@ -97,6 +97,7 @@ type Service struct {
 	volumeStreamSymbols    map[string]struct{}
 	volumePending          map[string]struct{}
 	volumeBackfillError    map[string]string
+	volumeBackfillRetryAt  map[string]time.Time
 	volumeBackfillQueue    chan string
 	localCandleMu          sync.Mutex
 	localCandles           map[string]domain.Candle

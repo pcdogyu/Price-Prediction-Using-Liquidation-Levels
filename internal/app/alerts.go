@@ -390,6 +390,11 @@ func (rtm *alertRuntime) valueAreaLoop(ctx context.Context) {
 			if entry.next.IsZero() || !time.Now().UTC().Before(entry.next) {
 				fetchCtx, cancelFetch := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				profile, err := rtm.service.VolumeProfile(fetchCtx, symbol)
+				if err == nil && profile.State != "ok" {
+					if backfillErr := rtm.service.EnsureVolumeProfile(fetchCtx, symbol, false); backfillErr != nil {
+						rtm.log.Warn("value-area volume profile backfill request failed", "symbol", symbol, "error", backfillErr)
+					}
+				}
 				cancelFetch()
 				if err != nil {
 					rtm.log.Warn("value-area volume profile read failed", "symbol", symbol, "error", err)

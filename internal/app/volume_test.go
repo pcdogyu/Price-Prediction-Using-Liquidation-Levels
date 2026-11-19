@@ -97,6 +97,52 @@ func TestEnsureVolumeProfileDeduplicatesPendingRequest(t *testing.T) {
 	}
 }
 
+func TestEnsureVolumeProfileRetriesAfterBackoffAndForceBypassesIt(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "volume-retry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	svc := &Service{
+		store:                 st,
+		volumeContext:         context.Background(),
+		volumeRequested:       make(map[string]struct{}),
+		volumeStreamSymbols:   make(map[string]struct{}),
+		volumePending:         make(map[string]struct{}),
+		volumeBackfillError:   map[string]string{"SOLUSDT": "temporary exchange error"},
+		volumeBackfillRetryAt: map[string]time.Time{"SOLUSDT": time.Now().Add(time.Minute)},
+		volumeBackfillQueue:   make(chan string, 4),
+	}
+
+	if err := svc.EnsureVolumeProfile(context.Background(), "SOLUSDT", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(svc.volumeBackfillQueue); got != 0 {
+		t.Fatalf("queued backfills during retry cooldown=%d, want 0", got)
+	}
+
+	if err := svc.EnsureVolumeProfile(context.Background(), "SOLUSDT", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(svc.volumeBackfillQueue); got != 1 {
+		t.Fatalf("forced retries=%d, want 1", got)
+	}
+	if got := <-svc.volumeBackfillQueue; got != "SOLUSDT" {
+		t.Fatalf("queued symbol=%s, want SOLUSDT", got)
+	}
+
+	delete(svc.volumePending, "SOLUSDT")
+	svc.volumeBackfillError["SOLUSDT"] = "temporary exchange error"
+	svc.volumeBackfillRetryAt["SOLUSDT"] = time.Now().Add(-time.Second)
+	if err := svc.EnsureVolumeProfile(context.Background(), "SOLUSDT", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(svc.volumeBackfillQueue); got != 1 {
+		t.Fatalf("automatic retries after cooldown=%d, want 1", got)
+	}
+}
+
 func TestEnsureVolumeProfileForceQueuesCompletedSession(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "volume-force.db"))
 	if err != nil {

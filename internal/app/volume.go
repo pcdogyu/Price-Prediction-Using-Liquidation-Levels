@@ -15,6 +15,8 @@ import (
 
 var fetchAggregateTrades = exchange.BinanceAggregateTrades
 
+const volumeProfileBackfillRetryDelay = 30 * time.Second
+
 func (s *Service) startVolumeProfiles(ctx context.Context) {
 	bootstrapSymbols := s.volumeBootstrapSymbols()
 	s.volumeMu.Lock()
@@ -147,7 +149,11 @@ func (s *Service) volumeBackfillLoop(ctx context.Context) {
 			s.volumeMu.Lock()
 			delete(s.volumePending, symbol)
 			if err != nil {
+				if s.volumeBackfillRetryAt == nil {
+					s.volumeBackfillRetryAt = make(map[string]time.Time)
+				}
 				s.volumeBackfillError[symbol] = err.Error()
+				s.volumeBackfillRetryAt[symbol] = time.Now().Add(volumeProfileBackfillRetryDelay)
 				s.volumeMu.Unlock()
 				if ctx.Err() == nil && s.log != nil {
 					s.log.Warn("on-demand aggregate trade backfill failed", "symbol", symbol, "error", err)
@@ -155,6 +161,7 @@ func (s *Service) volumeBackfillLoop(ctx context.Context) {
 				continue
 			}
 			delete(s.volumeBackfillError, symbol)
+			delete(s.volumeBackfillRetryAt, symbol)
 			_, alreadyStreaming := s.volumeStreamSymbols[symbol]
 			if !alreadyStreaming {
 				s.volumeStreamSymbols[symbol] = struct{}{}
@@ -238,6 +245,9 @@ func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force 
 	if s.volumeBackfillError == nil {
 		s.volumeBackfillError = make(map[string]string)
 	}
+	if s.volumeBackfillRetryAt == nil {
+		s.volumeBackfillRetryAt = make(map[string]time.Time)
+	}
 	s.volumeRequested[symbol] = struct{}{}
 	if (complete && !force) || s.volumeContext == nil || s.volumeBackfillQueue == nil {
 		s.volumeMu.Unlock()
@@ -247,12 +257,13 @@ func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force 
 		s.volumeMu.Unlock()
 		return nil
 	}
-	if !force && s.volumeBackfillError[symbol] != "" {
+	if !force && time.Now().Before(s.volumeBackfillRetryAt[symbol]) {
 		s.volumeMu.Unlock()
 		return nil
 	}
 	s.volumePending[symbol] = struct{}{}
 	delete(s.volumeBackfillError, symbol)
+	delete(s.volumeBackfillRetryAt, symbol)
 	queue := s.volumeBackfillQueue
 	s.volumeMu.Unlock()
 	select {
