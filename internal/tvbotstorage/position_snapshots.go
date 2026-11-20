@@ -52,7 +52,8 @@ func (s *OrderStore) UpsertUSDTPositionSnapshot(snapshot USDTPositionSnapshot) e
 		ON CONFLICT(exchange, api_id, env, bucket_ts) DO UPDATE SET
 			observed_at=excluded.observed_at,
 			status=excluded.status,
-			payload_json=excluded.payload_json`,
+			payload_json=excluded.payload_json
+		WHERE usdt_position_snapshots.status <> 'ok' OR excluded.status = 'ok'`,
 		snapshot.Exchange,
 		snapshot.APIID,
 		snapshot.Env,

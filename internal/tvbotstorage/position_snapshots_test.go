@@ -22,6 +22,7 @@ func TestUSDTPositionSnapshotIsolationAndUpsert(t *testing.T) {
 	}
 	base.Status = "unavailable"
 	base.PayloadJSON = "[]"
+	base.ObservedAt = at.Add(20 * time.Second)
 	if err := store.UpsertUSDTPositionSnapshot(base); err != nil {
 		t.Fatal(err)
 	}
@@ -29,8 +30,22 @@ func TestUSDTPositionSnapshotIsolationAndUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != "unavailable" || got.PayloadJSON != "[]" {
-		t.Fatalf("same bucket should be replaced, got %+v", got)
+	if got.Status != "ok" || got.PayloadJSON != `[{"symbol":"BTCUSDT"}]` || !got.ObservedAt.Equal(at) {
+		t.Fatalf("failed read must not replace a successful snapshot in the same bucket, got %+v", got)
+	}
+
+	base.Status = "ok"
+	base.PayloadJSON = `[{"symbol":"ETHUSDT"}]`
+	base.ObservedAt = at.Add(40 * time.Second)
+	if err := store.UpsertUSDTPositionSnapshot(base); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.GetUSDTPositionSnapshot("binance", "main", "demo", at.Truncate(time.Minute).UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "ok" || got.PayloadJSON != base.PayloadJSON || !got.ObservedAt.Equal(base.ObservedAt) {
+		t.Fatalf("later successful read should refresh the snapshot, got %+v", got)
 	}
 	if _, err := store.GetUSDTPositionSnapshot("binance", "main", "live", got.BucketTS); !IsMissingUSDTPositionSnapshot(err) {
 		t.Fatalf("environment must be isolated, got err=%v", err)
