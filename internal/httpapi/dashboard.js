@@ -70,6 +70,7 @@ let symbol = 'ETHUSDT';
 const initialSymbolButton = document.querySelector('button[data-symbol].active');
 if (initialSymbolButton) symbol = initialSymbolButton.dataset.symbol;
 if (requestedTradeSymbol) symbol = requestedTradeSymbol;
+document.querySelectorAll('button[data-symbol]').forEach(button => button.classList.toggle('active', button.dataset.symbol === symbol));
 let symbolCatalog = [];
 const tradeView = {
   ref: String(tradeQuery.get('trade_ref') || '').trim(),

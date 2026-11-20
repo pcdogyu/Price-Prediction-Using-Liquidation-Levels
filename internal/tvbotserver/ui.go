@@ -7522,8 +7522,8 @@ const tvbotHTML = `<!doctype html>
       const display = displayInstID(instID);
       if (!instID || display === "-") return textTableCell(display);
       const key = positionCloseRowKey(row);
-      const title = "在新页面查看 " + display + " K 线开平仓信息";
-      return tableCell('<button class="position-symbol-link" type="button" data-position-symbol-details="true" data-position-key="' + escapeHTML(key) + '" title="' + escapeHTML(title) + '">' + escapeHTML(display) + '</button>');
+      const title = "点击弹出 " + display + " 气泡图";
+      return tableCell('<button class="position-symbol-link" type="button" data-position-symbol-bubble="true" data-position-key="' + escapeHTML(key) + '" title="' + escapeHTML(title) + '">' + escapeHTML(display) + '</button>');
     }
 
     function positionSideCell(row) {
@@ -8335,37 +8335,25 @@ const tvbotHTML = `<!doctype html>
       state.analysisFills = Array.isArray(result.trades) ? result.trades : [];
     }
 
-    async function openPositionSymbolDetails(row) {
+    function openPositionBubbleChart(row) {
       const symbol = analysisGateChartSymbol(row && row.instId);
       if (!symbol) {
-        toast("该币对无法转换为 Binance USDT K 线");
+        toast("该币对无法转换为 Binance 气泡图");
         return;
       }
-      const label = displayInstID(row && row.instId);
-      const exchange = normalizeExchange(row && row._exchange || activeExchange());
-      const initialRows = positionSymbolTradeRows(row, false);
-      const initialURL = buildPositionChartURL(symbol, exchange, initialRows, initialRows[0]);
-      if (!initialURL) {
-        toast("无法生成持仓详情页面");
-        return;
-      }
-      initialURL.searchParams.set("standalone", "1");
-      const chartWindow = window.open(initialURL.toString(), "_blank");
+      const base = document.querySelector('meta[name="app-base"]')?.content || "/";
+      const bubbleURL = new URL(base + "bubbles", window.location.origin);
+      bubbleURL.searchParams.set("symbol", symbol);
+      const chartWindow = window.open(
+        bubbleURL.toString(),
+        "position-bubble-chart",
+        "popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes"
+      );
       if (!chartWindow) {
-        toast("浏览器阻止了新页面，请允许弹出窗口后重试");
+        toast("浏览器阻止了气泡图弹窗，请允许弹出窗口后重试");
         return;
       }
-      try {
-        await loadPositionSymbolAnalysis(row);
-        const rows = positionSymbolTradeRows(row);
-        const chartURL = buildPositionChartURL(symbol, exchange, rows, rows[0]);
-        if (chartURL && !chartWindow.closed) {
-          chartURL.searchParams.set("standalone", "1");
-          chartWindow.location.href = chartURL.toString();
-        }
-      } catch (err) {
-        toast(err && err.message ? err.message : "K 线下单信息读取失败");
-      }
+      chartWindow.focus();
     }
 
     function closePositionSymbolDetails() {
@@ -10809,12 +10797,12 @@ const tvbotHTML = `<!doctype html>
       savePositionOpenMode(input).catch((err) => toast("增仓方式保存失败：" + err.message));
     });
     $("position-rows").addEventListener("click", (event) => {
-      const symbolButton = event.target.closest("button[data-position-symbol-details]");
+      const symbolButton = event.target.closest("button[data-position-symbol-bubble]");
       if (symbolButton) {
         const key = symbolButton.dataset.positionKey || "";
         const rows = state.positions && Array.isArray(state.positions.positions) ? state.positions.positions : [];
         const row = rows.find((item) => positionCloseRowKey(item) === key);
-        if (row) openPositionSymbolDetails(row).catch((err) => toast(err.message));
+        if (row) openPositionBubbleChart(row);
         return;
       }
       const openButton = event.target.closest("button[data-position-open]");

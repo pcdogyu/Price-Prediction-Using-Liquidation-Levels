@@ -115,6 +115,9 @@ func TestBubbleChartUsesConfiguredMultipleSymbols(t *testing.T) {
 	if strings.Contains(w.Body.String(), `$('symbol-search').value = symbol`) {
 		t.Fatal("symbol search input must start empty")
 	}
+	if !strings.Contains(w.Body.String(), `document.querySelectorAll('button[data-symbol]').forEach(button => button.classList.toggle('active', button.dataset.symbol === symbol));`) {
+		t.Fatal("bubble chart should mark the URL-selected symbol as active")
+	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/market?symbol=SOLUSDT&interval=15m", nil))
 	if w.Code == 400 || strings.Contains(w.Body.String(), "symbol must be one of") {

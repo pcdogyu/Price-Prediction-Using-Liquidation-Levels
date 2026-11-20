@@ -503,8 +503,6 @@ func TestRenderTVBotAnalysisAddsTradeTimeColumns(t *testing.T) {
 		`url.searchParams.set("trade_ref", token)`,
 		`url.searchParams.set("exchange", normalizedExchange)`,
 		`function buildPositionChartURL(symbol, exchange, trades, selectedRow)`,
-		`initialURL.searchParams.set("standalone", "1")`,
-		`window.open(initialURL.toString(), "_blank")`,
 		`function analysisTimeText(v)`,
 		`function analysisTradeHoldingTimeText(row)`,
 		`function analysisTradeHoldingSeconds(row, nowMs)`,
@@ -603,42 +601,23 @@ func TestRenderTVBotPeakSnapshotsOnlyShowChartPeriodPeak(t *testing.T) {
 	}
 }
 
-func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
+func TestRenderTVBotPositionsSymbolsOpenBubbleChartPopup(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{
 		`cell: (row) => positionSymbolCell(row)`,
 		`function positionSymbolCell(row)`,
-		`data-position-symbol-details="true"`,
-		`id="position-symbol-dialog"`,
-		`id="position-symbol-chart-frame"`,
-		`K线 / 开平仓信息`,
-		`function positionSymbolTradeRows(row, includeAnalysis)`,
-		`includeAnalysis !== false`,
-		`state.analysisFills`,
-		`filter((item) => String(item && (item.trade_id || item.ord_id) || "").trim())`,
-		`tradeChartPayloadRow(item)`,
-		`operation_source: String(item && item.operation_source || "").trim().toLowerCase()`,
-		`function buildPositionChartURL(symbol, exchange, trades, selectedRow)`,
-		`function analysisPositionKlineURL()`,
-		`base + "/alerts/chart"`,
-		`url.searchParams.set("position", "1")`,
-		`initialURL.searchParams.set("standalone", "1")`,
-		`window.open(initialURL.toString(), "_blank")`,
-		`chartWindow.location.href = chartURL.toString()`,
-		`exchange: String(item && item.exchange || "").trim() ? normalizeExchange(item && item.exchange) : ""`,
-		`async function loadPositionSymbolAnalysis(row)`,
-		`async function openPositionSymbolDetails(row)`,
+		`data-position-symbol-bubble="true"`,
+		`点击弹出 `,
+		`function openPositionBubbleChart(row)`,
+		`new URL(base + "bubbles", window.location.origin)`,
+		`bubbleURL.searchParams.set("symbol", symbol)`,
+		`window.open(`,
+		`"position-bubble-chart"`,
+		`popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes`,
+		`浏览器阻止了气泡图弹窗`,
 	} {
 		if !strings.Contains(page, want) {
-			t.Fatalf("position symbol details marker missing %q", want)
-		}
-	}
-	if strings.Contains(page, `trade_id: "position-entry"`) {
-		t.Fatal("position chart must not synthesize a marker from the current position average price")
-	}
-	for _, removed := range []string{"position-symbol-history-panel", "position-symbol-history-rows", "历史下单信息"} {
-		if strings.Contains(page, removed) {
-			t.Fatalf("position symbol details should not render the right-side history panel marker %q", removed)
+			t.Fatalf("position symbol bubble chart marker missing %q", want)
 		}
 	}
 	positionsStart := strings.Index(page, "const positionTableColumnDefs = [")
@@ -656,17 +635,17 @@ func TestRenderTVBotPositionsAddsSymbolDetails(t *testing.T) {
 	if directionIndex < 0 || strategyIndex < 0 || sizeIndex < 0 || strategyIndex <= directionIndex || sizeIndex <= strategyIndex {
 		t.Fatalf("position strategy column should follow direction before size: direction=%d strategy=%d size=%d", directionIndex, strategyIndex, sizeIndex)
 	}
-	positionOpen := strings.Index(page, "async function openPositionSymbolDetails(row)")
+	positionOpen := strings.Index(page, "function openPositionBubbleChart(row)")
 	if positionOpen < 0 {
-		t.Fatal("position symbol detail handler is missing")
+		t.Fatal("position symbol bubble chart handler is missing")
 	}
-	positionClose := strings.Index(page[positionOpen:], "\n    function closePositionSymbolDetails()")
-	if positionClose < 0 {
-		t.Fatal("position symbol detail handler end is missing")
+	positionHandlerEnd := strings.Index(page[positionOpen:], "\n    function closePositionSymbolDetails()")
+	if positionHandlerEnd < 0 {
+		t.Fatal("position symbol bubble chart handler end is missing")
 	}
-	positionHandler := page[positionOpen : positionOpen+positionClose]
-	if strings.Contains(positionHandler, "openSharedPositionKlineDialog({") || !strings.Contains(positionHandler, `window.open(initialURL.toString(), "_blank")`) {
-		t.Fatal("position symbol details must open a standalone K-line page")
+	positionHandler := page[positionOpen : positionOpen+positionHandlerEnd]
+	if strings.Contains(positionHandler, "buildPositionChartURL") || !strings.Contains(positionHandler, `bubbleURL.toString()`) {
+		t.Fatal("position symbol clicks must open the matching bubble chart")
 	}
 	if strings.Contains(page, `function buildTradeChartURL(`) || strings.Contains(page, `function buildTradeChartPayloadURL(`) || strings.Contains(page, `function analysisBubblesURL(`) {
 		t.Fatal("analysis and positions must use one shared K-line builder instead of the legacy second chart path")
