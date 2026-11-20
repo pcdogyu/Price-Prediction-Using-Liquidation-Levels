@@ -218,6 +218,37 @@ func TestEnsureVolumeProfileForceQueuesCompletedSession(t *testing.T) {
 	}
 }
 
+func TestIncompleteVolumeBackfillIsRequeuedAfterPendingClears(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "volume-incomplete-requeue.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	session, err := volumeprofile.SessionAt(time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetVolumeProfileComplete(context.Background(), "SOLUSDT", session.Start, false); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{
+		store:               st,
+		volumeContext:       context.Background(),
+		volumeRequested:     make(map[string]struct{}),
+		volumeStreamSymbols: make(map[string]struct{}),
+		volumePending:       make(map[string]struct{}),
+		volumeBackfillError: make(map[string]string),
+		volumeBackfillQueue: make(chan string, 1),
+	}
+	svc.requeueIncompleteVolumeProfile(context.Background(), "SOLUSDT")
+	if len(svc.volumeBackfillQueue) != 1 {
+		t.Fatalf("queued incomplete backfill=%d, want one", len(svc.volumeBackfillQueue))
+	}
+	if symbol := <-svc.volumeBackfillQueue; symbol != "SOLUSDT" {
+		t.Fatalf("queued symbol=%q, want SOLUSDT", symbol)
+	}
+}
+
 func TestOnDemandVolumeBackfillGeneratesProfile(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "volume-on-demand.db"))
 	if err != nil {

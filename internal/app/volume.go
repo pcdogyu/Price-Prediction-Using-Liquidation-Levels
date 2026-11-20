@@ -170,7 +170,32 @@ func (s *Service) volumeBackfillLoop(ctx context.Context) {
 			if !alreadyStreaming {
 				s.updateMarketCollectorAggregateSymbols()
 			}
+			s.requeueIncompleteVolumeProfile(ctx, symbol)
 		}
+	}
+}
+
+func (s *Service) requeueIncompleteVolumeProfile(ctx context.Context, symbol string) {
+	// A live trade batch can detect a gap while this symbol is still marked
+	// pending. EnsureVolumeProfile then deduplicates the request, but that can
+	// leave the cursor incomplete after this worker clears pending. Recheck
+	// after clearing it and queue another pass.
+	session, err := volumeprofile.SessionAt(time.Now().UTC())
+	if err != nil {
+		return
+	}
+	_, _, complete, err := s.store.VolumeProfileCursor(ctx, symbol, session.Start)
+	if err != nil {
+		if ctx.Err() == nil && s.log != nil {
+			s.log.Warn("aggregate trade backfill completion check failed", "symbol", symbol, "error", err)
+		}
+		return
+	}
+	if complete {
+		return
+	}
+	if err := s.EnsureVolumeProfile(ctx, symbol, false); err != nil && ctx.Err() == nil && s.log != nil {
+		s.log.Warn("incomplete aggregate trade backfill could not be requeued", "symbol", symbol, "error", err)
 	}
 }
 
@@ -283,7 +308,7 @@ func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force 
 }
 
 func (s *Service) syncVolumeSessionExclusive(ctx context.Context, symbol string, target time.Time) error {
-	release, ok := s.beginBackfill(ctx)
+	release, ok := s.beginVolumeBackfill(ctx)
 	if !ok {
 		return ctx.Err()
 	}

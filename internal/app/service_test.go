@@ -62,6 +62,63 @@ func TestBeginBackfillSerializesHistoricalWorkAndHonorsCancellation(t *testing.T
 	release()
 }
 
+func TestVolumeBackfillGetsPriorityOverQueuedHistoricalWork(t *testing.T) {
+	svc := &Service{backfillGate: make(chan struct{}, 1)}
+	release, ok := svc.beginBackfill(context.Background())
+	if !ok {
+		t.Fatal("initial historical backfill should acquire the gate")
+	}
+
+	type acquisition struct {
+		name    string
+		release func()
+		ok      bool
+	}
+	acquired := make(chan acquisition, 2)
+	go func() {
+		unlock, got := svc.beginVolumeBackfill(context.Background())
+		acquired <- acquisition{name: "volume", release: unlock, ok: got}
+	}()
+	deadline := time.Now().Add(time.Second)
+	for svc.volumeBackfillWaiters.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if svc.volumeBackfillWaiters.Load() == 0 {
+		t.Fatal("volume backfill did not register as waiting")
+	}
+	go func() {
+		unlock, got := svc.beginBackfill(context.Background())
+		acquired <- acquisition{name: "historical", release: unlock, ok: got}
+	}()
+
+	release()
+	var first acquisition
+	select {
+	case first = <-acquired:
+	case <-time.After(time.Second):
+		t.Fatal("queued backfill did not acquire the gate")
+	}
+	if !first.ok || first.name != "volume" {
+		if first.ok {
+			first.release()
+		}
+		t.Fatalf("first queued backfill=%q, want volume", first.name)
+	}
+	first.release()
+	select {
+	case second := <-acquired:
+		if !second.ok || second.name != "historical" {
+			if second.ok {
+				second.release()
+			}
+			t.Fatalf("second queued backfill=%q, want historical", second.name)
+		}
+		second.release()
+	case <-time.After(time.Second):
+		t.Fatal("historical backfill did not resume after volume backfill")
+	}
+}
+
 func (p *backgroundCandidateProviderStub) RefreshBackgroundCandidates(_ context.Context, configured []string) (domain.BackgroundSymbolSnapshot, error) {
 	p.calls++
 	p.configured = append([]string(nil), configured...)

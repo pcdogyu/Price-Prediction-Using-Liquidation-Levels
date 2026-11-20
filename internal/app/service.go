@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/coinglass"
@@ -61,6 +62,7 @@ type Service struct {
 	symbolCatalogMu        sync.Mutex
 	candidateMu            sync.RWMutex
 	backfillGate           chan struct{}
+	volumeBackfillWaiters  atomic.Int32
 	klineCache             map[string]klineCacheEntry
 	alertCandleRepairAt    map[string]time.Time
 	marketCache            map[string]marketCacheEntry
@@ -196,6 +198,32 @@ func (s *Service) beginBackfill(ctx context.Context) (func(), bool) {
 	if s.backfillGate == nil {
 		return func() {}, true
 	}
+	for {
+		select {
+		case s.backfillGate <- struct{}{}:
+			if s.volumeBackfillWaiters.Load() == 0 {
+				return func() { <-s.backfillGate }, true
+			}
+			<-s.backfillGate
+			timer := time.NewTimer(10 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, false
+			case <-timer.C:
+			}
+		case <-ctx.Done():
+			return nil, false
+		}
+	}
+}
+
+func (s *Service) beginVolumeBackfill(ctx context.Context) (func(), bool) {
+	if s.backfillGate == nil {
+		return func() {}, true
+	}
+	s.volumeBackfillWaiters.Add(1)
+	defer s.volumeBackfillWaiters.Add(-1)
 	select {
 	case s.backfillGate <- struct{}{}:
 		return func() { <-s.backfillGate }, true
