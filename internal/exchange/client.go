@@ -290,10 +290,13 @@ func (b *Binance) Current(ctx context.Context, symbol string) (domain.Candle, er
 	}
 	r := k[len(k)-1]
 	c := domain.Candle{Exchange: b.Name(), Symbol: symbol, Time: ms(r[0]), Open: f(anyString(r[1])), High: f(anyString(r[2])), Low: f(anyString(r[3])), Close: f(anyString(r[4])), VolumeUSD: f(anyString(r[7])), TakerBuyUSD: f(anyString(r[10]))}
-	var oi struct {
-		OpenInterest string `json:"openInterest"`
-	}
-	if e := b.get(ctx, binanceFuturesBase+"/fapi/v1/openInterest?symbol="+url.QueryEscape(symbol), &oi); e == nil {
+	upperSymbol := strings.ToUpper(strings.TrimSpace(symbol))
+	oi, oiErr := cachedBinancePerSymbolMetric(ctx, "openInterest:"+upperSymbol, func() (binanceOpenInterestSnapshot, error) {
+		var value binanceOpenInterestSnapshot
+		err := b.get(ctx, binanceFuturesBase+"/fapi/v1/openInterest?symbol="+url.QueryEscape(symbol), &value)
+		return value, err
+	})
+	if oiErr == nil {
 		c.OpenInterestUSD = f(oi.OpenInterest) * c.Close
 	}
 	premiumRows, premiumErr := cachedBinancePremiumIndex(ctx)
@@ -309,11 +312,13 @@ func (b *Binance) Current(ctx context.Context, symbol string) (domain.Candle, er
 			c.FundingRate = f(p.Funding)
 		}
 	}
-	var ratio []struct {
-		R string `json:"longShortRatio"`
-	}
-	if e := b.get(ctx, binanceFuturesBase+"/futures/data/globalLongShortAccountRatio?symbol="+url.QueryEscape(symbol)+"&period=5m&limit=1", &ratio); e == nil && len(ratio) > 0 {
-		c.LongShortRatio = f(ratio[0].R)
+	ratio, ratioErr := cachedBinancePerSymbolMetric(ctx, "globalLongShortAccountRatio:"+upperSymbol, func() ([]binanceRatioSnapshot, error) {
+		var value []binanceRatioSnapshot
+		err := b.get(ctx, binanceFuturesBase+"/futures/data/globalLongShortAccountRatio?symbol="+url.QueryEscape(symbol)+"&period=5m&limit=1", &value)
+		return value, err
+	})
+	if ratioErr == nil && len(ratio) > 0 {
+		c.LongShortRatio = f(ratio[0].Ratio)
 	}
 	return c, nil
 }

@@ -38,6 +38,15 @@ type binancePerSymbolMetricCacheEntry struct {
 	loading   chan struct{}
 }
 
+type binanceOpenInterestSnapshot struct {
+	OpenInterest string `json:"openInterest"`
+}
+
+type binanceRatioSnapshot struct {
+	Ratio     string `json:"longShortRatio"`
+	Timestamp int64  `json:"timestamp"`
+}
+
 var binancePerSymbolMetricCache = struct {
 	sync.Mutex
 	entries map[string]*binancePerSymbolMetricCacheEntry
@@ -302,18 +311,15 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 		m.BestBid = number(book.Bid)
 		m.BestAsk = number(book.Ask)
 	}
-	type openInterestSnapshot struct {
-		Quantity string `json:"openInterest"`
-	}
-	oi, oiErr := cachedBinancePerSymbolMetric(ctx, "openInterest:"+symbol, func() (openInterestSnapshot, error) {
-		var value openInterestSnapshot
+	oi, oiErr := cachedBinancePerSymbolMetric(ctx, "openInterest:"+symbol, func() (binanceOpenInterestSnapshot, error) {
+		var value binanceOpenInterestSnapshot
 		err := h.get(ctx, binanceFuturesBase+"/fapi/v1/openInterest?symbol="+url.QueryEscape(symbol), &value)
 		return value, err
 	})
 	if oiErr != nil {
 		m.Warnings = append(m.Warnings, oiErr.Error())
 	} else {
-		m.OIQuantity = number(oi.Quantity)
+		m.OIQuantity = number(oi.OpenInterest)
 		if m.OIQuantity != nil && m.MarkPrice != nil {
 			v := *m.OIQuantity * *m.MarkPrice
 			m.OIUSD = &v
@@ -324,12 +330,8 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 		if top {
 			path = "topLongShortPositionRatio"
 		}
-		type ratioSnapshot struct {
-			Ratio     string `json:"longShortRatio"`
-			Timestamp int64  `json:"timestamp"`
-		}
-		ratios, ratioErr := cachedBinancePerSymbolMetric(ctx, path+":"+symbol, func() ([]ratioSnapshot, error) {
-			var rows []ratioSnapshot
+		ratios, ratioErr := cachedBinancePerSymbolMetric(ctx, path+":"+symbol, func() ([]binanceRatioSnapshot, error) {
+			var rows []binanceRatioSnapshot
 			err := h.get(ctx, binanceFuturesBase+"/futures/data/"+path+"?symbol="+url.QueryEscape(symbol)+"&period=5m&limit=1", &rows)
 			return rows, err
 		})

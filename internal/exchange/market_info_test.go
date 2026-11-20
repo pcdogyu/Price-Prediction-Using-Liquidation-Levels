@@ -151,7 +151,7 @@ func TestBinanceCurrentReusesBulkPremiumCache(t *testing.T) {
 		binanceFuturesBase = originalBase
 		resetBinanceMarketInfoCaches()
 	})
-	var premiumRequests int32
+	var premiumRequests, openInterestRequests, accountRatioRequests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/fapi/v1/premiumIndex":
@@ -163,8 +163,10 @@ func TestBinanceCurrentReusesBulkPremiumCache(t *testing.T) {
 		case "/fapi/v1/klines":
 			_ = json.NewEncoder(w).Encode([][]any{{float64(time.Now().UnixMilli()), "1", "2", "0.5", "1.5", "0", "0", "10", "0", "0", "5"}})
 		case "/fapi/v1/openInterest":
+			atomic.AddInt32(&openInterestRequests, 1)
 			_ = json.NewEncoder(w).Encode(map[string]string{"openInterest": "10"})
 		case "/futures/data/globalLongShortAccountRatio":
+			atomic.AddInt32(&accountRatioRequests, 1)
 			_ = json.NewEncoder(w).Encode([]map[string]string{{"longShortRatio": "1.1"}})
 		default:
 			http.NotFound(w, r)
@@ -186,6 +188,13 @@ func TestBinanceCurrentReusesBulkPremiumCache(t *testing.T) {
 	wg.Wait()
 	if got := atomic.LoadInt32(&premiumRequests); got != 1 {
 		t.Fatalf("premiumIndex requests = %d, want 1 bulk request", got)
+	}
+	_ = BinanceMarketMetric(context.Background(), "BTCUSDT")
+	if got := atomic.LoadInt32(&openInterestRequests); got != 2 {
+		t.Fatalf("open interest requests shared with market metrics = %d, want 2", got)
+	}
+	if got := atomic.LoadInt32(&accountRatioRequests); got != 2 {
+		t.Fatalf("account ratio requests shared with market metrics = %d, want 2", got)
 	}
 }
 
