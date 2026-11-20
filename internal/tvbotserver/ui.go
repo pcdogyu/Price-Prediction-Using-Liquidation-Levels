@@ -823,6 +823,9 @@ const tvbotHTML = `<!doctype html>
     .status-cell .order-json-button {
       flex: 0 0 auto;
     }
+    .order-status-actions {
+      padding-left: 12px;
+    }
     .split {
       display: grid;
       grid-template-columns: 0.95fr 1.05fr;

@@ -389,6 +389,16 @@ func TestRenderTVBotHTMLRedirectsUnauthorizedAPICallsToLogin(t *testing.T) {
 	}
 }
 
+func TestRenderTVBotOrderStatusActionsAreInsetFromTimeColumn(t *testing.T) {
+	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=orders", nil))
+	if !strings.Contains(page, ".order-status-actions {\n      padding-left: 12px;\n    }") {
+		t.Fatal("order status and JSON buttons should be shifted right to clear the timestamp")
+	}
+	if !strings.Contains(page, `class="status-cell order-status-actions"`) {
+		t.Fatal("order status actions should use the timestamp clearance spacing")
+	}
+}
+
 func TestRenderTVBotOrderSettingsSaveButtonHasAnimatedStates(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot?tab=orderSettings", nil))
 	for _, want := range []string{
