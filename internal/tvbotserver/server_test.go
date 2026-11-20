@@ -6164,6 +6164,7 @@ func TestTVBotPendingOrderChaseFallbackMarketIncludesRiskControls(t *testing.T) 
 
 func TestTVBotPositionMarketCloseUsesDedicatedClosePositionEndpoint(t *testing.T) {
 	srv := newTestServer(t)
+	recentFillTime := srv.now().Add(-time.Minute).UnixMilli()
 	var sawClose bool
 	okxServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -6172,9 +6173,9 @@ func TestTVBotPositionMarketCloseUsesDedicatedClosePositionEndpoint(t *testing.T
 			if r.URL.Query().Get("instType") != "SWAP" {
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
-			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"cross","posId":"1","posSide":"net","pos":"2","availPos":"2","avgPx":"100","markPx":"100.1","upl":"0.2","uplRatio":"0.0015","lever":"5","notionalUsd":"200","margin":"40","uTime":"1784800000000"}]}`))
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"cross","posId":"1","posSide":"net","pos":"2","availPos":"2","avgPx":"100","markPx":"100.1","upl":"0.2","uplRatio":"0.0015","lever":"5","notionalUsd":"200","margin":"40","uTime":"%d"}]}`, recentFillTime)))
 		case "/api/v5/trade/fills-history":
-			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","tradeId":"entry","ordId":"entry","posSide":"net","side":"buy","fillSz":"2","fillTime":"1784800000000"}]}`))
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","tradeId":"entry","ordId":"entry","posSide":"net","side":"buy","fillSz":"2","fillTime":"%d"}]}`, recentFillTime)))
 		case "/api/v5/market/ticker":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","bidPx":"99.9","askPx":"100.1","last":"100","ts":"1784880000000"}]}`))
 		case "/api/v5/trade/close-position":

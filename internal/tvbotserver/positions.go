@@ -1188,9 +1188,8 @@ func positionMonitorHoldingLocked(position okx.Position, monitor config.Position
 	return false, ""
 }
 
-// enforceMinimumPositionHolding is the execution-side guard for direct
-// position actions. It shares the monitor's authoritative 15-minute minimum
-// with automatic closes and fails closed when entry time cannot be verified.
+// enforceMinimumPositionHolding guards manual protection-order changes. Manual
+// closes bypass this check; automatic closes use their own close policy.
 func enforceMinimumPositionHolding(cfg config.Config, position okx.Position, fills []positionEntryFill, fillErr error, allowPositionTimeFallback bool, now time.Time) error {
 	return automaticPositionHoldingError(position, cfg.Trading.PositionMonitor, fills, fillErr, allowPositionTimeFallback, now)
 }
@@ -2294,11 +2293,6 @@ func (s *Server) handlePositionClose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "positions_failed", err.Error())
 		return
 	}
-	fills, fillErr := fetchOKXPositionEntryFills(ctx, client, "SWAP", []okx.Position{position}, s.now())
-	if err := enforceMinimumPositionHolding(cfg, position, fills, fillErr, true, s.now()); err != nil {
-		writeError(w, http.StatusConflict, "position_min_hold", err.Error())
-		return
-	}
 	closeSz := ""
 	if ratio < 1 {
 		closeSz, err = okxPositionCloseSize(ctx, client, position, ratio)
@@ -2395,11 +2389,6 @@ func (s *Server) handleGatePositionClose(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	converted := gatePositionToOKX(found)
-	trades, fillErr := client.MyTrades(ctx, found.Contract)
-	if err := enforceMinimumPositionHolding(cfg, converted, gatePositionEntryFills(trades), fillErr, true, s.now()); err != nil {
-		writeError(w, http.StatusConflict, "position_min_hold", err.Error())
-		return
-	}
 	if req.Mode == "limit" {
 		closeSz := ""
 		var closeErr error
@@ -3142,11 +3131,6 @@ func (s *Server) handleBinancePositionClose(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		writeError(w, http.StatusBadGateway, "positions_failed", err.Error())
-		return
-	}
-	fills, fillErr := fetchBinancePositionEntryFills(ctx, client, position.InstID, []okx.Position{position}, s.now())
-	if err := enforceMinimumPositionHolding(cfg, position, fills, fillErr, true, s.now()); err != nil {
-		writeError(w, http.StatusConflict, "position_min_hold", err.Error())
 		return
 	}
 	if err := cancelAllBinanceSymbolOrders(ctx, client, position.InstID); err != nil {

@@ -78,6 +78,7 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 	})
 
 	srv := newTestServer(t)
+	recentFillTime := srv.now().Add(-time.Minute).UnixMilli()
 	var orderForms []url.Values
 	binanceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -89,7 +90,7 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 			if r.URL.Query().Get("symbol") != "BTCUSDT" {
 				t.Fatalf("bad positions query: %s", r.URL.RawQuery)
 			}
-			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","liquidationPrice":"120","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":1784800000000}]`))
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-2","entryPrice":"100","markPrice":"100.1","unRealizedProfit":"-0.2","liquidationPrice":"120","isolatedMargin":"20","notional":"200.2","marginAsset":"USDT","leverage":"10","marginType":"isolated","updateTime":%d}]`, recentFillTime)))
 		case "/fapi/v1/exchangeInfo":
 			_, _ = w.Write([]byte(`{"symbols":[{"symbol":"BTCUSDT","status":"TRADING","pricePrecision":1,"quantityPrecision":3,"filters":[{"filterType":"PRICE_FILTER","tickSize":"0.1"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]}]}`))
 		case "/fapi/v1/ticker/bookTicker":
@@ -102,7 +103,7 @@ func TestTVBotBinancePositionCloseMarketAndLimit(t *testing.T) {
 		case "/fapi/v1/openAlgoOrders":
 			_, _ = w.Write([]byte(`[]`))
 		case "/fapi/v1/userTrades":
-			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":1784800000000},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":1784800000000}]`, r.URL.Query().Get("symbol"), r.URL.Query().Get("symbol"))))
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"symbol":%q,"orderId":1,"price":"100","qty":"1000","side":"BUY","positionSide":"BOTH","time":%d},{"symbol":%q,"orderId":2,"price":"100","qty":"1000","side":"SELL","positionSide":"BOTH","time":%d}]`, r.URL.Query().Get("symbol"), recentFillTime, r.URL.Query().Get("symbol"), recentFillTime)))
 		case "/fapi/v1/order":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)

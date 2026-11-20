@@ -37,12 +37,14 @@ func configureGatePositionCloseTest(t *testing.T, srv *Server, baseURL string) {
 func TestTVBotGateFullLimitPositionClose(t *testing.T) {
 	restore := isolatePositionCloseJobsForTest()
 	defer restore()
+	srv := newTestServer(t)
+	recentFillTime := fmt.Sprint(srv.now().Add(-time.Minute).Unix())
 	var orderBody map[string]any
 	gateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v4/futures/usdt/positions":
-			_, _ = w.Write([]byte(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"100","pos_margin_mode":"isolated","mode":"single","open_time":"1784800000"}]`))
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"contract":"BTC_USDT","size":"-20","entry_price":"100","mark_price":"100","pos_margin_mode":"isolated","mode":"single","open_time":%q}]`, recentFillTime)))
 		case "/api/v4/futures/usdt/contracts/BTC_USDT":
 			_, _ = w.Write([]byte(`{"name":"BTC_USDT","order_size_min":"1","order_price_round":"0.1","mark_price":"100","enable_decimal":false}`))
 		case "/api/v4/futures/usdt/tickers":
@@ -68,14 +70,13 @@ func TestTVBotGateFullLimitPositionClose(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`[]`))
 		case "/api/v4/futures/usdt/my_trades":
-			_, _ = w.Write([]byte(fmt.Sprintf(`[{"id":"entry-buy","contract":%q,"order_id":"entry-buy","size":"1000","create_time":"1784800000"},{"id":"entry-sell","contract":%q,"order_id":"entry-sell","size":"-1000","create_time":"1784800000"}]`, r.URL.Query().Get("contract"), r.URL.Query().Get("contract"))))
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"id":"entry-buy","contract":%q,"order_id":"entry-buy","size":"1000","create_time":%q},{"id":"entry-sell","contract":%q,"order_id":"entry-sell","size":"-1000","create_time":%q}]`, r.URL.Query().Get("contract"), recentFillTime, r.URL.Query().Get("contract"), recentFillTime)))
 		default:
 			t.Fatalf("unexpected Gate path %s", r.URL.Path)
 		}
 	}))
 	defer gateServer.Close()
 
-	srv := newTestServer(t)
 	configureGatePositionCloseTest(t, srv, gateServer.URL)
 	oldPoll, oldTimeout := positionClosePollInterval, positionCloseLimitTimeout
 	positionClosePollInterval, positionCloseLimitTimeout = time.Hour, time.Hour
