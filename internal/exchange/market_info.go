@@ -30,6 +30,66 @@ func EstimateNetPosition(oi, ratio *float64) *float64 {
 }
 
 const binanceLiveMarketCacheTTL = 30 * time.Second
+const binancePerSymbolMetricCacheTTL = 5 * time.Minute
+
+type binancePerSymbolMetricCacheEntry struct {
+	value     any
+	fetchedAt time.Time
+	loading   chan struct{}
+}
+
+var binancePerSymbolMetricCache = struct {
+	sync.Mutex
+	entries map[string]*binancePerSymbolMetricCacheEntry
+}{entries: make(map[string]*binancePerSymbolMetricCacheEntry)}
+
+func cachedBinancePerSymbolMetric[T any](ctx context.Context, key string, fetch func() (T, error)) (T, error) {
+	var zero T
+	for {
+		now := time.Now().UTC()
+		binancePerSymbolMetricCache.Lock()
+		entry := binancePerSymbolMetricCache.entries[key]
+		if entry != nil && now.Sub(entry.fetchedAt) < binancePerSymbolMetricCacheTTL {
+			value, ok := entry.value.(T)
+			binancePerSymbolMetricCache.Unlock()
+			if !ok {
+				return zero, fmt.Errorf("Binance metric cache type mismatch for %s", key)
+			}
+			return value, nil
+		}
+		if entry != nil && entry.loading != nil {
+			loading := entry.loading
+			binancePerSymbolMetricCache.Unlock()
+			select {
+			case <-ctx.Done():
+				return zero, ctx.Err()
+			case <-loading:
+				continue
+			}
+		}
+		if entry == nil {
+			entry = &binancePerSymbolMetricCacheEntry{}
+			binancePerSymbolMetricCache.entries[key] = entry
+		}
+		entry.loading = make(chan struct{})
+		loading := entry.loading
+		binancePerSymbolMetricCache.Unlock()
+
+		value, err := fetch()
+		binancePerSymbolMetricCache.Lock()
+		if err == nil {
+			entry.value = value
+			entry.fetchedAt = time.Now().UTC()
+		}
+		entry.loading = nil
+		close(loading)
+		binancePerSymbolMetricCache.Unlock()
+		if err != nil {
+			return zero, err
+		}
+		return value, nil
+	}
+}
 
 type binancePremiumIndexSnapshot struct {
 	Symbol  string `json:"symbol"`
@@ -202,13 +262,6 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 	m := domain.MarketMetric{Symbol: symbol, Time: time.Now().UTC().Truncate(time.Minute), Warnings: []string{}}
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	h := newHTTP()
-	get := func(path string, target any) bool {
-		if err := h.get(ctx, binanceFuturesBase+path, target); err != nil {
-			m.Warnings = append(m.Warnings, err.Error())
-			return false
-		}
-		return true
-	}
 	premiumRows, premiumErr := cachedBinancePremiumIndex(ctx)
 	if premiumErr != nil {
 		m.Warnings = append(m.Warnings, premiumErr.Error())
@@ -249,10 +302,17 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 		m.BestBid = number(book.Bid)
 		m.BestAsk = number(book.Ask)
 	}
-	var oi struct {
+	type openInterestSnapshot struct {
 		Quantity string `json:"openInterest"`
 	}
-	if get("/fapi/v1/openInterest?symbol="+symbol, &oi) {
+	oi, oiErr := cachedBinancePerSymbolMetric(ctx, "openInterest:"+symbol, func() (openInterestSnapshot, error) {
+		var value openInterestSnapshot
+		err := h.get(ctx, binanceFuturesBase+"/fapi/v1/openInterest?symbol="+url.QueryEscape(symbol), &value)
+		return value, err
+	})
+	if oiErr != nil {
+		m.Warnings = append(m.Warnings, oiErr.Error())
+	} else {
 		m.OIQuantity = number(oi.Quantity)
 		if m.OIQuantity != nil && m.MarkPrice != nil {
 			v := *m.OIQuantity * *m.MarkPrice
@@ -264,11 +324,16 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 		if top {
 			path = "topLongShortPositionRatio"
 		}
-		var ratios []struct {
+		type ratioSnapshot struct {
 			Ratio     string `json:"longShortRatio"`
 			Timestamp int64  `json:"timestamp"`
 		}
-		if get("/futures/data/"+path+"?symbol="+symbol+"&period=5m&limit=1", &ratios) && len(ratios) > 0 && time.Since(time.UnixMilli(ratios[0].Timestamp)) < 10*time.Minute {
+		ratios, ratioErr := cachedBinancePerSymbolMetric(ctx, path+":"+symbol, func() ([]ratioSnapshot, error) {
+			var rows []ratioSnapshot
+			err := h.get(ctx, binanceFuturesBase+"/futures/data/"+path+"?symbol="+url.QueryEscape(symbol)+"&period=5m&limit=1", &rows)
+			return rows, err
+		})
+		if ratioErr == nil && len(ratios) > 0 && time.Since(time.UnixMilli(ratios[0].Timestamp)) < 10*time.Minute {
 			v := number(ratios[0].Ratio)
 			if top {
 				m.TopPositionRatio = v
@@ -276,7 +341,11 @@ func BinanceMarketMetric(ctx context.Context, symbol string) domain.MarketMetric
 				m.AccountRatio = v
 			}
 		} else {
-			m.Warnings = append(m.Warnings, path+": 数据缺失或超过 10 分钟")
+			if ratioErr != nil {
+				m.Warnings = append(m.Warnings, ratioErr.Error())
+			} else {
+				m.Warnings = append(m.Warnings, path+": 数据缺失或超过 10 分钟")
+			}
 		}
 	}
 	m.NetPositionUSD = EstimateNetPosition(m.OIUSD, m.TopPositionRatio)
@@ -291,13 +360,18 @@ func BinanceOpenInterestHistory(ctx context.Context, symbol string) (domain.Mark
 	if symbol == "" {
 		return domain.MarketMetric{}, false, fmt.Errorf("symbol is required")
 	}
-	var rows []struct {
+	type historySnapshot struct {
 		Timestamp int64  `json:"timestamp"`
 		OIUSD     string `json:"sumOpenInterestValue"`
 		Quantity  string `json:"sumOpenInterest"`
 	}
-	endpoint := binanceFuturesBase + "/futures/data/openInterestHist?symbol=" + url.QueryEscape(symbol) + "&period=5m&limit=1"
-	if err := newHTTP().get(ctx, endpoint, &rows); err != nil {
+	rows, err := cachedBinancePerSymbolMetric(ctx, "openInterestHist:"+symbol, func() ([]historySnapshot, error) {
+		var value []historySnapshot
+		endpoint := binanceFuturesBase + "/futures/data/openInterestHist?symbol=" + url.QueryEscape(symbol) + "&period=5m&limit=1"
+		fetchErr := newHTTP().get(ctx, endpoint, &value)
+		return value, fetchErr
+	})
+	if err != nil {
 		return domain.MarketMetric{}, false, err
 	}
 	if len(rows) == 0 {

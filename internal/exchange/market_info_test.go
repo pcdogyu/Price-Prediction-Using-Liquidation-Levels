@@ -70,6 +70,11 @@ func TestBinanceMarketMetricUsesBulkCaches(t *testing.T) {
 		}(symbol)
 	}
 	wg.Wait()
+	for _, symbol := range []string{"BTCUSDT", "ETHUSDT"} {
+		if metric := BinanceMarketMetric(context.Background(), symbol); len(metric.Warnings) != 0 {
+			t.Fatalf("%s cached metric warnings: %v", symbol, metric.Warnings)
+		}
+	}
 	if got := atomic.LoadInt32(&premiumRequests); got != 1 {
 		t.Fatalf("premiumIndex requests = %d, want 1", got)
 	}
@@ -88,13 +93,30 @@ func TestBinanceMarketMetricUsesBulkCaches(t *testing.T) {
 	if got := atomic.LoadInt32(&topRatioRequests); got != 2 {
 		t.Fatalf("top ratio requests = %d, want 2", got)
 	}
+	binancePerSymbolMetricCache.Lock()
+	for _, entry := range binancePerSymbolMetricCache.entries {
+		entry.fetchedAt = time.Now().Add(-binancePerSymbolMetricCacheTTL - time.Second)
+	}
+	binancePerSymbolMetricCache.Unlock()
+	_ = BinanceMarketMetric(context.Background(), "BTCUSDT")
+	if got := atomic.LoadInt32(&openInterestRequests); got != 3 {
+		t.Fatalf("open interest requests after 5-minute cache expiry = %d, want 3", got)
+	}
+	if got := atomic.LoadInt32(&accountRatioRequests); got != 3 {
+		t.Fatalf("account ratio requests after 5-minute cache expiry = %d, want 3", got)
+	}
+	if got := atomic.LoadInt32(&topRatioRequests); got != 3 {
+		t.Fatalf("top ratio requests after 5-minute cache expiry = %d, want 3", got)
+	}
 }
 
 func TestBinanceOpenInterestHistoryFetchesLatestFiveMinutePoint(t *testing.T) {
 	originalBase := binanceFuturesBase
 	t.Cleanup(func() { binanceFuturesBase = originalBase })
 	timestamp := time.Date(2026, time.November, 18, 12, 35, 0, 0, time.UTC)
+	var historyRequests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&historyRequests, 1)
 		if r.URL.Path != "/futures/data/openInterestHist" || r.URL.Query().Get("symbol") != "ETHUSDT" || r.URL.Query().Get("period") != "5m" || r.URL.Query().Get("limit") != "1" {
 			t.Errorf("unexpected request: %s", r.URL.String())
 		}
@@ -113,6 +135,12 @@ func TestBinanceOpenInterestHistoryFetchesLatestFiveMinutePoint(t *testing.T) {
 	}
 	if metric.Symbol != "ETHUSDT" || !metric.Time.Equal(timestamp) || metric.OIUSD == nil || *metric.OIUSD != 1250000.5 || metric.OIQuantity == nil || *metric.OIQuantity != 500 {
 		t.Fatalf("unexpected OI history point: %+v", metric)
+	}
+	if _, found, err = BinanceOpenInterestHistory(context.Background(), "ETHUSDT"); err != nil || !found {
+		t.Fatalf("reuse cached OI history point: found=%v err=%v", found, err)
+	}
+	if got := atomic.LoadInt32(&historyRequests); got != 1 {
+		t.Fatalf("open interest history requests within 5 minutes = %d, want 1", got)
 	}
 }
 
@@ -162,6 +190,9 @@ func TestBinanceCurrentReusesBulkPremiumCache(t *testing.T) {
 }
 
 func resetBinanceMarketInfoCaches() {
+	binancePerSymbolMetricCache.Lock()
+	binancePerSymbolMetricCache.entries = make(map[string]*binancePerSymbolMetricCacheEntry)
+	binancePerSymbolMetricCache.Unlock()
 	binanceLiveMarketCache.Lock()
 	binanceLiveMarketCache.premium = nil
 	binanceLiveMarketCache.premiumAt = time.Time{}
