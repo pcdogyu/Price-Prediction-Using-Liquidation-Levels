@@ -2155,7 +2155,7 @@ func analysisCacheKey(apiID, binanceAPIID, envName string, priceDays, pnlMinutes
 	if len(gateAPIIDs) > 0 {
 		gateAPIID = strings.TrimSpace(gateAPIIDs[0])
 	}
-	return "analysis|v4|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
+	return "analysis|v5|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
 }
 
 func (s *Server) refreshAnalysisData(ctx context.Context, client okx.Client, apiID string, priceDays, pnlMinutes int, now time.Time) error {

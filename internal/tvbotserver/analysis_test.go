@@ -1599,6 +1599,13 @@ func TestBuildAnalysisPositionTradesCountsClosedPositionsOnly(t *testing.T) {
 	}
 }
 
+func TestAnalysisCacheKeyUsesUpdatedSummarySchema(t *testing.T) {
+	key := analysisCacheKey("default", "binance", "demo", 3, 1440, "gate")
+	if !strings.HasPrefix(key, "analysis|v5|") {
+		t.Fatalf("analysis cache key=%q, want v5 schema key", key)
+	}
+}
+
 func TestComputeStatsAddsPerSymbolClosedPositionDetails(t *testing.T) {
 	base := time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)
 	positions := []analysisPositionTrade{
