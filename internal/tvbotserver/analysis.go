@@ -503,21 +503,31 @@ type analysisBalanceWindow struct {
 }
 
 type analysisSymbolStats struct {
-	Exchange         string  `json:"exchange,omitempty"`
-	InstID           string  `json:"inst_id"`
-	TradeCount       int     `json:"trade_count"`
-	Wins             int     `json:"wins"`
-	Losses           int     `json:"losses"`
-	Flats            int     `json:"flats"`
-	GrossProfit      float64 `json:"gross_profit"`
-	GrossLoss        float64 `json:"gross_loss"`
-	Fees             float64 `json:"fees"`
-	Turnover         float64 `json:"turnover"`
-	NetPnL           float64 `json:"net_pnl"`
-	WinRate          float64 `json:"win_rate"`
-	ProfitFactor     float64 `json:"profit_factor"`
-	ProfitFactorText string  `json:"profit_factor_text,omitempty"`
-	PayoffRatio      float64 `json:"payoff_ratio"`
+	Exchange            string  `json:"exchange,omitempty"`
+	InstID              string  `json:"inst_id"`
+	TradeCount          int     `json:"trade_count"`
+	Wins                int     `json:"wins"`
+	Losses              int     `json:"losses"`
+	Flats               int     `json:"flats"`
+	GrossProfit         float64 `json:"gross_profit"`
+	GrossLoss           float64 `json:"gross_loss"`
+	Fees                float64 `json:"fees"`
+	Turnover            float64 `json:"turnover"`
+	NetPnL              float64 `json:"net_pnl"`
+	WinRate             float64 `json:"win_rate"`
+	ProfitFactor        float64 `json:"profit_factor"`
+	ProfitFactorText    string  `json:"profit_factor_text,omitempty"`
+	PayoffRatio         float64 `json:"payoff_ratio"`
+	AvgHoldingSeconds   float64 `json:"avg_holding_seconds,omitempty"`
+	AvgLeverage         float64 `json:"avg_leverage,omitempty"`
+	Strategy            string  `json:"strategy,omitempty"`
+	Side                string  `json:"side,omitempty"`
+	holdingSecondsTotal float64 `json:"-"`
+	holdingSecondsCount int     `json:"-"`
+	leverageTotal       float64 `json:"-"`
+	leverageCount       int     `json:"-"`
+	strategyMixed       bool    `json:"-"`
+	sideMixed           bool    `json:"-"`
 }
 
 type analysisTrade struct {
@@ -5358,10 +5368,9 @@ func computeStats(cfg config.Config, positions []analysisPositionTrade, periodTr
 		if stats == nil {
 			continue
 		}
-		net := parseFloat(position.NetPnL)
-		applyPositionStats(stats, net)
-		applyPositionStats(exchangeStats, net)
-		applyPositionStats(&summary, net)
+		applyPositionStats(stats, position)
+		applyPositionStats(exchangeStats, position)
+		applyPositionStats(&summary, position)
 	}
 	for _, trade := range periodTrades {
 		if trade.FillTime.Before(periodSince) {
@@ -5393,7 +5402,8 @@ func computeStats(cfg config.Config, positions []analysisPositionTrade, periodTr
 	return summary, exchangeSummaries, symbols
 }
 
-func applyPositionStats(stats *analysisSymbolStats, net float64) {
+func applyPositionStats(stats *analysisSymbolStats, position analysisPositionTrade) {
+	net := parseFloat(position.NetPnL)
 	stats.TradeCount++
 	stats.NetPnL += net
 	switch {
@@ -5406,6 +5416,31 @@ func applyPositionStats(stats *analysisSymbolStats, net float64) {
 	default:
 		stats.Flats++
 	}
+	if !position.EntryTime.IsZero() && !position.ExitTime.IsZero() && !position.ExitTime.Before(position.EntryTime) {
+		stats.holdingSecondsTotal += position.ExitTime.Sub(position.EntryTime).Seconds()
+		stats.holdingSecondsCount++
+	}
+	if position.Leverage > 0 {
+		stats.leverageTotal += float64(position.Leverage)
+		stats.leverageCount++
+	}
+	mergeStatsLabel(&stats.Strategy, &stats.strategyMixed, position.Strategy)
+	mergeStatsLabel(&stats.Side, &stats.sideMixed, position.Side)
+}
+
+func mergeStatsLabel(current *string, mixed *bool, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" || *mixed {
+		return
+	}
+	if *current == "" {
+		*current = value
+		return
+	}
+	if !strings.EqualFold(*current, value) {
+		*current = "mixed"
+		*mixed = true
+	}
 }
 
 func applyPeriodFillStats(stats *analysisSymbolStats, fee, turnover float64) {
@@ -5414,6 +5449,12 @@ func applyPeriodFillStats(stats *analysisSymbolStats, fee, turnover float64) {
 }
 
 func finalizeStats(stats *analysisSymbolStats) {
+	if stats.holdingSecondsCount > 0 {
+		stats.AvgHoldingSeconds = stats.holdingSecondsTotal / float64(stats.holdingSecondsCount)
+	}
+	if stats.leverageCount > 0 {
+		stats.AvgLeverage = stats.leverageTotal / float64(stats.leverageCount)
+	}
 	decided := stats.Wins + stats.Losses
 	if decided > 0 {
 		stats.WinRate = float64(stats.Wins) / float64(decided)

@@ -95,6 +95,7 @@ func defaultTopMenu() []TopMenuItem {
 		{Key: "positions", Title: "持仓", Href: "/tvbot?tab=positions"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot?tab=analysis"},
 		{Key: "history-orders", Title: "历史订单", Href: "/tvbot?tab=historyOrders"},
+		{Key: "stop-loss-analysis", Title: "止盈止损分析", Href: "/tvbot?tab=stopLossAnalysis"},
 		{Key: "symbols", Title: "币对配置", Href: "/tvbot?tab=symbols"},
 		{Key: "config", Title: "订单配置", Href: "/tvbot?tab=config"},
 		{Key: "api-keys", Title: "API Key", Href: "/tvbot?tab=apiKeys"},
@@ -2595,7 +2596,6 @@ const tvbotHTML = `<!doctype html>
               <button class="btn small" type="button" id="reset-balance-baseline">重置基准</button>
               <button class="btn small" type="button" id="sync-balance-history">同步历史</button>
             </div>
-            <div id="analysis-okx-peak-snapshots" class="analysis-peak-snapshots"></div>
             <div class="section-head" style="margin:12px 0 8px">
               <h3 id="analysis-okx-usdt-title">USDT 权益图</h3>
               <label class="position-environment-control">API账户<select id="analysis-okx-account" aria-label="OKX 权益账户"></select></label>
@@ -2634,7 +2634,6 @@ const tvbotHTML = `<!doctype html>
             </div>
           </div>
           <div class="analysis-usdt-chart-card">
-            <div id="analysis-binance-peak-snapshots" class="analysis-peak-snapshots"></div>
             <div class="section-head" style="margin:12px 0 8px">
               <h3 id="analysis-binance-usdt-title">USDT 权益图</h3>
               <label class="position-environment-control">API账户<select id="analysis-binance-account" aria-label="Binance 权益账户"></select></label>
@@ -2671,7 +2670,6 @@ const tvbotHTML = `<!doctype html>
             </div>
           </div>
           <div class="analysis-usdt-chart-card">
-            <div id="analysis-gate-peak-snapshots" class="analysis-peak-snapshots"></div>
             <div class="section-head" style="margin:12px 0 8px">
               <h3 id="analysis-gate-usdt-title">USDT 权益图</h3>
               <label class="position-environment-control">API账户<select id="analysis-gate-account" aria-label="Gate 权益账户"></select></label>
@@ -2688,7 +2686,7 @@ const tvbotHTML = `<!doctype html>
         <div class="symbol-table-wrap">
           <table class="symbol-table analysis-symbol-stats-table">
             <thead>
-              <tr><th>币对</th><th>仓位数</th><th>胜 / 负</th><th>胜率</th><th>毛利</th><th>毛损</th><th>手续费</th><th>净盈亏</th><th>成交额</th></tr>
+              <tr><th>币对</th><th>仓位数</th><th>方向</th><th>策略</th><th>平均持仓时间</th><th>平均杠杆</th><th>胜 / 负</th><th>胜率</th><th>毛利</th><th>毛损</th><th>手续费</th><th>净盈亏</th><th>成交额</th></tr>
             </thead>
             <tbody id="analysis-symbol-stats-rows"></tbody>
           </table>
@@ -2714,6 +2712,18 @@ const tvbotHTML = `<!doctype html>
           <span class="muted" id="analysis-trade-page-info">-</span>
           <button class="btn small" type="button" id="analysis-trade-next">下一页</button>
         </div>
+      </div>
+    </section>
+
+    <section id="stopLossAnalysis" aria-label="止盈止损分析">
+      <div class="analysis-trade-history-card">
+        <div class="section-head" style="margin-bottom:10px">
+          <h2>图表周期最高</h2>
+          <span class="muted" id="analysis-period-peak-status">-</span>
+        </div>
+        <div id="analysis-period-peak-account-slot"></div>
+        <div id="analysis-period-peak-toolbar-slot"></div>
+        <div id="analysis-period-peak-card" class="analysis-peak-snapshots"></div>
       </div>
     </section>
 
@@ -3282,6 +3292,7 @@ const tvbotHTML = `<!doctype html>
       { tab: "positions", label: "持仓" },
       { tab: "analysis", label: "订单分析" },
       { tab: "historyOrders", label: "历史订单" },
+      { tab: "stopLossAnalysis", label: "止盈止损分析" },
       { tab: "symbols", label: "币对配置" },
       { tab: "config", label: "订单配置" },
       { tab: "apiKeys", label: "API Key" },
@@ -3891,7 +3902,7 @@ const tvbotHTML = `<!doctype html>
       if (sectionActive("dashboard")) {
         Promise.all([loadBalanceOverview(true), loadDashboardOrderAnalysis(true)]).then(() => renderDashboard()).catch((err) => toast(err.message));
       }
-      if (sectionActive("analysis")) {
+      if (sectionActive("analysis") || sectionActive("stopLossAnalysis")) {
         loadAnalysis(false).catch((err) => toast(err.message));
       }
       if (sectionActive("positions")) {
@@ -4463,7 +4474,15 @@ const tvbotHTML = `<!doctype html>
         seen[tab] = true;
       });
       defaultMenuItems.forEach((def) => {
-        if (!seen[def.tab]) normalized.push({ tab: def.tab, hidden: false, label: def.label });
+        if (seen[def.tab]) return;
+        const item = { tab: def.tab, hidden: false, label: def.label };
+        if (def.tab === "stopLossAnalysis") {
+          const historyIndex = normalized.findIndex((entry) => entry.tab === "historyOrders");
+          normalized.splice(historyIndex >= 0 ? historyIndex + 1 : normalized.length, 0, item);
+        } else {
+          normalized.push(item);
+        }
+        seen[def.tab] = true;
       });
       return normalized;
     }
@@ -4662,7 +4681,8 @@ const tvbotHTML = `<!doctype html>
 
     function analysisTabActive() {
       const section = $("analysis");
-      return !!(section && section.classList.contains("active"));
+      const peakSection = $("stopLossAnalysis");
+      return !!((section && section.classList.contains("active")) || (peakSection && peakSection.classList.contains("active")));
     }
 
     function analysisBalanceAutoRefreshAllowed() {
@@ -4839,7 +4859,7 @@ const tvbotHTML = `<!doctype html>
       } else {
         stopPositionViewPolling();
       }
-      if (target === "analysis") {
+      if (target === "analysis" || target === "stopLossAnalysis") {
         startAnalysisBalanceAutoRefresh();
         startAnalysisConnectionPolling();
       } else {
@@ -4856,7 +4876,7 @@ const tvbotHTML = `<!doctype html>
       } else {
         stopCoinpairBlockPolling();
       }
-      if (target === "analysis" && !state.analysis) {
+      if ((target === "analysis" || target === "stopLossAnalysis") && !state.analysis) {
         loadAnalysis(false).catch((err) => toast(err.message));
       }
       if (target === "historyOrders" && !state.exchangeOrdersLoaded) {
@@ -7727,7 +7747,7 @@ const tvbotHTML = `<!doctype html>
       const rowsEl = $("analysis-symbol-stats-rows");
       const status = $("analysis-symbol-stats-status");
       if (!rowsEl) return;
-      const colspan = 9;
+      const colspan = 13;
       if (errorText) {
         rowsEl.innerHTML = '<tr><td colspan="' + colspan + '" class="muted">' + escapeHTML(errorText) + '</td></tr>';
         if (status) status.textContent = "-";
@@ -7750,9 +7770,15 @@ const tvbotHTML = `<!doctype html>
       if (status) status.textContent = exchangeLabel(exchange) + " · " + balanceWindowLabel(analysisPNLWindowMinutes()) + " · 已平仓 · " + rows.length + " 个币对";
       rowsEl.innerHTML = rows.map((row) => {
         const tone = signedToneClass(row && row.net_pnl);
+        const strategy = String(row && row.strategy || "");
+        const side = String(row && row.side || "");
         return "<tr>" +
           "<td>" + escapeHTML(asText(row && row.inst_id)) + "</td>" +
           "<td>" + escapeHTML(asText(row && row.trade_count || 0)) + "</td>" +
+          "<td>" + escapeHTML(side === "mixed" ? "多种" : analysisPositionSideText(side)) + "</td>" +
+          "<td>" + escapeHTML(strategy === "mixed" ? "多种" : analysisStrategyText(row)) + "</td>" +
+          "<td>" + escapeHTML(Number(row && row.avg_holding_seconds) > 0 ? formatHoldingSeconds(row.avg_holding_seconds) : "-") + "</td>" +
+          "<td>" + escapeHTML(Number(row && row.avg_leverage) > 0 ? formatNumber(row.avg_leverage) + "x" : "-") + "</td>" +
           "<td>" + escapeHTML(asText(row && row.wins || 0)) + " / " + escapeHTML(asText(row && row.losses || 0)) + "</td>" +
           "<td>" + escapeHTML(formatPct(row && row.win_rate)) + "</td>" +
           "<td>" + escapeHTML(formatUSDTAmount(row && row.gross_profit)) + "</td>" +
@@ -8494,7 +8520,7 @@ const tvbotHTML = `<!doctype html>
       const prev = $("analysis-trade-prev");
       const next = $("analysis-trade-next");
       const binanceIncome = exchange === "binance";
-      if (section) section.hidden = false;
+      if (section) section.hidden = binanceIncome;
       if (title) title.textContent = binanceIncome ? ("Binance 订单盈亏 · " + balanceWindowLabel(analysisPNLWindowMinutes())) : label + " 下单盈亏分析";
       const aggregateToggle = $("analysis-trade-aggregate-toggle");
       if (aggregateToggle) aggregateToggle.hidden = binanceIncome;
@@ -8702,16 +8728,23 @@ const tvbotHTML = `<!doctype html>
 
     function placeAnalysisBalanceWindowToolbar(exchange) {
       const toolbar = $("analysis-balance-window-toolbar");
-      const snapshots = $("analysis-" + exchange + "-peak-snapshots");
-      if (!toolbar || !snapshots || !snapshots.parentNode || normalizeExchange(exchange) !== activeExchange()) return;
-      snapshots.parentNode.insertBefore(toolbar, snapshots);
+      const slot = $("analysis-period-peak-toolbar-slot");
+      const accountSlot = $("analysis-period-peak-account-slot");
+      const accountSelect = $("analysis-" + exchange + "-account");
+      const accountLabel = accountSelect && accountSelect.closest("label");
+      if (!toolbar || !slot || !accountSlot || normalizeExchange(exchange) !== activeExchange()) return;
+      if (accountLabel) accountSlot.replaceChildren(accountLabel);
+      slot.appendChild(toolbar);
       toolbar.hidden = false;
     }
 
     function renderAnalysisPeakSnapshots(exchange, item) {
-      const container = $("analysis-" + exchange + "-peak-snapshots");
+      if (normalizeExchange(exchange) !== activeExchange()) return;
+      const container = $("analysis-period-peak-card");
       if (!container) return;
       container.innerHTML = renderAnalysisPeakCard("图表周期最高", item && item.period_peak);
+      const status = $("analysis-period-peak-status");
+      if (status) status.textContent = exchangeLabel(exchange) + " · " + balanceWindowLabel(state.balanceWindowMinutes);
       placeAnalysisBalanceWindowToolbar(exchange);
     }
 

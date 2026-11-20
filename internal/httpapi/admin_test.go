@@ -33,9 +33,10 @@ func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
 		t.Fatalf("migrated menu item=%#v", migrated[0])
 	}
 	wantHrefs := map[string]string{
-		"positions": "/tvbot?tab=positions",
-		"orders":    "/tvbot?tab=orders",
-		"analysis":  "/tvbot?tab=analysis",
+		"positions":          "/tvbot?tab=positions",
+		"orders":             "/tvbot?tab=orders",
+		"analysis":           "/tvbot?tab=analysis",
+		"stop-loss-analysis": "/tvbot?tab=stopLossAnalysis",
 	}
 	for _, item := range migrated {
 		if want, ok := wantHrefs[item.Key]; ok && item.Href != want {
@@ -56,7 +57,7 @@ func TestDefaultAdminMenuUsesRequestedTopOrder(t *testing.T) {
 	menu := defaultAdminMenu()
 	want := []string{
 		"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-		"orders", "positions", "analysis", "history-orders", "symbols", "config", "api-keys",
+		"orders", "positions", "analysis", "history-orders", "stop-loss-analysis", "symbols", "config", "api-keys",
 		"order-settings", "template", "trade-monitor", "upgrade",
 		"system-info", "menu", "system",
 	}

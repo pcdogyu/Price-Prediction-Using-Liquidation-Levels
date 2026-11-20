@@ -1599,6 +1599,28 @@ func TestBuildAnalysisPositionTradesCountsClosedPositionsOnly(t *testing.T) {
 	}
 }
 
+func TestComputeStatsAddsPerSymbolClosedPositionDetails(t *testing.T) {
+	base := time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)
+	positions := []analysisPositionTrade{
+		{Exchange: trading.ExchangeOKX, InstID: "BTC-USDT-SWAP", Side: "long", Strategy: "trend", EntryTime: base, ExitTime: base.Add(time.Hour), Leverage: 5, NetPnL: "10"},
+		{Exchange: trading.ExchangeOKX, InstID: "BTC-USDT-SWAP", Side: "short", Strategy: "scalp", EntryTime: base, ExitTime: base.Add(3 * time.Hour), Leverage: 10, NetPnL: "-5"},
+	}
+	_, _, symbols := computeStats(config.Config{}, positions, nil, base.Add(-time.Minute))
+	if len(symbols) != 1 {
+		t.Fatalf("symbol count=%d, want 1", len(symbols))
+	}
+	stats := symbols[0]
+	if math.Abs(stats.AvgHoldingSeconds-2*60*60) > 0.000001 {
+		t.Fatalf("average holding seconds=%v, want 7200", stats.AvgHoldingSeconds)
+	}
+	if math.Abs(stats.AvgLeverage-7.5) > 0.000001 {
+		t.Fatalf("average leverage=%v, want 7.5", stats.AvgLeverage)
+	}
+	if stats.Strategy != "mixed" || stats.Side != "mixed" {
+		t.Fatalf("mixed position details should be marked mixed: %#v", stats)
+	}
+}
+
 func TestBuildAnalysisPositionTradesPropagatesOperationMetadata(t *testing.T) {
 	base := time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)
 	trade := func(id, ordID, side, positionSide, effect, operation, source string, at time.Time) analysisTrade {

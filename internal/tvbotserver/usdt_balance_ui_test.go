@@ -243,14 +243,17 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 	analysisUpdated := strings.Index(tvbotHTML, `id="analysis-updated"`)
 	windowToolbar := strings.Index(tvbotHTML, `id="analysis-balance-window-toolbar"`)
 	analysisGrid := strings.Index(tvbotHTML, `class="analysis-balance-grid"`)
-	okxPeak := strings.Index(tvbotHTML, `id="analysis-okx-peak-snapshots"`)
+	peakPage := strings.Index(tvbotHTML, `id="stopLossAnalysis"`)
+	peakAccountSlot := strings.Index(tvbotHTML, `id="analysis-period-peak-account-slot"`)
+	peakToolbarSlot := strings.Index(tvbotHTML, `id="analysis-period-peak-toolbar-slot"`)
+	peakCard := strings.Index(tvbotHTML, `id="analysis-period-peak-card"`)
 	okxChartTitle := strings.Index(tvbotHTML, `id="analysis-okx-usdt-title"`)
 	okxChartInPeriodPanel := strings.Index(tvbotHTML, `id="usdt-chart" class="mini-usdt-chart"`)
-	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 || okxPeak < 0 || okxChartTitle < 0 || okxChartInPeriodPanel < 0 {
+	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 || peakPage < 0 || peakAccountSlot < 0 || peakToolbarSlot < 0 || peakCard < 0 || okxChartTitle < 0 || okxChartInPeriodPanel < 0 {
 		t.Fatal("analysis balance toolbar layout markers are missing")
 	}
-	if !(analysisUpdated < analysisGrid && analysisGrid < windowToolbar && windowToolbar < okxPeak && okxPeak < okxChartTitle && okxChartTitle < okxChartInPeriodPanel) {
-		t.Fatal("analysis should place the period switch and full-width chart-period peak card above the equity chart")
+	if !(analysisUpdated < analysisGrid && analysisGrid < windowToolbar && windowToolbar < okxChartTitle && okxChartTitle < okxChartInPeriodPanel && okxChartInPeriodPanel < peakPage && peakPage < peakAccountSlot && peakAccountSlot < peakToolbarSlot && peakToolbarSlot < peakCard) {
+		t.Fatal("chart-period peak card and period switch should live on the dedicated page")
 	}
 	if !strings.Contains(tvbotHTML, ".analysis-balance-window-toolbar {\n      width: 100%;\n      justify-content: flex-start;") {
 		t.Fatal("analysis balance period switch should use full card width")
@@ -262,7 +265,7 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`id="analysis-balance-window-toolbar" class="balance-window-toolbar analysis-balance-window-toolbar" role="group" aria-label="USDT余额周期" hidden`,
 		`function placeAnalysisBalanceWindowToolbar(exchange)`,
 		`normalizeExchange(exchange) !== activeExchange()`,
-		`snapshots.parentNode.insertBefore(toolbar, snapshots);`,
+		`slot.appendChild(toolbar);`,
 		`toolbar.hidden = false;`,
 	} {
 		if !strings.Contains(tvbotHTML, marker) {
@@ -296,21 +299,9 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 	if !(gateValuation < gatePNL && gatePNL < gateChart) {
 		t.Fatal("Gate column should show USDT valuation cards, pnl summary, then equity chart")
 	}
-	for _, layout := range []struct {
-		name  string
-		peak  string
-		title string
-		chart string
-	}{
-		{name: "OKX", peak: `id="analysis-okx-peak-snapshots"`, title: `id="analysis-okx-usdt-title"`, chart: `id="usdt-chart" class="mini-usdt-chart"`},
-		{name: "Binance", peak: `id="analysis-binance-peak-snapshots"`, title: `id="analysis-binance-usdt-title"`, chart: `id="analysis-binance-usdt-chart" class="mini-usdt-chart"`},
-		{name: "Gate", peak: `id="analysis-gate-peak-snapshots"`, title: `id="analysis-gate-usdt-title"`, chart: `id="analysis-gate-usdt-chart" class="mini-usdt-chart"`},
-	} {
-		peak := strings.Index(tvbotHTML, layout.peak)
-		title := strings.Index(tvbotHTML, layout.title)
-		chart := strings.Index(tvbotHTML, layout.chart)
-		if peak < 0 || title < 0 || chart < 0 || !(peak < title && title < chart) {
-			t.Fatalf("%s chart-period peak should span the panel above the complete equity chart", layout.name)
+	for _, peak := range []string{`id="analysis-okx-peak-snapshots"`, `id="analysis-binance-peak-snapshots"`, `id="analysis-gate-peak-snapshots"`} {
+		if strings.Contains(tvbotHTML, peak) {
+			t.Fatalf("chart-period peak should move out of the exchange balance panels: %s", peak)
 		}
 	}
 	tradeHistory := strings.Index(tvbotHTML, `id="analysis-trade-history-section"`)

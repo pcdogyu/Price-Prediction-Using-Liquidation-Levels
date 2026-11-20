@@ -542,6 +542,7 @@ func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
 	}
 	for _, want := range []string{
 		`id="analysis-trade-history-section"`,
+		`if (section) section.hidden = binanceIncome;`,
 		`id="analysis-api-badge"`,
 		`id="analysis-connection-indicator"`,
 		`/tvbot/exchange-connection?`,
@@ -583,13 +584,15 @@ func TestRenderTVBotAnalysisAddsPerSymbolPnLTable(t *testing.T) {
 	for _, want := range []string{
 		`id="analysis-symbol-stats-section"`,
 		`class="symbol-table analysis-symbol-stats-table"`,
-		`<th>币对</th><th>仓位数</th><th>胜 / 负</th><th>胜率</th><th>毛利</th><th>毛损</th><th>手续费</th><th>净盈亏</th><th>成交额</th>`,
+		`<th>币对</th><th>仓位数</th><th>方向</th><th>策略</th><th>平均持仓时间</th><th>平均杠杆</th><th>胜 / 负</th><th>胜率</th><th>毛利</th><th>毛损</th><th>手续费</th><th>净盈亏</th><th>成交额</th>`,
 		`id="analysis-symbol-stats-rows"`,
 		`function renderAnalysisSymbolStats(errorText)`,
 		`Array.isArray(state.analysis.symbols) ? state.analysis.symbols : []`,
 		`normalizeExchange(row && row.exchange) === exchange`,
 		`row && row.net_pnl`,
 		`balanceWindowLabel(analysisPNLWindowMinutes()) + " · 已平仓 · "`,
+		`row && row.avg_holding_seconds`,
+		`row && row.avg_leverage`,
 		`所选周期内暂无已平仓币对盈亏`,
 	} {
 		if !strings.Contains(page, want) {
@@ -603,8 +606,14 @@ func TestRenderTVBotPeakSnapshotsOnlyShowChartPeriodPeak(t *testing.T) {
 	if !strings.Contains(page, `'<details open><summary>查看当时持仓明细 (' + count + ')</summary>' + detail + '</details>' +`) {
 		t.Fatal("chart-period peak position details should be expanded by default")
 	}
+	if !strings.Contains(page, `id="stopLossAnalysis" aria-label="止盈止损分析"`) || !strings.Contains(page, `id="analysis-period-peak-card"`) {
+		t.Fatal("chart-period peak card should be on the dedicated analysis page")
+	}
 	if !strings.Contains(page, `container.innerHTML = renderAnalysisPeakCard("图表周期最高", item && item.period_peak);`) {
-		t.Fatal("analysis peak snapshots should keep the chart-period peak card")
+		t.Fatal("analysis peak snapshots should render the chart-period peak card")
+	}
+	if strings.Contains(page, `id="analysis-okx-peak-snapshots"`) || strings.Contains(page, `id="analysis-binance-peak-snapshots"`) || strings.Contains(page, `id="analysis-gate-peak-snapshots"`) {
+		t.Fatal("chart-period peak card should no longer render inside the order analysis page")
 	}
 	if strings.Contains(page, `renderAnalysisPeakCard("账户历史最高"`) || strings.Contains(page, `item && item.all_time_peak`) {
 		t.Fatal("analysis peak snapshots should not render the account-history peak card")

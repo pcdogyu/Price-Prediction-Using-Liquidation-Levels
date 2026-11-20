@@ -45,6 +45,7 @@ func defaultTVBotMenuItems() []adminMenuItem {
 		{Key: "positions", Title: "持仓", Href: "/tvbot?tab=positions", Group: "trading"},
 		{Key: "analysis", Title: "订单分析", Href: "/tvbot?tab=analysis", Group: "trading"},
 		{Key: "history-orders", Title: "历史订单", Href: "/tvbot?tab=historyOrders", Group: "trading"},
+		{Key: "stop-loss-analysis", Title: "止盈止损分析", Href: "/tvbot?tab=stopLossAnalysis", Group: "trading"},
 		{Key: "symbols", Title: "币对配置", Href: "/tvbot?tab=symbols", Group: "trading"},
 		{Key: "config", Title: "订单配置", Href: "/tvbot?tab=config", Group: "trading"},
 		{Key: "api-keys", Title: "API Key", Href: "/tvbot?tab=apiKeys", Group: "trading"},
@@ -80,7 +81,7 @@ var legacyDefaultAdminMenuKeys = []string{
 
 var canonicalDefaultAdminMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-	"orders", "positions", "analysis", "history-orders", "symbols", "config", "api-keys",
+	"orders", "positions", "analysis", "history-orders", "stop-loss-analysis", "symbols", "config", "api-keys",
 	"order-settings", "template", "trade-monitor", "upgrade",
 	"system-info", "menu", "system",
 }
@@ -105,7 +106,7 @@ var legacyOrdersFirstAdminMenuKeys = []string{
 
 var canonicalPersonalMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
-	"orders", "positions", "analysis", "history-orders", "symbols", "config", "api-keys",
+	"orders", "positions", "analysis", "history-orders", "stop-loss-analysis", "symbols", "config", "api-keys",
 	"order-settings", "template", "trade-monitor", "upgrade",
 	"system-info",
 }
@@ -114,6 +115,20 @@ var legacyCanonicalPersonalMenuKeys = []string{
 	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
 	"overview", "positions", "analysis", "symbols", "config", "api-keys",
 	"order-settings", "template", "orders", "trade-monitor", "upgrade", "system-info",
+}
+
+var previousCanonicalDefaultAdminMenuKeys = []string{
+	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+	"orders", "positions", "analysis", "history-orders", "symbols", "config", "api-keys",
+	"order-settings", "template", "trade-monitor", "upgrade",
+	"system-info", "menu", "system",
+}
+
+var previousCanonicalPersonalMenuKeys = []string{
+	"alerts", "bubbles", "liquidations", "hedge-wall", "market-info", "options",
+	"orders", "positions", "analysis", "history-orders", "symbols", "config", "api-keys",
+	"order-settings", "template", "trade-monitor", "upgrade",
+	"system-info",
 }
 
 func reorderLegacyDefaultAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
@@ -226,17 +241,18 @@ func defaultTVBotMenuItemByKey(key string) (adminMenuItem, bool) {
 }
 
 var tvbotMenuTabs = map[string]string{
-	"orders":         "orders",
-	"positions":      "positions",
-	"analysis":       "analysis",
-	"history-orders": "historyOrders",
-	"symbols":        "symbols",
-	"config":         "config",
-	"api-keys":       "apiKeys",
-	"order-settings": "orderSettings",
-	"template":       "template",
-	"trade-monitor":  "tradeMonitor",
-	"upgrade":        "upgrade",
+	"orders":             "orders",
+	"positions":          "positions",
+	"analysis":           "analysis",
+	"history-orders":     "historyOrders",
+	"stop-loss-analysis": "stopLossAnalysis",
+	"symbols":            "symbols",
+	"config":             "config",
+	"api-keys":           "apiKeys",
+	"order-settings":     "orderSettings",
+	"template":           "template",
+	"trade-monitor":      "tradeMonitor",
+	"upgrade":            "upgrade",
 }
 
 func tvbotMenuHref(item adminMenuItem) (string, bool) {
@@ -328,6 +344,12 @@ func migrateAdminMenu(menu []adminMenuItem) ([]adminMenuItem, bool) {
 	if reordered, ok := reorderMenuKeys(migrated, legacyCanonicalPersonalMenuKeys, canonicalPersonalMenuKeys); ok {
 		return finish(reordered, true)
 	}
+	if reordered, ok := reorderMenuKeys(migrated, previousCanonicalDefaultAdminMenuKeys, canonicalDefaultAdminMenuKeys); ok {
+		return finish(reordered, true)
+	}
+	if reordered, ok := reorderMenuKeys(migrated, previousCanonicalPersonalMenuKeys, canonicalPersonalMenuKeys); ok {
+		return finish(reordered, true)
+	}
 	return finish(migrated, changed)
 }
 
@@ -366,17 +388,44 @@ func ensureTVBotMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {
 		return menu, false
 	}
 	insertAt := len(menu)
+	var peakMenuItem *adminMenuItem
 	for i, item := range menu {
+		if item.Key == "history-orders" {
+			for _, missingItem := range missing {
+				if missingItem.Key == "stop-loss-analysis" {
+					copy := missingItem
+					peakMenuItem = &copy
+					break
+				}
+			}
+			if peakMenuItem != nil {
+				insertAt = i + 1
+				break
+			}
+		}
 		if item.Group == "admin" || item.Key == "system-info" || item.Key == "menu" || item.Key == "system" {
 			insertAt = i
 			break
 		}
+	}
+	if peakMenuItem != nil {
+		missing = append([]adminMenuItem{*peakMenuItem}, missingWithoutMenuItem(missing, peakMenuItem.Key)...)
 	}
 	restored := make([]adminMenuItem, 0, len(menu)+len(missing))
 	restored = append(restored, menu[:insertAt]...)
 	restored = append(restored, missing...)
 	restored = append(restored, menu[insertAt:]...)
 	return restored, true
+}
+
+func missingWithoutMenuItem(items []adminMenuItem, key string) []adminMenuItem {
+	out := make([]adminMenuItem, 0, len(items))
+	for _, item := range items {
+		if item.Key != key {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func (s *Server) menuUsername(r *http.Request) (string, bool) {

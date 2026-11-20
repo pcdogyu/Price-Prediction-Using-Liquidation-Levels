@@ -239,6 +239,7 @@ var DefaultMenuTabs = []string{
 	"positions",
 	"analysis",
 	"historyOrders",
+	"stopLossAnalysis",
 	"symbols",
 	"config",
 	"apiKeys",
@@ -301,19 +302,20 @@ var DefaultSymbolTableColumns = []string{
 }
 
 var defaultMenuLabels = map[string]string{
-	"dashboard":     "资金",
-	"positions":     "持仓",
-	"analysis":      "订单分析",
-	"historyOrders": "历史订单",
-	"symbols":       "币对配置",
-	"config":        "订单配置",
-	"apiKeys":       "API Key",
-	"orderSettings": "下单设置",
-	"template":      "告警模板",
-	"orders":        "订单",
-	"tradeMonitor":  "成交监听",
-	MenuSettingsTab: "菜单设置",
-	"upgrade":       "升级",
+	"dashboard":        "资金",
+	"positions":        "持仓",
+	"analysis":         "订单分析",
+	"historyOrders":    "历史订单",
+	"stopLossAnalysis": "止盈止损分析",
+	"symbols":          "币对配置",
+	"config":           "订单配置",
+	"apiKeys":          "API Key",
+	"orderSettings":    "下单设置",
+	"template":         "告警模板",
+	"orders":           "订单",
+	"tradeMonitor":     "成交监听",
+	MenuSettingsTab:    "菜单设置",
+	"upgrade":          "升级",
 }
 
 func Default() Config {
@@ -936,6 +938,20 @@ func normalizeMenuItems(items []MenuItemConfig) []MenuItemConfig {
 	}
 	for _, tab := range DefaultMenuTabs {
 		if seen[tab] {
+			continue
+		}
+		if tab == "stopLossAnalysis" {
+			insertAt := len(normalized)
+			for i, existing := range normalized {
+				if existing.Tab == "historyOrders" {
+					insertAt = i + 1
+					break
+				}
+			}
+			normalized = append(normalized, MenuItemConfig{})
+			copy(normalized[insertAt+1:], normalized[insertAt:])
+			normalized[insertAt] = MenuItemConfig{Tab: tab, Label: defaultMenuLabel(tab)}
+			seen[tab] = true
 			continue
 		}
 		normalized = append(normalized, MenuItemConfig{Tab: tab, Label: defaultMenuLabel(tab)})

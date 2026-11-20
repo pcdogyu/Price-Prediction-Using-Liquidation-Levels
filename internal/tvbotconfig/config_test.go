@@ -31,6 +31,27 @@ func TestNormalizeDefaultTab(t *testing.T) {
 	}
 }
 
+func TestNormalizeMenuInsertsStopLossAnalysisAfterHistoryOrders(t *testing.T) {
+	cfg := Default()
+	cfg.UI.MenuItems = []MenuItemConfig{
+		{Tab: "analysis", Label: "订单分析"},
+		{Tab: "historyOrders", Label: "历史订单"},
+		{Tab: "symbols", Label: "币对配置"},
+	}
+	cfg.Normalize()
+	index := func(tab string) int {
+		for i, item := range cfg.UI.MenuItems {
+			if item.Tab == tab {
+				return i
+			}
+		}
+		return -1
+	}
+	if index("stopLossAnalysis") != index("historyOrders")+1 {
+		t.Fatalf("stop-loss analysis should follow history orders: %#v", cfg.UI.MenuItems)
+	}
+}
+
 func TestSignalTTLDefaultsToFiveMinutes(t *testing.T) {
 	cfg := Default()
 	if cfg.Trading.SignalTTLSeconds != 300 {
