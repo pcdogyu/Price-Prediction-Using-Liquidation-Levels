@@ -946,7 +946,7 @@ const tvbotHTML = `<!doctype html>
       display: flex;
       flex-direction: column;
       align-items: flex-start;
-      gap: 6px;
+      gap: 5.4px;
       min-width: max-content;
     }
     .position-action-group {
@@ -959,20 +959,20 @@ const tvbotHTML = `<!doctype html>
     .position-action-label {
       color: var(--muted);
       font-size: 12px;
-      line-height: 36px;
+      line-height: 32.4px;
       white-space: nowrap;
     }
     .position-percent-close-btn,
     .position-percent-open-btn {
-      width: 36px;
-      height: 36px;
-      min-width: 36px;
-      min-height: 36px;
+      width: 32.4px;
+      height: 32.4px;
+      min-width: 32.4px;
+      min-height: 32.4px;
       padding: 0;
       border-radius: 999px;
       font-size: 7px;
       line-height: 1;
-      flex: 0 0 36px;
+      flex: 0 0 32.4px;
     }
     .position-open-mode-toggle {
       display: inline-flex;
