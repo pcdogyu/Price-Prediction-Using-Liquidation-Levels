@@ -2309,7 +2309,9 @@ async function loadLogs(older = false) {
 function openLogs() { $('log-drawer').classList.remove('hidden'); $('drawer-backdrop').classList.remove('hidden'); loadLogs(false); }
 function closeLogs() { $('log-drawer').classList.add('hidden'); $('drawer-backdrop').classList.add('hidden'); }
 function coinGlassBrowserURL() {
-  const base = new URL('.', document.baseURI);
+  const baseMeta = document.querySelector('meta[name="app-base"]');
+  const base = new URL(baseMeta?.content || '/', window.location.origin);
+  if (!base.pathname.endsWith('/')) base.pathname += '/';
   const socketPath = base.pathname.replace(/^\/+/, '') + 'coinglass-login/websockify';
   const target = new URL('coinglass-login/vnc.html', base);
   target.searchParams.set('autoconnect', 'true');
