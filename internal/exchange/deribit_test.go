@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type gammaContract struct {
@@ -19,10 +21,13 @@ type gammaContract struct {
 	bad   string
 }
 
-func TestNewDeribitClientLeavesRateLimitHeadroom(t *testing.T) {
+func TestNewDeribitClientUsesTickerWebSocket(t *testing.T) {
 	client := NewDeribitClient()
 	if client.Spacing < 500*time.Millisecond {
-		t.Fatalf("Deribit order-book spacing=%s, want at least 500ms", client.Spacing)
+		t.Fatalf("Deribit REST spacing=%s, want at least 500ms", client.Spacing)
+	}
+	if !strings.HasPrefix(client.WebSocketURL, "wss://") {
+		t.Fatalf("Deribit WebSocket URL=%q, want wss://", client.WebSocketURL)
 	}
 }
 
@@ -42,34 +47,67 @@ func gammaFixture(t *testing.T, contracts []gammaContract) (*DeribitClient, *[]s
 			_ = json.NewEncoder(w).Encode(map[string]any{"result": rows})
 			return
 		}
-		name := r.URL.Query().Get("instrument_name")
-		requests = append(requests, name)
-		if r.URL.Query().Get("depth") != "1" {
-			t.Error("unexpected book depth")
-		}
-		for _, c := range contracts {
-			if c.name != name {
-				continue
-			}
-			if c.bad == "rate" {
-				_, _ = w.Write([]byte(`{"error":{"code":10028,"message":"too_many_requests"}}`))
-				return
-			}
-			if c.bad == "http" {
-				w.WriteHeader(503)
-				return
-			}
-			at := time.Now()
-			if c.bad == "stale" {
-				at = at.Add(-3 * time.Minute)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"instrument_name": name, "timestamp": at.UnixMilli(), "open_interest": c.oi, "greeks": map[string]any{"gamma": c.gamma}}})
+		if r.URL.Path != "/ws/api/v2" {
+			http.NotFound(w, r)
 			return
 		}
-		w.WriteHeader(404)
+		connection, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer connection.Close()
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Channels []string `json:"channels"`
+			} `json:"params"`
+		}
+		if err = connection.ReadJSON(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		if request.Method != "public/subscribe" || len(request.Params.Channels) == 0 {
+			t.Errorf("invalid subscription request: %+v", request)
+			return
+		}
+		for _, c := range contracts {
+			if c.bad == "rate" {
+				_ = connection.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": request.ID, "error": map[string]any{"code": 10028, "message": "too_many_requests"}})
+				return
+			}
+		}
+		_ = connection.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": request.Params.Channels})
+		for _, channel := range request.Params.Channels {
+			name := strings.TrimSuffix(strings.TrimPrefix(channel, "ticker."), ".100ms")
+			requests = append(requests, name)
+			var contract *gammaContract
+			for i := range contracts {
+				if contracts[i].name == name {
+					contract = &contracts[i]
+					break
+				}
+			}
+			if contract == nil {
+				continue
+			}
+			at := time.Now()
+			if contract.bad == "stale" {
+				at = at.Add(-3 * time.Minute)
+			}
+			data := map[string]any{"instrument_name": name, "timestamp": at.UnixMilli()}
+			if contract.bad != "http" {
+				data["greeks"] = map[string]any{"gamma": contract.gamma}
+			}
+			if err = connection.WriteJSON(map[string]any{"jsonrpc": "2.0", "method": "subscription", "params": map[string]any{"channel": channel, "data": data}}); err != nil {
+				t.Error(err)
+				return
+			}
+		}
 	}))
 	t.Cleanup(server.Close)
-	return &DeribitClient{HTTP: server.Client(), BaseURL: server.URL}, &requests
+	return &DeribitClient{HTTP: server.Client(), BaseURL: server.URL, WebSocketURL: "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/api/v2"}, &requests
 }
 
 func gammaName(currency, side string, strike int) string {
@@ -87,7 +125,7 @@ func TestDeribitGammaMatchesReferenceWithoutOIWeighting(t *testing.T) {
 	}
 }
 
-func TestDeribitGammaSignsMissingAndRateLimit(t *testing.T) {
+func TestDeribitGammaSignsAndMissingSnapshots(t *testing.T) {
 	positive, zero, negative := .1, 0., -.1
 	for _, tc := range []struct {
 		name, bad string
@@ -103,16 +141,12 @@ func TestDeribitGammaSignsMissingAndRateLimit(t *testing.T) {
 		{"missing gamma", "", nil, nil, 0, "", true},
 		{"invalid gamma", "", &negative, nil, 0, "", true},
 		{"stale", "stale", &positive, &positive, 0, "", true},
-		{"one HTTP failure", "http", &positive, &positive, 1, "partial", false},
-		{"rate limit", "rate", &positive, &positive, 1, "partial", false},
+		{"one missing ticker value", "http", &positive, &positive, 1, "partial", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cs := []gammaContract{{gammaName("ETH", "C", 3000), 3, tc.call, ""}, {gammaName("ETH", "P", 3000), 2, tc.put, tc.bad}}
 			if tc.bad == "stale" {
 				cs[0].bad = "stale"
-			}
-			if tc.bad == "rate" {
-				cs = append(cs, gammaContract{gammaName("ETH", "C", 4000), 1, &positive, ""})
 			}
 			client, requests := gammaFixture(t, cs)
 			p, err := client.Gamma(context.Background(), "ETH", time.Now())
@@ -128,10 +162,20 @@ func TestDeribitGammaSignsMissingAndRateLimit(t *testing.T) {
 			if tc.state == "partial" && p.Warning == "" {
 				t.Fatal("missing partial warning")
 			}
-			if tc.bad == "rate" && len(*requests) != 2 {
-				t.Fatal("continued after rate limit")
+			if len(*requests) != len(cs) {
+				t.Fatalf("received ticker snapshots=%d, want %d", len(*requests), len(cs))
 			}
 		})
+	}
+}
+
+func TestDeribitGammaSubscriptionRateLimit(t *testing.T) {
+	g := .1
+	cs := []gammaContract{{gammaName("ETH", "C", 3000), 3, &g, "rate"}}
+	client, _ := gammaFixture(t, cs)
+	p, err := client.Gamma(context.Background(), "ETH", time.Now())
+	if err == nil || !strings.Contains(err.Error(), "10028") || p.Gamma != nil {
+		t.Fatalf("subscription rate limit was not surfaced: point=%+v err=%v", p, err)
 	}
 }
 
