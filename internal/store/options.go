@@ -100,7 +100,7 @@ type OptionGammaCleanupReport struct {
 }
 
 // CleanupOptionGamma applies the two storage tiers in bounded transactions:
-// one-minute source data for 24 hours, then only exact wall-clock :00/:30
+// at most one point per minute for 24 hours, then only exact wall-clock :00/:30
 // samples through day 3. The time slots are UTC, which has the same minute
 // boundaries as Beijing time.
 func (s *Store) CleanupOptionGamma(ctx context.Context, now time.Time) (OptionGammaCleanupReport, error) {
@@ -117,7 +117,7 @@ func (s *Store) CleanupOptionGamma(ctx context.Context, now time.Time) (OptionGa
 	if err != nil {
 		return report, err
 	}
-	denseRemoved, err := s.downsampleOptionGamma(ctx, denseCutoff, now.UTC().Add(time.Minute).UnixMilli(), domain.OptionGammaRefreshSeconds/60)
+	denseRemoved, err := s.downsampleOptionGamma(ctx, denseCutoff, now.UTC().Add(time.Minute).UnixMilli(), domain.OptionGammaDenseMinutes)
 	report.Downsampled += denseRemoved
 	return report, err
 }

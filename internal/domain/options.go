@@ -6,6 +6,8 @@ const (
 	// OptionGammaRefreshSeconds is both the Deribit collection cadence and the
 	// interval the options page polls on, so the served copy cannot drift.
 	OptionGammaRefreshSeconds = 180
+	// OptionGammaDenseMinutes caps stored density independently of collection cadence.
+	OptionGammaDenseMinutes   = 1
 	OptionGammaRetentionDays  = 3
 	OptionGammaMaxHours       = OptionGammaRetentionDays * 24
 	OptionGammaDenseHours     = 24
