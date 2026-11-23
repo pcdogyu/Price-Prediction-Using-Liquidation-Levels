@@ -104,6 +104,43 @@
     return markers.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
   }
 
+  function normalizeSignalMarkers(rows, symbol) {
+    const target = normalizeMarketSymbol(symbol);
+    if (!target || !Array.isArray(rows)) return [];
+    const markers = [];
+    rows.forEach((row, index) => {
+      if (!row || normalizeMarketSymbol(row.coinpair || row.ticker) !== target) return;
+      const side = String(row.position_side || row.action || row.source_action || '').trim().toLowerCase();
+      if (side !== 'long' && side !== 'short') return;
+      const time = tradeTime(row.accepted_at || row.sent_at || row.time);
+      const price = Number(row.price);
+      if (!Number.isFinite(time) || !Number.isFinite(price) || price <= 0) return;
+      const rowKey = String(row.signal_id || row.row_key || row.key || index);
+      const operationText = String(row.position_effect || 'open').trim().toLowerCase();
+      const operation = ['close', 'exit', 'reduce', 'take_profit', 'stop_loss'].includes(operationText) ? 'close' : 'open';
+      markers.push({
+        id: 'signal:' + rowKey,
+        row_key: rowKey,
+        symbol: target,
+        exchange: String(row.target_exchange || row.exchange || '').trim().toLowerCase(),
+        source_exchange: String(row.source_exchange || '').trim().toLowerCase(),
+        side,
+        phase: 'signal',
+        action: side,
+        operation,
+        status: String(row.status || '').trim().toLowerCase(),
+        order_intent: String(row.order_intent || '').trim(),
+        signal_id: String(row.signal_id || '').trim(),
+        time,
+        time_iso: new Date(time).toISOString(),
+        price,
+        selected: false,
+        actual_order: false
+      });
+    });
+    return markers.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+  }
+
   // A single candle can contain several fills for the same opening or closing
   // action. Keep one marker per phase and direction in that candle so the chart
   // describes the action without covering the candle with repeated labels.
@@ -112,12 +149,12 @@
     if (!Array.isArray(markers) || !Number.isFinite(step) || step <= 0) return Array.isArray(markers) ? markers.slice() : [];
     const result = [], groups = new Map();
     for (const marker of markers) {
-      if (!marker || (marker.phase !== 'entry' && marker.phase !== 'exit') || !Number.isFinite(marker.time) || (marker.side !== 'long' && marker.side !== 'short')) {
+      if (!marker || !['entry', 'exit', 'signal'].includes(marker.phase) || !Number.isFinite(marker.time) || (marker.side !== 'long' && marker.side !== 'short')) {
         result.push(marker);
         continue;
       }
       const bucket = Math.floor(marker.time / step) * step;
-      const key = bucket + ':' + marker.phase + ':' + marker.side;
+      const key = bucket + ':' + marker.phase + ':' + marker.side + (marker.phase === 'signal' ? ':' + marker.operation : '');
       const existing = groups.get(key);
       if (!existing) {
         const copy = Object.assign({}, marker, { collapsed_count: 1 });
@@ -129,6 +166,7 @@
       existing.selected = existing.selected || marker.selected === true;
       if (existing.operation_source !== marker.operation_source) existing.operation_source = 'mixed';
       if (existing.phase === 'exit' && existing.operation !== marker.operation) existing.operation = 'mixed';
+      if (existing.phase === 'signal' && existing.status !== marker.status) existing.status = 'mixed';
       if (existing.phase === 'entry' && existing.open_position !== marker.open_position) existing.open_position = false;
     }
     return result.sort((a, b) => a.time - b.time || String(a.id || '').localeCompare(String(b.id || '')));
@@ -136,6 +174,7 @@
 
   function tradeMarkerLabel(marker) {
     const side = marker && marker.side === 'short' ? '空' : '多';
+    if (marker && marker.phase === 'signal') return (marker.operation === 'close' ? '信平' : '信开') + side;
     if (!marker || marker.phase !== 'exit') return '开' + side;
     switch (String(marker.operation || 'close').toLowerCase()) {
       case 'take_profit': return '止盈' + side;
@@ -157,7 +196,7 @@
       const x = clamp(scale.x(marker.time), bounds.left + 9, bounds.right - 9);
       const priceY = clamp(y(marker.price), bounds.top + 9, bounds.bottom - 9);
       const long = marker.side === 'long';
-      const closing = marker.phase === 'exit';
+      const closing = marker.phase === 'exit' || (marker.phase === 'signal' && marker.operation === 'close');
       const collapsedLabel = marker.collapsed_count > 1 ? '×' + marker.collapsed_count : '';
       const labelText = tradeMarkerLabel(marker) + collapsedLabel;
       const labelWidth = labelText.length * 11 + 12;
@@ -371,7 +410,7 @@
     }
   }
 
-  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, collapseTradeMarkers, tradeMarkerLabel, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
+  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, normalizeSignalMarkers, collapseTradeMarkers, tradeMarkerLabel, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.BubbleChart = exported;
 })(typeof window === 'object' ? window : globalThis);

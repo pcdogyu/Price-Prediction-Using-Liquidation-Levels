@@ -42,6 +42,39 @@ test('trade markers map long and short entry/exit actions and keep the selected 
   assert.equal(markers[0].exchange, 'binance');
 });
 
+test('historical TVBot signals keep intent distinct from actual trade points', () => {
+  const markers = B.normalizeSignalMarkers([
+    { signal_id: 'open-long', target_exchange: 'binance', coinpair: 'BTCUSDT', position_side: 'long', position_effect: 'open', action: 'long', accepted_at: '2026-01-01T00:01:00Z', price: '100', status: 'submitted' },
+    { signal_id: 'close-short', target_exchange: 'gate', coinpair: 'BTC_USDT', position_side: 'short', position_effect: 'close', action: 'short', accepted_at: '2026-01-01T00:03:00Z', price: 101, status: 'accepted' },
+    { signal_id: 'other-symbol', coinpair: 'ETHUSDT', position_side: 'long', accepted_at: '2026-01-01T00:03:00Z', price: 101 },
+    { signal_id: 'invalid-price', coinpair: 'BTCUSDT', position_side: 'long', accepted_at: '2026-01-01T00:03:00Z', price: 0 },
+    { signal_id: 'invalid-time', coinpair: 'BTCUSDT', position_side: 'long', accepted_at: 'later', price: 101 }
+  ], 'BTCUSDT');
+  assert.deepEqual(markers.map(item => [item.id, item.phase, item.side, item.operation, item.status]), [
+    ['signal:open-long', 'signal', 'long', 'open', 'submitted'],
+    ['signal:close-short', 'signal', 'short', 'close', 'accepted']
+  ]);
+  assert.deepEqual(markers.map(B.tradeMarkerLabel), ['信开多', '信平空']);
+  assert.equal(markers[0].actual_order, false);
+});
+
+test('historical signal markers collapse by direction and open/close intent', () => {
+  const collapsed = B.collapseTradeMarkers([
+    { id: 'open-1', time: 1000, price: 100, side: 'long', phase: 'signal', operation: 'open', status: 'submitted' },
+    { id: 'open-2', time: 2000, price: 101, side: 'long', phase: 'signal', operation: 'open', status: 'accepted' },
+    { id: 'close-1', time: 3000, price: 102, side: 'long', phase: 'signal', operation: 'close', status: 'accepted' }
+  ], 60000);
+  assert.deepEqual(collapsed.map(item => [item.phase, item.operation, item.collapsed_count, item.status]), [
+    ['signal', 'open', 2, 'mixed'],
+    ['signal', 'close', 1, 'accepted']
+  ]);
+  assert.equal(B.tradeMarkerLabel(collapsed[0]), '信开多');
+  assert.equal(collapsed[0].collapsed_count, 2);
+  assert.equal(B.tradeMarkerLabel(collapsed[1]), '信平多');
+  const placements = B.tradeMarkerPlacements(collapsed, [0, 20000], { start: 0, end: 20000, x: time => time / 20 }, price => 100 - price, { left: 0, right: 1000, top: 0, bottom: 200 });
+  assert.equal(placements.markers[0].labelText, '信开多×2');
+});
+
 test('trade markers preserve take-profit, stop-loss and manual/automatic labels', () => {
   const markers = B.normalizeTradeMarkers([
     { row_key: 'tp', inst_id: 'ETHUSDT', side: 'long', entry_operation: 'open', entry_operation_source: 'auto', exit_operation: 'take_profit', exit_operation_source: 'monitor', entry_time: '', entry_px: '', exit_time: '2026-01-01T01:00:00Z', exit_px: 2100 },
