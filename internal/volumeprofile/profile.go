@@ -133,12 +133,15 @@ func Build(symbol string, session Session, levels []Level, dataThrough, now time
 	rankTopVolume(profile.Bins, 3)
 	if !complete {
 		profile.State = "backfilling"
-		return profile
+	} else {
+		profile.State = "ok"
+		if dataThrough.IsZero() || now.Sub(dataThrough) > 30*time.Second {
+			profile.State = "stale"
+		}
 	}
-	profile.State = "ok"
-	if dataThrough.IsZero() || now.Sub(dataThrough) > 30*time.Second {
-		profile.State = "stale"
-	}
+	// Keep provisional value-area bounds available while historical trades are
+	// still being replayed. Callers can display them as estimates, while signal
+	// strategies continue to require State == "ok".
 	low, high := valueArea(profile.Bins, profile.TotalVolumeUSD*ValueAreaFraction)
 	for i := low; i <= high; i++ {
 		profile.Bins[i].InValueArea = true

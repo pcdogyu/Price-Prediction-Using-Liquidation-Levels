@@ -88,7 +88,7 @@ func TestBuildSinglePriceAndIncomplete(t *testing.T) {
 		t.Fatalf("complete=%+v", complete)
 	}
 	incomplete := Build("ETHUSDT", session, []Level{{Price: 100, VolumeUSD: 25}}, start.Add(30*time.Minute), time.Now().UTC(), false)
-	if incomplete.State != "backfilling" || incomplete.VAL != nil || incomplete.VAH != nil {
+	if incomplete.State != "backfilling" || incomplete.VAL == nil || incomplete.VAH == nil || !incomplete.Bins[0].InValueArea {
 		t.Fatalf("incomplete=%+v", incomplete)
 	}
 }

@@ -244,7 +244,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	srv.http.Handler.ServeHTTP(w, r)
 	// The wheel gesture is regional, so the shipped asset must keep the routing table and
 	// the three zoom helpers that the browser regression asserts on.
-	for _, marker := range []string{`const candleZoomLimits = { minimum: 24, maximum: 500 };`, `const profileZoomLimits = { minimum: .25, maximum: 12 };`, `function chartRegion(point)`, `function zoomCandleWindow(fraction, factor)`, `function zoomProfilePanel(region, factor)`, `function zoomPriceAxis(point, factor)`, `event.shiftKey || event.ctrlKey ? 'price' : chartRegion(point)`, `if (zoomProfilePanel(region, 1 / factor))`, `svg.setAttribute('data-liquidation-zoom', chart.liquidationZoom);`, `events.onopen = recoverStream;`} {
+	for _, marker := range []string{`const candleZoomLimits = { minimum: 24, maximum: 500 };`, `const profileZoomLimits = { minimum: .25, maximum: 12 };`, `function chartRegion(point)`, `function zoomCandleWindow(fraction, factor)`, `function zoomProfilePanel(region, factor)`, `function zoomPriceAxis(point, factor)`, `function currentRange(candles, volume)`, `data-value-area-line`, `临时参考，数据更新后会修正`, `event.shiftKey || event.ctrlKey ? 'price' : chartRegion(point)`, `if (zoomProfilePanel(region, 1 / factor))`, `svg.setAttribute('data-liquidation-zoom', chart.liquidationZoom);`, `events.onopen = recoverStream;`} {
 		if !strings.Contains(w.Body.String(), marker) {
 			t.Fatalf("dashboard asset lost the region wheel zoom %q", marker)
 		}

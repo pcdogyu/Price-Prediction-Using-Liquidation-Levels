@@ -1082,11 +1082,19 @@ function visibleCandles() {
   return candles.filter(candle => Date.parse(candle.time) >= start);
 }
 
-function currentRange(candles) {
+function currentRange(candles, volume) {
   const automatic = window.BubbleChart.candleRange(candles);
   if (!automatic) return null;
   if (chart.yManual && finite(chart.yLow) && finite(chart.yHigh) && chart.yHigh > chart.yLow) return [chart.yLow, chart.yHigh];
-  const [low, high] = automatic;
+  let [low, high] = automatic;
+  const outsideValueAreaLevels = [volume?.val, volume?.vah].filter(value => finite(value) && value > 0 && (value < low || value > high));
+  if (outsideValueAreaLevels.length) {
+    low = Math.min(low, ...outsideValueAreaLevels);
+    high = Math.max(high, ...outsideValueAreaLevels);
+    const padding = (high - low) * .05;
+    low -= padding;
+    high += padding;
+  }
   chart.yLow = low;
   chart.yHigh = high;
   chart.autoSpan = high - low;
@@ -1320,7 +1328,7 @@ function draw(view, map, signal, volume) {
   const leverageText = (map?.leverages || []).map(value => value + '×').join('/');
   const coinGlassMap = map?.data_source === 'coinglass_binance_liqmap';
   const liquidationName = coinGlassMap ? 'CoinGlass Binance 清算墙' : 'CoinGlass 清算墙不可用';
-  const range = currentRange(candles);
+  const range = currentRange(candles, volume);
   const candleCountText = candles.length < chart.visibleCount ? 'K线 ' + candles.length + '/' + chart.visibleCount + '根' : 'K线 ' + chart.visibleCount + '根';
   const marketSourceText = view?.remote_syncing ? '本地K线 · Binance后台同步中' : view?.remote_sync_error ? '本地K线 · Binance同步失败，等待重试' : String(view?.source || '').includes('local') ? '本地K线' : '';
   if (!embeddedChart) renderLiquidationTop3(map, range);
@@ -1505,10 +1513,11 @@ function draw(view, map, signal, volume) {
   [['VAL', volume?.val, '#22c55e'], ['VAH', volume?.vah, '#ef4444']].forEach(([name, price, color]) => {
     if (embeddedChart) return;
     if (!finite(price) || price < low || price > high) return;
+    const provisional = ['backfilling', 'stale', 'unavailable'].includes(volume?.state);
     const yy = y(price);
-    svg.appendChild(svgNode('line', { x1: left, y1: yy, x2: profileRight, y2: yy, stroke: color, 'stroke-width': 1.7, opacity: .95 }));
+    svg.appendChild(svgNode('line', { x1: left, y1: yy, x2: profileRight, y2: yy, stroke: color, 'stroke-width': 1.7, 'stroke-dasharray': provisional ? '5 4' : '', opacity: .95, 'data-value-area-line': name, 'data-provisional': provisional }));
     svg.appendChild(svgNode('rect', { x: profileRight - rightPriceLabelWidth, y: yy - 12, width: rightPriceLabelWidth, height: 22, fill: '#071019', stroke: color, rx: 5 }));
-    svg.appendChild(svgNode('text', { x: profileRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11 }, name + ' ' + money(price)));
+    svg.appendChild(svgNode('text', { x: profileRight - 6, y: yy + 4, 'text-anchor': 'end', fill: color, 'font-size': 11, 'data-value-area-label': name, 'data-provisional': provisional, 'data-tip': provisional ? '成交量分布尚未完成或已过期；此 VAL/VAH 为临时参考，数据更新后会修正' : name }, name + (provisional ? '≈ ' : ' ') + money(price)));
   });
   if (!embeddedChart) {
     drawLiquidationBiasArrow(svg, map, currentPrice, y, low, high, layout);
