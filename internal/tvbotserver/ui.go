@@ -3160,8 +3160,8 @@ const tvbotHTML = `<!doctype html>
     </div>
     <div class="position-symbol-dialog-body">
       <section class="position-symbol-detail-panel">
-        <h4 id="position-symbol-chart-title">币对图表</h4>
-        <iframe class="position-symbol-chart-frame" id="position-symbol-chart-frame" title="币对图表" src="about:blank"></iframe>
+        <h4>K线 / 开平仓信息</h4>
+        <iframe class="position-symbol-chart-frame" id="position-symbol-chart-frame" title="币对 K 线和开平仓信息" src="about:blank"></iframe>
       </section>
     </div>
   </dialog>
@@ -7541,10 +7541,13 @@ const tvbotHTML = `<!doctype html>
     function positionSymbolCell(row) {
       const instID = asText(row && row.instId);
       const display = displayInstID(instID);
-      if (!instID || display === "-") return textTableCell(display);
-      const key = positionCloseRowKey(row);
-      const title = "点击打开 " + display + " 气泡图";
-      return tableCell('<button class="position-symbol-link" type="button" data-position-symbol-bubble="true" data-position-key="' + escapeHTML(key) + '" title="' + escapeHTML(title) + '">' + escapeHTML(display) + '</button>');
+      const symbol = analysisGateChartSymbol(instID);
+      if (!instID || display === "-" || !symbol) return textTableCell(display);
+      const base = document.querySelector('meta[name="app-base"]')?.content || "/";
+      const bubbleURL = new URL(base + "bubbles", window.location.origin);
+      bubbleURL.searchParams.set("symbol", symbol);
+      const title = "在新标签页打开 " + display + " 气泡图";
+      return tableCell('<a class="position-symbol-link" href="' + escapeHTML(bubbleURL.toString()) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHTML(title) + '">' + escapeHTML(display) + '</a>');
     }
 
     function positionSideCell(row) {
@@ -8292,11 +8295,8 @@ const tvbotHTML = `<!doctype html>
       const title = $("position-symbol-dialog-title");
       const status = $("position-symbol-dialog-status");
       const frame = $("position-symbol-chart-frame");
-      const chartTitle = $("position-symbol-chart-title");
       const sequence = ++positionSymbolDetailsSequence;
       if (title) title.textContent = String(config.label || symbol) + " · " + exchangeLabel(exchange) + " " + String(config.titleSuffix || "持仓详情");
-      if (chartTitle) chartTitle.textContent = "K线 / 开平仓信息";
-      if (frame) frame.title = "币对 K 线和开平仓信息";
       if (status) status.textContent = String(config.loadingStatus || "正在读取 K 线和开平仓信息…");
       if (frame) frame.src = "about:blank";
       if (dialog) {
@@ -8363,42 +8363,6 @@ const tvbotHTML = `<!doctype html>
       });
       const result = await api("/tvbot/analysis/fills?" + qs.toString());
       state.analysisFills = Array.isArray(result.trades) ? result.trades : [];
-    }
-
-    function openPositionBubbleChart(row) {
-      const symbol = analysisGateChartSymbol(row && row.instId);
-      if (!symbol) {
-        toast("该币对无法转换为 Binance 气泡图");
-        return;
-      }
-      const base = document.querySelector('meta[name="app-base"]')?.content || "/";
-      const bubbleURL = new URL(base + "bubbles", window.location.origin);
-      bubbleURL.searchParams.set("embed", "1");
-      bubbleURL.searchParams.set("symbol", symbol);
-      const dialog = $("position-symbol-dialog");
-      const title = $("position-symbol-dialog-title");
-      const status = $("position-symbol-dialog-status");
-      const chartTitle = $("position-symbol-chart-title");
-      const frame = $("position-symbol-chart-frame");
-      const sequence = ++positionSymbolDetailsSequence;
-      if (!dialog || !frame) {
-        toast("币对图表弹窗暂不可用");
-        return;
-      }
-      if (title) title.textContent = symbol + " · 气泡图";
-      if (chartTitle) chartTitle.textContent = "气泡图";
-      if (status) status.textContent = "正在加载 " + symbol + " 气泡图…";
-      frame.title = symbol + " 气泡图";
-      frame.onload = () => {
-        if (sequence !== positionSymbolDetailsSequence || frame.getAttribute("src") !== bubbleURL.toString()) return;
-        if (status) status.textContent = symbol + " 气泡图已加载";
-      };
-      frame.src = "about:blank";
-      if (!dialog.open) {
-        if (dialog.showModal) dialog.showModal();
-        else dialog.setAttribute("open", "open");
-      }
-      frame.src = bubbleURL.toString();
     }
 
     function closePositionSymbolDetails() {
@@ -10849,14 +10813,6 @@ const tvbotHTML = `<!doctype html>
       savePositionOpenMode(input).catch((err) => toast("增仓方式保存失败：" + err.message));
     });
     $("position-rows").addEventListener("click", (event) => {
-      const symbolButton = event.target.closest("button[data-position-symbol-bubble]");
-      if (symbolButton) {
-        const key = symbolButton.dataset.positionKey || "";
-        const rows = state.positions && Array.isArray(state.positions.positions) ? state.positions.positions : [];
-        const row = rows.find((item) => positionCloseRowKey(item) === key);
-        if (row) openPositionBubbleChart(row);
-        return;
-      }
       const openButton = event.target.closest("button[data-position-open]");
       if (openButton) {
         openPosition(openButton).catch((err) => toast(err.message));

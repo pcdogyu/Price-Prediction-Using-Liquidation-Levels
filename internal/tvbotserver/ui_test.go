@@ -620,24 +620,18 @@ func TestRenderTVBotPeakSnapshotsOnlyShowChartPeriodPeak(t *testing.T) {
 	}
 }
 
-func TestRenderTVBotPositionsSymbolsOpenBubbleChartDialog(t *testing.T) {
+func TestRenderTVBotPositionsSymbolsOpenBubbleChartInBlankTab(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{
 		`cell: (row) => positionSymbolCell(row)`,
 		`function positionSymbolCell(row)`,
-		`data-position-symbol-bubble="true"`,
-		`点击打开 `,
-		`function openPositionBubbleChart(row)`,
-		`new URL(base + "bubbles", window.location.origin)`,
-		`bubbleURL.searchParams.set("embed", "1")`,
-		`bubbleURL.searchParams.set("symbol", symbol)`,
-		`const dialog = $("position-symbol-dialog")`,
-		`dialog.showModal()`,
-		`frame.src = bubbleURL.toString()`,
-		`position-symbol-chart-title`,
+		`const bubbleURL = new URL(base + "bubbles", window.location.origin);`,
+		`bubbleURL.searchParams.set("symbol", symbol);`,
+		`target="_blank" rel="noopener noreferrer"`,
+		`在新标签页打开 `,
 	} {
 		if !strings.Contains(page, want) {
-			t.Fatalf("position symbol bubble chart dialog marker missing %q", want)
+			t.Fatalf("position symbol new-tab link marker missing %q", want)
 		}
 	}
 	positionsStart := strings.Index(page, "const positionTableColumnDefs = [")
@@ -655,17 +649,28 @@ func TestRenderTVBotPositionsSymbolsOpenBubbleChartDialog(t *testing.T) {
 	if directionIndex < 0 || strategyIndex < 0 || sizeIndex < 0 || strategyIndex <= directionIndex || sizeIndex <= strategyIndex {
 		t.Fatalf("position strategy column should follow direction before size: direction=%d strategy=%d size=%d", directionIndex, strategyIndex, sizeIndex)
 	}
-	positionOpen := strings.Index(page, "function openPositionBubbleChart(row)")
-	if positionOpen < 0 {
-		t.Fatal("position symbol bubble chart handler is missing")
+	positionCellStart := strings.Index(page, "function positionSymbolCell(row)")
+	if positionCellStart < 0 {
+		t.Fatal("position symbol link renderer is missing")
 	}
-	positionHandlerEnd := strings.Index(page[positionOpen:], "\n    function closePositionSymbolDetails()")
-	if positionHandlerEnd < 0 {
-		t.Fatal("position symbol bubble chart handler end is missing")
+	positionCellEnd := strings.Index(page[positionCellStart:], "\n    function positionSideCell(row)")
+	if positionCellEnd < 0 {
+		t.Fatal("position symbol link renderer end is missing")
 	}
-	positionHandler := page[positionOpen : positionOpen+positionHandlerEnd]
-	if strings.Contains(positionHandler, "buildPositionChartURL") || strings.Contains(positionHandler, "window.open") || !strings.Contains(positionHandler, `frame.src = bubbleURL.toString()`) {
-		t.Fatal("position symbol clicks must show the matching bubble chart in a dialog, not a new page")
+	positionCell := page[positionCellStart : positionCellStart+positionCellEnd]
+	if !strings.Contains(positionCell, `href="' + escapeHTML(bubbleURL.toString()) + '" target="_blank"`) || strings.Contains(positionCell, `data-position-symbol-bubble`) {
+		t.Fatal("position symbol must link to its bubble chart in a normal new tab")
+	}
+	positionsClickStart := strings.Index(page, `$("position-rows").addEventListener("click"`)
+	if positionsClickStart < 0 {
+		t.Fatal("position rows click handler is missing")
+	}
+	positionsClickEnd := strings.Index(page[positionsClickStart:], `$("pending-order-rows").addEventListener("click"`)
+	if positionsClickEnd < 0 {
+		t.Fatal("position rows click handler end is missing")
+	}
+	if strings.Contains(page[positionsClickStart:positionsClickStart+positionsClickEnd], "position-symbol-bubble") {
+		t.Fatal("position symbol links should use native target=_blank navigation")
 	}
 	if strings.Contains(page, `function buildTradeChartURL(`) || strings.Contains(page, `function buildTradeChartPayloadURL(`) || strings.Contains(page, `function analysisBubblesURL(`) {
 		t.Fatal("analysis and positions must use one shared K-line builder instead of the legacy second chart path")
