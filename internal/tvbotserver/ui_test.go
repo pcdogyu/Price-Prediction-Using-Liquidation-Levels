@@ -620,23 +620,24 @@ func TestRenderTVBotPeakSnapshotsOnlyShowChartPeriodPeak(t *testing.T) {
 	}
 }
 
-func TestRenderTVBotPositionsSymbolsOpenBubbleChartPopup(t *testing.T) {
+func TestRenderTVBotPositionsSymbolsOpenBubbleChartDialog(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
 	for _, want := range []string{
 		`cell: (row) => positionSymbolCell(row)`,
 		`function positionSymbolCell(row)`,
 		`data-position-symbol-bubble="true"`,
-		`点击弹出 `,
+		`点击打开 `,
 		`function openPositionBubbleChart(row)`,
 		`new URL(base + "bubbles", window.location.origin)`,
+		`bubbleURL.searchParams.set("embed", "1")`,
 		`bubbleURL.searchParams.set("symbol", symbol)`,
-		`window.open(`,
-		`"position-bubble-chart"`,
-		`popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes`,
-		`浏览器阻止了气泡图弹窗`,
+		`const dialog = $("position-symbol-dialog")`,
+		`dialog.showModal()`,
+		`frame.src = bubbleURL.toString()`,
+		`position-symbol-chart-title`,
 	} {
 		if !strings.Contains(page, want) {
-			t.Fatalf("position symbol bubble chart marker missing %q", want)
+			t.Fatalf("position symbol bubble chart dialog marker missing %q", want)
 		}
 	}
 	positionsStart := strings.Index(page, "const positionTableColumnDefs = [")
@@ -663,8 +664,8 @@ func TestRenderTVBotPositionsSymbolsOpenBubbleChartPopup(t *testing.T) {
 		t.Fatal("position symbol bubble chart handler end is missing")
 	}
 	positionHandler := page[positionOpen : positionOpen+positionHandlerEnd]
-	if strings.Contains(positionHandler, "buildPositionChartURL") || !strings.Contains(positionHandler, `bubbleURL.toString()`) {
-		t.Fatal("position symbol clicks must open the matching bubble chart")
+	if strings.Contains(positionHandler, "buildPositionChartURL") || strings.Contains(positionHandler, "window.open") || !strings.Contains(positionHandler, `frame.src = bubbleURL.toString()`) {
+		t.Fatal("position symbol clicks must show the matching bubble chart in a dialog, not a new page")
 	}
 	if strings.Contains(page, `function buildTradeChartURL(`) || strings.Contains(page, `function buildTradeChartPayloadURL(`) || strings.Contains(page, `function analysisBubblesURL(`) {
 		t.Fatal("analysis and positions must use one shared K-line builder instead of the legacy second chart path")

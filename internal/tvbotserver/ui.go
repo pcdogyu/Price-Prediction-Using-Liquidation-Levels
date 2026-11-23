@@ -3160,8 +3160,8 @@ const tvbotHTML = `<!doctype html>
     </div>
     <div class="position-symbol-dialog-body">
       <section class="position-symbol-detail-panel">
-        <h4>K线 / 开平仓信息</h4>
-        <iframe class="position-symbol-chart-frame" id="position-symbol-chart-frame" title="币对 K 线和开平仓信息" src="about:blank"></iframe>
+        <h4 id="position-symbol-chart-title">币对图表</h4>
+        <iframe class="position-symbol-chart-frame" id="position-symbol-chart-frame" title="币对图表" src="about:blank"></iframe>
       </section>
     </div>
   </dialog>
@@ -7543,7 +7543,7 @@ const tvbotHTML = `<!doctype html>
       const display = displayInstID(instID);
       if (!instID || display === "-") return textTableCell(display);
       const key = positionCloseRowKey(row);
-      const title = "点击弹出 " + display + " 气泡图";
+      const title = "点击打开 " + display + " 气泡图";
       return tableCell('<button class="position-symbol-link" type="button" data-position-symbol-bubble="true" data-position-key="' + escapeHTML(key) + '" title="' + escapeHTML(title) + '">' + escapeHTML(display) + '</button>');
     }
 
@@ -8292,8 +8292,11 @@ const tvbotHTML = `<!doctype html>
       const title = $("position-symbol-dialog-title");
       const status = $("position-symbol-dialog-status");
       const frame = $("position-symbol-chart-frame");
+      const chartTitle = $("position-symbol-chart-title");
       const sequence = ++positionSymbolDetailsSequence;
       if (title) title.textContent = String(config.label || symbol) + " · " + exchangeLabel(exchange) + " " + String(config.titleSuffix || "持仓详情");
+      if (chartTitle) chartTitle.textContent = "K线 / 开平仓信息";
+      if (frame) frame.title = "币对 K 线和开平仓信息";
       if (status) status.textContent = String(config.loadingStatus || "正在读取 K 线和开平仓信息…");
       if (frame) frame.src = "about:blank";
       if (dialog) {
@@ -8370,17 +8373,32 @@ const tvbotHTML = `<!doctype html>
       }
       const base = document.querySelector('meta[name="app-base"]')?.content || "/";
       const bubbleURL = new URL(base + "bubbles", window.location.origin);
+      bubbleURL.searchParams.set("embed", "1");
       bubbleURL.searchParams.set("symbol", symbol);
-      const chartWindow = window.open(
-        bubbleURL.toString(),
-        "position-bubble-chart",
-        "popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes"
-      );
-      if (!chartWindow) {
-        toast("浏览器阻止了气泡图弹窗，请允许弹出窗口后重试");
+      const dialog = $("position-symbol-dialog");
+      const title = $("position-symbol-dialog-title");
+      const status = $("position-symbol-dialog-status");
+      const chartTitle = $("position-symbol-chart-title");
+      const frame = $("position-symbol-chart-frame");
+      const sequence = ++positionSymbolDetailsSequence;
+      if (!dialog || !frame) {
+        toast("币对图表弹窗暂不可用");
         return;
       }
-      chartWindow.focus();
+      if (title) title.textContent = symbol + " · 气泡图";
+      if (chartTitle) chartTitle.textContent = "气泡图";
+      if (status) status.textContent = "正在加载 " + symbol + " 气泡图…";
+      frame.title = symbol + " 气泡图";
+      frame.onload = () => {
+        if (sequence !== positionSymbolDetailsSequence || frame.getAttribute("src") !== bubbleURL.toString()) return;
+        if (status) status.textContent = symbol + " 气泡图已加载";
+      };
+      frame.src = "about:blank";
+      if (!dialog.open) {
+        if (dialog.showModal) dialog.showModal();
+        else dialog.setAttribute("open", "open");
+      }
+      frame.src = bubbleURL.toString();
     }
 
     function closePositionSymbolDetails() {
