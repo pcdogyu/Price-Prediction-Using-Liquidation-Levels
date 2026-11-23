@@ -19,6 +19,13 @@ type gammaContract struct {
 	bad   string
 }
 
+func TestNewDeribitClientLeavesRateLimitHeadroom(t *testing.T) {
+	client := NewDeribitClient()
+	if client.Spacing < 500*time.Millisecond {
+		t.Fatalf("Deribit order-book spacing=%s, want at least 500ms", client.Spacing)
+	}
+}
+
 func gammaFixture(t *testing.T, contracts []gammaContract) (*DeribitClient, *[]string) {
 	t.Helper()
 	requests := []string{}

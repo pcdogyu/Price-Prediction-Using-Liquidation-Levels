@@ -25,7 +25,8 @@ type DeribitClient struct {
 }
 
 func NewDeribitClient() *DeribitClient {
-	return &DeribitClient{HTTP: &http.Client{Timeout: 6 * time.Second}, BaseURL: "https://www.deribit.com/api/v2", Spacing: 200 * time.Millisecond}
+	// Leave headroom under Deribit's shared public ticker/order-book limit.
+	return &DeribitClient{HTTP: &http.Client{Timeout: 6 * time.Second}, BaseURL: "https://www.deribit.com/api/v2", Spacing: 500 * time.Millisecond}
 }
 
 type deribitRPC struct {

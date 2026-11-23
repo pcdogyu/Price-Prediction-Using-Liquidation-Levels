@@ -42,7 +42,7 @@ func TestOptionsEndpointWindowAndZero(t *testing.T) {
 		if hours == "" && packet.Data.Hours != 24 {
 			t.Fatalf("default options window=%d, want 24", packet.Data.Hours)
 		}
-		if packet.Data.RefreshSeconds != 60 || packet.Data.RetentionDays != 3 || packet.Data.DenseHours != 24 || packet.Data.ArchiveMinutes != 30 {
+		if packet.Data.RefreshSeconds != 180 || packet.Data.RetentionDays != 3 || packet.Data.DenseHours != 24 || packet.Data.ArchiveMinutes != 30 {
 			t.Fatal(packet.Data)
 		}
 	}
@@ -71,7 +71,7 @@ func TestOptionsAssetFollowsServerCadence(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/options", nil))
-	if !strings.Contains(w.Body.String(), "后台每分钟采集，页面每分钟刷新") || !strings.Contains(w.Body.String(), "完整的 1 分钟数据") || !strings.Contains(w.Body.String(), "最长保留 3 天") || !strings.Contains(w.Body.String(), "整点和半点的值") || strings.Contains(w.Body.String(), "附近") {
+	if !strings.Contains(w.Body.String(), "后台每 3 分钟采集，页面每 3 分钟刷新") || !strings.Contains(w.Body.String(), "完整的 3 分钟采样") || !strings.Contains(w.Body.String(), "超过 8 分钟没有新数据") || !strings.Contains(w.Body.String(), "最长保留 3 天") || !strings.Contains(w.Body.String(), "整点和半点的值") || strings.Contains(w.Body.String(), "附近") {
 		t.Fatal("options page copy does not describe tiered retention")
 	}
 }

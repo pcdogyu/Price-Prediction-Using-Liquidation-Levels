@@ -49,7 +49,7 @@ func (s *Service) deribitGammaLoop(ctx context.Context) {
 	scheduledAt := time.Now().UTC().Truncate(interval)
 	for {
 		for _, currency := range []string{"BTC", "ETH"} {
-			cc, cancel := context.WithTimeout(ctx, 45*time.Second)
+			cc, cancel := context.WithTimeout(ctx, 75*time.Second)
 			point, err := client.Gamma(cc, currency, scheduledAt)
 			cancel()
 			if err == nil {
