@@ -2721,8 +2721,6 @@ const tvbotHTML = `<!doctype html>
           <h2>图表周期最高</h2>
           <span class="muted" id="analysis-period-peak-status">-</span>
         </div>
-        <div id="analysis-period-peak-account-slot"></div>
-        <div id="analysis-period-peak-toolbar-slot"></div>
         <div id="analysis-period-peak-card" class="analysis-peak-snapshots"></div>
       </div>
     </section>
@@ -8728,13 +8726,13 @@ const tvbotHTML = `<!doctype html>
 
     function placeAnalysisBalanceWindowToolbar(exchange) {
       const toolbar = $("analysis-balance-window-toolbar");
-      const slot = $("analysis-period-peak-toolbar-slot");
-      const accountSlot = $("analysis-period-peak-account-slot");
       const accountSelect = $("analysis-" + exchange + "-account");
       const accountLabel = accountSelect && accountSelect.closest("label");
-      if (!toolbar || !slot || !accountSlot || normalizeExchange(exchange) !== activeExchange()) return;
-      if (accountLabel) accountSlot.replaceChildren(accountLabel);
-      slot.appendChild(toolbar);
+      const chartCard = accountSelect && accountSelect.closest(".analysis-usdt-chart-card");
+      const chartHead = chartCard && chartCard.querySelector(".section-head");
+      if (!toolbar || !chartCard || !chartHead || normalizeExchange(exchange) !== activeExchange()) return;
+      if (accountLabel && accountLabel.parentElement !== chartHead) chartHead.appendChild(accountLabel);
+      chartCard.insertBefore(toolbar, chartHead);
       toolbar.hidden = false;
     }
 

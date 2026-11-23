@@ -244,16 +244,14 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 	windowToolbar := strings.Index(tvbotHTML, `id="analysis-balance-window-toolbar"`)
 	analysisGrid := strings.Index(tvbotHTML, `class="analysis-balance-grid"`)
 	peakPage := strings.Index(tvbotHTML, `id="stopLossAnalysis"`)
-	peakAccountSlot := strings.Index(tvbotHTML, `id="analysis-period-peak-account-slot"`)
-	peakToolbarSlot := strings.Index(tvbotHTML, `id="analysis-period-peak-toolbar-slot"`)
 	peakCard := strings.Index(tvbotHTML, `id="analysis-period-peak-card"`)
 	okxChartTitle := strings.Index(tvbotHTML, `id="analysis-okx-usdt-title"`)
 	okxChartInPeriodPanel := strings.Index(tvbotHTML, `id="usdt-chart" class="mini-usdt-chart"`)
-	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 || peakPage < 0 || peakAccountSlot < 0 || peakToolbarSlot < 0 || peakCard < 0 || okxChartTitle < 0 || okxChartInPeriodPanel < 0 {
+	if analysisUpdated < 0 || windowToolbar < 0 || analysisGrid < 0 || peakPage < 0 || peakCard < 0 || okxChartTitle < 0 || okxChartInPeriodPanel < 0 {
 		t.Fatal("analysis balance toolbar layout markers are missing")
 	}
-	if !(analysisUpdated < analysisGrid && analysisGrid < windowToolbar && windowToolbar < okxChartTitle && okxChartTitle < okxChartInPeriodPanel && okxChartInPeriodPanel < peakPage && peakPage < peakAccountSlot && peakAccountSlot < peakToolbarSlot && peakToolbarSlot < peakCard) {
-		t.Fatal("chart-period peak card and period switch should live on the dedicated page")
+	if !(analysisUpdated < analysisGrid && analysisGrid < windowToolbar && windowToolbar < okxChartTitle && okxChartTitle < okxChartInPeriodPanel && okxChartInPeriodPanel < peakPage && peakPage < peakCard) {
+		t.Fatal("period switch should stay with the visible equity chart while the peak card lives on its dedicated page")
 	}
 	if !strings.Contains(tvbotHTML, ".analysis-balance-window-toolbar {\n      width: 100%;\n      justify-content: flex-start;") {
 		t.Fatal("analysis balance period switch should use full card width")
@@ -265,7 +263,8 @@ func TestTVBotUSDTBalanceLayoutAndWindowButtons(t *testing.T) {
 		`id="analysis-balance-window-toolbar" class="balance-window-toolbar analysis-balance-window-toolbar" role="group" aria-label="USDT余额周期" hidden`,
 		`function placeAnalysisBalanceWindowToolbar(exchange)`,
 		`normalizeExchange(exchange) !== activeExchange()`,
-		`slot.appendChild(toolbar);`,
+		`accountSelect.closest(".analysis-usdt-chart-card")`,
+		`chartCard.insertBefore(toolbar, chartHead);`,
 		`toolbar.hidden = false;`,
 	} {
 		if !strings.Contains(tvbotHTML, marker) {
