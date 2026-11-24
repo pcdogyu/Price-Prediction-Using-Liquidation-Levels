@@ -593,6 +593,23 @@ func TestUserThemeAPIIsUserScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	otherSession := login("other", otherPassword)
+	bubbles := func(session *http.Cookie) string {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/bubbles", nil)
+		r.AddCookie(session)
+		w := httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("bubbles page status=%d body=%s", w.Code, w.Body.String())
+		}
+		return w.Body.String()
+	}
+	if strings.Contains(bubbles(adminSession), `id="coinglass-button" class="secondary" disabled`) {
+		t.Fatal("administrator CoinGlass login button should be enabled")
+	}
+	if !strings.Contains(bubbles(otherSession), `id="coinglass-button" class="secondary" disabled aria-disabled="true"`) {
+		t.Fatal("regular-user CoinGlass login button should be disabled")
+	}
 	if w := request(http.MethodGet, "", otherSession); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"theme":"dark"`) {
 		t.Fatalf("other user theme status=%d body=%s", w.Code, w.Body.String())
 	}

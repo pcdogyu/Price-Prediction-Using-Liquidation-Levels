@@ -287,7 +287,14 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	page := s.renderPage(indexHTML, "bubbles", "气泡图", r)
-	page = []byte(strings.Replace(string(page), `{{DASHBOARD_SYMBOL_SEARCH}}`, s.dashboardSymbolSearch(), 1))
+	coinglassLoginDisabled := `disabled aria-disabled="true" title="仅管理员可登录 CoinGlass"`
+	if cookie, err := r.Cookie(sessionCookie); err == nil && s.auth.IsAdmin(cookie.Value) {
+		coinglassLoginDisabled = ""
+	}
+	page = []byte(strings.NewReplacer(
+		`{{DASHBOARD_SYMBOL_SEARCH}}`, s.dashboardSymbolSearch(),
+		`{{COINGLASS_LOGIN_DISABLED}}`, coinglassLoginDisabled,
+	).Replace(string(page)))
 	_, _ = w.Write(page)
 }
 func (s *Server) dashboardScript(w http.ResponseWriter, _ *http.Request) {
