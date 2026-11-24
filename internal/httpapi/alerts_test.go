@@ -593,6 +593,16 @@ func TestAlertHistoryEndpoints(t *testing.T) {
 	if len(merged.Rows) != 8 || merged.TotalCount != 8 || merged.AlertCount != 4 || merged.AggressiveCount != 3 || merged.SteadyCount != 1 {
 		t.Fatalf("unexpected merged timeline: %+v", merged)
 	}
+	largeTimelinePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?limit=200", nil)
+	var largeTimeline domain.AlertTimelinePage
+	if largeTimelinePage.Code != http.StatusOK || json.Unmarshal(largeTimelinePage.Body.Bytes(), &largeTimeline) != nil || len(largeTimeline.Rows) != 8 || largeTimeline.TotalCount != 8 {
+		t.Fatalf("large timeline page status=%d body=%s page=%+v", largeTimelinePage.Code, largeTimelinePage.Body.String(), largeTimeline)
+	}
+	smallTimelinePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?limit=1", nil)
+	var smallTimeline domain.AlertTimelinePage
+	if smallTimelinePage.Code != http.StatusOK || json.Unmarshal(smallTimelinePage.Body.Bytes(), &smallTimeline) != nil || len(smallTimeline.Rows) != 1 || smallTimeline.NextCursor == "" {
+		t.Fatalf("small timeline page status=%d body=%s page=%+v", smallTimelinePage.Code, smallTimelinePage.Body.String(), smallTimeline)
+	}
 	for i := 1; i < len(merged.Rows); i++ {
 		if merged.Rows[i-1].EventAt.Before(merged.Rows[i].EventAt) {
 			t.Fatalf("merged timeline must be newest first: %+v", merged.Rows)
@@ -650,6 +660,9 @@ func TestAlertHistoryEndpoints(t *testing.T) {
 		"/api/v1/alerts/timeline?kind=trend",
 		"/api/v1/alerts/timeline?filter=unknown",
 		"/api/v1/alerts/timeline?cursor=not-a-cursor",
+		"/api/v1/alerts/timeline?limit=0",
+		"/api/v1/alerts/timeline?limit=201",
+		"/api/v1/alerts/timeline?limit=invalid",
 	} {
 		bad := serveAlert(srv, http.MethodGet, path, nil)
 		if bad.Code != http.StatusBadRequest {

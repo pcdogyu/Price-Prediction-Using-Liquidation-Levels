@@ -58,6 +58,23 @@ test('historical TVBot signals keep intent distinct from actual trade points', (
   assert.equal(markers[0].actual_order, false);
 });
 
+test('stored alert history maps alarms and strategy signals separately from execution', () => {
+  const markers = B.normalizeAlertHistoryMarkers([
+    { type: 'alert', event_at: '2026-01-01T00:01:00Z', alert: { id: 'alarm-1', symbol: 'BTCUSDT', side: 'long', trade_side: 'long', triggered_at: '2026-01-01T00:01:00Z', reference_price: 100, status: 'aggressive', notional_usd: 1200, event_count: 3 } },
+    { type: 'aggressive', event_at: '2026-01-01T00:02:00Z', signal: { id: 'aggressive-1', symbol: 'BTCUSDT', kind: 'aggressive', side: 'short', created_at: '2026-01-01T00:02:00Z', reference_price: 99, alert_notional_usd: 1400, open_allowed: true, notify_status: 'sent' } },
+    { type: 'value_area', event_at: '2026-01-01T00:03:00Z', signal: { id: 'value-close', symbol: 'BTCUSDT', kind: 'value_area', side: 'long', position_effect: 'close', created_at: '2026-01-01T00:03:00Z', reference_price: 98, open_allowed: false, close_allowed: true } },
+    { type: 'steady', event_at: '2026-01-01T00:03:00Z', signal: { id: 'other-symbol', symbol: 'ETHUSDT', kind: 'steady', side: 'long', created_at: '2026-01-01T00:03:00Z', reference_price: 98 } },
+    { type: 'alert', event_at: '2026-01-01T00:03:00Z', alert: { id: 'invalid-price', symbol: 'BTCUSDT', side: 'long', triggered_at: '2026-01-01T00:03:00Z', reference_price: 0 } }
+  ], 'BTCUSDT');
+  assert.deepEqual(markers.map(item => [item.phase, item.kind, item.side, item.operation]), [
+    ['alert', 'alert', 'long', 'open'],
+    ['alert_signal', 'aggressive', 'short', 'open'],
+    ['alert_signal', 'value_area', 'long', 'close']
+  ]);
+  assert.deepEqual(markers.map(B.tradeMarkerLabel), ['预警多', '激空', '区平多']);
+  assert.ok(markers.every(item => item.actual_order === false));
+});
+
 test('historical signal markers collapse by direction and open/close intent', () => {
   const collapsed = B.collapseTradeMarkers([
     { id: 'open-1', time: 1000, price: 100, side: 'long', phase: 'signal', operation: 'open', status: 'submitted' },

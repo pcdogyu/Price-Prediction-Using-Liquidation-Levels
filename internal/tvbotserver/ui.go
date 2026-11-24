@@ -7774,7 +7774,7 @@ const tvbotHTML = `<!doctype html>
         const strategy = String(row && row.strategy || "");
         const side = String(row && row.side || "");
         return "<tr>" +
-          "<td>" + escapeHTML(asText(row && row.inst_id)) + "</td>" +
+          "<td>" + analysisTradeSymbolHTML(row) + "</td>" +
           "<td>" + escapeHTML(asText(row && row.trade_count || 0)) + "</td>" +
           "<td>" + escapeHTML(side === "mixed" ? "多种" : analysisPositionSideText(side)) + "</td>" +
           "<td>" + escapeHTML(strategy === "mixed" ? "多种" : analysisStrategyText(row)) + "</td>" +
@@ -8245,7 +8245,7 @@ const tvbotHTML = `<!doctype html>
       if (!symbol) return escapeHTML(text);
       const base = document.querySelector('meta[name="app-base"]')?.content || "/";
       const href = base + "bubbles?symbol=" + encodeURIComponent(symbol);
-      return '<a class="analysis-symbol-link" target="_blank" rel="noopener" href="' + escapeHTML(href) + '" title="在新标签页打开 ' + escapeHTML(symbol) + ' 气泡图">' + escapeHTML(text) + '</a>';
+      return '<a class="analysis-symbol-link" target="_blank" rel="noopener" href="' + escapeHTML(href) + '" title="在新标签页打开 ' + escapeHTML(symbol) + ' 气泡图，查看历史报警和实际开平仓点">' + escapeHTML(text) + '</a>';
     }
 
     function analysisPositionKlineURL() {

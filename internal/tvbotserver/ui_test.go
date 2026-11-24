@@ -591,6 +591,7 @@ func TestRenderTVBotAnalysisAddsPerSymbolPnLTable(t *testing.T) {
 		`normalizeExchange(row && row.exchange) === exchange`,
 		`row && row.net_pnl`,
 		`balanceWindowLabel(analysisPNLWindowMinutes()) + " · 已平仓 · "`,
+		`"<td>" + analysisTradeSymbolHTML(row) + "</td>" +`,
 		`row && row.avg_holding_seconds`,
 		`row && row.avg_leverage`,
 		`所选周期内暂无已平仓币对盈亏`,

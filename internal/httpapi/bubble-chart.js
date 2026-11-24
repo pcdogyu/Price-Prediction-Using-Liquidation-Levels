@@ -141,6 +141,52 @@
     return markers.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
   }
 
+  function normalizeAlertHistoryMarkers(rows, symbol) {
+    const target = normalizeMarketSymbol(symbol);
+    if (!target || !Array.isArray(rows)) return [];
+    const markers = [];
+    rows.forEach((item, index) => {
+      const type = String(item && item.type || '').trim().toLowerCase();
+      const isAlert = type === 'alert';
+      const row = isAlert ? item.alert : item && item.signal;
+      if (!row || normalizeMarketSymbol(row.symbol) !== target) return;
+      const side = String(row.trade_side || row.side || '').trim().toLowerCase();
+      const time = tradeTime((isAlert ? row.triggered_at : row.created_at) || item.event_at);
+      const price = Number(row.reference_price);
+      if ((side !== 'long' && side !== 'short') || !Number.isFinite(time) || !Number.isFinite(price) || price <= 0) return;
+      const kind = isAlert ? 'alert' : String(row.kind || type).trim().toLowerCase();
+      const effect = String(row.position_effect || '').trim().toLowerCase();
+      const operation = effect === 'close' || (row.open_allowed === false && row.close_allowed === true) ? 'close' : 'open';
+      const id = String(row.id || item.event_at || index);
+      markers.push({
+        id: (isAlert ? 'alert:' : 'alert-signal:') + id,
+        row_key: id,
+        symbol: target,
+        side,
+        phase: isAlert ? 'alert' : 'alert_signal',
+        kind,
+        operation,
+        status: String(isAlert ? row.status : row.notify_status || '').trim().toLowerCase(),
+        liquidation_side: String(isAlert ? row.side : row.liquidation_side || '').trim().toLowerCase(),
+        notional_usd: Number(isAlert ? row.notional_usd : row.alert_notional_usd) || 0,
+        threshold_usd: Number(row.threshold_usd) || 0,
+        event_count: Number(row.event_count) || 0,
+        follow_ups: Number(row.follow_ups) || 0,
+        filter_applied: row.filter_applied === true,
+        open_allowed: row.open_allowed === true,
+        close_allowed: row.close_allowed === true,
+        gamma_ignored: row.gamma_ignored === true,
+        filter_reason: String(row.filter_reason || '').trim(),
+        time,
+        time_iso: new Date(time).toISOString(),
+        price,
+        selected: false,
+        actual_order: false
+      });
+    });
+    return markers.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+  }
+
   // A single candle can contain several fills for the same opening or closing
   // action. Keep one marker per phase and direction in that candle so the chart
   // describes the action without covering the candle with repeated labels.
@@ -149,12 +195,14 @@
     if (!Array.isArray(markers) || !Number.isFinite(step) || step <= 0) return Array.isArray(markers) ? markers.slice() : [];
     const result = [], groups = new Map();
     for (const marker of markers) {
-      if (!marker || !['entry', 'exit', 'signal'].includes(marker.phase) || !Number.isFinite(marker.time) || (marker.side !== 'long' && marker.side !== 'short')) {
+      if (!marker || !['entry', 'exit', 'signal', 'alert', 'alert_signal'].includes(marker.phase) || !Number.isFinite(marker.time) || (marker.side !== 'long' && marker.side !== 'short')) {
         result.push(marker);
         continue;
       }
       const bucket = Math.floor(marker.time / step) * step;
-      const key = bucket + ':' + marker.phase + ':' + marker.side + (marker.phase === 'signal' ? ':' + marker.operation : '');
+      const key = bucket + ':' + marker.phase + ':' + marker.side +
+        (marker.phase === 'signal' ? ':' + marker.operation : '') +
+        (marker.phase === 'alert_signal' ? ':' + marker.kind + ':' + marker.operation : '');
       const existing = groups.get(key);
       if (!existing) {
         const copy = Object.assign({}, marker, { collapsed_count: 1 });
@@ -164,9 +212,11 @@
       }
       existing.collapsed_count += 1;
       existing.selected = existing.selected || marker.selected === true;
+      if (['alert', 'alert_signal'].includes(existing.phase)) existing.notional_usd = (Number(existing.notional_usd) || 0) + (Number(marker.notional_usd) || 0);
       if (existing.operation_source !== marker.operation_source) existing.operation_source = 'mixed';
       if (existing.phase === 'exit' && existing.operation !== marker.operation) existing.operation = 'mixed';
       if (existing.phase === 'signal' && existing.status !== marker.status) existing.status = 'mixed';
+      if (['alert', 'alert_signal'].includes(existing.phase) && existing.status !== marker.status) existing.status = 'mixed';
       if (existing.phase === 'entry' && existing.open_position !== marker.open_position) existing.open_position = false;
     }
     return result.sort((a, b) => a.time - b.time || String(a.id || '').localeCompare(String(b.id || '')));
@@ -175,6 +225,11 @@
   function tradeMarkerLabel(marker) {
     const side = marker && marker.side === 'short' ? '空' : '多';
     if (marker && marker.phase === 'signal') return (marker.operation === 'close' ? '信平' : '信开') + side;
+    if (marker && marker.phase === 'alert') return '预警' + side;
+    if (marker && marker.phase === 'alert_signal') {
+      const kind = { aggressive: '激', steady: '稳', value_area: '区' }[marker.kind] || '信';
+      return kind + (marker.operation === 'close' ? '平' : '') + side;
+    }
     if (!marker || marker.phase !== 'exit') return '开' + side;
     switch (String(marker.operation || 'close').toLowerCase()) {
       case 'take_profit': return '止盈' + side;
@@ -196,7 +251,7 @@
       const x = clamp(scale.x(marker.time), bounds.left + 9, bounds.right - 9);
       const priceY = clamp(y(marker.price), bounds.top + 9, bounds.bottom - 9);
       const long = marker.side === 'long';
-      const closing = marker.phase === 'exit' || (marker.phase === 'signal' && marker.operation === 'close');
+      const closing = marker.phase === 'exit' || (['signal', 'alert_signal'].includes(marker.phase) && marker.operation === 'close');
       const collapsedLabel = marker.collapsed_count > 1 ? '×' + marker.collapsed_count : '';
       const labelText = tradeMarkerLabel(marker) + collapsedLabel;
       const labelWidth = labelText.length * 11 + 12;
@@ -410,7 +465,7 @@
     }
   }
 
-  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, normalizeSignalMarkers, collapseTradeMarkers, tradeMarkerLabel, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
+  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, normalizeSignalMarkers, normalizeAlertHistoryMarkers, collapseTradeMarkers, tradeMarkerLabel, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.BubbleChart = exported;
 })(typeof window === 'object' ? window : globalThis);

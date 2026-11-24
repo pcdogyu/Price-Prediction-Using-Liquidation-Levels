@@ -62,12 +62,36 @@ with sync_playwright() as playwright:
     page.on("pageerror", lambda error: errors.append(str(error)))
     if production:
         entries = json.loads((root / "pem" / "password.json").read_text(encoding="utf-8"))
-        entry = next((e for e in entries if e.get("username") == "pcdog"), entries[0])
+        entry = next((e for e in entries if e.get("username") == "admin"), entries[0])
         page.goto(base + "/", wait_until="domcontentloaded")
         page.locator("input[name=username]").fill(entry["username"])
         page.locator("input[name=password]").fill(entry["password"])
         page.get_by_role("button", name="登录", exact=True).click()
         expect(page).to_have_url(re.compile(re.escape(base) + r"/(?:alerts|bubbles)$"))
+        page.goto(base + "/tvbot?tab=analysis", wait_until="domcontentloaded")
+        pair_link = page.locator(".analysis-symbol-stats-table a.analysis-symbol-link").filter(has_text="BTCUSDT").first
+        expect(pair_link).to_be_visible(timeout=45000)
+        pair_href = pair_link.get_attribute("href")
+        with context.expect_page(timeout=15000) as popup_info:
+            pair_link.click()
+        pair_page = popup_info.value
+        pair_page.on("pageerror", lambda error: errors.append(str(error)))
+        expect(pair_page).to_have_url(re.compile(re.escape(base) + r"/bubbles\?symbol=BTCUSDT(?:&|$)"))
+        pair_page.wait_for_load_state("domcontentloaded")
+        pair_page.wait_for_function("() => document.getElementById('chart-context')?.textContent.includes('最近30天历史预警 ') || document.getElementById('api-errors')?.textContent.includes('历史报警信号 ·')", timeout=60000)
+        pair_popup_status = pair_page.evaluate("""() => ({
+          url: location.href,
+          context: document.getElementById('chart-context').textContent,
+          error: document.getElementById('api-errors').textContent,
+          alerts: Number(document.getElementById('market-chart').dataset.alertMarkerCount || 0),
+          signals: Number(document.getElementById('market-chart').dataset.alertSignalMarkerCount || 0),
+          actual: Number(document.getElementById('market-chart').dataset.tradeMarkerCount || 0)
+        })""")
+        assert "最近30天历史预警 " in pair_popup_status["context"], {"href": pair_href, **pair_popup_status}
+        assert "历史报警信号 ·" not in pair_popup_status["error"], pair_popup_status
+        assert pair_popup_status["url"].startswith(base + "/bubbles?symbol=BTCUSDT"), pair_popup_status
+        evidence.append({"analysis_pair_popup": pair_popup_status})
+        pair_page.close()
         page.goto(base + "/bubbles", wait_until="domcontentloaded")
 
     baseline = context.request.get(base + "/api/v1/market?symbol=ETHUSDT&interval=1m").json()
@@ -86,6 +110,12 @@ with sync_playwright() as playwright:
         {"signal_id": "signal-eth-close-short", "target_exchange": "gate", "coinpair": "ETH_USDT", "action": "short", "position_effect": "close", "position_side": "short", "accepted_at": iso(state["anchor"] - 28 * intervals["1m"]), "price": "2498", "status": "accepted"},
         {"signal_id": "signal-eth-open-short", "target_exchange": "binance", "coinpair": "ETHUSDT", "action": "short", "position_effect": "open", "position_side": "short", "accepted_at": iso(state["anchor"] - 26 * intervals["1m"]), "price": "2496", "status": "partial"},
         {"signal_id": "signal-btc-open-long", "target_exchange": "binance", "coinpair": "BTCUSDT", "action": "long", "position_effect": "open", "position_side": "long", "accepted_at": iso(state["anchor"] - 20 * intervals["1m"]), "price": "2492", "status": "submitted"},
+    ]
+    alert_timeline_rows = [
+        {"type": "alert", "event_at": iso(state["anchor"] - 22 * intervals["1m"]), "alert": {"id": "alert-eth-long", "symbol": "ETHUSDT", "side": "short", "trade_side": "long", "triggered_at": iso(state["anchor"] - 22 * intervals["1m"]), "reference_price": "2491", "status": "watching", "notional_usd": 300000, "threshold_usd": 200000, "event_count": 2}},
+        {"type": "aggressive", "event_at": iso(state["anchor"] - 21 * intervals["1m"]), "signal": {"id": "signal-eth-aggressive", "symbol": "ETHUSDT", "kind": "aggressive", "side": "short", "created_at": iso(state["anchor"] - 21 * intervals["1m"]), "reference_price": "2493", "alert_notional_usd": 320000, "filter_applied": True, "open_allowed": True, "notify_status": "sent"}},
+        {"type": "value_area", "event_at": iso(state["anchor"] - 19 * intervals["1m"]), "signal": {"id": "signal-eth-value-close", "symbol": "ETHUSDT", "kind": "value_area", "side": "long", "position_effect": "close", "created_at": iso(state["anchor"] - 19 * intervals["1m"]), "reference_price": "2497", "open_allowed": False, "close_allowed": True, "notify_status": "sent"}},
+        {"type": "alert", "event_at": iso(state["anchor"] - 18 * intervals["1m"]), "alert": {"id": "alert-btc-long", "symbol": "BTCUSDT", "side": "short", "trade_side": "long", "triggered_at": iso(state["anchor"] - 18 * intervals["1m"]), "reference_price": "2492", "status": "watching"}},
     ]
 
     def dataset(symbol, interval, before=None):
@@ -210,6 +240,10 @@ with sync_playwright() as playwright:
                 limit = max(1, int(query.get("limit", 500)))
                 offset = max(0, int(query.get("offset", 0)))
                 route.fulfill(json={"orders": copy.deepcopy(orders[offset:offset + limit]), "total": len(orders), "limit": limit, "offset": offset, "total_pages": (len(orders) + limit - 1) // limit})
+        elif parsed.path.endswith("/api/v1/alerts/timeline"):
+            symbol = query.get("symbol", "").upper().replace("_", "").replace("-", "")
+            rows = [row for row in alert_timeline_rows if (row.get("alert") or row.get("signal") or {}).get("symbol", "").upper().replace("_", "").replace("-", "") == symbol]
+            route.fulfill(json={"rows": copy.deepcopy(rows), "total_count": len(rows), "next_cursor": ""})
         else:
             route.continue_()
 
@@ -224,6 +258,7 @@ with sync_playwright() as playwright:
         page.route("**/tvbot/analysis/trades?**", fixture)
         page.route("**/tvbot/analysis/open-positions?**", fixture)
         page.route("**/tvbot/orders?**", fixture)
+        page.route("**/api/v1/alerts/timeline?**", fixture)
         state["market_history_fail_once"].add(("ETHUSDT", "30m"))
         state["market_fail_once"].add(("ETHUSDT", "30m", 1))
 
@@ -342,6 +377,13 @@ with sync_playwright() as playwright:
       labels: Array.from(document.querySelectorAll('[data-trade-marker] text'), e => e.textContent),
       signalLabels: Array.from(document.querySelectorAll('[data-signal-marker] text'), e => e.textContent),
       signalTips: Array.from(document.querySelectorAll('[data-signal-marker]'), e => e.dataset.tip),
+      alertCount: Number(document.getElementById('market-chart').dataset.alertMarkerCount || 0),
+      alertSignalCount: Number(document.getElementById('market-chart').dataset.alertSignalMarkerCount || 0),
+      alertLabels: Array.from(document.querySelectorAll('[data-alert-marker] text'), e => e.textContent),
+      alertSignalLabels: Array.from(document.querySelectorAll('[data-alert-signal-marker] text'), e => e.textContent),
+      alertTips: Array.from(document.querySelectorAll('[data-alert-marker], [data-alert-signal-marker]'), e => e.dataset.tip),
+      alertLegendHidden: document.getElementById('historical-alert-legend').classList.contains('hidden'),
+      alertSignalLegendHidden: document.getElementById('historical-alert-signal-legend').classList.contains('hidden'),
       legendHidden: document.getElementById('trade-marker-legend').classList.contains('hidden'),
       signalLegendHidden: document.getElementById('historical-signal-legend').classList.contains('hidden'),
       error: document.getElementById('api-errors').textContent
@@ -356,6 +398,13 @@ with sync_playwright() as playwright:
         assert any("不代表实际成交" in tip for tip in trade_view_status["signalTips"]), trade_view_status
         assert "TVBot历史信号 3条" in trade_view_status["context"], trade_view_status
         assert not trade_view_status["signalLegendHidden"], trade_view_status
+        assert trade_view_status["alertCount"] == 1 and trade_view_status["alertSignalCount"] == 2, trade_view_status
+        assert trade_view_status["alertLabels"] == ["预警多"], trade_view_status
+        assert set(trade_view_status["alertSignalLabels"]) == {"激空", "区平多"}, trade_view_status
+        assert all("来源：报警历史记录" in tip for tip in trade_view_status["alertTips"]), trade_view_status
+        assert not trade_view_status["alertLegendHidden"] and not trade_view_status["alertSignalLegendHidden"], trade_view_status
+        assert "最近30天历史预警 1条" in trade_view_status["context"] and "策略信号 2条" in trade_view_status["context"], trade_view_status
+        assert any("limit" in query and query["limit"] == "200" for path, query in requests if path.endswith("/api/v1/alerts/timeline")), requests
     if not production:
         default_trade_view = page.evaluate("""() => ({
           count: Number(document.getElementById('market-chart').dataset.tradeMarkerCount),

@@ -102,6 +102,19 @@ const historicalSignalView = {
   retryCount: 0,
   error: ''
 };
+const historicalAlertView = {
+  symbol: '',
+  rows: [],
+  markers: [],
+  total: 0,
+  truncated: false,
+  loaded: false,
+  loading: false,
+  requestID: 0,
+  retryTimer: 0,
+  retryCount: 0,
+  error: ''
+};
 const historicalTradeRetryDelays = [2000, 5000, 15000, 30000];
 let refreshing = false;
 let refreshSequence = 0;
@@ -462,6 +475,83 @@ async function loadHistoricalSignalView(targetSymbol = symbol) {
   }
 }
 
+function historicalAlertRetryDelay(error) {
+  const message = String(error?.message || '');
+  const retryable = error?.name === 'TypeError' || /HTTP (?:408|429|500|502|503|504)\b/.test(message);
+  if (!retryable || historicalAlertView.retryCount >= historicalTradeRetryDelays.length) return 0;
+  return historicalTradeRetryDelays[historicalAlertView.retryCount++];
+}
+
+async function loadHistoricalAlertView(targetSymbol = symbol) {
+  const requestedSymbol = window.BubbleChart.normalizeMarketSymbol(targetSymbol);
+  if (embeddedChart) return;
+  if (requestedSymbol === historicalAlertView.symbol && historicalAlertView.loaded) return;
+  if (requestedSymbol === historicalAlertView.symbol && historicalAlertView.loading) return;
+  const requestID = ++historicalAlertView.requestID;
+  if (historicalAlertView.retryTimer) {
+    clearTimeout(historicalAlertView.retryTimer);
+    historicalAlertView.retryTimer = 0;
+  }
+  historicalAlertView.symbol = requestedSymbol;
+  historicalAlertView.rows = [];
+  historicalAlertView.markers = [];
+  historicalAlertView.total = 0;
+  historicalAlertView.truncated = false;
+  historicalAlertView.loaded = false;
+  historicalAlertView.loading = Boolean(requestedSymbol);
+  historicalAlertView.error = requestedSymbol ? '' : '币对格式无法加载历史报警';
+  historicalAlertView.retryCount = 0;
+  if (!requestedSymbol) {
+    if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+    showFailures(lastFailures);
+    return;
+  }
+  if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+  try {
+    const pageSize = 200;
+    const maxPages = 25;
+    let cursor = '';
+    let total = 0;
+    const rows = [];
+    for (let page = 0; page < maxPages; page += 1) {
+      const query = new URLSearchParams({ symbol: requestedSymbol, limit: String(pageSize) });
+      if (cursor) query.set('cursor', cursor);
+      const packet = await json('alerts/timeline?' + query.toString());
+      total = Math.max(total, Number(packet?.total_count) || 0);
+      if (Array.isArray(packet?.rows)) rows.push(...packet.rows);
+      cursor = String(packet?.next_cursor || '').trim();
+      if (!cursor) break;
+    }
+    if (requestID !== historicalAlertView.requestID || requestedSymbol !== symbol) return;
+    historicalAlertView.rows = rows;
+    historicalAlertView.markers = window.BubbleChart.normalizeAlertHistoryMarkers(rows, requestedSymbol);
+    historicalAlertView.total = total || rows.length;
+    historicalAlertView.truncated = Boolean(cursor);
+    historicalAlertView.loaded = true;
+    historicalAlertView.error = '';
+    historicalAlertView.retryCount = 0;
+  } catch (error) {
+    if (requestID !== historicalAlertView.requestID || error?.name === 'AbortError') return;
+    const message = error.message || '历史报警数据暂不可用';
+    const retryDelay = historicalAlertRetryDelay(error);
+    historicalAlertView.error = retryDelay
+      ? message + '（' + Math.ceil(retryDelay / 1000) + ' 秒后自动重试）'
+      : message;
+    if (retryDelay) {
+      historicalAlertView.retryTimer = setTimeout(() => {
+        historicalAlertView.retryTimer = 0;
+        if (symbol === requestedSymbol) loadHistoricalAlertView(requestedSymbol);
+      }, retryDelay);
+    }
+  } finally {
+    if (requestID === historicalAlertView.requestID) {
+      historicalAlertView.loading = false;
+      if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+      showFailures(lastFailures);
+    }
+  }
+}
+
 function catalogSymbol(value) {
   const raw = String(value || '').trim().toUpperCase();
   if (!raw) return '';
@@ -488,6 +578,7 @@ function activateSymbol(next) {
   cache.signal = cache.map = cache.market = cache.volume = null;
   refreshTradeMarkers();
   loadHistoricalSignalView(symbol);
+  loadHistoricalAlertView(symbol);
   tradeView.focusAt = NaN;
   tradeView.referenceError = '';
   resetChartState({ cancelBackfill: true });
@@ -1236,6 +1327,22 @@ function tradeMarkerTip(marker) {
     if (marker.order_intent) details.push('意图 ' + marker.order_intent);
     return tradeExchangeLabel(marker.exchange || tradeView.exchange) + ' 历史信号 · ' + (marker.operation === 'close' ? '平仓' : '开仓') + (marker.side === 'short' ? '空单' : '多单') + '\n时间 ' + when(marker.time_iso) + '\n信号价 ' + money(marker.price) + (details.length ? '\n' + details.join('\n') : '') + '\n该标记表示信号记录，不代表实际成交';
   }
+  if (marker.phase === 'alert' || marker.phase === 'alert_signal') {
+    const details = [];
+    const typeLabels = { alert: '预警', aggressive: '激进信号', steady: '稳健信号', value_area: '价值区信号' };
+    const statusLabels = { watching: '监控中', aggressive: '激活', steady: '稳健确认', expired: '已结束', sent: '已推送', suppressed: '已抑制', skipped: '未启用', disabled: '已关闭', failed: '推送失败', replayed: '历史记录', mixed: '状态混合' };
+    if (marker.collapsed_count > 1) details.push('同K线合并 ' + marker.collapsed_count + ' 条记录');
+    if (marker.status) details.push('状态 ' + (statusLabels[marker.status] || marker.status));
+    if (marker.liquidation_side) details.push('爆仓方向 ' + (marker.liquidation_side === 'short' ? '空单爆仓' : '多单爆仓'));
+    if (marker.event_count) details.push('爆仓笔数 ' + marker.event_count);
+    if (marker.follow_ups) details.push('信号顺延 ' + marker.follow_ups + ' 次');
+    if (marker.notional_usd) details.push('爆仓金额 ' + money(marker.notional_usd));
+    if (marker.threshold_usd) details.push('触发阈值 ' + money(marker.threshold_usd));
+    if (marker.filter_applied) details.push(marker.open_allowed ? '策略判定 允许开仓' : marker.close_allowed ? '策略判定 仅平仓' : '策略判定 未放行');
+    if (marker.gamma_ignored) details.push('负 Gamma 忽略开仓');
+    if (marker.filter_reason) details.push('过滤原因 ' + marker.filter_reason);
+    return (typeLabels[marker.kind] || '历史报警') + ' · ' + (marker.side === 'short' ? '空单' : '多单') + '\n时间 ' + when(marker.time_iso) + '\n参考价 ' + money(marker.price) + (details.length ? '\n' + details.join('\n') : '') + '\n来源：报警历史记录';
+  }
   const operation = String(marker.operation || (marker.phase === 'entry' ? 'open' : 'close')).toLowerCase();
   const markerLabel = typeof window.BubbleChart.tradeMarkerLabel === 'function'
     ? window.BubbleChart.tradeMarkerLabel(marker)
@@ -1264,24 +1371,33 @@ function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top
   const layout = window.BubbleChart.tradeMarkerPlacements(collapsed, range, scale, y, { left, right: candleRight, top, bottom: plotBottom });
   layout.markers.forEach(({ marker, x, priceY, labelX, labelCenterY, labelBelow, labelText, labelWidth }) => {
     const isSignal = marker.phase === 'signal';
+    const isAlert = marker.phase === 'alert';
+    const isAlertSignal = marker.phase === 'alert_signal';
     const long = marker.side === 'long';
-    const closing = marker.phase === 'exit' || (isSignal && marker.operation === 'close');
-    const color = isSignal ? '#a78bfa' : (closing ? '#f5c400' : (long ? '#2dd4bf' : '#fb7185'));
-    const markerAttrs = isSignal ? { 'data-signal-marker': marker.id } : { 'data-trade-marker': marker.id };
+    const closing = marker.phase === 'exit' || ((isSignal || isAlertSignal) && marker.operation === 'close');
+    const color = isAlert ? '#fbbf24' : isAlertSignal ? '#38bdf8' : isSignal ? '#a78bfa' : (closing ? '#f5c400' : (long ? '#2dd4bf' : '#fb7185'));
+    const markerAttrs = isAlert ? { 'data-alert-marker': marker.id } : isAlertSignal ? { 'data-alert-signal-marker': marker.id } : isSignal ? { 'data-signal-marker': marker.id } : { 'data-trade-marker': marker.id };
     const group = svgNode('g', Object.assign(markerAttrs, { 'data-tip': tradeMarkerTip(marker) }));
     if (marker.selected) group.appendChild(svgNode('rect', { x: labelX - labelWidth / 2 - 3, y: labelCenterY - 12, width: labelWidth + 6, height: 24, fill: 'none', stroke: '#f8fafc', 'stroke-width': 2, rx: 5, opacity: .95 }));
     group.appendChild(svgNode('line', { x1: x, y1: priceY, x2: labelX, y2: labelBelow ? labelCenterY - 10 : labelCenterY + 10, stroke: color, 'stroke-width': 1.2, opacity: .9 }));
-    group.appendChild(svgNode('rect', Object.assign({ x: labelX - labelWidth / 2, y: labelCenterY - 10, width: labelWidth, height: 20, fill: color, stroke: isSignal ? '#e9d5ff' : '#07141d', 'stroke-width': 1.2, rx: 5 }, isSignal ? { 'stroke-dasharray': '3 2' } : {})));
+    const historical = isSignal || isAlert || isAlertSignal;
+    group.appendChild(svgNode('rect', Object.assign({ x: labelX - labelWidth / 2, y: labelCenterY - 10, width: labelWidth, height: 20, fill: color, stroke: historical ? '#e9d5ff' : '#07141d', 'stroke-width': 1.2, rx: 5 }, historical ? { 'stroke-dasharray': '3 2' } : {})));
     group.appendChild(svgNode('text', { x: labelX, y: labelCenterY + 4, 'text-anchor': 'middle', fill: '#07141d', 'font-size': 10, 'font-weight': 750 }, labelText));
     plot.appendChild(group);
   });
   const signalMarkers = collapsed.filter(marker => marker.phase === 'signal');
-  const tradeMarkers = collapsed.filter(marker => marker.phase !== 'signal');
+  const alertMarkers = collapsed.filter(marker => marker.phase === 'alert');
+  const alertSignalMarkers = collapsed.filter(marker => marker.phase === 'alert_signal');
+  const tradeMarkers = collapsed.filter(marker => !['signal', 'alert', 'alert_signal'].includes(marker.phase));
   const visibleSignals = layout.markers.filter(item => item.marker.phase === 'signal').length;
-  const visibleTrades = layout.markers.length - visibleSignals;
+  const visibleAlerts = layout.markers.filter(item => item.marker.phase === 'alert').length;
+  const visibleAlertSignals = layout.markers.filter(item => item.marker.phase === 'alert_signal').length;
+  const visibleTrades = layout.markers.length - visibleSignals - visibleAlerts - visibleAlertSignals;
   return {
     trade: { visible: visibleTrades, outside: tradeMarkers.length - visibleTrades },
-    signal: { visible: visibleSignals, outside: signalMarkers.length - visibleSignals }
+    signal: { visible: visibleSignals, outside: signalMarkers.length - visibleSignals },
+    alert: { visible: visibleAlerts, outside: alertMarkers.length - visibleAlerts },
+    alertSignal: { visible: visibleAlertSignals, outside: alertSignalMarkers.length - visibleAlertSignals }
   };
 }
 
@@ -1334,6 +1450,8 @@ function draw(view, map, signal, volume) {
   if (!embeddedChart) renderLiquidationTop3(map, range);
   $('trade-marker-legend').classList.toggle('hidden', !tradeView.enabled);
   $('historical-signal-legend').classList.toggle('hidden', !(historicalSignalView.loaded && historicalSignalView.symbol === symbol && historicalSignalView.markers.length));
+  $('historical-alert-legend').classList.toggle('hidden', !(historicalAlertView.loaded && historicalAlertView.symbol === symbol && historicalAlertView.markers.some(marker => marker.phase === 'alert')));
+  $('historical-alert-signal-legend').classList.toggle('hidden', !(historicalAlertView.loaded && historicalAlertView.symbol === symbol && historicalAlertView.markers.some(marker => marker.phase === 'alert_signal')));
   bubbleHits = () => [];
   const state = bubbleLoader.state;
   $('bubble-retry').classList.toggle('hidden', state.status !== 'error');
@@ -1342,7 +1460,7 @@ function draw(view, map, signal, volume) {
     ? (chart.atLatest ? '最新K线' : '历史K线')
     : (chart.atLatest ? '最新K线' : '历史K线') + ' · ' + profileState + ' / ' + liquidationName + (marketSourceText ? ' · ' + marketSourceText : '') + ' · K线基准纵轴' + (leverageText ? ' · 杠杆 ' + leverageText : '') + (coinGlassMap && map.captured_at ? ' · 抓取 ' + when(map.captured_at) : '') + ' · ' + candleCountText + ' · 成交量缩放 ' + zoomLabel(chart.volumeZoom) + ' · 清算墙缩放 ' + zoomLabel(chart.liquidationZoom) + automaticMarketBackfillLabel();
   if (!range || !chartTimeScale(candles, layout.left, layout.candleRight)) {
-    ['price-low', 'price-high', 'window-start', 'window-end', 'bubble-count', 'trade-marker-count', 'signal-marker-count'].forEach(key => svg.removeAttribute('data-' + key));
+    ['price-low', 'price-high', 'window-start', 'window-end', 'bubble-count', 'trade-marker-count', 'signal-marker-count', 'alert-marker-count', 'alert-signal-marker-count'].forEach(key => svg.removeAttribute('data-' + key));
     $('chart-context').textContent = context + ' · 等待有效K线';
     svg.appendChild(svgNode('text', { x: 800, y: 280, 'text-anchor': 'middle', fill: '#83a0b2' }, '等待有效 K 线数据'));
     return;
@@ -1420,12 +1538,18 @@ function draw(view, map, signal, volume) {
   const bubbles = embeddedChart ? { points: [], outside: 0 } : drawLiquidationBubbles(plot, windowLiquidations, range, timeScale, y, left, candleRight, top, plotBottom);
   const visibleTradeRows = tradeView.enabled ? tradeView.markers : [];
   const visibleSignalRows = !embeddedChart && historicalSignalView.loaded && historicalSignalView.symbol === symbol ? historicalSignalView.markers : [];
-  const markerCounts = drawTradeMarkers(plot, [...visibleTradeRows, ...visibleSignalRows], range, timeScale, y, left, candleRight, top, plotBottom);
+  const visibleAlertRows = !embeddedChart && historicalAlertView.loaded && historicalAlertView.symbol === symbol ? historicalAlertView.markers.filter(marker => marker.phase === 'alert') : [];
+  const visibleAlertSignalRows = !embeddedChart && historicalAlertView.loaded && historicalAlertView.symbol === symbol ? historicalAlertView.markers.filter(marker => marker.phase === 'alert_signal') : [];
+  const markerCounts = drawTradeMarkers(plot, [...visibleTradeRows, ...visibleSignalRows, ...visibleAlertRows, ...visibleAlertSignalRows], range, timeScale, y, left, candleRight, top, plotBottom);
   const tradeMarkers = markerCounts.trade;
   const signalMarkers = markerCounts.signal;
+  const alertMarkers = markerCounts.alert;
+  const alertSignalMarkers = markerCounts.alertSignal;
   svg.setAttribute('data-bubble-count', bubbles.points.length);
   svg.setAttribute('data-trade-marker-count', tradeMarkers.visible);
   svg.setAttribute('data-signal-marker-count', signalMarkers.visible);
+  svg.setAttribute('data-alert-marker-count', alertMarkers.visible);
+  svg.setAttribute('data-alert-signal-marker-count', alertSignalMarkers.visible);
   const tradeText = tradeView.historyLoading && !tradeView.historyLoaded
     ? ' · 历史开平点加载中'
     : tradeView.enabled
@@ -1436,8 +1560,13 @@ function draw(view, map, signal, volume) {
     : historicalSignalView.loaded && historicalSignalView.symbol === symbol
       ? ' · TVBot历史信号 ' + historicalSignalView.markers.length + '条 · 屏内 ' + signalMarkers.visible + '组 · 视野外 ' + signalMarkers.outside + '组' + (historicalSignalView.truncated ? ' · 仅显示最近5000条' : '')
       : '';
+  const alertText = historicalAlertView.loading && historicalAlertView.symbol === symbol
+    ? ' · 最近30天报警历史加载中'
+    : historicalAlertView.loaded && historicalAlertView.symbol === symbol
+      ? ' · 最近30天历史预警 ' + visibleAlertRows.length + '条 / 屏内 ' + alertMarkers.visible + '组 · 策略信号 ' + visibleAlertSignalRows.length + '条 / 屏内 ' + alertSignalMarkers.visible + '组' + (historicalAlertView.truncated ? ' · 仅显示最近5000条' : '')
+      : '';
   const liquidationFilterText = chart.liquidationMinimumUSD > 0 ? ' · 金额≥$' + compact(chart.liquidationMinimumUSD) : '';
-  $('chart-context').textContent = context + liquidationFilterText + ' · 窗口已加载 ' + windowLiquidations.length + '笔 · 屏内气泡 ' + bubbles.points.length + '笔' + (bubbles.outside ? ' · 价格视野外 ' + bubbles.outside + '笔' : '') + tradeText + signalText + ' · ' + loadState;
+  $('chart-context').textContent = context + liquidationFilterText + ' · 窗口已加载 ' + windowLiquidations.length + '笔 · 屏内气泡 ' + bubbles.points.length + '笔' + (bubbles.outside ? ' · 价格视野外 ' + bubbles.outside + '笔' : '') + tradeText + signalText + alertText + ' · ' + loadState;
   if (!embeddedChart && bins.length) {
     const maximum = Math.max(...bins.map(item => item.total_usd), 1);
     const binWidth = map?.bin_width || (high - low) / Math.max(1, bins.length);
@@ -1554,6 +1683,7 @@ function showFailures(failures) {
   const tradeError = tradeViewError();
   if (tradeError) all.push('历史交易点 · ' + tradeError);
   if (historicalSignalView.error) all.push('TVBot历史信号 · ' + historicalSignalView.error);
+  if (historicalAlertView.error) all.push('历史报警信号 · ' + historicalAlertView.error);
   $('api-errors').textContent = all.length ? '数据接口异常：\n' + all.join('\n') : '';
   $('api-errors').classList.toggle('hidden', all.length === 0);
 }
@@ -2479,6 +2609,7 @@ if (embeddedChart) refresh(true);
 else {
   loadHistoricalTradeView();
   loadHistoricalSignalView(symbol);
+  loadHistoricalAlertView(symbol);
   loadSymbolCatalog();
   refresh(true);
 }

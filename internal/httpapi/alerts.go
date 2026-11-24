@@ -173,8 +173,9 @@ func (s *Server) alertNotify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, result)
 }
 
-// alertTimeline reads the unified alert and signal history. The page size is
-// intentionally fixed at 20 so every browser page has the same shape.
+// alertTimeline reads the unified alert and signal history. The default page
+// size stays at 20 for the alerts page; chart consumers can request larger
+// pages to reduce the number of sequential history requests.
 func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	symbol, _, err := alertFilters(query.Get("symbol"), "")
@@ -199,10 +200,18 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err)
 		return
 	}
+	limit := domain.AlertTimelinePageSize
+	if rawLimit := strings.TrimSpace(query.Get("limit")); rawLimit != "" {
+		limit, err = strconv.Atoi(rawLimit)
+		if err != nil || limit < 1 || limit > 200 {
+			problem(w, http.StatusBadRequest, errors.New("limit must be between 1 and 200"))
+			return
+		}
+	}
 	ctx := s.alertContext(r)
 	var page domain.AlertTimelinePage
 	if query.Get("replay") == "1" {
-		replayed, ready, replayErr := s.svc.AlertTimelineReplayedFiltered(ctx, symbol, kind, filter, domain.AlertTimelinePageSize, query.Get("cursor"))
+		replayed, ready, replayErr := s.svc.AlertTimelineReplayedFiltered(ctx, symbol, kind, filter, limit, query.Get("cursor"))
 		if replayErr != nil {
 			problem(w, http.StatusServiceUnavailable, replayErr)
 			return
@@ -210,10 +219,10 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 		if ready {
 			page = replayed
 		} else {
-			page, err = s.svc.AlertTimelineFiltered(ctx, symbol, kind, filter, domain.AlertTimelinePageSize, query.Get("cursor"))
+			page, err = s.svc.AlertTimelineFiltered(ctx, symbol, kind, filter, limit, query.Get("cursor"))
 		}
 	} else {
-		page, err = s.svc.AlertTimelineFiltered(ctx, symbol, kind, filter, domain.AlertTimelinePageSize, query.Get("cursor"))
+		page, err = s.svc.AlertTimelineFiltered(ctx, symbol, kind, filter, limit, query.Get("cursor"))
 	}
 	if err != nil {
 		problem(w, http.StatusServiceUnavailable, err)
