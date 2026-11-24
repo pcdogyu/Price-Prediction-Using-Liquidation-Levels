@@ -16,6 +16,7 @@ from playwright.sync_api import expect, sync_playwright
 
 base = sys.argv[1].rstrip("/")
 production = "--production" in sys.argv
+signal_preferences_only = "--signal-preferences-only" in sys.argv
 root = pathlib.Path(__file__).resolve().parents[2]
 artifacts = root / "build"
 artifacts.mkdir(exist_ok=True)
@@ -103,10 +104,36 @@ with sync_playwright() as playwright:
         evidence.append({"analysis_pair_popup": pair_popup_status})
         pair_page.close()
         page.goto(base + "/bubbles", wait_until="domcontentloaded")
+        expect(page.locator("button[data-chart-signal-toggle]").nth(0)).to_be_visible(timeout=30000)
+        page.wait_for_function("() => document.getElementById('chart-signal-preference-status')?.textContent.startsWith('设置已同步')", timeout=30000)
+        assert page.locator("button[data-chart-signal-toggle]").count() == 6
+        preference_button = page.locator('button[data-chart-signal-toggle="aggressive_signals"]')
+        original_preference = preference_button.get_attribute("aria-pressed")
+        synchronized_page = context.new_page()
+        try:
+            synchronized_page.goto(base + "/bubbles", wait_until="domcontentloaded")
+            synchronized_button = synchronized_page.locator('button[data-chart-signal-toggle="aggressive_signals"]')
+            expect(synchronized_button).to_be_visible(timeout=30000)
+            synchronized_page.wait_for_function("() => document.getElementById('chart-signal-preference-status')?.textContent.startsWith('设置已同步')", timeout=30000)
+            expect(synchronized_button).to_have_attribute("aria-pressed", original_preference)
+            preference_button.click()
+            toggled_preference = "false" if original_preference == "true" else "true"
+            expect(preference_button).to_have_attribute("aria-pressed", toggled_preference)
+            synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
+            expect(synchronized_button).to_have_attribute("aria-pressed", toggled_preference, timeout=12000)
+            preference_button.click()
+            expect(preference_button).to_have_attribute("aria-pressed", original_preference)
+            synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
+            expect(synchronized_button).to_have_attribute("aria-pressed", original_preference, timeout=12000)
+        finally:
+            if preference_button.is_visible() and preference_button.get_attribute("aria-pressed") != original_preference:
+                preference_button.click()
+                expect(preference_button).to_have_attribute("aria-pressed", original_preference, timeout=12000)
+            synchronized_page.close()
 
     baseline = context.request.get(base + "/api/v1/market?symbol=ETHUSDT&interval=1m").json()
     history_base = context.request.get(base + "/api/v1/liquidations?symbol=ETHUSDT&limit=1").json()
-    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "market_fail_once": set(), "market_history_fail_once": set(), "history_active": 0, "history_max_active": 0, "market_active": 0, "market_max_active": 0, "history_delay_once": True, "backfill_delay_once": True, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
+    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "market_fail_once": set(), "market_history_fail_once": set(), "history_active": 0, "history_max_active": 0, "market_active": 0, "market_max_active": 0, "history_delay_once": True, "backfill_delay_once": True, "chart_preferences": {"tvbot_signals": True, "warning_signals": True, "aggressive_signals": True, "steady_signals": True, "value_area_signals": True, "actual_trades": True}, "chart_preferences_updated_at": 1, "chart_preferences_fail_next": False, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
     history_rows = [
         {"row_key": "history-eth-long", "exchange": "binance", "inst_id": "ETHUSDT", "side": "long", "entry_time": iso(state["anchor"] - 20 * intervals["1m"]), "entry_px": "2490", "exit_time": iso(state["anchor"] - 10 * intervals["1m"]), "exit_px": "2498", "entry_operation": "open", "entry_operation_source": "auto", "exit_operation": "take_profit", "exit_operation_source": "monitor", "entry_ord_id": "binance-open-1", "exit_ord_id": "binance-close-1"},
         {"row_key": "history-eth-short", "exchange": "gate", "inst_id": "ETH_USDT", "side": "short", "entry_time": iso(state["anchor"] - 18 * intervals["1m"]), "entry_px": "2498", "exit_time": iso(state["anchor"] - 8 * intervals["1m"]), "exit_px": "2492", "entry_operation": "open", "entry_operation_source": "manual", "exit_operation": "stop_loss", "exit_operation_source": "exchange", "entry_ord_id": "gate-open-1", "exit_ord_id": "gate-close-1"},
@@ -124,6 +151,7 @@ with sync_playwright() as playwright:
     alert_timeline_rows = [
         {"type": "alert", "event_at": iso(state["anchor"] - 22 * intervals["1m"]), "alert": {"id": "alert-eth-long", "symbol": "ETHUSDT", "side": "short", "trade_side": "long", "triggered_at": iso(state["anchor"] - 22 * intervals["1m"]), "reference_price": "2491", "status": "watching", "notional_usd": 300000, "threshold_usd": 200000, "event_count": 2}},
         {"type": "aggressive", "event_at": iso(state["anchor"] - 21 * intervals["1m"]), "signal": {"id": "signal-eth-aggressive", "symbol": "ETHUSDT", "kind": "aggressive", "side": "short", "created_at": iso(state["anchor"] - 21 * intervals["1m"]), "reference_price": "2493", "alert_notional_usd": 320000, "filter_applied": True, "open_allowed": True, "notify_status": "sent"}},
+        {"type": "steady", "event_at": iso(state["anchor"] - 20 * intervals["1m"]), "signal": {"id": "signal-eth-steady", "symbol": "ETHUSDT", "kind": "steady", "side": "long", "created_at": iso(state["anchor"] - 20 * intervals["1m"]), "reference_price": "2494", "alert_notional_usd": 330000, "open_allowed": True, "notify_status": "sent"}},
         {"type": "value_area", "event_at": iso(state["anchor"] - 19 * intervals["1m"]), "signal": {"id": "signal-eth-value-close", "symbol": "ETHUSDT", "kind": "value_area", "side": "long", "position_effect": "close", "created_at": iso(state["anchor"] - 19 * intervals["1m"]), "reference_price": "2497", "open_allowed": False, "close_allowed": True, "notify_status": "sent"}},
         {"type": "alert", "event_at": iso(state["anchor"] - 18 * intervals["1m"]), "alert": {"id": "alert-btc-long", "symbol": "BTCUSDT", "side": "short", "trade_side": "long", "triggered_at": iso(state["anchor"] - 18 * intervals["1m"]), "reference_price": "2492", "status": "watching"}},
     ]
@@ -148,7 +176,17 @@ with sync_playwright() as playwright:
         parsed = urlsplit(route.request.url)
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
         requests.append((parsed.path, query))
-        if parsed.path.endswith("/market"):
+        if parsed.path.endswith("/api/v1/user/chart-signal-preferences"):
+            if route.request.method == "PATCH":
+                if state["chart_preferences_fail_next"]:
+                    state["chart_preferences_fail_next"] = False
+                    route.fulfill(status=503, json={"detail": "fixture preference save unavailable"})
+                    return
+                update = json.loads(route.request.post_data or "{}")
+                state["chart_preferences"][update["key"]] = update["enabled"]
+                state["chart_preferences_updated_at"] += 1
+            route.fulfill(json={**state["chart_preferences"], "updated_at": state["chart_preferences_updated_at"]})
+        elif parsed.path.endswith("/market"):
             state["market_active"] += 1
             state["market_max_active"] = max(state["market_max_active"], state["market_active"])
             symbol, interval = query["symbol"], query["interval"]
@@ -269,12 +307,55 @@ with sync_playwright() as playwright:
         page.route("**/tvbot/analysis/open-positions?**", fixture)
         page.route("**/tvbot/orders?**", fixture)
         page.route("**/api/v1/alerts/timeline?**", fixture)
+        page.route("**/api/v1/user/chart-signal-preferences", fixture)
         state["market_history_fail_once"].add(("ETHUSDT", "30m"))
         state["market_fail_once"].add(("ETHUSDT", "30m", 1))
 
     def idle():
         page.wait_for_function("() => window.__testActiveRequests === 0")
         page.wait_for_function("() => document.getElementById('chart-context').textContent.includes('窗口已补齐') || document.getElementById('chart-context').textContent.includes('补齐失败') || document.getElementById('chart-context').textContent.includes('等待有效K线')")
+
+    def verify_chart_signal_preferences():
+        toggles = page.locator("button[data-chart-signal-toggle]")
+        assert toggles.count() == 6
+        for key in ("tvbot_signals", "warning_signals", "aggressive_signals", "steady_signals", "value_area_signals", "actual_trades"):
+            button = page.locator(f'button[data-chart-signal-toggle="{key}"]')
+            expect(button).to_have_attribute("aria-pressed", "true")
+            button.click()
+            expect(button).to_have_attribute("aria-pressed", "false")
+            expect(button).to_be_enabled()
+            if key == "tvbot_signals":
+                assert page.locator("[data-signal-marker]").count() == 0
+            elif key == "warning_signals":
+                assert page.locator("[data-alert-marker]").count() == 0
+            elif key == "aggressive_signals":
+                assert not page.locator('[data-alert-signal-marker] text').filter(has_text="激空").count()
+            elif key == "steady_signals":
+                assert not page.locator('[data-alert-signal-marker] text').filter(has_text="稳多").count()
+            elif key == "value_area_signals":
+                assert not page.locator('[data-alert-signal-marker] text').filter(has_text="区平多").count()
+            elif key == "actual_trades":
+                assert page.locator("[data-trade-marker]").count() == 0
+            button.click()
+            expect(button).to_have_attribute("aria-pressed", "true")
+            expect(button).to_be_enabled()
+
+        state["chart_preferences_fail_next"] = True
+        warning_toggle = page.locator('button[data-chart-signal-toggle="warning_signals"]')
+        warning_toggle.click()
+        expect(warning_toggle).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#chart-signal-preference-status")).to_contain_text("保存失败")
+
+        state["chart_preferences"]["steady_signals"] = False
+        state["chart_preferences_updated_at"] += 1
+        page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
+        steady_toggle = page.locator('button[data-chart-signal-toggle="steady_signals"]')
+        expect(steady_toggle).to_have_attribute("aria-pressed", "false")
+        assert not page.locator('[data-alert-signal-marker] text').filter(has_text="稳多").count()
+        state["chart_preferences"]["steady_signals"] = True
+        state["chart_preferences_updated_at"] += 1
+        page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
+        expect(steady_toggle).to_have_attribute("aria-pressed", "true")
 
     def refresh():
         page.evaluate("() => window.__testIntervals.find(item => item.ms === 10000).fn()")
@@ -304,6 +385,14 @@ with sync_playwright() as playwright:
 
     page.goto(base + "/bubbles", wait_until="domcontentloaded")
     idle()
+    if signal_preferences_only and not production:
+        page.wait_for_function("() => historicalSignalView.loaded && historicalAlertView.loaded && tradeView.historyLoaded", timeout=60000)
+        verify_chart_signal_preferences()
+        if errors:
+            raise AssertionError({"page_errors": errors})
+        print(json.dumps({"signal_preferences_ui": "passed", "request_count": len(requests)}, ensure_ascii=False))
+        browser.close()
+        sys.exit(0)
     watermark = page.locator("[data-chart-watermark]")
     assert watermark.count() == 1
     assert watermark.get_attribute("pointer-events") == "none"
@@ -408,12 +497,12 @@ with sync_playwright() as playwright:
         assert any("不代表实际成交" in tip for tip in trade_view_status["signalTips"]), trade_view_status
         assert "TVBot历史信号 3条" in trade_view_status["context"], trade_view_status
         assert not trade_view_status["signalLegendHidden"], trade_view_status
-        assert trade_view_status["alertCount"] == 1 and trade_view_status["alertSignalCount"] == 2, trade_view_status
+        assert trade_view_status["alertCount"] == 1 and trade_view_status["alertSignalCount"] == 3, trade_view_status
         assert trade_view_status["alertLabels"] == ["预警多"], trade_view_status
-        assert set(trade_view_status["alertSignalLabels"]) == {"激空", "区平多"}, trade_view_status
+        assert set(trade_view_status["alertSignalLabels"]) == {"激空", "稳多", "区平多"}, trade_view_status
         assert all("来源：报警历史记录" in tip for tip in trade_view_status["alertTips"]), trade_view_status
         assert not trade_view_status["alertLegendHidden"] and not trade_view_status["alertSignalLegendHidden"], trade_view_status
-        assert "最近30天历史预警 1条" in trade_view_status["context"] and "策略信号 2条" in trade_view_status["context"], trade_view_status
+        assert "最近30天历史预警 1条" in trade_view_status["context"] and "策略信号 3条" in trade_view_status["context"], trade_view_status
         assert any(query.get("limit") == "20" and query.get("stored") == "1" for path, query in requests if path.endswith("/api/v1/alerts/timeline")), requests
     if not production:
         default_trade_view = page.evaluate("""() => ({
@@ -431,6 +520,8 @@ with sync_playwright() as playwright:
         assert any("状态 持仓中" in tip for tip in default_trade_view["tips"]), default_trade_view
         assert any("成交监听" in tip for tip in default_trade_view["tips"]), default_trade_view
         assert not default_trade_view["legendHidden"], default_trade_view
+        verify_chart_signal_preferences()
+
         assert len(initial["ids"]) == 6002 and "窗口已加载 6003笔" in initial["context"] and "价格视野外 1笔" in initial["context"], initial["context"]
         all_rows = dataset("ETHUSDT", "1m")[1]
         assert set(initial["ids"]) == {r["id"] for r in all_rows if r["price"] != 2800}

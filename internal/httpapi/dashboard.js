@@ -115,6 +115,11 @@ const historicalAlertView = {
   retryCount: 0,
   error: ''
 };
+const chartSignalPreferenceKeys = ['tvbot_signals', 'warning_signals', 'aggressive_signals', 'steady_signals', 'value_area_signals', 'actual_trades'];
+const chartSignalPreferences = Object.fromEntries(chartSignalPreferenceKeys.map(key => [key, true]));
+let chartSignalPreferencesUpdatedAt = 0;
+let chartSignalPreferenceSync = null;
+const pendingChartSignalPreferenceKeys = new Set();
 const historicalTradeRetryDelays = [2000, 5000, 15000, 30000];
 let refreshing = false;
 let refreshSequence = 0;
@@ -1465,10 +1470,22 @@ function draw(view, map, signal, volume) {
   const candleCountText = candles.length < chart.visibleCount ? 'K线 ' + candles.length + '/' + chart.visibleCount + '根' : 'K线 ' + chart.visibleCount + '根';
   const marketSourceText = view?.remote_syncing ? '本地K线 · Binance后台同步中' : view?.remote_sync_error ? '本地K线 · Binance同步失败，等待重试' : String(view?.source || '').includes('local') ? '本地K线' : '';
   if (!embeddedChart) renderLiquidationTop3(map, range);
-  $('trade-marker-legend').classList.toggle('hidden', !tradeView.enabled);
-  $('historical-signal-legend').classList.toggle('hidden', !(historicalSignalView.loaded && historicalSignalView.symbol === symbol && historicalSignalView.markers.length));
-  $('historical-alert-legend').classList.toggle('hidden', !(historicalAlertView.loaded && historicalAlertView.symbol === symbol && historicalAlertView.markers.some(marker => marker.phase === 'alert')));
-  $('historical-alert-signal-legend').classList.toggle('hidden', !(historicalAlertView.loaded && historicalAlertView.symbol === symbol && historicalAlertView.markers.some(marker => marker.phase === 'alert_signal')));
+  const visibleTradeRows = !embeddedChart && tradeView.enabled
+    ? window.BubbleChart.filterChartMarkers(tradeView.markers, chartSignalPreferences)
+    : [];
+  const visibleSignalRows = !embeddedChart && historicalSignalView.loaded && historicalSignalView.symbol === symbol
+    ? window.BubbleChart.filterChartMarkers(historicalSignalView.markers, chartSignalPreferences)
+    : [];
+  const visibleAlertRows = !embeddedChart && historicalAlertView.loaded && historicalAlertView.symbol === symbol
+    ? window.BubbleChart.filterChartMarkers(historicalAlertView.markers.filter(marker => marker.phase === 'alert'), chartSignalPreferences)
+    : [];
+  const visibleAlertSignalRows = !embeddedChart && historicalAlertView.loaded && historicalAlertView.symbol === symbol
+    ? window.BubbleChart.filterChartMarkers(historicalAlertView.markers.filter(marker => marker.phase === 'alert_signal'), chartSignalPreferences)
+    : [];
+  $('trade-marker-legend').classList.toggle('hidden', !visibleTradeRows.length);
+  $('historical-signal-legend').classList.toggle('hidden', !visibleSignalRows.length);
+  $('historical-alert-legend').classList.toggle('hidden', !visibleAlertRows.length);
+  $('historical-alert-signal-legend').classList.toggle('hidden', !visibleAlertSignalRows.length);
   bubbleHits = () => [];
   const state = bubbleLoader.state;
   $('bubble-retry').classList.toggle('hidden', state.status !== 'error');
@@ -1553,10 +1570,6 @@ function draw(view, map, signal, volume) {
   }
   const windowLiquidations = embeddedChart ? [] : window.BubbleChart.windowEvents(chart.liquidations, timeScale.start, timeScale.end).filter(event => event.notional_usd >= chart.liquidationMinimumUSD);
   const bubbles = embeddedChart ? { points: [], outside: 0 } : drawLiquidationBubbles(plot, windowLiquidations, range, timeScale, y, left, candleRight, top, plotBottom);
-  const visibleTradeRows = tradeView.enabled ? tradeView.markers : [];
-  const visibleSignalRows = !embeddedChart && historicalSignalView.loaded && historicalSignalView.symbol === symbol ? historicalSignalView.markers : [];
-  const visibleAlertRows = !embeddedChart && historicalAlertView.loaded && historicalAlertView.symbol === symbol ? historicalAlertView.markers.filter(marker => marker.phase === 'alert') : [];
-  const visibleAlertSignalRows = !embeddedChart && historicalAlertView.loaded && historicalAlertView.symbol === symbol ? historicalAlertView.markers.filter(marker => marker.phase === 'alert_signal') : [];
   const markerCounts = drawTradeMarkers(plot, [...visibleTradeRows, ...visibleSignalRows, ...visibleAlertRows, ...visibleAlertSignalRows], range, timeScale, y, left, candleRight, top, plotBottom);
   const tradeMarkers = markerCounts.trade;
   const signalMarkers = markerCounts.signal;
@@ -1570,12 +1583,12 @@ function draw(view, map, signal, volume) {
   const tradeText = tradeView.historyLoading && !tradeView.historyLoaded
     ? ' · 历史开平点加载中'
     : tradeView.enabled
-      ? ' · 历史开平点 ' + tradeExchangeSummary(tradeView.markers) + ' 共 ' + tradeView.markers.length + '个 · 屏内 ' + tradeMarkers.visible + '个 · 视野外 ' + tradeMarkers.outside + '个'
+      ? ' · 历史开平点 ' + tradeExchangeSummary(visibleTradeRows) + ' 共 ' + visibleTradeRows.length + '个 · 屏内 ' + tradeMarkers.visible + '个 · 视野外 ' + tradeMarkers.outside + '个'
       : '';
   const signalText = historicalSignalView.loading && historicalSignalView.symbol === symbol
     ? ' · TVBot历史信号加载中'
     : historicalSignalView.loaded && historicalSignalView.symbol === symbol
-      ? ' · TVBot历史信号 ' + historicalSignalView.markers.length + '条 · 屏内 ' + signalMarkers.visible + '组 · 视野外 ' + signalMarkers.outside + '组' + (historicalSignalView.truncated ? ' · 仅显示最近5000条' : '')
+      ? ' · TVBot历史信号 ' + visibleSignalRows.length + '条 · 屏内 ' + signalMarkers.visible + '组 · 视野外 ' + signalMarkers.outside + '组' + (historicalSignalView.truncated ? ' · 仅显示最近5000条' : '')
       : '';
   const alertText = historicalAlertView.loading && historicalAlertView.symbol === symbol
     ? ' · 最近30天报警与策略信号加载中 ' + historicalAlertView.rows.length + '/' + Math.min(400, historicalAlertView.total || 400) + '条'
@@ -1703,6 +1716,114 @@ function showFailures(failures) {
   if (historicalAlertView.error) all.push('历史报警信号 · ' + historicalAlertView.error);
   $('api-errors').textContent = all.length ? '数据接口异常：\n' + all.join('\n') : '';
   $('api-errors').classList.toggle('hidden', all.length === 0);
+}
+
+function setChartSignalPreferenceStatus(message, isError = false) {
+  const status = $('chart-signal-preference-status');
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle('error', isError);
+}
+
+function updateChartSignalPreferenceButtons() {
+  document.querySelectorAll('button[data-chart-signal-toggle]').forEach(button => {
+    const key = button.dataset.chartSignalToggle;
+    const enabled = chartSignalPreferences[key] !== false;
+    button.setAttribute('aria-pressed', String(enabled));
+    button.classList.toggle('active', enabled);
+    const saving = pendingChartSignalPreferenceKeys.has(key);
+    button.disabled = saving;
+    button.setAttribute('aria-busy', String(saving));
+    button.classList.toggle('is-saving', saving);
+  });
+}
+
+function applyChartSignalPreferences(payload) {
+  if (!payload || typeof payload !== 'object' || !Number.isFinite(Number(payload.updated_at)) ||
+      chartSignalPreferenceKeys.some(key => typeof payload[key] !== 'boolean')) return false;
+  const updatedAt = Number(payload.updated_at);
+  if (updatedAt < chartSignalPreferencesUpdatedAt) return true;
+  let changed = false;
+  chartSignalPreferenceKeys.forEach(key => {
+    if (pendingChartSignalPreferenceKeys.has(key) || chartSignalPreferences[key] === payload[key]) return;
+    chartSignalPreferences[key] = payload[key];
+    changed = true;
+  });
+  chartSignalPreferencesUpdatedAt = updatedAt;
+  updateChartSignalPreferenceButtons();
+  if (changed && cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+  return true;
+}
+
+async function syncChartSignalPreferences() {
+  if (embeddedChart || document.visibilityState !== 'visible') return;
+  if (chartSignalPreferenceSync) return chartSignalPreferenceSync;
+  chartSignalPreferenceSync = (async () => {
+    try {
+      const response = await fetch(api('user/chart-signal-preferences'), { cache: 'no-store', credentials: 'same-origin' });
+      if (response.status === 401) {
+        location.reload();
+        return;
+      }
+      let payload = null;
+      try { payload = await response.json(); } catch (_) { /* explained below */ }
+      if (!response.ok) throw new Error(payload?.detail || payload?.error || ('HTTP ' + response.status));
+      if (!applyChartSignalPreferences(payload)) throw new Error('返回的图表偏好格式无效');
+      if (!pendingChartSignalPreferenceKeys.size) {
+        const status = $('chart-signal-preference-status');
+        if (!status.textContent || status.textContent.startsWith('设置同步失败')) setChartSignalPreferenceStatus('设置已同步');
+      }
+    } catch (error) {
+      if (!pendingChartSignalPreferenceKeys.size) setChartSignalPreferenceStatus('设置同步失败，将自动重试：' + error.message, true);
+    } finally {
+      chartSignalPreferenceSync = null;
+    }
+  })();
+  return chartSignalPreferenceSync;
+}
+
+async function saveChartSignalPreference(key, button) {
+  if (!chartSignalPreferenceKeys.includes(key) || pendingChartSignalPreferenceKeys.has(key)) return;
+  const previous = chartSignalPreferences[key] !== false;
+  const enabled = !previous;
+  pendingChartSignalPreferenceKeys.add(key);
+  chartSignalPreferences[key] = enabled;
+  updateChartSignalPreferenceButtons();
+  setChartSignalPreferenceStatus('正在保存 ' + button.textContent.trim() + '…');
+  if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+  try {
+    const response = await fetch(api('user/chart-signal-preferences'), {
+      method: 'PATCH',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, enabled })
+    });
+    if (response.status === 401) {
+      location.reload();
+      return;
+    }
+    let payload = null;
+    try { payload = await response.json(); } catch (_) { /* explained below */ }
+    if (!response.ok) throw new Error(payload?.detail || payload?.error || ('HTTP ' + response.status));
+    if (!payload || typeof payload[key] !== 'boolean' || !Number.isFinite(Number(payload.updated_at))) throw new Error('返回的图表偏好格式无效');
+    const responseIsStale = Number(payload.updated_at) < chartSignalPreferencesUpdatedAt;
+    pendingChartSignalPreferenceKeys.delete(key);
+    if (!applyChartSignalPreferences(payload)) throw new Error('服务器返回了过期的图表偏好');
+    setChartSignalPreferenceStatus('设置已保存并同步');
+    if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+    if (responseIsStale) void syncChartSignalPreferences();
+  } catch (error) {
+    pendingChartSignalPreferenceKeys.delete(key);
+    chartSignalPreferences[key] = previous;
+    updateChartSignalPreferenceButtons();
+    setChartSignalPreferenceStatus('保存失败，已恢复原状态：' + error.message, true);
+    if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
+    void syncChartSignalPreferences();
+  } finally {
+    pendingChartSignalPreferenceKeys.delete(key);
+    updateChartSignalPreferenceButtons();
+  }
 }
 
 async function loadOlder(options = {}) {
@@ -2622,6 +2743,17 @@ updateMarketBackfillButton();
 if (!embeddedChart) installChartSizeControls();
 if (!embeddedChart) installChartInteractions();
 if (embeddedChart) installEmbeddedChartInteractions();
+if (!embeddedChart) {
+  updateChartSignalPreferenceButtons();
+  document.querySelectorAll('button[data-chart-signal-toggle]').forEach(button => {
+    button.addEventListener('click', () => saveChartSignalPreference(button.dataset.chartSignalToggle, button));
+  });
+  void syncChartSignalPreferences();
+  setInterval(() => { if (document.visibilityState === 'visible') void syncChartSignalPreferences(); }, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void syncChartSignalPreferences();
+  });
+}
 if (embeddedChart) refresh(true);
 else {
   loadHistoricalTradeView();

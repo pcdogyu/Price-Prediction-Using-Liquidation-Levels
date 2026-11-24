@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authn"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 )
 
 //go:embed admin.html
@@ -30,6 +31,8 @@ type adminUserStore interface {
 	SaveUserMenu(context.Context, string, []byte) error
 	LoadUserTheme(context.Context, string) (string, bool, error)
 	SaveUserTheme(context.Context, string, string) error
+	LoadUserChartSignalPreferences(context.Context, string) (store.UserChartSignalPreferences, error)
+	PatchUserChartSignalPreference(context.Context, string, string, bool) (store.UserChartSignalPreferences, error)
 }
 
 type adminMenuItem struct {

@@ -38,7 +38,7 @@ func (s *Store) databaseForTable(table string) *sql.DB {
 		return s.volume()
 	case "predictions", "backtests":
 		return s.models()
-	case "admin_menu", "user_menu", "user_theme", "background_symbol_snapshot":
+	case "admin_menu", "user_menu", "user_theme", "user_chart_signal_preferences", "background_symbol_snapshot":
 		return s.settings()
 	case "auth_sessions", "auth_users", "auth_audit":
 		return s.auth()

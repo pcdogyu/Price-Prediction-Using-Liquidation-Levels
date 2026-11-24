@@ -31,6 +31,12 @@ func TestOpenWithSettingsDatabaseRoutesUIAndBackgroundState(t *testing.T) {
 	if err := st.SaveUserTheme(ctx, "alice", "dark"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := st.PatchUserChartSignalPreference(ctx, "alice", "warning_signals", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.PatchUserChartSignalPreference(ctx, "bob", "steady_signals", false); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.SaveBackgroundSymbolSnapshot(ctx, domain.BackgroundSymbolSnapshot{Symbols: []domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1}}, TenantCount: 1, BaseCount: 1, RefreshedAt: time.UnixMilli(1_700_000_000_000).UTC()}); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +69,7 @@ func TestOpenWithSettingsDatabaseRoutesUIAndBackgroundState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer settingsDB.Close()
-	for _, table := range []string{"admin_menu", "user_menu", "background_symbol_snapshot"} {
+	for _, table := range []string{"admin_menu", "user_menu", "user_chart_signal_preferences", "background_symbol_snapshot"} {
 		var mainCount, settingsCount int
 		if err := mainDB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&mainCount); err != nil {
 			t.Fatal(err)
@@ -81,6 +87,23 @@ func TestOpenWithSettingsDatabaseRoutesUIAndBackgroundState(t *testing.T) {
 	}
 	if themeCount != 0 {
 		t.Fatalf("deleted user theme count=%d", themeCount)
+	}
+	var chartPreferenceCount int
+	if err := settingsDB.QueryRow("SELECT COUNT(*) FROM user_chart_signal_preferences").Scan(&chartPreferenceCount); err != nil {
+		t.Fatal(err)
+	}
+	if chartPreferenceCount != 1 {
+		t.Fatalf("remaining user chart preference count=%d", chartPreferenceCount)
+	}
+	var alicePreferenceCount int
+	if err := settingsDB.QueryRow("SELECT COUNT(*) FROM user_chart_signal_preferences WHERE username='alice'").Scan(&alicePreferenceCount); err != nil {
+		t.Fatal(err)
+	}
+	if alicePreferenceCount != 0 {
+		t.Fatalf("deleted user chart preference count=%d", alicePreferenceCount)
+	}
+	if preferences, err := st.LoadUserChartSignalPreferences(ctx, "bob"); err != nil || preferences.SteadySignals {
+		t.Fatalf("bob chart preferences=%+v err=%v", preferences, err)
 	}
 	var authTables int
 	if err := mainDB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='auth_users'").Scan(&authTables); err != nil {

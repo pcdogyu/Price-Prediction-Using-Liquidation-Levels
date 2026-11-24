@@ -75,6 +75,39 @@ test('stored alert history maps alarms and strategy signals separately from exec
   assert.ok(markers.every(item => item.actual_order === false));
 });
 
+test('chart marker preferences filter each signal and execution group independently', () => {
+  const markers = [
+    { id: 'tvbot', phase: 'signal' },
+    { id: 'warning', phase: 'alert' },
+    { id: 'aggressive', phase: 'alert_signal', kind: 'aggressive' },
+    { id: 'steady', phase: 'alert_signal', kind: 'steady' },
+    { id: 'value-area', phase: 'alert_signal', kind: 'value_area' },
+    { id: 'trade', phase: 'entry' }
+  ];
+  const enabled = {
+    tvbot_signals: true,
+    warning_signals: true,
+    aggressive_signals: true,
+    steady_signals: true,
+    value_area_signals: true,
+    actual_trades: true
+  };
+  assert.deepEqual(B.filterChartMarkers(markers, enabled), markers);
+  for (const [key, markerId] of [
+    ['tvbot_signals', 'tvbot'],
+    ['warning_signals', 'warning'],
+    ['aggressive_signals', 'aggressive'],
+    ['steady_signals', 'steady'],
+    ['value_area_signals', 'value-area'],
+    ['actual_trades', 'trade']
+  ]) {
+    const filtered = B.filterChartMarkers(markers, { ...enabled, [key]: false });
+    assert.equal(filtered.some(marker => marker.id === markerId), false, key);
+    assert.equal(filtered.length, markers.length - 1, key);
+  }
+  assert.equal(B.chartSignalPreferenceKey({ phase: 'alert_signal', kind: 'future_kind' }), 'value_area_signals');
+});
+
 test('historical signal markers collapse by direction and open/close intent', () => {
   const collapsed = B.collapseTradeMarkers([
     { id: 'open-1', time: 1000, price: 100, side: 'long', phase: 'signal', operation: 'open', status: 'submitted' },

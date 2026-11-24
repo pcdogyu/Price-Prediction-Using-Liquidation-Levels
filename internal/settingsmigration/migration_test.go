@@ -21,11 +21,13 @@ func TestMigrateUnifiedSQLiteCopiesOnlySettingsTables(t *testing.T) {
 CREATE TABLE admin_menu(id INTEGER PRIMARY KEY,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE user_menu(username TEXT PRIMARY KEY,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE user_theme(username TEXT PRIMARY KEY,theme TEXT NOT NULL,updated_ts INTEGER NOT NULL);
+CREATE TABLE user_chart_signal_preferences(username TEXT PRIMARY KEY,tvbot_signals INTEGER NOT NULL DEFAULT 1,warning_signals INTEGER NOT NULL DEFAULT 1,aggressive_signals INTEGER NOT NULL DEFAULT 1,steady_signals INTEGER NOT NULL DEFAULT 1,value_area_signals INTEGER NOT NULL DEFAULT 1,actual_trades INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE background_symbol_snapshot(id INTEGER PRIMARY KEY,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE auth_users(username TEXT PRIMARY KEY,password_hash TEXT NOT NULL);
 INSERT INTO admin_menu VALUES(1,'admin',1);
 INSERT INTO user_menu VALUES('alice','menu',2);
 INSERT INTO user_theme VALUES('alice','dark',3);
+INSERT INTO user_chart_signal_preferences VALUES('alice',1,0,1,1,1,1,4);
 INSERT INTO background_symbol_snapshot VALUES(1,'snapshot',4);
 INSERT INTO auth_users VALUES('not-copied','fixture');`)
 	if err != nil {

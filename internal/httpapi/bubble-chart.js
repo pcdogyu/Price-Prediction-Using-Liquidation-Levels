@@ -187,6 +187,25 @@
     return markers.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
   }
 
+  function chartSignalPreferenceKey(marker) {
+    if (!marker) return 'actual_trades';
+    if (marker.phase === 'signal') return 'tvbot_signals';
+    if (marker.phase === 'alert') return 'warning_signals';
+    if (marker.phase === 'alert_signal') {
+      if (marker.kind === 'aggressive') return 'aggressive_signals';
+      if (marker.kind === 'steady') return 'steady_signals';
+      return 'value_area_signals';
+    }
+    return 'actual_trades';
+  }
+
+  function filterChartMarkers(markers, preferences) {
+    return (Array.isArray(markers) ? markers : []).filter(marker => {
+      const key = chartSignalPreferenceKey(marker);
+      return !preferences || preferences[key] !== false;
+    });
+  }
+
   // A single candle can contain several fills for the same opening or closing
   // action. Keep one marker per phase and direction in that candle so the chart
   // describes the action without covering the candle with repeated labels.
@@ -469,7 +488,7 @@
     }
   }
 
-  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, normalizeSignalMarkers, normalizeAlertHistoryMarkers, collapseTradeMarkers, tradeMarkerLabel, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
+  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, normalizeSignalMarkers, normalizeAlertHistoryMarkers, chartSignalPreferenceKey, filterChartMarkers, collapseTradeMarkers, tradeMarkerLabel, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.BubbleChart = exported;
 })(typeof window === 'object' ? window : globalThis);

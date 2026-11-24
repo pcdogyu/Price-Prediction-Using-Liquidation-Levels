@@ -632,6 +632,7 @@ CREATE INDEX IF NOT EXISTS auth_audit_created ON auth_audit(created_ts DESC);
 CREATE TABLE IF NOT EXISTS admin_menu(id INTEGER PRIMARY KEY CHECK(id=1),payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS user_menu(username TEXT PRIMARY KEY,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS user_theme(username TEXT PRIMARY KEY,theme TEXT NOT NULL,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS user_chart_signal_preferences(username TEXT PRIMARY KEY,tvbot_signals INTEGER NOT NULL DEFAULT 1,warning_signals INTEGER NOT NULL DEFAULT 1,aggressive_signals INTEGER NOT NULL DEFAULT 1,steady_signals INTEGER NOT NULL DEFAULT 1,value_area_signals INTEGER NOT NULL DEFAULT 1,actual_trades INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS background_symbol_snapshot(id INTEGER PRIMARY KEY CHECK(id=1),payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
@@ -817,9 +818,15 @@ func (s *Store) DeleteAuthUser(ctx context.Context, username string) error {
 		if _, err := s.settings().ExecContext(ctx, `DELETE FROM user_theme WHERE username=?`, username); err != nil {
 			return err
 		}
+		if _, err := s.settings().ExecContext(ctx, `DELETE FROM user_chart_signal_preferences WHERE username=?`, username); err != nil {
+			return err
+		}
 	}
 	if s.authDB != nil && s.authDB != s.db && (s.settingsDB == nil || s.settingsDB == s.db) {
 		if _, err := s.settings().ExecContext(ctx, `DELETE FROM user_theme WHERE username=?`, username); err != nil {
+			return err
+		}
+		if _, err := s.settings().ExecContext(ctx, `DELETE FROM user_chart_signal_preferences WHERE username=?`, username); err != nil {
 			return err
 		}
 	}
@@ -833,6 +840,9 @@ func (s *Store) DeleteAuthUser(ctx context.Context, username string) error {
 	}
 	if (s.authDB == nil || s.authDB == s.db) && (s.settingsDB == nil || s.settingsDB == s.db) {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM user_theme WHERE username=?`, username); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM user_chart_signal_preferences WHERE username=?`, username); err != nil {
 			return err
 		}
 	}

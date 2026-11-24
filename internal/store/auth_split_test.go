@@ -35,6 +35,9 @@ func TestOpenWithAuthDatabaseRoutesAuthState(t *testing.T) {
 	if err := st.SaveUserTheme(ctx, "alice", "dark"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := st.PatchUserChartSignalPreference(ctx, "alice", "aggressive_signals", false); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.DeleteAuthUser(ctx, "alice"); err != nil {
 		t.Fatal(err)
 	}
@@ -74,8 +77,15 @@ func TestOpenWithAuthDatabaseRoutesAuthState(t *testing.T) {
 	if themeCount != 0 {
 		t.Fatalf("deleted user theme count=%d", themeCount)
 	}
+	var chartPreferenceCount int
+	if err := settingsDB.QueryRow("SELECT COUNT(*) FROM user_chart_signal_preferences").Scan(&chartPreferenceCount); err != nil {
+		t.Fatal(err)
+	}
+	if chartPreferenceCount != 0 {
+		t.Fatalf("deleted user chart preference count=%d", chartPreferenceCount)
+	}
 	var settingsUsers int
-	if err := authDB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='user_theme'").Scan(&settingsUsers); err != nil {
+	if err := authDB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('user_theme','user_chart_signal_preferences')").Scan(&settingsUsers); err != nil {
 		t.Fatal(err)
 	}
 	if settingsUsers != 0 {

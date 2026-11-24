@@ -16,7 +16,7 @@ import (
 // Tables is the explicit UI and background-state boundary for this split.
 // Authentication sessions, users, and audit records remain in the unified
 // database because they are security-critical state.
-var Tables = []string{"admin_menu", "user_menu", "user_theme", "background_symbol_snapshot"}
+var Tables = []string{"admin_menu", "user_menu", "user_theme", "user_chart_signal_preferences", "background_symbol_snapshot"}
 
 // MigrateUnifiedSQLite copies only UI and background-state tables from the
 // source database. The source is never modified and a committed marker makes

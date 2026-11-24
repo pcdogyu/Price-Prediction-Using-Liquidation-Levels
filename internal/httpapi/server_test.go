@@ -236,7 +236,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "69%价值区域内") || strings.Contains(w.Body.String(), "68%价值区域内") || strings.Contains(w.Body.String(), "70%价值区域内") {
 		t.Fatal("dashboard tooltip should report the 69% value area")
 	}
- if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "let symbol = 'ETHUSDT'") || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "volume-profile?symbol=") || !strings.Contains(w.Body.String(), "const baseMeta = document.querySelector('meta[name=\"app-base\"]')") || !strings.Contains(w.Body.String(), "new URL(baseMeta?.content || '/', window.location.origin)") || !strings.Contains(w.Body.String(), "coinglass-login/vnc.html") || !strings.Contains(w.Body.String(), "coinglass-login/websockify") || !strings.Contains(w.Body.String(), "coinglass/capture") || !strings.Contains(w.Body.String(), "coinglass/schedule") || !strings.Contains(w.Body.String(), "updateCoinGlassCountdown") || !strings.Contains(w.Body.String(), "captureCountdown") || !strings.Contains(w.Body.String(), "coinglass_binance_liqmap") || !strings.Contains(w.Body.String(), "top_long_liquidations") || !strings.Contains(w.Body.String(), "bin.leverage_usd") || !strings.Contains(w.Body.String(), "layoutRankLabels") || !strings.Contains(w.Body.String(), "drawLiquidationRankLabels") || !strings.Contains(w.Body.String(), "drawLiquidationBubbles") || !strings.Contains(w.Body.String(), "drawLiquidationBiasArrow") || !strings.Contains(w.Body.String(), "liquidation_above_usd") || !strings.Contains(w.Body.String(), "liquidation_below_usd") || !strings.Contains(w.Body.String(), "liquidation_direction") || !strings.Contains(w.Body.String(), "liquidationRadius") || !strings.Contains(w.Body.String(), "chartTimeScale") || !strings.Contains(w.Body.String(), "drawTimeGrid") || !strings.Contains(w.Body.String(), "const halfHour = 30 * 60 * 1000") || !strings.Contains(w.Body.String(), "defaultLiquidationMinimumUSD") || !strings.Contains(w.Body.String(), "defaultLiquidationLongOffset = 20") || !strings.Contains(w.Body.String(), "defaultLiquidationShortOffset = 20") || !strings.Contains(w.Body.String(), "installLiquidationControls") || !strings.Contains(w.Body.String(), "liquidationWallWidthScale = .9") || !strings.Contains(w.Body.String(), "window.BubbleChart.placements") || !strings.Contains(w.Body.String(), "mode = 'chart'") || !strings.Contains(w.Body.String(), "addEventListener('price'") || !strings.Contains(w.Body.String(), "applyPriceTick") || !strings.Contains(w.Body.String(), "aggTrade 实时") || !strings.Contains(w.Body.String(), "addEventListener('liquidation'") || !strings.Contains(w.Body.String(), "rankLabelRight") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") || strings.Contains(w.Body.String(), "signal?.upper_wall?.price") || strings.Contains(w.Body.String(), "signal?.lower_wall?.price") || strings.Contains(w.Body.String(), "Math.round(i * (candles.length - 1) / 4)") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "let symbol = 'ETHUSDT'") || !strings.Contains(w.Body.String(), "new URL('api/v1/'") || !strings.Contains(w.Body.String(), "volume-profile?symbol=") || !strings.Contains(w.Body.String(), "const baseMeta = document.querySelector('meta[name=\"app-base\"]')") || !strings.Contains(w.Body.String(), "new URL(baseMeta?.content || '/', window.location.origin)") || !strings.Contains(w.Body.String(), "coinglass-login/vnc.html") || !strings.Contains(w.Body.String(), "coinglass-login/websockify") || !strings.Contains(w.Body.String(), "coinglass/capture") || !strings.Contains(w.Body.String(), "coinglass/schedule") || !strings.Contains(w.Body.String(), "updateCoinGlassCountdown") || !strings.Contains(w.Body.String(), "captureCountdown") || !strings.Contains(w.Body.String(), "coinglass_binance_liqmap") || !strings.Contains(w.Body.String(), "top_long_liquidations") || !strings.Contains(w.Body.String(), "bin.leverage_usd") || !strings.Contains(w.Body.String(), "layoutRankLabels") || !strings.Contains(w.Body.String(), "drawLiquidationRankLabels") || !strings.Contains(w.Body.String(), "drawLiquidationBubbles") || !strings.Contains(w.Body.String(), "drawLiquidationBiasArrow") || !strings.Contains(w.Body.String(), "liquidation_above_usd") || !strings.Contains(w.Body.String(), "liquidation_below_usd") || !strings.Contains(w.Body.String(), "liquidation_direction") || !strings.Contains(w.Body.String(), "liquidationRadius") || !strings.Contains(w.Body.String(), "chartTimeScale") || !strings.Contains(w.Body.String(), "drawTimeGrid") || !strings.Contains(w.Body.String(), "const halfHour = 30 * 60 * 1000") || !strings.Contains(w.Body.String(), "defaultLiquidationMinimumUSD") || !strings.Contains(w.Body.String(), "defaultLiquidationLongOffset = 20") || !strings.Contains(w.Body.String(), "defaultLiquidationShortOffset = 20") || !strings.Contains(w.Body.String(), "installLiquidationControls") || !strings.Contains(w.Body.String(), "liquidationWallWidthScale = .9") || !strings.Contains(w.Body.String(), "window.BubbleChart.placements") || !strings.Contains(w.Body.String(), "mode = 'chart'") || !strings.Contains(w.Body.String(), "addEventListener('price'") || !strings.Contains(w.Body.String(), "applyPriceTick") || !strings.Contains(w.Body.String(), "aggTrade 实时") || !strings.Contains(w.Body.String(), "addEventListener('liquidation'") || !strings.Contains(w.Body.String(), "rankLabelRight") || !strings.Contains(w.Body.String(), "addEventListener('wheel'") || !strings.Contains(w.Body.String(), "pointerdown") || strings.Contains(w.Body.String(), "signal?.upper_wall?.price") || strings.Contains(w.Body.String(), "signal?.lower_wall?.price") || strings.Contains(w.Body.String(), "Math.round(i * (candles.length - 1) / 4)") {
 		t.Fatalf("dashboard asset status=%d", w.Code)
 	}
 	r = httptest.NewRequest(http.MethodGet, "/assets/dashboard.js", nil)
@@ -598,5 +598,100 @@ func TestUserThemeRequiresAuthentication(t *testing.T) {
 	srv.http.Handler.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated/no-auth theme status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestUserChartSignalPreferencesAPIIsUserScopedAndPatchable(t *testing.T) {
+	const adminPassword = "admin-chart-signal-password"
+	adminHash, err := authn.HashPassword(adminPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := config.Config{BasePath: "/liquidation/", AuthUsername: "pcdog", AuthPasswordHash: adminHash}
+	srv, st := testService(t, cfg, logger, nil)
+	defer st.Close()
+
+	login := func(username, password string) *http.Cookie {
+		t.Helper()
+		form := url.Values{"username": {username}, "password": {password}}
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(w, r)
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("login status=%d body=%s", w.Code, w.Body.String())
+		}
+		for _, cookie := range w.Result().Cookies() {
+			if cookie.Name == sessionCookie {
+				return cookie
+			}
+		}
+		t.Fatal("chart signal preference test login did not return a session cookie")
+		return nil
+	}
+	adminSession := login("pcdog", adminPassword)
+	request := func(method, body string, session *http.Cookie) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, "/api/v1/user/chart-signal-preferences", strings.NewReader(body))
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		if session != nil {
+			r.AddCookie(session)
+		}
+		w := httptest.NewRecorder()
+		srv.http.Handler.ServeHTTP(w, r)
+		return w
+	}
+	decode := func(w *httptest.ResponseRecorder) store.UserChartSignalPreferences {
+		t.Helper()
+		var preferences store.UserChartSignalPreferences
+		if err := json.Unmarshal(w.Body.Bytes(), &preferences); err != nil {
+			t.Fatalf("decode preferences: %v body=%s", err, w.Body.String())
+		}
+		return preferences
+	}
+
+	defaultResponse := request(http.MethodGet, "", adminSession)
+	defaults := decode(defaultResponse)
+	if defaultResponse.Code != http.StatusOK || !defaults.TVBotSignals || !defaults.WarningSignals || !defaults.AggressiveSignals || !defaults.SteadySignals || !defaults.ValueAreaSignals || !defaults.ActualTrades || defaults.UpdatedAt != 0 {
+		t.Fatalf("default preferences status=%d prefs=%+v body=%s", defaultResponse.Code, defaults, defaultResponse.Body.String())
+	}
+	patched := request(http.MethodPatch, `{"key":"aggressive_signals","enabled":false}`, adminSession)
+	adminPreferences := decode(patched)
+	if patched.Code != http.StatusOK || adminPreferences.AggressiveSignals || !adminPreferences.SteadySignals || adminPreferences.UpdatedAt == 0 {
+		t.Fatalf("patch preferences status=%d prefs=%+v body=%s", patched.Code, adminPreferences, patched.Body.String())
+	}
+	for _, body := range []string{`{"key":"unknown","enabled":false}`, `{"key":"steady_signals"}`, `{"key":"steady_signals","enabled":1}`, `{"key":"steady_signals","enabled":true,"username":"other"}`} {
+		if response := request(http.MethodPatch, body, adminSession); response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid patch %s status=%d body=%s", body, response.Code, response.Body.String())
+		}
+	}
+	if response := request(http.MethodGet, "", nil); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := request(http.MethodPost, "", adminSession); response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("invalid method status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	const otherPassword = "other-chart-signal-password"
+	otherHash, err := authn.HashPassword(otherPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.CreateAuthUser(context.Background(), "other", otherHash, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if err = srv.auth.ReloadUsers(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	otherSession := login("other", otherPassword)
+	otherDefaults := request(http.MethodGet, "", otherSession)
+	if preferences := decode(otherDefaults); otherDefaults.Code != http.StatusOK || !preferences.AggressiveSignals {
+		t.Fatalf("other user preferences status=%d prefs=%+v", otherDefaults.Code, preferences)
+	}
+	if preferences := decode(request(http.MethodGet, "", adminSession)); preferences.AggressiveSignals {
+		t.Fatalf("admin preference changed by another user: %+v", preferences)
 	}
 }
