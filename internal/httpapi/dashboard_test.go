@@ -322,7 +322,7 @@ func TestBubbleChartHasManualChartHeightControls(t *testing.T) {
 	if strings.Contains(string(dashboardJS), "K线形态") || strings.Contains(body, "△ 形态") || strings.Contains(body, "空心箭头为K线形态") {
 		t.Fatal("bubble chart should not display candlestick pattern labels")
 	}
-	for _, marker := range []string{"开多</b>", "开空</b>", "平多</b>", "平空</b>", "止盈多/空", "止损多/空", "持仓中"} {
+	for _, marker := range []string{"Long</b>", "Short</b>", "平多</b>", "平空</b>", "TP Long/Short", "SL Long/Short", "持仓中"} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("bubble chart legend missing historical trade label %q", marker)
 		}

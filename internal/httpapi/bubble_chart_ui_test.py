@@ -421,10 +421,12 @@ with sync_playwright() as playwright:
           context: document.getElementById('chart-context').textContent,
           labels: Array.from(document.querySelectorAll('[data-trade-marker] text'), e => e.textContent),
           tips: Array.from(document.querySelectorAll('[data-trade-marker]'), e => e.dataset.tip),
+          legend: document.getElementById('trade-marker-legend').textContent,
           legendHidden: document.getElementById('trade-marker-legend').classList.contains('hidden')
         })""")
         assert default_trade_view["count"] == 5 and "历史开平点" in default_trade_view["context"], default_trade_view
         assert set(default_trade_view["labels"]) == {"Long", "Short", "TP Long", "SL Short"}, default_trade_view
+        assert all(label in default_trade_view["legend"] for label in ("Long", "Short", "平多", "平空", "TP Long/Short", "SL Long/Short")), default_trade_view
         assert any("Binance 下单信息" in tip for tip in default_trade_view["tips"]) and any("Gate 下单信息" in tip for tip in default_trade_view["tips"]), default_trade_view
         assert any("状态 持仓中" in tip for tip in default_trade_view["tips"]), default_trade_view
         assert any("成交监听" in tip for tip in default_trade_view["tips"]), default_trade_view
