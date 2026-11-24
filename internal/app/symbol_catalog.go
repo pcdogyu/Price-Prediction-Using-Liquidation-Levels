@@ -12,6 +12,11 @@ const symbolCatalogTTL = 5 * time.Minute
 
 var fetchDashboardSymbols = exchange.BinanceUSDTPerpetualSymbols
 
+// Binance's USDⓈ-M catalog can omit TradFi perpetuals from exchangeInfo on
+// some routes. Keep explicitly supported contracts selectable in the bubble
+// dashboard even when they are absent from that response.
+var additionalDashboardSymbols = []exchange.ContractSymbol{{Symbol: "BSPUSDT", BaseAsset: "BSP"}}
+
 // DashboardSymbolCatalog is the exchange-wide selector data used by the
 // bubble page. It is intentionally separate from Config.Symbols: the latter
 // controls continuous collection and model work, while this catalog only
@@ -28,7 +33,7 @@ func (s *Service) DashboardSymbolCatalog(ctx context.Context) (DashboardSymbolCa
 	now := time.Now().UTC()
 	s.symbolCatalogMu.Lock()
 	if len(s.symbolCatalog) > 0 && now.Sub(s.symbolCatalogAt) < symbolCatalogTTL {
-		result := DashboardSymbolCatalog{Symbols: cloneContractSymbols(s.symbolCatalog), Source: "binance_usdm_exchange_info", RefreshedAt: s.symbolCatalogAt}
+		result := DashboardSymbolCatalog{Symbols: mergeDashboardSymbols(s.symbolCatalog), Source: "binance_usdm_exchange_info+local_overrides", RefreshedAt: s.symbolCatalogAt}
 		s.symbolCatalogMu.Unlock()
 		return result, nil
 	}
@@ -40,19 +45,45 @@ func (s *Service) DashboardSymbolCatalog(ctx context.Context) (DashboardSymbolCa
 	rows, err := fetchDashboardSymbols(fetchCtx)
 	cancel()
 	if err == nil {
+		rows = mergeDashboardSymbols(rows)
 		s.symbolCatalogMu.Lock()
 		s.symbolCatalog = cloneContractSymbols(rows)
 		s.symbolCatalogAt = now
 		s.symbolCatalogMu.Unlock()
-		return DashboardSymbolCatalog{Symbols: rows, Source: "binance_usdm_exchange_info", RefreshedAt: now}, nil
+		return DashboardSymbolCatalog{Symbols: rows, Source: "binance_usdm_exchange_info+local_overrides", RefreshedAt: now}, nil
 	}
 	if len(previous) > 0 {
 		if s.log != nil {
 			s.log.Warn("Binance symbol catalog refresh failed; serving stale catalog", "error", err)
 		}
-		return DashboardSymbolCatalog{Symbols: previous, Source: "binance_usdm_exchange_info_stale", RefreshedAt: previousAt}, nil
+		return DashboardSymbolCatalog{Symbols: mergeDashboardSymbols(previous), Source: "binance_usdm_exchange_info_stale+local_overrides", RefreshedAt: previousAt}, nil
+	}
+	if len(additionalDashboardSymbols) > 0 {
+		return DashboardSymbolCatalog{Symbols: mergeDashboardSymbols(nil), Source: "local_overrides", RefreshedAt: now}, nil
 	}
 	return DashboardSymbolCatalog{}, err
+}
+
+func mergeDashboardSymbols(rows []exchange.ContractSymbol) []exchange.ContractSymbol {
+	merged := cloneContractSymbols(rows)
+	seen := make(map[string]struct{}, len(merged)+len(additionalDashboardSymbols))
+	for _, row := range merged {
+		seen[strings.ToUpper(strings.TrimSpace(row.Symbol))] = struct{}{}
+	}
+	for _, row := range additionalDashboardSymbols {
+		symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
+		if symbol == "" {
+			continue
+		}
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+		row.Symbol = symbol
+		row.BaseAsset = strings.ToUpper(strings.TrimSpace(row.BaseAsset))
+		merged = append(merged, row)
+		seen[symbol] = struct{}{}
+	}
+	return merged
 }
 
 // DashboardSymbolSupported validates an on-demand chart selection against the
