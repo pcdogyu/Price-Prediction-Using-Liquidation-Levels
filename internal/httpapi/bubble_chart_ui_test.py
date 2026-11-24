@@ -110,7 +110,7 @@ with sync_playwright() as playwright:
         page.wait_for_function("() => document.getElementById('chart-signal-preference-status')?.textContent.startsWith('设置已同步')", timeout=30000)
         assert page.locator("button[data-chart-preference-toggle]").count() == len(chart_preference_keys)
         assert page.locator("#alternate-symbol-shortcuts button[data-symbol]").all_text_contents() == ["SOL", "XRP", "ZEC", "BNB", "HYPE"]
-        assert len(page.locator("#alternate-symbol-shortcuts").evaluate("node => getComputedStyle(node).gridTemplateColumns.split(' ').length")) == 3
+        assert page.locator("#alternate-symbol-shortcuts").evaluate("node => getComputedStyle(node).gridTemplateColumns.split(' ').length") == 3
         if signal_preferences_only:
             preference_button = page.locator('button[data-chart-preference-toggle="aggressive_signals"]')
             original_preference = preference_button.get_attribute("aria-pressed")
@@ -124,12 +124,14 @@ with sync_playwright() as playwright:
                 preference_button.click()
                 toggled_preference = "false" if original_preference == "true" else "true"
                 expect(preference_button).to_have_attribute("aria-pressed", toggled_preference)
+                expect(preference_button).to_have_attribute("aria-busy", "false", timeout=12000)
                 synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
                 expect(synchronized_button).to_have_attribute("aria-pressed", toggled_preference, timeout=12000)
             finally:
                 if preference_button.is_visible() and preference_button.get_attribute("aria-pressed") != original_preference:
                     preference_button.click()
                     expect(preference_button).to_have_attribute("aria-pressed", original_preference, timeout=12000)
+                    expect(preference_button).to_have_attribute("aria-busy", "false", timeout=12000)
                     synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
                     expect(synchronized_button).to_have_attribute("aria-pressed", original_preference, timeout=12000)
                 synchronized_page.close()
@@ -150,10 +152,12 @@ with sync_playwright() as playwright:
             preference_button.click()
             toggled_preference = "false" if original_preference == "true" else "true"
             expect(preference_button).to_have_attribute("aria-pressed", toggled_preference)
+            expect(preference_button).to_have_attribute("aria-busy", "false", timeout=12000)
             synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
             expect(synchronized_button).to_have_attribute("aria-pressed", toggled_preference, timeout=12000)
             preference_button.click()
             expect(preference_button).to_have_attribute("aria-pressed", original_preference)
+            expect(preference_button).to_have_attribute("aria-busy", "false", timeout=12000)
             synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
             expect(synchronized_button).to_have_attribute("aria-pressed", original_preference, timeout=12000)
         finally:
@@ -432,6 +436,7 @@ with sync_playwright() as playwright:
         assert steady_text_fill not in (None, "#07141d"), {"steady_text_fill": steady_text_fill, "steady_markers": page.locator('[data-alert-signal-marker][data-marker-kind="steady"]').count()}
 
         alternate = page.locator('#alternate-symbol-shortcuts button[data-symbol="SOLUSDT"]')
+        assert page.locator("#alternate-symbol-shortcuts").evaluate("node => getComputedStyle(node).gridTemplateColumns.split(' ').length") == 3
         alternate.click()
         expect(page.locator("#ticker-symbol")).to_contain_text("SOLUSDT")
         primary = page.locator('#primary-symbol-shortcuts button[data-symbol="ETHUSDT"]')
