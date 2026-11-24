@@ -201,6 +201,7 @@
       }
       const bucket = Math.floor(marker.time / step) * step;
       const key = bucket + ':' + marker.phase + ':' + marker.side +
+        (['entry', 'exit'].includes(marker.phase) ? ':' + (marker.actual_order === true ? 'actual' : 'unverified') : '') +
         (marker.phase === 'signal' ? ':' + marker.operation : '') +
         (marker.phase === 'alert_signal' ? ':' + marker.kind + ':' + marker.operation : '');
       const existing = groups.get(key);
@@ -224,16 +225,19 @@
 
   function tradeMarkerLabel(marker) {
     const side = marker && marker.side === 'short' ? '空' : '多';
+    const englishSide = marker && marker.side === 'short' ? 'Short' : 'Long';
     if (marker && marker.phase === 'signal') return (marker.operation === 'close' ? '信平' : '信开') + side;
     if (marker && marker.phase === 'alert') return '预警' + side;
     if (marker && marker.phase === 'alert_signal') {
       const kind = { aggressive: '激', steady: '稳', value_area: '区' }[marker.kind] || '信';
       return kind + (marker.operation === 'close' ? '平' : '') + side;
     }
-    if (!marker || marker.phase !== 'exit') return '开' + side;
+    if (!marker || marker.phase !== 'exit') {
+      return marker && marker.phase === 'entry' && marker.actual_order === true ? englishSide : '开' + side;
+    }
     switch (String(marker.operation || 'close').toLowerCase()) {
-      case 'take_profit': return '止盈' + side;
-      case 'stop_loss': return '止损' + side;
+      case 'take_profit': return marker.actual_order === true ? 'TP ' + englishSide : '止盈' + side;
+      case 'stop_loss': return marker.actual_order === true ? 'SL ' + englishSide : '止损' + side;
       default: return '平' + side;
     }
   }

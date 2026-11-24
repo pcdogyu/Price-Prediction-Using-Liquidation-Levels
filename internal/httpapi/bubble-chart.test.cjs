@@ -92,7 +92,7 @@ test('historical signal markers collapse by direction and open/close intent', ()
   assert.equal(placements.markers[0].labelText, '信开多×2');
 });
 
-test('trade markers preserve take-profit, stop-loss and manual/automatic labels', () => {
+test('unverified trade markers preserve localized take-profit and stop-loss labels', () => {
   const markers = B.normalizeTradeMarkers([
     { row_key: 'tp', inst_id: 'ETHUSDT', side: 'long', entry_operation: 'open', entry_operation_source: 'auto', exit_operation: 'take_profit', exit_operation_source: 'monitor', entry_time: '', entry_px: '', exit_time: '2026-01-01T01:00:00Z', exit_px: 2100 },
     { row_key: 'sl', inst_id: 'ETHUSDT', side: 'short', entry_operation: 'open', entry_operation_source: 'manual', exit_operation: 'stop_loss', exit_operation_source: 'manual', entry_time: '', entry_px: '', exit_time: '2026-01-01T02:00:00Z', exit_px: 2200 }
@@ -101,6 +101,18 @@ test('trade markers preserve take-profit, stop-loss and manual/automatic labels'
   assert.deepEqual(markers.map(item => [item.operation, item.operation_source]), [['take_profit', 'monitor'], ['stop_loss', 'manual']]);
   assert.equal(layout.markers[0].labelText, '止盈多');
   assert.equal(layout.markers[1].labelText, '止损空');
+});
+
+test('actual trade exits use TP and SL labels with their position side', () => {
+  const markers = B.normalizeTradeMarkers([
+    { row_key: 'tp-long', inst_id: 'ETHUSDT', side: 'long', exit_operation: 'take_profit', exit_time: '2026-01-01T01:00:00Z', exit_px: 2100, exit_ord_id: 'tp-long-order' },
+    { row_key: 'tp-short', inst_id: 'ETHUSDT', side: 'short', exit_operation: 'take_profit', exit_time: '2026-01-01T02:00:00Z', exit_px: 2200, exit_ord_id: 'tp-short-order' },
+    { row_key: 'sl-long', inst_id: 'ETHUSDT', side: 'long', exit_operation: 'stop_loss', exit_time: '2026-01-01T03:00:00Z', exit_px: 2300, exit_ord_id: 'sl-long-order' },
+    { row_key: 'sl-short', inst_id: 'ETHUSDT', side: 'short', exit_operation: 'stop_loss', exit_time: '2026-01-01T04:00:00Z', exit_px: 2400, exit_ord_id: 'sl-short-order' },
+    { row_key: 'close-long', inst_id: 'ETHUSDT', side: 'long', exit_operation: 'close', exit_time: '2026-01-01T05:00:00Z', exit_px: 2500, exit_ord_id: 'close-long-order' }
+  ], 'ETHUSDT');
+  assert.ok(markers.every(marker => marker.actual_order));
+  assert.deepEqual(markers.map(B.tradeMarkerLabel), ['TP Long', 'TP Short', 'SL Long', 'SL Short', '平多']);
 });
 
 test('collapseTradeMarkers shows one opening or closing action per direction and candle', () => {
@@ -132,11 +144,23 @@ test('collapseTradeMarkers shows one opening or closing action per direction and
 test('opening markers use direction labels below long and above short candles', () => {
   const firstAt = Date.parse('2026-01-01T00:00:00Z');
   const markers = B.normalizeTradeMarkers([
-    { row_key: 'long-entry', inst_id: 'ETHUSDT', side: 'long', entry_time: firstAt, entry_px: 2000 },
-    { row_key: 'short-entry', inst_id: 'ETHUSDT', side: 'short', entry_time: '2026-01-01T01:00:00Z', entry_px: 2100 }
+    { row_key: 'long-entry', inst_id: 'ETHUSDT', side: 'long', entry_time: firstAt, entry_px: 2000, entry_ord_id: 'long-entry-order' },
+    { row_key: 'short-entry', inst_id: 'ETHUSDT', side: 'short', entry_time: '2026-01-01T01:00:00Z', entry_px: 2100, entry_ord_id: 'short-entry-order' }
   ], 'ETHUSDT');
   const layout = B.tradeMarkerPlacements(markers, [1900, 2200], { start: 0, end: Date.parse('2026-01-01T02:00:00Z'), x: at => 50 + (at - firstAt) / 3600000 * 100 }, price => (2200 - price) / 2, { left: 0, right: 300, top: 0, bottom: 300 });
-  assert.deepEqual(layout.markers.map(item => [item.labelText, item.labelBelow, item.labelX]), [['开多', true, 50], ['开空', false, 150]]);
+  assert.deepEqual(layout.markers.map(item => [item.labelText, item.labelBelow, item.labelX]), [['Long', true, 50], ['Short', false, 150]]);
+});
+
+test('collapseTradeMarkers does not merge actual and unverified fills', () => {
+  const markers = B.normalizeTradeMarkers([
+    { row_key: 'actual-entry', inst_id: 'ETHUSDT', side: 'long', entry_time: '2026-01-01T00:01:00Z', entry_px: 2000, entry_ord_id: 'actual-entry-order' },
+    { row_key: 'unverified-entry', inst_id: 'ETHUSDT', side: 'long', entry_time: '2026-01-01T00:02:00Z', entry_px: 2001 }
+  ], 'ETHUSDT');
+  const collapsed = B.collapseTradeMarkers(markers, 5 * 60 * 1000);
+  assert.deepEqual(collapsed.map(marker => [marker.actual_order, marker.collapsed_count, B.tradeMarkerLabel(marker)]), [
+    [true, 1, 'Long'],
+    [false, 1, '开多']
+  ]);
 });
 
 test('open position markers keep the entry operation and holding state', () => {

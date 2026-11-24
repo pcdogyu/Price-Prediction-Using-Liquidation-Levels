@@ -398,7 +398,7 @@ with sync_playwright() as playwright:
       signalLegendHidden: document.getElementById('historical-signal-legend').classList.contains('hidden'),
       error: document.getElementById('api-errors').textContent
     })""")
-    assert set(trade_view_status["labels"]).issubset({"开多", "开空", "平多", "平空", "止盈多", "止盈空", "止损多", "止损空"}), trade_view_status
+    assert set(trade_view_status["labels"]).issubset({"Long", "Short", "TP Long", "TP Short", "SL Long", "SL Short", "开多", "开空", "平多", "平空", "止盈多", "止盈空", "止损多", "止损空"}), trade_view_status
     assert "历史开平点" in trade_view_status["context"] or "历史交易点" in trade_view_status["error"], trade_view_status
     if trade_view_status["count"]:
         assert not trade_view_status["legendHidden"], trade_view_status
@@ -424,7 +424,7 @@ with sync_playwright() as playwright:
           legendHidden: document.getElementById('trade-marker-legend').classList.contains('hidden')
         })""")
         assert default_trade_view["count"] == 5 and "历史开平点" in default_trade_view["context"], default_trade_view
-        assert set(default_trade_view["labels"]) == {"开多", "开空", "止盈多", "止损空"}, default_trade_view
+        assert set(default_trade_view["labels"]) == {"Long", "Short", "TP Long", "SL Short"}, default_trade_view
         assert any("Binance 下单信息" in tip for tip in default_trade_view["tips"]) and any("Gate 下单信息" in tip for tip in default_trade_view["tips"]), default_trade_view
         assert any("状态 持仓中" in tip for tip in default_trade_view["tips"]), default_trade_view
         assert any("成交监听" in tip for tip in default_trade_view["tips"]), default_trade_view
