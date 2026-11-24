@@ -333,7 +333,7 @@ func TestAlertOverviewShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := packet.Data
-	if view.Thresholds.WindowMinutes != 3 || view.Thresholds.QuietMinutes != 10 || view.Thresholds.ConfirmMinutes != 30 {
+	if view.Thresholds.WindowMinutes != 10 || view.Thresholds.QuietMinutes != 10 || view.Thresholds.ConfirmMinutes != 30 {
 		t.Fatalf("the strategy periods must be published: %+v", view.Thresholds)
 	}
 	if view.Thresholds.BTCUSD != 300000 || view.Thresholds.ETHUSD != 200000 || view.Thresholds.OtherUSD != 100000 {
@@ -364,7 +364,7 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 	defer st.Close()
 
 	initial := serveAlert(srv, http.MethodGet, "/api/v1/alerts/strategy-settings", nil)
-	if initial.Code != http.StatusOK || !strings.Contains(initial.Body.String(), `"window_minutes":3`) || !strings.Contains(initial.Body.String(), `"eth_usd":200000`) || !strings.Contains(initial.Body.String(), `"other_usd":100000`) || !strings.Contains(initial.Body.String(), `"vwap_filter_enabled":true`) || !strings.Contains(initial.Body.String(), `"donchian_filter_enabled":true`) || !strings.Contains(initial.Body.String(), `"block_open_0800_0900":true`) || !strings.Contains(initial.Body.String(), `"block_open_1600_1700":true`) || !strings.Contains(initial.Body.String(), `"block_open_2130_2230":true`) || !strings.Contains(initial.Body.String(), `"value_area_start_minute":1200`) || !strings.Contains(initial.Body.String(), `"value_area_end_minute":1440`) {
+	if initial.Code != http.StatusOK || !strings.Contains(initial.Body.String(), `"window_minutes":10`) || !strings.Contains(initial.Body.String(), `"eth_usd":200000`) || !strings.Contains(initial.Body.String(), `"other_usd":100000`) || !strings.Contains(initial.Body.String(), `"vwap_filter_enabled":true`) || !strings.Contains(initial.Body.String(), `"donchian_filter_enabled":true`) || !strings.Contains(initial.Body.String(), `"block_open_0800_0900":true`) || !strings.Contains(initial.Body.String(), `"block_open_1600_1700":true`) || !strings.Contains(initial.Body.String(), `"block_open_2130_2230":true`) || !strings.Contains(initial.Body.String(), `"value_area_start_minute":1200`) || !strings.Contains(initial.Body.String(), `"value_area_end_minute":1440`) {
 		t.Fatalf("default strategy settings status=%d body=%s", initial.Code, initial.Body.String())
 	}
 	saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":5,"btc_usd":300000,"eth_usd":200000,"other_usd":100000,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30,"vwap_filter_enabled":false,"donchian_filter_enabled":true,"block_open_0800_0900":false,"block_open_1600_1700":true,"block_open_2130_2230":false,"value_area_start_minute":1080,"value_area_end_minute":1320}`))
@@ -602,6 +602,14 @@ func TestAlertHistoryEndpoints(t *testing.T) {
 	var storedTimeline domain.AlertTimelinePage
 	if storedTimelinePage.Code != http.StatusOK || json.Unmarshal(storedTimelinePage.Body.Bytes(), &storedTimeline) != nil || len(storedTimeline.Rows) != 8 || storedTimeline.TotalCount != 8 {
 		t.Fatalf("stored timeline page status=%d body=%s page=%+v", storedTimelinePage.Code, storedTimelinePage.Body.String(), storedTimeline)
+	}
+	storedTimelineWidePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?stored=1&limit=5000", nil)
+	if storedTimelineWidePage.Code != http.StatusOK {
+		t.Fatalf("wide stored timeline page status=%d body=%s", storedTimelineWidePage.Code, storedTimelineWidePage.Body.String())
+	}
+	regularTimelineWidePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?limit=5000", nil)
+	if regularTimelineWidePage.Code != http.StatusBadRequest {
+		t.Fatalf("regular timeline limit should remain bounded at 200, got %d", regularTimelineWidePage.Code)
 	}
 	smallTimelinePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?limit=1", nil)
 	var smallTimeline domain.AlertTimelinePage

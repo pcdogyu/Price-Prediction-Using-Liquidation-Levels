@@ -577,8 +577,8 @@
     const valueAreaEnd = $('alerts-value-area-end');
     if (document.activeElement !== valueAreaStart) valueAreaStart.value = minuteText(settings.value_area_start_minute);
     if (document.activeElement !== valueAreaEnd) valueAreaEnd.value = minuteText(settings.value_area_end_minute);
-    $('alerts-monitor-window').textContent = settings.window_minutes || 3;
-    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 50) + ' 币对 · ' + (settings.window_minutes || 3) + ' 分钟爆仓预警 · 激进 / 稳健 / 交易所刷单下单信号';
+    $('alerts-monitor-window').textContent = settings.window_minutes || 10;
+    $('alerts-subtitle').textContent = '成交额前 ' + (settings.top_symbols || 50) + ' 币对 · ' + (settings.window_minutes || 10) + ' 分钟爆仓预警 · 激进 / 稳健 / 交易所刷单下单信号';
     if (!strategyLoaded) strategyLoaded = true;
   }
 

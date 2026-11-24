@@ -136,7 +136,7 @@ func Load() Config {
 		MarketInfoInterval:       envDuration("APP_MARKET_INFO_INTERVAL", time.Minute),
 		MarketFetchConcurrency:   envInt("APP_MARKET_FETCH_CONCURRENCY", 5),
 		AlertTopSymbols:          envInt("APP_ALERT_TOP_SYMBOLS", domain.AlertTopSymbolsDefault),
-		AlertWindow:              envDuration("APP_ALERT_WINDOW", 3*time.Minute),
+		AlertWindow:              envDuration("APP_ALERT_WINDOW", 10*time.Minute),
 		AlertQuiet:               envDuration("APP_ALERT_QUIET", 10*time.Minute),
 		AlertConfirm:             envDuration("APP_ALERT_CONFIRM", 30*time.Minute),
 		AlertRefresh:             envDuration("APP_ALERT_REFRESH", 10*time.Minute),

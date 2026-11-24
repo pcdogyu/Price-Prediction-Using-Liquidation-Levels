@@ -86,7 +86,7 @@ type Config struct {
 // Defaults returns the production strategy configuration.
 func Defaults() Config {
 	return Config{
-		Window:                3 * time.Minute,
+		Window:                10 * time.Minute,
 		Quiet:                 10 * time.Minute,
 		Confirm:               30 * time.Minute,
 		Refresh:               10 * time.Minute,

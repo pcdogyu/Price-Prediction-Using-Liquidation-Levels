@@ -163,6 +163,7 @@ func TestConfirmationWindowExpiry(t *testing.T) {
 // settings that default to zero so any liquidation counts.
 func TestMinimumsGateBothPhases(t *testing.T) {
 	cfg := Defaults()
+	cfg.Window = 3 * time.Minute
 	cfg.FollowUpMinimumUSD = 50000
 	cfg.OppositeMinimumUSD = 50000
 	engine := testEngine(t, cfg, "BTCUSDT")
@@ -258,11 +259,11 @@ func TestSeedReplayIsIdempotent(t *testing.T) {
 func TestZeroConfigKeepsProductionDefaults(t *testing.T) {
 	engine := testEngine(t, Config{}, "BTCUSDT")
 	got := engine.Config()
-	if got.Window != 3*time.Minute || got.Quiet != 10*time.Minute || got.Confirm != 30*time.Minute || got.BTCUSD != 300000 || got.ETHUSD != 200000 || got.OtherUSD != 100000 || got.VWAPRangeMinutes != 1440 || got.VWAPMinDrawdown != .022 || got.VWAPDonchianFraction != .35 || !got.VWAPFilterEnabled || !got.DonchianFilterEnabled {
+	if got.Window != 10*time.Minute || got.Quiet != 10*time.Minute || got.Confirm != 30*time.Minute || got.BTCUSD != 300000 || got.ETHUSD != 200000 || got.OtherUSD != 100000 || got.VWAPRangeMinutes != 1440 || got.VWAPMinDrawdown != .022 || got.VWAPDonchianFraction != .35 || !got.VWAPFilterEnabled || !got.DonchianFilterEnabled {
 		t.Fatalf("zero values must fall back to the documented defaults: %+v", got)
 	}
 	thresholds := engine.Thresholds()
-	if thresholds.WindowMinutes != 3 || thresholds.QuietMinutes != 10 || thresholds.ConfirmMinutes != 30 || thresholds.TopSymbols != domain.AlertTopSymbolsDefault {
+	if thresholds.WindowMinutes != 10 || thresholds.QuietMinutes != 10 || thresholds.ConfirmMinutes != 30 || thresholds.TopSymbols != domain.AlertTopSymbolsDefault {
 		t.Fatalf("the threshold view must publish minutes and the top N: %+v", thresholds)
 	}
 	if got.ThresholdFor("ethusdt") != 200000 || got.ThresholdFor("SOLUSDT") != 100000 {
