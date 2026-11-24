@@ -508,8 +508,8 @@ async function loadHistoricalAlertView(targetSymbol = symbol) {
   }
   if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
   try {
-    const pageSize = 200;
-    const maxPages = 25;
+    const pageSize = 20;
+    const maxPages = 20;
     let cursor = '';
     let total = 0;
     const rows = [];
@@ -520,13 +520,16 @@ async function loadHistoricalAlertView(targetSymbol = symbol) {
       total = Math.max(total, Number(packet?.total_count) || 0);
       if (Array.isArray(packet?.rows)) rows.push(...packet.rows);
       cursor = String(packet?.next_cursor || '').trim();
+      if (requestID !== historicalAlertView.requestID || requestedSymbol !== symbol) return;
+      historicalAlertView.rows = rows;
+      historicalAlertView.markers = window.BubbleChart.normalizeAlertHistoryMarkers(rows, requestedSymbol);
+      historicalAlertView.total = total || rows.length;
+      historicalAlertView.truncated = page === maxPages - 1 && Boolean(cursor);
+      historicalAlertView.loaded = true;
+      if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
       if (!cursor) break;
     }
     if (requestID !== historicalAlertView.requestID || requestedSymbol !== symbol) return;
-    historicalAlertView.rows = rows;
-    historicalAlertView.markers = window.BubbleChart.normalizeAlertHistoryMarkers(rows, requestedSymbol);
-    historicalAlertView.total = total || rows.length;
-    historicalAlertView.truncated = Boolean(cursor);
     historicalAlertView.loaded = true;
     historicalAlertView.error = '';
     historicalAlertView.retryCount = 0;
@@ -1561,9 +1564,9 @@ function draw(view, map, signal, volume) {
       ? ' · TVBot历史信号 ' + historicalSignalView.markers.length + '条 · 屏内 ' + signalMarkers.visible + '组 · 视野外 ' + signalMarkers.outside + '组' + (historicalSignalView.truncated ? ' · 仅显示最近5000条' : '')
       : '';
   const alertText = historicalAlertView.loading && historicalAlertView.symbol === symbol
-    ? ' · 最近30天报警历史加载中'
+    ? ' · 最近30天报警与策略信号加载中 ' + historicalAlertView.rows.length + '/' + Math.min(400, historicalAlertView.total || 400) + '条'
     : historicalAlertView.loaded && historicalAlertView.symbol === symbol
-      ? ' · 最近30天历史预警 ' + visibleAlertRows.length + '条 / 屏内 ' + alertMarkers.visible + '组 · 策略信号 ' + visibleAlertSignalRows.length + '条 / 屏内 ' + alertSignalMarkers.visible + '组' + (historicalAlertView.truncated ? ' · 仅显示最近5000条' : '')
+      ? ' · 最近30天历史预警 ' + visibleAlertRows.length + '条 / 屏内 ' + alertMarkers.visible + '组 · 策略信号 ' + visibleAlertSignalRows.length + '条 / 屏内 ' + alertSignalMarkers.visible + '组' + (historicalAlertView.truncated ? ' · 仅显示最近400条' : '')
       : '';
   const liquidationFilterText = chart.liquidationMinimumUSD > 0 ? ' · 金额≥$' + compact(chart.liquidationMinimumUSD) : '';
   $('chart-context').textContent = context + liquidationFilterText + ' · 窗口已加载 ' + windowLiquidations.length + '笔 · 屏内气泡 ' + bubbles.points.length + '笔' + (bubbles.outside ? ' · 价格视野外 ' + bubbles.outside + '笔' : '') + tradeText + signalText + alertText + ' · ' + loadState;

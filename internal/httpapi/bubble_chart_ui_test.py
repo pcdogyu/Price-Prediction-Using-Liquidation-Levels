@@ -76,20 +76,30 @@ with sync_playwright() as playwright:
             pair_link.click()
         pair_page = popup_info.value
         pair_page.on("pageerror", lambda error: errors.append(str(error)))
+        pair_timeline_page_sizes = []
+        pair_page.on("request", lambda request: pair_timeline_page_sizes.append(parse_qs(urlsplit(request.url).query).get("limit", [""])[0]) if urlsplit(request.url).path.endswith("/api/v1/alerts/timeline") else None)
         expect(pair_page).to_have_url(re.compile(re.escape(base) + r"/bubbles\?symbol=BTCUSDT(?:&|$)"))
         pair_page.wait_for_load_state("domcontentloaded")
         pair_page.wait_for_function("() => document.getElementById('chart-context')?.textContent.includes('最近30天历史预警 ') || document.getElementById('api-errors')?.textContent.includes('历史报警信号 ·')", timeout=60000)
+        pair_page.wait_for_function("() => historicalAlertView.loaded && !historicalAlertView.loading", timeout=120000)
         pair_popup_status = pair_page.evaluate("""() => ({
           url: location.href,
           context: document.getElementById('chart-context').textContent,
           error: document.getElementById('api-errors').textContent,
           alerts: Number(document.getElementById('market-chart').dataset.alertMarkerCount || 0),
           signals: Number(document.getElementById('market-chart').dataset.alertSignalMarkerCount || 0),
-          actual: Number(document.getElementById('market-chart').dataset.tradeMarkerCount || 0)
+          actual: Number(document.getElementById('market-chart').dataset.tradeMarkerCount || 0),
+          historyRows: historicalAlertView.rows.length,
+          historyTotal: historicalAlertView.total,
+          historyTruncated: historicalAlertView.truncated
         })""")
         assert "最近30天历史预警 " in pair_popup_status["context"], {"href": pair_href, **pair_popup_status}
         assert "历史报警信号 ·" not in pair_popup_status["error"], pair_popup_status
         assert pair_popup_status["url"].startswith(base + "/bubbles?symbol=BTCUSDT"), pair_popup_status
+        assert pair_popup_status["historyRows"] <= 400, pair_popup_status
+        if pair_popup_status["historyTotal"] > 400:
+            assert pair_popup_status["historyRows"] == 400 and pair_popup_status["historyTruncated"], pair_popup_status
+        assert pair_timeline_page_sizes and len(pair_timeline_page_sizes) <= 20 and set(pair_timeline_page_sizes) == {"20"}, pair_timeline_page_sizes
         evidence.append({"analysis_pair_popup": pair_popup_status})
         pair_page.close()
         page.goto(base + "/bubbles", wait_until="domcontentloaded")
@@ -404,7 +414,7 @@ with sync_playwright() as playwright:
         assert all("来源：报警历史记录" in tip for tip in trade_view_status["alertTips"]), trade_view_status
         assert not trade_view_status["alertLegendHidden"] and not trade_view_status["alertSignalLegendHidden"], trade_view_status
         assert "最近30天历史预警 1条" in trade_view_status["context"] and "策略信号 2条" in trade_view_status["context"], trade_view_status
-        assert any(query.get("limit") == "200" and query.get("stored") == "1" for path, query in requests if path.endswith("/api/v1/alerts/timeline")), requests
+        assert any(query.get("limit") == "20" and query.get("stored") == "1" for path, query in requests if path.endswith("/api/v1/alerts/timeline")), requests
     if not production:
         default_trade_view = page.evaluate("""() => ({
           count: Number(document.getElementById('market-chart').dataset.tradeMarkerCount),
