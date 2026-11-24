@@ -567,6 +567,17 @@ function catalogSymbol(value) {
   return base ? base.symbol : '';
 }
 
+function showSymbolLoading(targetSymbol) {
+  $('ticker-symbol').textContent = targetSymbol + ' · Binance 永续价格';
+  $('ticker-price').textContent = '—';
+  $('ticker-updated').textContent = '正在加载 ' + targetSymbol + ' 行情…';
+  ['ticker-change', 'ticker-change-amount', 'ticker-high', 'ticker-low', 'ticker-volume'].forEach(id => {
+    $(id).textContent = '—';
+  });
+  $('ticker-change').className = 'value';
+  $('ticker-coverage').textContent = '—';
+}
+
 function activateSymbol(next) {
   next = String(next || '').toUpperCase();
   if (!next || next === symbol) {
@@ -585,6 +596,9 @@ function activateSymbol(next) {
   tradeView.focusAt = NaN;
   tradeView.referenceError = '';
   resetChartState({ cancelBackfill: true });
+  showSymbolLoading(symbol);
+  draw(null, null, null, null);
+  $('chart-context').textContent = '正在加载 ' + symbol + ' 的 K 线和清算数据…';
   refresh(true);
 }
 
@@ -2616,7 +2630,7 @@ else {
   loadSymbolCatalog();
   refresh(true);
 }
-setInterval(() => refresh(false), 10000);
+setInterval(() => { if (!refreshing) refresh(false); }, 10000);
 setInterval(updateCoinGlassCountdown, 1000);
 setInterval(() => { if (!$('log-drawer').classList.contains('hidden') && $('log-auto').checked) loadLogs(false); }, 5000);
 
