@@ -23,7 +23,8 @@ func TestMarketInfoAssessmentUIIsEmbedded(t *testing.T) {
 	}
 	assets := string(pagesJS)
 	for _, marker := range []string{
-		"marketRange = '24h'",
+		"marketRange = '4h'",
+		"ctx.moveTo(px,pad.t);ctx.lineTo(px,height-pad.b)",
 		"function renderMarketAssessment(assessment)",
 		"marketBiasLabel",
 		"delta_exposure",

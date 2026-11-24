@@ -45,7 +45,7 @@ func TestDashboardRoutesAndValidation(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/market-info?symbol=ETHUSDT", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"range":"24h"`) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"range":"4h"`) {
 		t.Fatalf("market-info default range status=%d body=%s", w.Code, w.Body.String())
 	}
 	at := time.Now().UTC().Add(-time.Second)

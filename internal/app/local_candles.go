@@ -60,7 +60,11 @@ func (s *Service) persistLiveCandles(ctx context.Context, trades []domain.Aggreg
 			current.Low = trade.Price
 		}
 		current.Close = trade.Price
-		current.VolumeUSD += trade.Price * trade.Quantity
+		notional := trade.Price * trade.Quantity
+		current.VolumeUSD += notional
+		if !trade.BuyerIsMaker {
+			current.TakerBuyUSD += notional
+		}
 		current.Exchange = "binance"
 		current.Symbol = symbol
 		s.localCandleMu.Lock()

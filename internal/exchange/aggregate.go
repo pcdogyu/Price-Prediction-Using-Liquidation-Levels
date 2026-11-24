@@ -186,14 +186,15 @@ func ParseBinanceAggregateTrade(payload []byte, symbols []string) (domain.Aggreg
 		payload = envelope.Data
 	}
 	var message struct {
-		Event     string `json:"e"`
-		EventTime int64  `json:"E"`
-		Symbol    string `json:"s"`
-		ID        int64  `json:"a"`
-		Price     string `json:"p"`
-		Qty       string `json:"q"`
-		Time      int64  `json:"T"`
-		Type      int    `json:"st"`
+		Event      string `json:"e"`
+		EventTime  int64  `json:"E"`
+		Symbol     string `json:"s"`
+		ID         int64  `json:"a"`
+		Price      string `json:"p"`
+		Qty        string `json:"q"`
+		Time       int64  `json:"T"`
+		Type       int    `json:"st"`
+		BuyerMaker bool   `json:"m"`
 	}
 	if json.Unmarshal(payload, &message) != nil || message.Event != "aggTrade" || !allowed(message.Symbol, symbols) {
 		return domain.AggregateTrade{}, false
@@ -207,15 +208,16 @@ func ParseBinanceAggregateTrade(payload []byte, symbols []string) (domain.Aggreg
 	if message.ID <= 0 || price <= 0 || quantity <= 0 || message.Time <= 0 {
 		return domain.AggregateTrade{}, false
 	}
-	return domain.AggregateTrade{ID: message.ID, Symbol: message.Symbol, Time: time.UnixMilli(message.Time).UTC(), Price: price, Quantity: quantity, PriceText: message.Price}, true
+	return domain.AggregateTrade{ID: message.ID, Symbol: message.Symbol, Time: time.UnixMilli(message.Time).UTC(), Price: price, Quantity: quantity, BuyerIsMaker: message.BuyerMaker, PriceText: message.Price}, true
 }
 
 type aggregateTradeResponse struct {
-	ID     int64  `json:"a"`
-	Price  string `json:"p"`
-	Qty    string `json:"q"`
-	Time   int64  `json:"T"`
-	Symbol string `json:"s"`
+	ID         int64  `json:"a"`
+	Price      string `json:"p"`
+	Qty        string `json:"q"`
+	Time       int64  `json:"T"`
+	Symbol     string `json:"s"`
+	BuyerMaker bool   `json:"m"`
 }
 
 func BinanceAggregateTrades(ctx context.Context, symbol string, fromID int64, start, end time.Time) ([]domain.AggregateTrade, error) {
@@ -236,7 +238,7 @@ func BinanceAggregateTrades(ctx context.Context, symbol string, fromID int64, st
 		if row.ID <= 0 || price <= 0 || quantity <= 0 || row.Time <= 0 {
 			continue
 		}
-		out = append(out, domain.AggregateTrade{ID: row.ID, Symbol: symbol, Time: time.UnixMilli(row.Time).UTC(), Price: price, Quantity: quantity, PriceText: row.Price})
+		out = append(out, domain.AggregateTrade{ID: row.ID, Symbol: symbol, Time: time.UnixMilli(row.Time).UTC(), Price: price, Quantity: quantity, BuyerIsMaker: row.BuyerMaker, PriceText: row.Price})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil

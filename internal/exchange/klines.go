@@ -245,7 +245,7 @@ func binanceKlines(ctx context.Context, symbol, interval string, limit int, unti
 	now := time.Now().UTC()
 	out := make([]domain.MarketCandle, 0, len(rows))
 	for _, row := range rows {
-		if len(row) < 8 {
+		if len(row) < 11 {
 			continue
 		}
 		open := ms(row[0])
@@ -253,7 +253,7 @@ func binanceKlines(ctx context.Context, symbol, interval string, limit int, unti
 			continue
 		}
 		out = append(out, domain.MarketCandle{Time: open, Open: f(anyString(row[1])), High: f(anyString(row[2])), Low: f(anyString(row[3])),
-			Close: f(anyString(row[4])), VolumeUSD: f(anyString(row[7])), ExchangeCount: 1, Complete: open.Add(step).Before(now)})
+			Close: f(anyString(row[4])), VolumeUSD: f(anyString(row[7])), TakerBuyUSD: f(anyString(row[10])), ExchangeCount: 1, Complete: open.Add(step).Before(now)})
 	}
 	// A page that comes back full means the series continues before this window; a
 	// short page means the candles simply start later, which is the answer the chart

@@ -42,9 +42,9 @@ func TestOfficialMessageShapes(t *testing.T) {
 }
 
 func TestParseBinanceAggregateTradeAndUMFilter(t *testing.T) {
-	payload := []byte(`{"stream":"btcusdt@aggTrade","data":{"e":"aggTrade","E":1700000000100,"s":"BTCUSDT","a":123,"p":"100.50","q":"2.25","T":1700000000000,"st":1}}`)
+	payload := []byte(`{"stream":"btcusdt@aggTrade","data":{"e":"aggTrade","E":1700000000100,"s":"BTCUSDT","a":123,"p":"100.50","q":"2.25","T":1700000000000,"st":1,"m":true}}`)
 	trade, ok := ParseBinanceAggregateTrade(payload, []string{"BTCUSDT"})
-	if !ok || trade.ID != 123 || trade.Price != 100.5 || trade.Quantity != 2.25 || trade.PriceText != "100.50" {
+	if !ok || trade.ID != 123 || trade.Price != 100.5 || trade.Quantity != 2.25 || !trade.BuyerIsMaker || trade.PriceText != "100.50" {
 		t.Fatalf("trade=%+v ok=%v", trade, ok)
 	}
 	coin := []byte(`{"e":"aggTrade","s":"BTCUSDT","a":124,"p":"100","q":"1","T":1700000000001,"st":2}`)

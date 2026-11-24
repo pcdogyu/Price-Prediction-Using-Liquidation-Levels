@@ -30,8 +30,8 @@ func TestPersistLiveCandlesBuildsLocalOneMinuteCandle(t *testing.T) {
 	base := time.Now().UTC().Truncate(time.Minute).Add(-2 * time.Minute)
 	trades := []domain.AggregateTrade{
 		{ID: 1, Symbol: "ETHUSDT", Time: base.Add(5 * time.Second), Price: 100, Quantity: 2},
-		{ID: 2, Symbol: "ETHUSDT", Time: base.Add(30 * time.Second), Price: 102, Quantity: 1},
-		{ID: 3, Symbol: "ETHUSDT", Time: base.Add(50 * time.Second), Price: 99, Quantity: 3},
+		{ID: 2, Symbol: "ETHUSDT", Time: base.Add(30 * time.Second), Price: 102, Quantity: 1, BuyerIsMaker: true},
+		{ID: 3, Symbol: "ETHUSDT", Time: base.Add(50 * time.Second), Price: 99, Quantity: 3, BuyerIsMaker: true},
 	}
 	if err := svc.persistLiveCandles(context.Background(), trades); err != nil {
 		t.Fatal(err)
@@ -40,8 +40,8 @@ func TestPersistLiveCandlesBuildsLocalOneMinuteCandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].Open != 100 || rows[0].High != 102 || rows[0].Low != 99 || rows[0].Close != 99 || rows[0].VolumeUSD != 599 {
-		t.Fatalf("local candle=%+v, want OHLCV 100/102/99/99/599", rows)
+	if len(rows) != 1 || rows[0].Open != 100 || rows[0].High != 102 || rows[0].Low != 99 || rows[0].Close != 99 || rows[0].VolumeUSD != 599 || rows[0].TakerBuyUSD != 200 {
+		t.Fatalf("local candle=%+v, want OHLCV 100/102/99/99/599 and taker buy USD 200", rows)
 	}
 }
 
@@ -91,7 +91,7 @@ func TestRemoteSyncKeepsCurrentLocalCandle(t *testing.T) {
 	original := fetchMarketHistoryKlines
 	fetchMarketHistoryKlines = func(context.Context, string, string, time.Time, time.Time) ([]domain.MarketCandle, error) {
 		return []domain.MarketCandle{
-			{Time: now.Add(-time.Minute), Open: 100, High: 103, Low: 99, Close: 102, VolumeUSD: 20},
+			{Time: now.Add(-time.Minute), Open: 100, High: 103, Low: 99, Close: 102, VolumeUSD: 20, TakerBuyUSD: 13},
 			{Time: now, Open: 1, High: 2, Low: 1, Close: 1, VolumeUSD: 1},
 		}, nil
 	}
@@ -103,7 +103,7 @@ func TestRemoteSyncKeepsCurrentLocalCandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 || rows[0].Close != 102 || rows[1].Close != 105 {
+	if len(rows) != 2 || rows[0].Close != 102 || rows[0].TakerBuyUSD != 13 || rows[1].Close != 105 {
 		t.Fatalf("remote sync rows=%+v, want closed remote row and current local row", rows)
 	}
 }

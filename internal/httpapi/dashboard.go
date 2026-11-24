@@ -288,7 +288,7 @@ func (s *Server) marketInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	period := r.URL.Query().Get("range")
 	if period == "" {
-		period = "24h"
+		period = "4h"
 	}
 	if _, ok := app.MarketRanges[period]; !ok {
 		problem(w, 400, fmt.Errorf("unsupported range"))

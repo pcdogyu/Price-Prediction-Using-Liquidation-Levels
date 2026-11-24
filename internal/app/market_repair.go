@@ -102,7 +102,7 @@ func (s *Service) RepairMarketGaps(ctx context.Context, symbol, intervalName str
 			if row.Time.Before(gap.from) || !row.Time.Before(gap.until) {
 				continue
 			}
-			repaired = append(repaired, domain.Candle{Exchange: "binance", Symbol: symbol, Time: row.Time, Open: row.Open, High: row.High, Low: row.Low, Close: row.Close, VolumeUSD: row.VolumeUSD})
+			repaired = append(repaired, domain.Candle{Exchange: "binance", Symbol: symbol, Time: row.Time, Open: row.Open, High: row.High, Low: row.Low, Close: row.Close, VolumeUSD: row.VolumeUSD, TakerBuyUSD: row.TakerBuyUSD})
 		}
 		if len(repaired) == 0 {
 			return fmt.Errorf("market gap fetch returned no candles: %s to %s", gap.from.Format(time.RFC3339), gap.until.Format(time.RFC3339))

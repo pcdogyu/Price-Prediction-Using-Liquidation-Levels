@@ -45,12 +45,13 @@ const DataSourceBinanceUSDM = "binance_usdm"
 const DefaultLiquidationMinimumUSD = 0
 
 type AggregateTrade struct {
-	ID        int64     `json:"id"`
-	Symbol    string    `json:"symbol"`
-	Time      time.Time `json:"time"`
-	Price     float64   `json:"price"`
-	Quantity  float64   `json:"quantity"`
-	PriceText string    `json:"-"`
+	ID           int64     `json:"id"`
+	Symbol       string    `json:"symbol"`
+	Time         time.Time `json:"time"`
+	Price        float64   `json:"price"`
+	Quantity     float64   `json:"quantity"`
+	BuyerIsMaker bool      `json:"buyer_is_maker,omitempty"`
+	PriceText    string    `json:"-"`
 }
 
 type PriceTick struct {
@@ -133,6 +134,7 @@ type MarketCandle struct {
 	Low           float64         `json:"low"`
 	Close         float64         `json:"close"`
 	VolumeUSD     float64         `json:"volume_usd"`
+	TakerBuyUSD   float64         `json:"taker_buy_usd"`
 	ExchangeCount int             `json:"exchange_count"`
 	Complete      bool            `json:"complete"`
 	Patterns      []CandlePattern `json:"patterns,omitempty"`

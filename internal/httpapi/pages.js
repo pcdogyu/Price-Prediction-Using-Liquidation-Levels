@@ -14,7 +14,7 @@
   const when = value => value && !String(value).startsWith('0001-') ? new Date(value).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false}) : '—';
   const tone = value => !valid(value) ? '' : value > 0 ? 'buy' : value < 0 ? 'sell' : '';
   const stateLabel = value => ({ok:'正常',partial:'部分数据缺失',stale:'数据已过期',unavailable:'等待采集'})[value] || value;
-  let busy = false, marketRange = '24h', latest = null, liqCursor = '', liqStack = [], liqNext = '', liqAnchor = '';
+  let busy = false, marketRange = '4h', latest = null, liqCursor = '', liqStack = [], liqNext = '', liqAnchor = '';
   let liqSymbol = 'ETHUSDT', liqSymbols = [], symbolActive = -1, pendingLoad = false;
   let liqAnalysisAnchor = '';
   let historyCursor = '', historyRows = [], historyNext = '', historyAnchor = '', frozenBook = null, historyKind = 'events';
@@ -182,6 +182,9 @@
     const x = i => pad.l + i / Math.max(1,points.length-1) * (width-pad.l-pad.r), y = v => pad.t + (high-v)/(high-low)*(height-pad.t-pad.b);
     ctx.strokeStyle = paint('#213946'); ctx.fillStyle = paint('#83a0b2');
     for(let i=0;i<5;i++){const v=low+(high-low)*i/4,py=y(v);ctx.beginPath();ctx.moveTo(pad.l,py);ctx.lineTo(width-pad.r,py);ctx.stroke();ctx.fillText(compact(v),4,py+4);}
+    ctx.save();ctx.strokeStyle=paint('#18313f');ctx.lineWidth=1;
+    for(let i=0;i<5;i++){const px=pad.l+(width-pad.l-pad.r)*i/4;ctx.beginPath();ctx.moveTo(px,pad.t);ctx.lineTo(px,height-pad.b);ctx.stroke();}
+    ctx.restore();
     for(let i=0;i<3;i++){const index=Math.round((points.length-1)*i/2),label=new Date(points[index].time).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}),labelWidth=ctx.measureText(label).width;ctx.fillText(label,Math.max(pad.l,Math.min(x(index)-labelWidth/2,width-pad.r-labelWidth)),height-10);}
     lines.forEach((l,j)=>{ctx.strokeStyle=l.color;ctx.lineWidth=1.8;ctx.beginPath();let drawing=false;points.forEach((p,i)=>{const v=p[l.key];if(!valid(v)){drawing=false;return;}if(drawing)ctx.lineTo(x(i),y(v));else{ctx.moveTo(x(i),y(v));drawing=true;}if(points.length===1){ctx.lineTo(x(i)+3,y(v));}});ctx.stroke();ctx.fillStyle=l.color;ctx.fillText(l.label,pad.l+j*140,14);});
     canvas.onpointermove = event => {const i=Math.max(0,Math.min(points.length-1,Math.round((event.offsetX-pad.l)/(width-pad.l-pad.r)*(points.length-1))));canvas.title=when(points[i].time)+'\n'+lines.map(l=>l.label+' '+amount(points[i][l.key])).join('\n');};

@@ -342,6 +342,9 @@ func (s *Service) MarketInfo(ctx context.Context, symbol, rangeName string) (dom
 	if from.Before(readFrom) {
 		readFrom = from.Add(-10 * time.Minute)
 	}
+	// Refresh the persisted Binance 1m candles in the background so CVD has
+	// authoritative taker-buy volume instead of relying on stale local rows.
+	s.requestMarketSync(symbol, readFrom, to, "1m")
 	metrics, err := s.store.MarketMetrics(ctx, symbol, readFrom, now.Add(time.Minute))
 	if err != nil {
 		return domain.MarketInfo{}, err

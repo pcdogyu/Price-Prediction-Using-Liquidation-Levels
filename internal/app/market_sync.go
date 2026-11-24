@@ -266,7 +266,7 @@ func (s *Service) persistRemoteKlines(ctx context.Context, symbol string, from, 
 		if at.Before(from.UTC()) || !at.Before(until.UTC()) || !at.Before(closedBefore) {
 			continue
 		}
-		repaired = append(repaired, domain.Candle{Exchange: "binance", Symbol: symbol, Time: at, Open: row.Open, High: row.High, Low: row.Low, Close: row.Close, VolumeUSD: row.VolumeUSD})
+		repaired = append(repaired, domain.Candle{Exchange: "binance", Symbol: symbol, Time: at, Open: row.Open, High: row.High, Low: row.Low, Close: row.Close, VolumeUSD: row.VolumeUSD, TakerBuyUSD: row.TakerBuyUSD})
 	}
 	if len(repaired) == 0 {
 		return fmt.Errorf("Binance returned no closed 1m candles for %s", symbol)

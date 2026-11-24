@@ -288,7 +288,7 @@ func fetchPagedAlertKlines(ctx context.Context, symbol, interval string, require
 func marketCandlesToDomain(symbol string, rows []domain.MarketCandle) []domain.Candle {
 	out := make([]domain.Candle, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, domain.Candle{Exchange: "binance", Symbol: symbol, Time: row.Time, Open: row.Open, High: row.High, Low: row.Low, Close: row.Close, VolumeUSD: row.VolumeUSD})
+		out = append(out, domain.Candle{Exchange: "binance", Symbol: symbol, Time: row.Time, Open: row.Open, High: row.High, Low: row.Low, Close: row.Close, VolumeUSD: row.VolumeUSD, TakerBuyUSD: row.TakerBuyUSD})
 	}
 	return out
 }

@@ -35,7 +35,7 @@ func fakeKlines(t *testing.T, handler http.HandlerFunc) *url.Values {
 // klineRow renders one Binance kline row. The chart only needs the four prices
 // and the quote volume; the other slots stay at their Binance positions.
 func klineRow(at time.Time, open, high, low, close, quoteVolume string) string {
-	return fmt.Sprintf(`[%d,%q,%q,%q,%q,"1000",%d,%q,"40","5","5",""]`, at.UnixMilli(), open, high, low, close, at.Add(time.Minute).UnixMilli(), quoteVolume)
+	return fmt.Sprintf(`[%d,%q,%q,%q,%q,"1000",%d,%q,"40","5","2000",""]`, at.UnixMilli(), open, high, low, close, at.Add(time.Minute).UnixMilli(), quoteVolume)
 }
 
 // TestBinanceKlinesQueryAndMapping pins the upstream window and the candle fields.
@@ -63,7 +63,7 @@ func TestBinanceKlinesQueryAndMapping(t *testing.T) {
 		t.Fatalf("the row at the exclusive end must be dropped: %+v", candles)
 	}
 	first := candles[0]
-	if !first.Time.Equal(start.Add(30*time.Second)) || first.Open != 1 || first.High != 3 || first.Low != 0.5 || first.Close != 2 || first.VolumeUSD != 5000 || first.ExchangeCount != 1 {
+	if !first.Time.Equal(start.Add(30*time.Second)) || first.Open != 1 || first.High != 3 || first.Low != 0.5 || first.Close != 2 || first.VolumeUSD != 5000 || first.TakerBuyUSD != 2000 || first.ExchangeCount != 1 {
 		t.Fatalf("candle fields mapped wrong: %+v", first)
 	}
 	if !first.Complete || !candles[1].Complete {
