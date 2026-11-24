@@ -514,7 +514,7 @@ async function loadHistoricalAlertView(targetSymbol = symbol) {
     let total = 0;
     const rows = [];
     for (let page = 0; page < maxPages; page += 1) {
-      const query = new URLSearchParams({ symbol: requestedSymbol, limit: String(pageSize) });
+      const query = new URLSearchParams({ symbol: requestedSymbol, limit: String(pageSize), stored: '1' });
       if (cursor) query.set('cursor', cursor);
       const packet = await json('alerts/timeline?' + query.toString());
       total = Math.max(total, Number(packet?.total_count) || 0);

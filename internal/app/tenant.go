@@ -45,6 +45,15 @@ func (s *Service) alertRuntimeForContext(ctx context.Context) (*alertRuntime, er
 	return s.ensureTenantAlertRuntime(ctx, tenantID)
 }
 
+func (s *Service) alertTenantStorePath(tenantID string) string {
+	root := strings.TrimSpace(s.cfg.AlertTenantDataPath)
+	if root == "" {
+		root = filepath.Join(filepath.Dir(s.cfg.DatabasePath), "alert-tenants")
+	}
+	hash := sha256.Sum256([]byte(strings.TrimSpace(tenantID)))
+	return filepath.Join(root, hex.EncodeToString(hash[:8])+".db")
+}
+
 func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string) (*alertRuntime, error) {
 	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {
@@ -55,16 +64,12 @@ func (s *Service) ensureTenantAlertRuntime(ctx context.Context, tenantID string)
 		s.alertTenantsMu.Unlock()
 		return rtm, nil
 	}
-	root := strings.TrimSpace(s.cfg.AlertTenantDataPath)
-	if root == "" {
-		root = filepath.Join(filepath.Dir(s.cfg.DatabasePath), "alert-tenants")
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	tenantPath := s.alertTenantStorePath(tenantID)
+	if err := os.MkdirAll(filepath.Dir(tenantPath), 0o700); err != nil {
 		s.alertTenantsMu.Unlock()
 		return nil, err
 	}
-	hash := sha256.Sum256([]byte(tenantID))
-	tenantStore, err := store.Open(filepath.Join(root, hex.EncodeToString(hash[:8])+".db"))
+	tenantStore, err := store.Open(tenantPath)
 	if err != nil {
 		s.alertTenantsMu.Unlock()
 		return nil, fmt.Errorf("open alert tenant store: %w", err)

@@ -69,7 +69,7 @@ with sync_playwright() as playwright:
         page.get_by_role("button", name="登录", exact=True).click()
         expect(page).to_have_url(re.compile(re.escape(base) + r"/(?:alerts|bubbles)$"))
         page.goto(base + "/tvbot?tab=analysis", wait_until="domcontentloaded")
-        pair_link = page.locator(".analysis-symbol-stats-table a.analysis-symbol-link").filter(has_text="BTCUSDT").first
+        pair_link = page.locator('.analysis-symbol-stats-table a.analysis-symbol-link[href*="symbol=BTCUSDT"]').first
         expect(pair_link).to_be_visible(timeout=45000)
         pair_href = pair_link.get_attribute("href")
         with context.expect_page(timeout=15000) as popup_info:
@@ -404,7 +404,7 @@ with sync_playwright() as playwright:
         assert all("来源：报警历史记录" in tip for tip in trade_view_status["alertTips"]), trade_view_status
         assert not trade_view_status["alertLegendHidden"] and not trade_view_status["alertSignalLegendHidden"], trade_view_status
         assert "最近30天历史预警 1条" in trade_view_status["context"] and "策略信号 2条" in trade_view_status["context"], trade_view_status
-        assert any("limit" in query and query["limit"] == "200" for path, query in requests if path.endswith("/api/v1/alerts/timeline")), requests
+        assert any(query.get("limit") == "200" and query.get("stored") == "1" for path, query in requests if path.endswith("/api/v1/alerts/timeline")), requests
     if not production:
         default_trade_view = page.evaluate("""() => ({
           count: Number(document.getElementById('market-chart').dataset.tradeMarkerCount),

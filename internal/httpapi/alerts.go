@@ -210,7 +210,9 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := s.alertContext(r)
 	var page domain.AlertTimelinePage
-	if query.Get("replay") == "1" {
+	if query.Get("stored") == "1" {
+		page, err = s.svc.AlertTimelineStoredForContext(ctx, symbol, kind, filter, limit, query.Get("cursor"))
+	} else if query.Get("replay") == "1" {
 		replayed, ready, replayErr := s.svc.AlertTimelineReplayedFiltered(ctx, symbol, kind, filter, limit, query.Get("cursor"))
 		if replayErr != nil {
 			problem(w, http.StatusServiceUnavailable, replayErr)

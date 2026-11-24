@@ -7,6 +7,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/alert"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 )
 
 func TestTenantAlertSettingsAreIsolated(t *testing.T) {
@@ -78,12 +79,77 @@ func TestTenantAlertHistoryIsIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	aliceStoredPage, err := svc.AlertTimelineStoredForContext(alice, "", "", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	bobPage, err := svc.AlertTimeline(bob, "", "", 20, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if alicePage.TotalCount != 2 || bobPage.TotalCount != 0 {
-		t.Fatalf("tenant history was not isolated: alice=%+v bob=%+v", alicePage, bobPage)
+	bobStoredPage, err := svc.AlertTimelineStoredForContext(bob, "", "", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alicePage.TotalCount != 2 || aliceStoredPage.TotalCount != 2 || bobPage.TotalCount != 0 || bobStoredPage.TotalCount != 0 {
+		t.Fatalf("tenant history was not isolated: alice=%+v alice_stored=%+v bob=%+v bob_stored=%+v", alicePage, aliceStoredPage, bobPage, bobStoredPage)
+	}
+}
+
+func TestStoredTenantAlertTimelineReadsExistingStoreWithoutStartingRuntime(t *testing.T) {
+	svc, _, st := alertTestService(t, "stored-tenant-history.db")
+	defer svc.Close()
+	ctx := context.Background()
+	at := time.Now().UTC().Truncate(time.Second)
+	if _, err := st.SaveLiquidationAlert(ctx, domain.LiquidationAlert{ID: "shared-alert", Symbol: "BTCUSDT", Side: "long", TradeSide: "long", TriggeredAt: at, Status: domain.AlertStateWatching}); err != nil {
+		t.Fatal(err)
+	}
+	tenantStore, err := store.Open(svc.alertTenantStorePath("alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tenantStore.SaveLiquidationAlert(ctx, domain.LiquidationAlert{ID: "alice-alert", Symbol: "BTCUSDT", Side: "short", TradeSide: "short", TriggeredAt: at, Status: domain.AlertStateWatching}); err != nil {
+		_ = tenantStore.Close()
+		t.Fatal(err)
+	}
+	if err := tenantStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	page, err := svc.AlertTimelineStoredForContext(WithTenantID(ctx, "alice"), "BTCUSDT", "", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.TotalCount != 1 || len(page.Rows) != 1 || page.Rows[0].Alert == nil || page.Rows[0].Alert.ID != "alice-alert" {
+		t.Fatalf("stored tenant history was not isolated: %+v", page)
+	}
+	svc.alertTenantsMu.Lock()
+	_, started := svc.alertTenants["alice"]
+	svc.alertTenantsMu.Unlock()
+	if started {
+		t.Fatal("stored history read must not start the tenant alert runtime")
+	}
+}
+
+func TestStoredLegacyAlertTimelineReadsSharedHistoryWithoutImporting(t *testing.T) {
+	svc, _, st := alertTestService(t, "stored-legacy-history.db")
+	defer svc.Close()
+	svc.cfg.AuthUsername = "admin"
+	at := time.Now().UTC().Truncate(time.Second)
+	if _, err := st.SaveLiquidationAlert(context.Background(), domain.LiquidationAlert{ID: "legacy-alert", Symbol: "BTCUSDT", Side: "long", TradeSide: "long", TriggeredAt: at, Status: domain.AlertStateWatching}); err != nil {
+		t.Fatal(err)
+	}
+	page, err := svc.AlertTimelineStoredForContext(WithTenantID(context.Background(), "admin"), "BTCUSDT", "", "", 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.TotalCount != 1 || len(page.Rows) != 1 || page.Rows[0].Alert == nil || page.Rows[0].Alert.ID != "legacy-alert" {
+		t.Fatalf("legacy stored history was not available: %+v", page)
+	}
+	svc.alertTenantsMu.Lock()
+	_, started := svc.alertTenants["admin"]
+	svc.alertTenantsMu.Unlock()
+	if started {
+		t.Fatal("legacy stored history read must not start or import into the tenant runtime")
 	}
 }
 

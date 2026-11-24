@@ -598,6 +598,11 @@ func TestAlertHistoryEndpoints(t *testing.T) {
 	if largeTimelinePage.Code != http.StatusOK || json.Unmarshal(largeTimelinePage.Body.Bytes(), &largeTimeline) != nil || len(largeTimeline.Rows) != 8 || largeTimeline.TotalCount != 8 {
 		t.Fatalf("large timeline page status=%d body=%s page=%+v", largeTimelinePage.Code, largeTimelinePage.Body.String(), largeTimeline)
 	}
+	storedTimelinePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?stored=1&limit=200", nil)
+	var storedTimeline domain.AlertTimelinePage
+	if storedTimelinePage.Code != http.StatusOK || json.Unmarshal(storedTimelinePage.Body.Bytes(), &storedTimeline) != nil || len(storedTimeline.Rows) != 8 || storedTimeline.TotalCount != 8 {
+		t.Fatalf("stored timeline page status=%d body=%s page=%+v", storedTimelinePage.Code, storedTimelinePage.Body.String(), storedTimeline)
+	}
 	smallTimelinePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?limit=1", nil)
 	var smallTimeline domain.AlertTimelinePage
 	if smallTimelinePage.Code != http.StatusOK || json.Unmarshal(smallTimelinePage.Body.Bytes(), &smallTimeline) != nil || len(smallTimeline.Rows) != 1 || smallTimeline.NextCursor == "" {

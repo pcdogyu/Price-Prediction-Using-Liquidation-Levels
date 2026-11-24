@@ -3,9 +3,11 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
 )
 
 // Alerts returns the alert page payload: live monitoring rows, the newest alerts and
@@ -125,6 +127,34 @@ func (s *Service) AlertTimelineFiltered(ctx context.Context, symbol, kind, filte
 	}
 	page.Gamma = s.alertGammaForSymbol(ctx, symbol)
 	return page, nil
+}
+
+// AlertTimelineStoredForContext reads persisted history without starting a
+// tenant alert runtime. Chart pages only need stored audit rows, and should not
+// wait for the live alert engine to seed itself from recent market events.
+func (s *Service) AlertTimelineStoredForContext(ctx context.Context, symbol, kind, filter string, limit int, cursor string) (domain.AlertTimelinePage, error) {
+	storeForTenant := s.store
+	tenantID := tenantIDFromContext(ctx)
+	if tenantID != "" {
+		path := s.alertTenantStorePath(tenantID)
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			if s.isLegacyAlertTenant(tenantID) {
+				storeForTenant = s.store
+			} else {
+				return domain.AlertTimelinePage{Rows: []domain.AlertTimelineItem{}}, nil
+			}
+		} else if err != nil {
+			return domain.AlertTimelinePage{}, err
+		} else {
+			tenantStore, err := store.Open(path)
+			if err != nil {
+				return domain.AlertTimelinePage{}, err
+			}
+			defer tenantStore.Close()
+			storeForTenant = tenantStore
+		}
+	}
+	return storeForTenant.AlertTimelineSinceFiltered(ctx, symbol, kind, filter, limit, cursor, time.Now().UTC().Add(-alertTimelineHistoryWindow))
 }
 
 const alertTimelineHistoryWindow = 30 * 24 * time.Hour
