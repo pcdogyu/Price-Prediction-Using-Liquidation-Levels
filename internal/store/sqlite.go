@@ -34,6 +34,23 @@ func Open(path string) (*Store, error) {
 	return OpenWithMarketAndAlertsAndOptionsAndVolumeAndModelsAndSettingsAndAuthDatabase(path, "", "", "", "", "", "", "")
 }
 
+// OpenReadOnly opens an existing database without changing its journal mode or
+// running schema migrations. It is intended for short-lived history reads
+// where another process may be actively writing to the database.
+func OpenReadOnly(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Clean(path))+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return &Store{db: db, marketDB: db, alertsDB: db, optionsDB: db, volumeDB: db, modelsDB: db, settingsDB: db, authDB: db}, nil
+}
+
 // OpenWithMarketDatabase keeps the unified database as the default while
 // allowing market-data methods to use a separately migrated SQLite file.
 func OpenWithMarketDatabase(path, marketPath string) (*Store, error) {

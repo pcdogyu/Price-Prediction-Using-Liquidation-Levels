@@ -146,7 +146,7 @@ func (s *Service) AlertTimelineStoredForContext(ctx context.Context, symbol, kin
 		} else if err != nil {
 			return domain.AlertTimelinePage{}, err
 		} else {
-			tenantStore, err := store.Open(path)
+			tenantStore, err := store.OpenReadOnly(path)
 			if err != nil {
 				return domain.AlertTimelinePage{}, err
 			}

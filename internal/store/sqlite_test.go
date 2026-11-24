@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -291,6 +292,45 @@ func TestVolumeProfileTradesAreAtomicAndDeduplicated(t *testing.T) {
 	lastID, through, complete, err = s.VolumeProfileCursor(ctx, "BTCUSDT", start)
 	if err != nil || lastID != 11 || !through.Equal(start.Add(2*time.Second)) || !complete {
 		t.Fatalf("cursor last=%d through=%v complete=%v err=%v", lastID, through, complete, err)
+	}
+}
+
+func TestOpenReadOnlyReadsExistingHistoryWithoutWriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	writable, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writable.SaveLiquidationAlert(context.Background(), alertRow("stored", "BTCUSDT", "long", time.Now().UTC(), domain.AlertStateWatching)); err != nil {
+		_ = writable.Close()
+		t.Fatal(err)
+	}
+	if err := writable.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	readOnly, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readOnly.Close()
+	page, err := readOnly.AlertTimelineSince(context.Background(), "BTCUSDT", "", 20, "", time.Time{})
+	if err != nil || page.AlertCount != 1 || len(page.Rows) != 1 {
+		t.Fatalf("read-only history page=%+v err=%v", page, err)
+	}
+	if _, err := readOnly.db.ExecContext(context.Background(), `DELETE FROM liquidation_alerts`); err == nil {
+		t.Fatal("read-only database unexpectedly accepted a write")
+	}
+}
+
+func TestOpenReadOnlyDoesNotCreateMissingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.db")
+	if db, err := OpenReadOnly(path); err == nil {
+		_ = db.Close()
+		t.Fatal("opening missing database should fail")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read-only open created a database: stat error=%v", err)
 	}
 }
 
