@@ -125,14 +125,14 @@ with sync_playwright() as playwright:
                 toggled_preference = "false" if original_preference == "true" else "true"
                 expect(preference_button).to_have_attribute("aria-pressed", toggled_preference)
                 expect(preference_button).to_have_attribute("aria-busy", "false", timeout=12000)
-                synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
+                synchronized_page.evaluate("() => syncChartSignalPreferences()")
                 expect(synchronized_button).to_have_attribute("aria-pressed", toggled_preference, timeout=12000)
             finally:
                 if preference_button.is_visible() and preference_button.get_attribute("aria-pressed") != original_preference:
                     preference_button.click()
                     expect(preference_button).to_have_attribute("aria-pressed", original_preference, timeout=12000)
                     expect(preference_button).to_have_attribute("aria-busy", "false", timeout=12000)
-                    synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
+                    synchronized_page.evaluate("() => syncChartSignalPreferences()")
                     expect(synchronized_button).to_have_attribute("aria-pressed", original_preference, timeout=12000)
                 synchronized_page.close()
             if errors:
@@ -153,12 +153,12 @@ with sync_playwright() as playwright:
             toggled_preference = "false" if original_preference == "true" else "true"
             expect(preference_button).to_have_attribute("aria-pressed", toggled_preference)
             expect(preference_button).to_have_attribute("aria-busy", "false", timeout=12000)
-            synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
+            synchronized_page.evaluate("() => syncChartSignalPreferences()")
             expect(synchronized_button).to_have_attribute("aria-pressed", toggled_preference, timeout=12000)
             preference_button.click()
             expect(preference_button).to_have_attribute("aria-pressed", original_preference)
             expect(preference_button).to_have_attribute("aria-busy", "false", timeout=12000)
-            synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
+            synchronized_page.evaluate("() => syncChartSignalPreferences()")
             expect(synchronized_button).to_have_attribute("aria-pressed", original_preference, timeout=12000)
         finally:
             if preference_button.is_visible() and preference_button.get_attribute("aria-pressed") != original_preference:
