@@ -230,9 +230,20 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `data-symbol="ETHUSDT" class="active"`) || strings.Contains(w.Body.String(), `data-symbol="BTCUSDT" class="active"`) || !strings.Contains(w.Body.String(), `id="ticker-symbol">ETHUSDT · Binance 永续价格`) {
 		t.Fatal("ETH should be the default dashboard symbol")
 	}
+	for _, marker := range []string{`id="symbol-search"`, `id="symbol-options"`, `id="symbol-load"`, `id="symbol-catalog-state"`, `data-symbol="HYPEUSDT"`} {
+		if !strings.Contains(w.Body.String(), marker) {
+			t.Fatalf("dashboard should render symbol search and shortcuts (%q missing)", marker)
+		}
+	}
+	if strings.Contains(w.Body.String(), `data-chart-preference-toggle="up_candles"`) || strings.Contains(w.Body.String(), `data-chart-preference-toggle="down_candles"`) {
+		t.Fatal("candle direction legend entries must not be toggles")
+	}
 	r = httptest.NewRequest(http.MethodGet, "/assets/dashboard.js", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
+	if strings.Contains(w.Body.String(), "chartSignalPreferences[candleSide === 'up' ? 'up_candles'") || !strings.Contains(w.Body.String(), "'data-candle': candleSide") || !strings.Contains(w.Body.String(), "const color = candleSide === 'up' ? '#2dd4bf' : '#fb7185'") {
+		t.Fatal("both candle directions should always render with their own colors")
+	}
 	if !strings.Contains(w.Body.String(), "69%价值区域内") || strings.Contains(w.Body.String(), "68%价值区域内") || strings.Contains(w.Body.String(), "70%价值区域内") {
 		t.Fatal("dashboard tooltip should report the 69% value area")
 	}

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"log/slog"
 	"net"
 	"net/http"
@@ -288,7 +287,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	page := s.renderPage(indexHTML, "bubbles", "气泡图", r)
-	page = []byte(strings.Replace(string(page), `<div class="controls"><button type="button" data-symbol="BTCUSDT">BTC</button><button type="button" data-symbol="ETHUSDT" class="active">ETH</button>`, `<div class="controls">`+s.dashboardSymbolButtons(), 1))
+	page = []byte(strings.Replace(string(page), `{{DASHBOARD_SYMBOL_SEARCH}}`, s.dashboardSymbolSearch(), 1))
 	_, _ = w.Write(page)
 }
 func (s *Server) dashboardScript(w http.ResponseWriter, _ *http.Request) {
@@ -446,38 +445,8 @@ func normalizeDashboardSymbols(values []string) []string {
 	return result
 }
 
-func (s *Server) dashboardSymbolButtons() string {
-	if len(s.symbols) == 0 {
-		s.symbols = normalizeDashboardSymbols(nil)
-	}
-	// Keep the two primary anchors as the stable, one-click choices. The
-	// exchange-wide catalog is intentionally searched instead of rendered as
-	// hundreds of buttons, which keeps the bubble page usable on desktop and TV.
-	buttons := make([]string, 0, 2)
-	for _, value := range []string{"BTCUSDT", "ETHUSDT"} {
-		if !containsString(s.symbols, value) {
-			continue
-		}
-		label := strings.TrimSuffix(value, "USDT")
-		if label == "" {
-			label = value
-		}
-		class := ""
-		if value == "ETHUSDT" || (value == "BTCUSDT" && !containsString(s.symbols, "ETHUSDT")) {
-			class = ` class="active"`
-		}
-		buttons = append(buttons, `<button type="button" data-symbol="`+htmlEscapeAttribute(value)+`"`+class+`>`+html.EscapeString(label)+`</button>`)
-	}
-	return strings.Join(buttons, "") + `<label class="symbol-picker" for="symbol-search"><span>其他币对</span><input id="symbol-search" type="search" list="symbol-options" placeholder="搜索 SOL / XRP" autocomplete="off" spellcheck="false"><datalist id="symbol-options"></datalist><button id="symbol-load" type="button">加载</button></label><span id="symbol-catalog-state" class="symbol-catalog-state" aria-live="polite">正在读取币对目录…</span>`
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+func (s *Server) dashboardSymbolSearch() string {
+	return `<label class="symbol-picker" for="symbol-search"><span>其他币对</span><input id="symbol-search" type="search" list="symbol-options" placeholder="搜索 SOL / XRP" autocomplete="off" spellcheck="false"><datalist id="symbol-options"></datalist><button id="symbol-load" type="button">加载</button></label><span id="symbol-catalog-state" class="symbol-catalog-state" aria-live="polite">正在读取币对目录…</span>`
 }
 
 func (s *Server) symbol(r *http.Request) (string, error) {

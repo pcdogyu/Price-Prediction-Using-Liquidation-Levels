@@ -117,7 +117,7 @@ const historicalAlertView = {
 };
 const chartPreferenceKeys = [
   'tvbot_signals', 'warning_signals', 'aggressive_signals', 'steady_signals', 'value_area_signals', 'actual_trades',
-  'up_candles', 'down_candles', 'long_liquidations', 'short_liquidations', 'volume_profile', 'top_volume_bins',
+  'long_liquidations', 'short_liquidations', 'volume_profile', 'top_volume_bins',
   'leverage_10x', 'leverage_25x', 'leverage_50x', 'leverage_100x', 'val_line', 'vah_line', 'model_signals'
 ];
 const chartSignalPreferences = Object.fromEntries(chartPreferenceKeys.map(key => [key, true]));
@@ -1553,7 +1553,6 @@ function draw(view, map, signal, volume) {
       const candleStart = new Date(candle.time).getTime();
       const x = timeScale.x(candleStart + timeScale.duration / 2);
       const candleSide = candle.close >= candle.open ? 'up' : 'down';
-      const candleVisible = chartSignalPreferences[candleSide === 'up' ? 'up_candles' : 'down_candles'] !== false;
       const color = candleSide === 'up' ? '#2dd4bf' : '#fb7185';
       const bodyTop = y(Math.max(candle.open, candle.close));
       const bodyBottom = y(Math.min(candle.open, candle.close));
@@ -1561,12 +1560,9 @@ function draw(view, map, signal, volume) {
         ? when(candle.time) + '\nO ' + money(candle.open) + '  H ' + money(candle.high) + '\nL ' + money(candle.low) + '  C ' + money(candle.close)
         : when(candle.time) + '\nO ' + money(candle.open) + '  H ' + money(candle.high) + '\nL ' + money(candle.low) + '  C ' + money(candle.close) + '\n成交额 $' + compact(candle.volume_usd) + (candle.complete ? '' : '\n当前K线尚未完成');
       const signals = modelSignals.get(new Date(candle.time).getTime()) || [];
-      if (!candleVisible && !signals.length) return;
-      const group = svgNode('g', candleVisible ? { 'data-tip': candleTip, 'data-candle': candleSide } : {});
-      if (candleVisible) {
-        group.appendChild(svgNode('line', { x1: x, y1: y(candle.high), x2: x, y2: y(candle.low), stroke: color, 'stroke-width': 1.15 }));
-        group.appendChild(svgNode('rect', { x: x - bodyWidth / 2, y: bodyTop, width: bodyWidth, height: Math.max(1.5, bodyBottom - bodyTop), fill: color, rx: .8 }));
-      }
+      const group = svgNode('g', { 'data-tip': candleTip, 'data-candle': candleSide });
+      group.appendChild(svgNode('line', { x1: x, y1: y(candle.high), x2: x, y2: y(candle.low), stroke: color, 'stroke-width': 1.15 }));
+      group.appendChild(svgNode('rect', { x: x - bodyWidth / 2, y: bodyTop, width: bodyWidth, height: Math.max(1.5, bodyBottom - bodyTop), fill: color, rx: .8 }));
       // Keep candle.patterns in the API payload for compatibility, but do not render
       // pattern annotations on the bubbles page.
       signals.forEach(item => {
