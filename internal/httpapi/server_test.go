@@ -655,13 +655,18 @@ func TestUserChartSignalPreferencesAPIIsUserScopedAndPatchable(t *testing.T) {
 
 	defaultResponse := request(http.MethodGet, "", adminSession)
 	defaults := decode(defaultResponse)
-	if defaultResponse.Code != http.StatusOK || !defaults.TVBotSignals || !defaults.WarningSignals || !defaults.AggressiveSignals || !defaults.SteadySignals || !defaults.ValueAreaSignals || !defaults.ActualTrades || defaults.UpdatedAt != 0 {
+	if defaultResponse.Code != http.StatusOK || !defaults.TVBotSignals || !defaults.WarningSignals || !defaults.AggressiveSignals || !defaults.SteadySignals || !defaults.ValueAreaSignals || !defaults.ActualTrades || !defaults.UpCandles || !defaults.DownCandles || !defaults.LongLiquidations || !defaults.ShortLiquidations || !defaults.VolumeProfile || !defaults.TopVolumeBins || !defaults.Leverage10x || !defaults.Leverage25x || !defaults.Leverage50x || !defaults.Leverage100x || !defaults.ValLine || !defaults.VahLine || !defaults.ModelSignals || defaults.UpdatedAt != 0 {
 		t.Fatalf("default preferences status=%d prefs=%+v body=%s", defaultResponse.Code, defaults, defaultResponse.Body.String())
 	}
 	patched := request(http.MethodPatch, `{"key":"aggressive_signals","enabled":false}`, adminSession)
 	adminPreferences := decode(patched)
 	if patched.Code != http.StatusOK || adminPreferences.AggressiveSignals || !adminPreferences.SteadySignals || adminPreferences.UpdatedAt == 0 {
 		t.Fatalf("patch preferences status=%d prefs=%+v body=%s", patched.Code, adminPreferences, patched.Body.String())
+	}
+	patched = request(http.MethodPatch, `{"key":"volume_profile","enabled":false}`, adminSession)
+	adminPreferences = decode(patched)
+	if patched.Code != http.StatusOK || adminPreferences.VolumeProfile || !adminPreferences.TopVolumeBins {
+		t.Fatalf("new preference patch status=%d prefs=%+v body=%s", patched.Code, adminPreferences, patched.Body.String())
 	}
 	for _, body := range []string{`{"key":"unknown","enabled":false}`, `{"key":"steady_signals"}`, `{"key":"steady_signals","enabled":1}`, `{"key":"steady_signals","enabled":true,"username":"other"}`} {
 		if response := request(http.MethodPatch, body, adminSession); response.Code != http.StatusBadRequest {

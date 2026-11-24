@@ -17,6 +17,19 @@ type UserChartSignalPreferences struct {
 	SteadySignals     bool  `json:"steady_signals"`
 	ValueAreaSignals  bool  `json:"value_area_signals"`
 	ActualTrades      bool  `json:"actual_trades"`
+	UpCandles         bool  `json:"up_candles"`
+	DownCandles       bool  `json:"down_candles"`
+	LongLiquidations  bool  `json:"long_liquidations"`
+	ShortLiquidations bool  `json:"short_liquidations"`
+	VolumeProfile     bool  `json:"volume_profile"`
+	TopVolumeBins     bool  `json:"top_volume_bins"`
+	Leverage10x       bool  `json:"leverage_10x"`
+	Leverage25x       bool  `json:"leverage_25x"`
+	Leverage50x       bool  `json:"leverage_50x"`
+	Leverage100x      bool  `json:"leverage_100x"`
+	ValLine           bool  `json:"val_line"`
+	VahLine           bool  `json:"vah_line"`
+	ModelSignals      bool  `json:"model_signals"`
 	UpdatedAt         int64 `json:"updated_at"`
 }
 
@@ -24,6 +37,10 @@ func defaultUserChartSignalPreferences() UserChartSignalPreferences {
 	return UserChartSignalPreferences{
 		TVBotSignals: true, WarningSignals: true, AggressiveSignals: true,
 		SteadySignals: true, ValueAreaSignals: true, ActualTrades: true,
+		UpCandles: true, DownCandles: true, LongLiquidations: true, ShortLiquidations: true,
+		VolumeProfile: true, TopVolumeBins: true,
+		Leverage10x: true, Leverage25x: true, Leverage50x: true, Leverage100x: true,
+		ValLine: true, VahLine: true, ModelSignals: true,
 	}
 }
 
@@ -37,7 +54,14 @@ func (s *Store) LoadUserChartSignalPreferences(ctx context.Context, username str
 	}
 	preferences := defaultUserChartSignalPreferences()
 	var tvbot, warning, aggressive, steady, valueArea, trades int
-	err := s.settings().QueryRowContext(ctx, `SELECT tvbot_signals,warning_signals,aggressive_signals,steady_signals,value_area_signals,actual_trades,updated_ts FROM user_chart_signal_preferences WHERE username=?`, username).Scan(&tvbot, &warning, &aggressive, &steady, &valueArea, &trades, &preferences.UpdatedAt)
+	var upCandles, downCandles, longLiquidations, shortLiquidations, volumeProfile, topVolumeBins int
+	var leverage10x, leverage25x, leverage50x, leverage100x, valLine, vahLine, modelSignals int
+	err := s.settings().QueryRowContext(ctx, `SELECT tvbot_signals,warning_signals,aggressive_signals,steady_signals,value_area_signals,actual_trades,up_candles,down_candles,long_liquidations,short_liquidations,volume_profile,top_volume_bins,leverage_10x,leverage_25x,leverage_50x,leverage_100x,val_line,vah_line,model_signals,updated_ts FROM user_chart_signal_preferences WHERE username=?`, username).Scan(
+		&tvbot, &warning, &aggressive, &steady, &valueArea, &trades,
+		&upCandles, &downCandles, &longLiquidations, &shortLiquidations, &volumeProfile, &topVolumeBins,
+		&leverage10x, &leverage25x, &leverage50x, &leverage100x, &valLine, &vahLine, &modelSignals,
+		&preferences.UpdatedAt,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return preferences, nil
 	}
@@ -50,6 +74,19 @@ func (s *Store) LoadUserChartSignalPreferences(ctx context.Context, username str
 	preferences.SteadySignals = steady != 0
 	preferences.ValueAreaSignals = valueArea != 0
 	preferences.ActualTrades = trades != 0
+	preferences.UpCandles = upCandles != 0
+	preferences.DownCandles = downCandles != 0
+	preferences.LongLiquidations = longLiquidations != 0
+	preferences.ShortLiquidations = shortLiquidations != 0
+	preferences.VolumeProfile = volumeProfile != 0
+	preferences.TopVolumeBins = topVolumeBins != 0
+	preferences.Leverage10x = leverage10x != 0
+	preferences.Leverage25x = leverage25x != 0
+	preferences.Leverage50x = leverage50x != 0
+	preferences.Leverage100x = leverage100x != 0
+	preferences.ValLine = valLine != 0
+	preferences.VahLine = vahLine != 0
+	preferences.ModelSignals = modelSignals != 0
 	return preferences, nil
 }
 
@@ -75,6 +112,32 @@ func (s *Store) PatchUserChartSignalPreference(ctx context.Context, username, ke
 		column = "value_area_signals"
 	case "actual_trades":
 		column = "actual_trades"
+	case "up_candles":
+		column = "up_candles"
+	case "down_candles":
+		column = "down_candles"
+	case "long_liquidations":
+		column = "long_liquidations"
+	case "short_liquidations":
+		column = "short_liquidations"
+	case "volume_profile":
+		column = "volume_profile"
+	case "top_volume_bins":
+		column = "top_volume_bins"
+	case "leverage_10x":
+		column = "leverage_10x"
+	case "leverage_25x":
+		column = "leverage_25x"
+	case "leverage_50x":
+		column = "leverage_50x"
+	case "leverage_100x":
+		column = "leverage_100x"
+	case "val_line":
+		column = "val_line"
+	case "vah_line":
+		column = "vah_line"
+	case "model_signals":
+		column = "model_signals"
 	default:
 		return UserChartSignalPreferences{}, errors.New("unknown chart signal preference")
 	}

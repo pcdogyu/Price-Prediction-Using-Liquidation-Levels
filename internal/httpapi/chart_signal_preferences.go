@@ -11,6 +11,9 @@ import (
 var validChartSignalPreferenceKeys = map[string]struct{}{
 	"tvbot_signals": {}, "warning_signals": {}, "aggressive_signals": {},
 	"steady_signals": {}, "value_area_signals": {}, "actual_trades": {},
+	"up_candles": {}, "down_candles": {}, "long_liquidations": {}, "short_liquidations": {},
+	"volume_profile": {}, "top_volume_bins": {}, "leverage_10x": {}, "leverage_25x": {},
+	"leverage_50x": {}, "leverage_100x": {}, "val_line": {}, "vah_line": {}, "model_signals": {},
 }
 
 func (s *Server) userChartSignalPreferences(w http.ResponseWriter, r *http.Request) {

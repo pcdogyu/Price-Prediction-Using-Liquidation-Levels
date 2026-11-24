@@ -104,17 +104,19 @@ func TestBubbleChartUsesConfiguredMultipleSymbols(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/bubbles", nil))
 	body := w.Body.String()
-	if w.Code != 200 || !strings.Contains(body, `data-symbol="BTCUSDT"`) || !strings.Contains(body, `data-symbol="ETHUSDT" class="active"`) || !strings.Contains(body, `id="symbol-search"`) || !strings.Contains(body, `id="symbol-options"`) {
-		t.Fatalf("primary buttons or symbol search were not rendered: status=%d", w.Code)
+	if w.Code != 200 || !strings.Contains(body, `data-symbol="BTCUSDT"`) || !strings.Contains(body, `data-symbol="ETHUSDT" class="active"`) {
+		t.Fatalf("primary symbol buttons were not rendered: status=%d", w.Code)
 	}
-	if strings.Contains(body, `data-symbol="SOLUSDT"`) {
-		t.Fatal("non-primary symbols should use the search box instead of shortcut buttons")
+	for _, symbol := range []string{"SOLUSDT", "XRPUSDT", "ZECUSDT", "BNBUSDT", "HYPEUSDT"} {
+		if !strings.Contains(body, `data-symbol="`+symbol+`"`) {
+			t.Fatalf("additional quick symbol %s was not rendered", symbol)
+		}
+	}
+	if !strings.Contains(body, `id="alternate-symbol-shortcuts"`) || !strings.Contains(body, `grid-template-columns:repeat(3,minmax(38px,1fr))`) {
+		t.Fatal("additional quick symbols should use a three-column row")
 	}
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/assets/dashboard.js", nil))
-	if strings.Contains(w.Body.String(), `$('symbol-search').value = symbol`) {
-		t.Fatal("symbol search input must start empty")
-	}
 	if !strings.Contains(w.Body.String(), `document.querySelectorAll('button[data-symbol]').forEach(button => button.classList.toggle('active', button.dataset.symbol === symbol));`) {
 		t.Fatal("bubble chart should mark the URL-selected symbol as active")
 	}

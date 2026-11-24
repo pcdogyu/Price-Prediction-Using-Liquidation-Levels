@@ -20,6 +20,7 @@ signal_preferences_only = "--signal-preferences-only" in sys.argv
 root = pathlib.Path(__file__).resolve().parents[2]
 artifacts = root / "build"
 artifacts.mkdir(exist_ok=True)
+chart_preference_keys = ["tvbot_signals", "warning_signals", "aggressive_signals", "steady_signals", "value_area_signals", "actual_trades", "up_candles", "down_candles", "long_liquidations", "short_liquidations", "volume_profile", "top_volume_bins", "leverage_10x", "leverage_25x", "leverage_50x", "leverage_100x", "val_line", "vah_line", "model_signals"]
 intervals = {"1m": 60000, "2m": 120000, "3m": 180000, "5m": 300000, "15m": 900000, "30m": 1800000, "1h": 3600000, "4h": 14400000, "8h": 28800000, "12h": 43200000, "24h": 86400000}
 errors, requests, evidence = [], [], []
 iso = lambda ms: dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -69,50 +70,80 @@ with sync_playwright() as playwright:
         page.locator("input[name=password]").fill(entry["password"])
         page.get_by_role("button", name="登录", exact=True).click()
         expect(page).to_have_url(re.compile(re.escape(base) + r"/(?:alerts|bubbles)$"))
-        page.goto(base + "/tvbot?tab=analysis", wait_until="domcontentloaded")
-        pair_link = page.locator('.analysis-symbol-stats-table a.analysis-symbol-link[href*="symbol=BTCUSDT"]').first
-        expect(pair_link).to_be_visible(timeout=45000)
-        pair_href = pair_link.get_attribute("href")
-        with context.expect_page(timeout=15000) as popup_info:
-            pair_link.click()
-        pair_page = popup_info.value
-        pair_page.on("pageerror", lambda error: errors.append(str(error)))
-        pair_timeline_page_sizes = []
-        pair_page.on("request", lambda request: pair_timeline_page_sizes.append(parse_qs(urlsplit(request.url).query).get("limit", [""])[0]) if urlsplit(request.url).path.endswith("/api/v1/alerts/timeline") else None)
-        expect(pair_page).to_have_url(re.compile(re.escape(base) + r"/bubbles\?symbol=BTCUSDT(?:&|$)"))
-        pair_page.wait_for_load_state("domcontentloaded")
-        pair_page.wait_for_function("() => document.getElementById('chart-context')?.textContent.includes('最近30天历史预警 ') || document.getElementById('api-errors')?.textContent.includes('历史报警信号 ·')", timeout=60000)
-        pair_page.wait_for_function("() => historicalAlertView.loaded && !historicalAlertView.loading", timeout=120000)
-        pair_popup_status = pair_page.evaluate("""() => ({
-          url: location.href,
-          context: document.getElementById('chart-context').textContent,
-          error: document.getElementById('api-errors').textContent,
-          alerts: Number(document.getElementById('market-chart').dataset.alertMarkerCount || 0),
-          signals: Number(document.getElementById('market-chart').dataset.alertSignalMarkerCount || 0),
-          actual: Number(document.getElementById('market-chart').dataset.tradeMarkerCount || 0),
-          historyRows: historicalAlertView.rows.length,
-          historyTotal: historicalAlertView.total,
-          historyTruncated: historicalAlertView.truncated
-        })""")
-        assert "最近30天历史预警 " in pair_popup_status["context"], {"href": pair_href, **pair_popup_status}
-        assert "历史报警信号 ·" not in pair_popup_status["error"], pair_popup_status
-        assert pair_popup_status["url"].startswith(base + "/bubbles?symbol=BTCUSDT"), pair_popup_status
-        assert pair_popup_status["historyRows"] <= 400, pair_popup_status
-        if pair_popup_status["historyTotal"] > 400:
-            assert pair_popup_status["historyRows"] == 400 and pair_popup_status["historyTruncated"], pair_popup_status
-        assert pair_timeline_page_sizes and len(pair_timeline_page_sizes) <= 20 and set(pair_timeline_page_sizes) == {"20"}, pair_timeline_page_sizes
-        evidence.append({"analysis_pair_popup": pair_popup_status})
-        pair_page.close()
+        if not signal_preferences_only:
+            page.goto(base + "/tvbot?tab=analysis", wait_until="domcontentloaded")
+            pair_link = page.locator('.analysis-symbol-stats-table a.analysis-symbol-link[href*="symbol=BTCUSDT"]').first
+            expect(pair_link).to_be_visible(timeout=45000)
+            pair_href = pair_link.get_attribute("href")
+            with context.expect_page(timeout=15000) as popup_info:
+                pair_link.click()
+            pair_page = popup_info.value
+            pair_page.on("pageerror", lambda error: errors.append(str(error)))
+            pair_timeline_page_sizes = []
+            pair_page.on("request", lambda request: pair_timeline_page_sizes.append(parse_qs(urlsplit(request.url).query).get("limit", [""])[0]) if urlsplit(request.url).path.endswith("/api/v1/alerts/timeline") else None)
+            expect(pair_page).to_have_url(re.compile(re.escape(base) + r"/bubbles\?symbol=BTCUSDT(?:&|$)"))
+            pair_page.wait_for_load_state("domcontentloaded")
+            pair_page.wait_for_function("() => document.getElementById('chart-context')?.textContent.includes('最近30天历史预警 ') || document.getElementById('api-errors')?.textContent.includes('历史报警信号 ·')", timeout=60000)
+            pair_page.wait_for_function("() => historicalAlertView.loaded && !historicalAlertView.loading", timeout=120000)
+            pair_popup_status = pair_page.evaluate("""() => ({
+              url: location.href,
+              context: document.getElementById('chart-context').textContent,
+              error: document.getElementById('api-errors').textContent,
+              alerts: Number(document.getElementById('market-chart').dataset.alertMarkerCount || 0),
+              signals: Number(document.getElementById('market-chart').dataset.alertSignalMarkerCount || 0),
+              actual: Number(document.getElementById('market-chart').dataset.tradeMarkerCount || 0),
+              historyRows: historicalAlertView.rows.length,
+              historyTotal: historicalAlertView.total,
+              historyTruncated: historicalAlertView.truncated
+            })""")
+            assert "最近30天历史预警 " in pair_popup_status["context"], {"href": pair_href, **pair_popup_status}
+            assert "历史报警信号 ·" not in pair_popup_status["error"], pair_popup_status
+            assert pair_popup_status["url"].startswith(base + "/bubbles?symbol=BTCUSDT"), pair_popup_status
+            assert pair_popup_status["historyRows"] <= 400, pair_popup_status
+            if pair_popup_status["historyTotal"] > 400:
+                assert pair_popup_status["historyRows"] == 400 and pair_popup_status["historyTruncated"], pair_popup_status
+            assert pair_timeline_page_sizes and len(pair_timeline_page_sizes) <= 20 and set(pair_timeline_page_sizes) == {"20"}, pair_timeline_page_sizes
+            evidence.append({"analysis_pair_popup": pair_popup_status})
+            pair_page.close()
         page.goto(base + "/bubbles", wait_until="domcontentloaded")
-        expect(page.locator("button[data-chart-signal-toggle]").nth(0)).to_be_visible(timeout=30000)
+        expect(page.locator("button[data-chart-preference-toggle]").nth(0)).to_be_visible(timeout=30000)
         page.wait_for_function("() => document.getElementById('chart-signal-preference-status')?.textContent.startsWith('设置已同步')", timeout=30000)
-        assert page.locator("button[data-chart-signal-toggle]").count() == 6
-        preference_button = page.locator('button[data-chart-signal-toggle="aggressive_signals"]')
+        assert page.locator("button[data-chart-preference-toggle]").count() == len(chart_preference_keys)
+        assert page.locator("#alternate-symbol-shortcuts button[data-symbol]").all_text_contents() == ["SOL", "XRP", "ZEC", "BNB", "HYPE"]
+        assert len(page.locator("#alternate-symbol-shortcuts").evaluate("node => getComputedStyle(node).gridTemplateColumns.split(' ').length")) == 3
+        if signal_preferences_only:
+            preference_button = page.locator('button[data-chart-preference-toggle="aggressive_signals"]')
+            original_preference = preference_button.get_attribute("aria-pressed")
+            synchronized_page = context.new_page()
+            try:
+                synchronized_page.goto(base + "/bubbles", wait_until="domcontentloaded")
+                synchronized_button = synchronized_page.locator('button[data-chart-preference-toggle="aggressive_signals"]')
+                expect(synchronized_button).to_be_visible(timeout=30000)
+                synchronized_page.wait_for_function("() => document.getElementById('chart-signal-preference-status')?.textContent.startsWith('设置已同步')", timeout=30000)
+                expect(synchronized_button).to_have_attribute("aria-pressed", original_preference)
+                preference_button.click()
+                toggled_preference = "false" if original_preference == "true" else "true"
+                expect(preference_button).to_have_attribute("aria-pressed", toggled_preference)
+                synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
+                expect(synchronized_button).to_have_attribute("aria-pressed", toggled_preference, timeout=12000)
+            finally:
+                if preference_button.is_visible() and preference_button.get_attribute("aria-pressed") != original_preference:
+                    preference_button.click()
+                    expect(preference_button).to_have_attribute("aria-pressed", original_preference, timeout=12000)
+                    synchronized_page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
+                    expect(synchronized_button).to_have_attribute("aria-pressed", original_preference, timeout=12000)
+                synchronized_page.close()
+            if errors:
+                raise AssertionError({"page_errors": errors})
+            print(json.dumps({"production_signal_preferences_ui": "passed", "preference_count": len(chart_preference_keys), "shortcuts": ["SOL", "XRP", "ZEC", "BNB", "HYPE"], "cross_page_sync": "passed"}, ensure_ascii=False))
+            browser.close()
+            sys.exit(0)
+        preference_button = page.locator('button[data-chart-preference-toggle="aggressive_signals"]')
         original_preference = preference_button.get_attribute("aria-pressed")
         synchronized_page = context.new_page()
         try:
             synchronized_page.goto(base + "/bubbles", wait_until="domcontentloaded")
-            synchronized_button = synchronized_page.locator('button[data-chart-signal-toggle="aggressive_signals"]')
+            synchronized_button = synchronized_page.locator('button[data-chart-preference-toggle="aggressive_signals"]')
             expect(synchronized_button).to_be_visible(timeout=30000)
             synchronized_page.wait_for_function("() => document.getElementById('chart-signal-preference-status')?.textContent.startsWith('设置已同步')", timeout=30000)
             expect(synchronized_button).to_have_attribute("aria-pressed", original_preference)
@@ -133,7 +164,7 @@ with sync_playwright() as playwright:
 
     baseline = context.request.get(base + "/api/v1/market?symbol=ETHUSDT&interval=1m").json()
     history_base = context.request.get(base + "/api/v1/liquidations?symbol=ETHUSDT&limit=1").json()
-    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "market_fail_once": set(), "market_history_fail_once": set(), "history_active": 0, "history_max_active": 0, "market_active": 0, "market_max_active": 0, "history_delay_once": True, "backfill_delay_once": True, "chart_preferences": {"tvbot_signals": True, "warning_signals": True, "aggressive_signals": True, "steady_signals": True, "value_area_signals": True, "actual_trades": True}, "chart_preferences_updated_at": 1, "chart_preferences_fail_next": False, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
+    state = {"fail": False, "history_fail": False, "empty": False, "wall_factor": 1, "datasets": {}, "market_fail_once": set(), "market_history_fail_once": set(), "history_active": 0, "history_max_active": 0, "market_active": 0, "market_max_active": 0, "history_delay_once": True, "backfill_delay_once": True, "chart_preferences": {key: True for key in chart_preference_keys}, "chart_preferences_updated_at": 1, "chart_preferences_fail_next": False, "anchor": int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)}
     history_rows = [
         {"row_key": "history-eth-long", "exchange": "binance", "inst_id": "ETHUSDT", "side": "long", "entry_time": iso(state["anchor"] - 20 * intervals["1m"]), "entry_px": "2490", "exit_time": iso(state["anchor"] - 10 * intervals["1m"]), "exit_px": "2498", "entry_operation": "open", "entry_operation_source": "auto", "exit_operation": "take_profit", "exit_operation_source": "monitor", "entry_ord_id": "binance-open-1", "exit_ord_id": "binance-close-1"},
         {"row_key": "history-eth-short", "exchange": "gate", "inst_id": "ETH_USDT", "side": "short", "entry_time": iso(state["anchor"] - 18 * intervals["1m"]), "entry_px": "2498", "exit_time": iso(state["anchor"] - 8 * intervals["1m"]), "exit_px": "2492", "entry_operation": "open", "entry_operation_source": "manual", "exit_operation": "stop_loss", "exit_operation_source": "exchange", "entry_ord_id": "gate-open-1", "exit_ord_id": "gate-close-1"},
@@ -162,7 +193,7 @@ with sync_playwright() as playwright:
         start = end - 120 * duration
         key = (symbol, interval, end)
         if key not in state["datasets"]:
-            candles = [{"time": iso(start + i * duration), "open": 2490, "close": 2495, "low": 2484.59, "high": 2501.49, "volume_usd": 1000, "patterns": ([{"name": "hammer", "bias": "bullish"}] if i == 20 else []), "complete": True} for i in range(120) if i != 10]
+            candles = [{"time": iso(start + i * duration), "open": 2490, "close": 2495 if i % 2 else 2488, "low": 2484.59, "high": 2501.49, "volume_usd": 1000, "patterns": ([{"name": "hammer", "bias": "bullish"}] if i == 20 else []), "complete": True} for i in range(120) if i != 10]
             rows = [{"id": f"{symbol}-{interval}-{end}-{i}", "exchange": "binance", "symbol": symbol, "position_side": "short" if i % 2 else "long", "price": 2490 + i % 5, "quantity": .001, "notional_usd": 2.49, "event_time": iso(start + int(i / 6003 * (119 * duration))), "coverage": "sampled"} for i in range(6003)]
             rows[0]["price"] = 2482.9  # At the padded lower border.
             rows[1]["price"] = 2800  # Counted as outside the price viewport.
@@ -202,7 +233,7 @@ with sync_playwright() as playwright:
                 return
             has_more = page_number < 3
             view = copy.deepcopy(baseline)
-            view.update(symbol=symbol, candles=[] if state["empty"] else candles, liquidations=rows[-5000:], liquidation_minimum_usd=0, liquidations_truncated=True, realtime_price=None, model_signals=[], has_more=has_more, next_before=candles[0]["time"] if has_more else None)
+            view.update(symbol=symbol, candles=[] if state["empty"] else candles, liquidations=rows[-5000:], liquidation_minimum_usd=0, liquidations_truncated=True, realtime_price=None, model_signals=[{"candle_time": candles[20]["time"], "time": candles[20]["time"], "side": "long", "price": 2490, "probability": .72, "model_version": "fixture"}], has_more=has_more, next_before=candles[0]["time"] if has_more else None)
             view["summary"].update(last_price=2495, change_24h=0, change_pct_24h=0, updated_at=iso(state["anchor"]))
             route.fulfill(json=view)
             state["market_active"] -= 1
@@ -251,14 +282,14 @@ with sync_playwright() as playwright:
             route.fulfill(json=packet)
         elif parsed.path.endswith("/map"):
             factor = state["wall_factor"]
-            route.fulfill(json={"data_source": "coinglass_binance_liqmap", "bins": [{"price": 2232.9 / factor, "total_usd": 10000}, {"price": 2492, "total_usd": 20000}, {"price": 2749.5 * factor, "total_usd": 30000}], "bin_width": 1, "mark_price": 2495, "captured_at": iso(state["anchor"]), "top_long_liquidations": [{"price": 2492, "amount_usd": 20000}, {"price": 2232.9, "amount_usd": 10000}], "top_short_liquidations": [{"price": 2498, "amount_usd": 25000}, {"price": 2749.5, "amount_usd": 30000}]})
+            route.fulfill(json={"data_source": "coinglass_binance_liqmap", "bins": [{"price": 2232.9 / factor, "total_usd": 10000, "leverage_usd": {"10": 2500, "25": 2500, "50": 2500, "100": 2500}}, {"price": 2492, "total_usd": 20000, "leverage_usd": {"10": 5000, "25": 5000, "50": 5000, "100": 5000}}, {"price": 2749.5 * factor, "total_usd": 30000, "leverage_usd": {"10": 7500, "25": 7500, "50": 7500, "100": 7500}}], "bin_width": 1, "mark_price": 2495, "captured_at": iso(state["anchor"]), "top_long_liquidations": [{"price": 2492, "amount_usd": 20000}, {"price": 2232.9, "amount_usd": 10000}], "top_short_liquidations": [{"price": 2498, "amount_usd": 25000}, {"price": 2749.5, "amount_usd": 30000}]})
         elif parsed.path.endswith("/volume-profile"):
-            route.fulfill(json={"state": "ok", "val": 100, "vah": 9000, "bins": [{"price_low": 100, "price_high": 200, "volume_usd": 10000}, {"price_low": 9000, "price_high": 9001, "volume_usd": 10000}]})
+            route.fulfill(json={"state": "ok", "val": 2490, "vah": 2500, "bins": [{"price_low": 2489, "price_high": 2490, "volume_usd": 10000, "volume_rank": 1}, {"price_low": 2499, "price_high": 2500, "volume_usd": 9000, "volume_rank": 2}]})
         elif parsed.path.endswith("/volume-profile/backfill"):
             if state["backfill_delay_once"]:
                 state["backfill_delay_once"] = False
                 time.sleep(0.2)
-            route.fulfill(json={"state": "ok", "val": 100, "vah": 9000, "bins": [{"price_low": 100, "price_high": 200, "volume_usd": 10000}, {"price_low": 9000, "price_high": 9001, "volume_usd": 10000}]})
+            route.fulfill(json={"state": "ok", "val": 2490, "vah": 2500, "bins": [{"price_low": 2489, "price_high": 2490, "volume_usd": 10000, "volume_rank": 1}, {"price_low": 2499, "price_high": 2500, "volume_usd": 9000, "volume_rank": 2}]})
         elif parsed.path.endswith("/signals/latest"):
             route.fulfill(json={
                 "state": "data_insufficient", "mark_price": 2495, "atr": 10, "reason": "模型尚未完成首次训练",
@@ -308,6 +339,7 @@ with sync_playwright() as playwright:
         page.route("**/tvbot/orders?**", fixture)
         page.route("**/api/v1/alerts/timeline?**", fixture)
         page.route("**/api/v1/user/chart-signal-preferences", fixture)
+        context.route("**/api/v1/user/chart-signal-preferences", fixture)
         state["market_history_fail_once"].add(("ETHUSDT", "30m"))
         state["market_fail_once"].add(("ETHUSDT", "30m", 1))
 
@@ -316,11 +348,18 @@ with sync_playwright() as playwright:
         page.wait_for_function("() => document.getElementById('chart-context').textContent.includes('窗口已补齐') || document.getElementById('chart-context').textContent.includes('补齐失败') || document.getElementById('chart-context').textContent.includes('等待有效K线')")
 
     def verify_chart_signal_preferences():
-        toggles = page.locator("button[data-chart-signal-toggle]")
-        assert toggles.count() == 6
-        for key in ("tvbot_signals", "warning_signals", "aggressive_signals", "steady_signals", "value_area_signals", "actual_trades"):
-            button = page.locator(f'button[data-chart-signal-toggle="{key}"]')
+        toggles = page.locator("button[data-chart-preference-toggle]")
+        assert toggles.count() == len(chart_preference_keys)
+        assert all(button.get_attribute("type") == "button" for button in toggles.all())
+        for key in chart_preference_keys:
+            button = page.locator(f'button[data-chart-preference-toggle="{key}"]')
             expect(button).to_have_attribute("aria-pressed", "true")
+            assert button.get_attribute("aria-busy") == "false"
+            liquidation_sample = None
+            if key in ("long_liquidations", "short_liquidations"):
+                side = "long" if key == "long_liquidations" else "short"
+                liquidation_sample = page.evaluate("selector => { const c = document.querySelector(selector); return c ? [Number(c.getAttribute('cx')), Number(c.getAttribute('cy'))] : null; }", f'[data-liquidation-side="{side}"]')
+                assert liquidation_sample is not None
             button.click()
             expect(button).to_have_attribute("aria-pressed", "false")
             expect(button).to_be_enabled()
@@ -336,12 +375,40 @@ with sync_playwright() as playwright:
                 assert not page.locator('[data-alert-signal-marker] text').filter(has_text="区平多").count()
             elif key == "actual_trades":
                 assert page.locator("[data-trade-marker]").count() == 0
+            elif key == "up_candles":
+                assert page.locator('[data-candle="up"]').count() == 0
+                assert page.locator('[data-candle="down"]').count() > 0
+            elif key == "down_candles":
+                assert page.locator('[data-candle="down"]').count() == 0
+                assert page.locator('[data-candle="up"]').count() > 0
+            elif key in ("long_liquidations", "short_liquidations"):
+                side = "long" if key == "long_liquidations" else "short"
+                assert page.locator(f'[data-liquidation-side="{side}"]').count() == 0
+                assert page.evaluate("() => Number(document.getElementById('market-chart').dataset.bubbleCount)") == page.locator("[data-liquidation-side]").count()
+                assert page.evaluate("([point, side]) => bubbleHits(point[0], point[1]).every(event => event.position_side !== side)", [liquidation_sample, side])
+                assert page.locator(f'[data-liquidation-rank^="{"多" if side == "long" else "空"}"]').count() == 0
+                assert page.locator(f"#liquidation-top3 .{side}").count() == 0
+            elif key == "volume_profile":
+                assert page.locator("[data-volume-bar]").count() == 0
+                assert page.locator("[data-volume-title]").count() == 0
+            elif key == "top_volume_bins":
+                assert page.locator("[data-volume-bar]").count() > 0
+                assert page.locator('[data-volume-highlight="true"]').count() == 0
+            elif key.startswith("leverage_"):
+                leverage = key.split("_")[1][:-1]
+                assert page.locator(f'[data-wall="segment"][data-leverage="{leverage}"]').count() == 0
+                assert page.locator('[data-wall="segment"]').count() > 0
+            elif key in ("val_line", "vah_line"):
+                name = "VAL" if key == "val_line" else "VAH"
+                assert page.locator(f'[data-value-area-line="{name}"]').count() == 0
+            elif key == "model_signals":
+                assert page.locator("[data-model-signal]").count() == 0
             button.click()
             expect(button).to_have_attribute("aria-pressed", "true")
             expect(button).to_be_enabled()
 
         state["chart_preferences_fail_next"] = True
-        warning_toggle = page.locator('button[data-chart-signal-toggle="warning_signals"]')
+        warning_toggle = page.locator('button[data-chart-preference-toggle="warning_signals"]')
         warning_toggle.click()
         expect(warning_toggle).to_have_attribute("aria-pressed", "true")
         expect(page.locator("#chart-signal-preference-status")).to_contain_text("保存失败")
@@ -349,13 +416,27 @@ with sync_playwright() as playwright:
         state["chart_preferences"]["steady_signals"] = False
         state["chart_preferences_updated_at"] += 1
         page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
-        steady_toggle = page.locator('button[data-chart-signal-toggle="steady_signals"]')
+        steady_toggle = page.locator('button[data-chart-preference-toggle="steady_signals"]')
         expect(steady_toggle).to_have_attribute("aria-pressed", "false")
         assert not page.locator('[data-alert-signal-marker] text').filter(has_text="稳多").count()
         state["chart_preferences"]["steady_signals"] = True
         state["chart_preferences_updated_at"] += 1
         page.evaluate("() => window.__testIntervals.find(item => item.ms === 5000).fn()")
         expect(steady_toggle).to_have_attribute("aria-pressed", "true")
+
+        steady_marker = page.locator('[data-alert-signal-marker][data-marker-kind="steady"] rect').first
+        aggressive_marker = page.locator('[data-alert-signal-marker][data-marker-kind="aggressive"] rect').first
+        assert steady_marker.get_attribute("fill") == "#1d4ed8"
+        assert aggressive_marker.get_attribute("fill") == "#38bdf8"
+        steady_text_fill = page.locator('[data-alert-signal-marker][data-marker-kind="steady"] text').first.get_attribute("fill")
+        assert steady_text_fill not in (None, "#07141d"), {"steady_text_fill": steady_text_fill, "steady_markers": page.locator('[data-alert-signal-marker][data-marker-kind="steady"]').count()}
+
+        alternate = page.locator('#alternate-symbol-shortcuts button[data-symbol="SOLUSDT"]')
+        alternate.click()
+        expect(page.locator("#ticker-symbol")).to_contain_text("SOLUSDT")
+        primary = page.locator('#primary-symbol-shortcuts button[data-symbol="ETHUSDT"]')
+        primary.click()
+        expect(page.locator("#ticker-symbol")).to_contain_text("ETHUSDT")
 
     def refresh():
         page.evaluate("() => window.__testIntervals.find(item => item.ms === 10000).fn()")

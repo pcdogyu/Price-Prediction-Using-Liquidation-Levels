@@ -115,8 +115,12 @@ const historicalAlertView = {
   retryCount: 0,
   error: ''
 };
-const chartSignalPreferenceKeys = ['tvbot_signals', 'warning_signals', 'aggressive_signals', 'steady_signals', 'value_area_signals', 'actual_trades'];
-const chartSignalPreferences = Object.fromEntries(chartSignalPreferenceKeys.map(key => [key, true]));
+const chartPreferenceKeys = [
+  'tvbot_signals', 'warning_signals', 'aggressive_signals', 'steady_signals', 'value_area_signals', 'actual_trades',
+  'up_candles', 'down_candles', 'long_liquidations', 'short_liquidations', 'volume_profile', 'top_volume_bins',
+  'leverage_10x', 'leverage_25x', 'leverage_50x', 'leverage_100x', 'val_line', 'vah_line', 'model_signals'
+];
+const chartSignalPreferences = Object.fromEntries(chartPreferenceKeys.map(key => [key, true]));
 let chartSignalPreferencesUpdatedAt = 0;
 let chartSignalPreferenceSync = null;
 const pendingChartSignalPreferenceKeys = new Set();
@@ -437,7 +441,7 @@ async function loadHistoricalSignalView(targetSymbol = symbol) {
   if (cache.market) draw(cache.market, cache.map, cache.signal, cache.volume);
   try {
     const pageSize = 500;
-    const maxPages = 10;
+    const maxPages = 20;
     const pageURL = offset => {
       const query = new URLSearchParams({ coinpair: requestedSymbol, limit: String(pageSize), offset: String(offset) });
       return 'orders?' + query.toString();
@@ -1227,7 +1231,8 @@ function renderLiquidationTop3(map, range) {
     container.appendChild(Object.assign(document.createElement('span'), { textContent: 'CoinGlass 清算数据不可用' }));
     return;
   }
-  [['long', '多头清算 Top3', map.top_long_liquidations || []], ['short', '空头清算 Top3', map.top_short_liquidations || []]].forEach(([className, label, peaks]) => {
+  [['long', 'long_liquidations', '多头清算 Top3', map.top_long_liquidations || []], ['short', 'short_liquidations', '空头清算 Top3', map.top_short_liquidations || []]].forEach(([className, preference, label, peaks]) => {
+    if (chartSignalPreferences[preference] === false) return;
     const span = document.createElement('span');
     span.className = className;
     span.textContent = label + '：' + (peaks.length ? peaks.map((peak, index) => (index + 1) + ') ' + money(peak.price) + (range && peak.price > range[1] ? ' ↑视野外' : range && peak.price < range[0] ? ' ↓视野外' : '')).join(' / ') : '—');
@@ -1260,7 +1265,8 @@ function drawLiquidationRankLabels(svg, map, low, high, y, top, plotBottom, layo
   if (map?.data_source !== 'coinglass_binance_liqmap') return;
   const { liquidationRight, rankLabelLeft, rankLabelRight } = layout;
   const labels = [];
-  [['short', '空', '#2dd4bf', map.top_short_liquidations || []], ['long', '多', '#fb7185', map.top_long_liquidations || []]].forEach(([side, prefix, color, peaks]) => {
+  [['short', 'short_liquidations', '空', '#2dd4bf', map.top_short_liquidations || []], ['long', 'long_liquidations', '多', '#fb7185', map.top_long_liquidations || []]].forEach(([side, preference, prefix, color, peaks]) => {
+    if (chartSignalPreferences[preference] === false) return;
     peaks.slice(0, 3).forEach((peak, index) => {
       if (!finite(peak.price) || peak.price < low || peak.price > high) return;
       labels.push({ side, prefix, color, rank: index + 1, price: peak.price, amount: peak.amount_usd, targetY: y(peak.price) });
@@ -1330,7 +1336,7 @@ function drawLiquidationBubbles(plot, events, range, scale, y, left, candleRight
   bubbleHits = window.BubbleChart.hitIndex(result.points);
   result.points.forEach(point => {
     const color = point.event.position_side === 'long' ? '#fb7185' : '#2dd4bf';
-    plot.appendChild(svgNode('circle', { cx: point.x, cy: point.y, r: liquidationRadius(point.event.notional_usd), fill: color, 'fill-opacity': .38, stroke: color, 'stroke-width': 1.5, 'data-event-id': point.event.id, 'data-event-price': point.event.price }));
+    plot.appendChild(svgNode('circle', { cx: point.x, cy: point.y, r: liquidationRadius(point.event.notional_usd), fill: color, 'fill-opacity': .38, stroke: color, 'stroke-width': 1.5, 'data-event-id': point.event.id, 'data-event-price': point.event.price, 'data-liquidation-side': point.event.position_side }));
   });
   return result;
 }
@@ -1397,14 +1403,14 @@ function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top
     const isAlertSignal = marker.phase === 'alert_signal';
     const long = marker.side === 'long';
     const closing = marker.phase === 'exit' || ((isSignal || isAlertSignal) && marker.operation === 'close');
-    const color = isAlert ? '#fbbf24' : isAlertSignal ? '#38bdf8' : isSignal ? '#a78bfa' : (closing ? '#f5c400' : (long ? '#2dd4bf' : '#fb7185'));
+    const color = isAlert ? '#fbbf24' : isAlertSignal ? (marker.kind === 'steady' ? '#1d4ed8' : '#38bdf8') : isSignal ? '#a78bfa' : (closing ? '#f5c400' : (long ? '#2dd4bf' : '#fb7185'));
     const markerAttrs = isAlert ? { 'data-alert-marker': marker.id } : isAlertSignal ? { 'data-alert-signal-marker': marker.id } : isSignal ? { 'data-signal-marker': marker.id } : { 'data-trade-marker': marker.id };
-    const group = svgNode('g', Object.assign(markerAttrs, { 'data-tip': tradeMarkerTip(marker) }));
+    const group = svgNode('g', Object.assign(markerAttrs, { 'data-tip': tradeMarkerTip(marker), 'data-marker-kind': marker.kind || '' }));
     if (marker.selected) group.appendChild(svgNode('rect', { x: labelX - labelWidth / 2 - 3, y: labelCenterY - 12, width: labelWidth + 6, height: 24, fill: 'none', stroke: '#f8fafc', 'stroke-width': 2, rx: 5, opacity: .95 }));
     group.appendChild(svgNode('line', { x1: x, y1: priceY, x2: labelX, y2: labelBelow ? labelCenterY - 10 : labelCenterY + 10, stroke: color, 'stroke-width': 1.2, opacity: .9 }));
     const historical = isSignal || isAlert || isAlertSignal;
     group.appendChild(svgNode('rect', Object.assign({ x: labelX - labelWidth / 2, y: labelCenterY - 10, width: labelWidth, height: 20, fill: color, stroke: historical ? '#e9d5ff' : '#07141d', 'stroke-width': 1.2, rx: 5 }, historical ? { 'stroke-dasharray': '3 2' } : {})));
-    group.appendChild(svgNode('text', { x: labelX, y: labelCenterY + 4, 'text-anchor': 'middle', fill: '#07141d', 'font-size': 10, 'font-weight': 750 }, labelText));
+    group.appendChild(svgNode('text', { x: labelX, y: labelCenterY + 4, 'text-anchor': 'middle', fill: isAlertSignal && marker.kind === 'steady' ? '#f8fafc' : '#07141d', 'font-size': 10, 'font-weight': 750 }, labelText));
     plot.appendChild(group);
   });
   const signalMarkers = collapsed.filter(marker => marker.phase === 'signal');
@@ -1482,10 +1488,6 @@ function draw(view, map, signal, volume) {
   const visibleAlertSignalRows = !embeddedChart && historicalAlertView.loaded && historicalAlertView.symbol === symbol
     ? window.BubbleChart.filterChartMarkers(historicalAlertView.markers.filter(marker => marker.phase === 'alert_signal'), chartSignalPreferences)
     : [];
-  $('trade-marker-legend').classList.toggle('hidden', !visibleTradeRows.length);
-  $('historical-signal-legend').classList.toggle('hidden', !visibleSignalRows.length);
-  $('historical-alert-legend').classList.toggle('hidden', !visibleAlertRows.length);
-  $('historical-alert-signal-legend').classList.toggle('hidden', !visibleAlertSignalRows.length);
   bubbleHits = () => [];
   const state = bubbleLoader.state;
   $('bubble-retry').classList.toggle('hidden', state.status !== 'error');
@@ -1540,35 +1542,44 @@ function draw(view, map, signal, volume) {
   if (candles.length) {
     const bodyWidth = Math.max(2, timeScale.step * .58);
     const modelSignals = new Map();
-    chart.signals.forEach(item => {
-      const key = new Date(item.candle_time).getTime();
-      if (!modelSignals.has(key)) modelSignals.set(key, []);
-      modelSignals.get(key).push(item);
-    });
+    if (!embeddedChart && chartSignalPreferences.model_signals !== false) {
+      chart.signals.forEach(item => {
+        const key = new Date(item.candle_time).getTime();
+        if (!modelSignals.has(key)) modelSignals.set(key, []);
+        modelSignals.get(key).push(item);
+      });
+    }
     candles.forEach(candle => {
       const candleStart = new Date(candle.time).getTime();
       const x = timeScale.x(candleStart + timeScale.duration / 2);
-      const color = candle.close >= candle.open ? '#2dd4bf' : '#fb7185';
+      const candleSide = candle.close >= candle.open ? 'up' : 'down';
+      const candleVisible = chartSignalPreferences[candleSide === 'up' ? 'up_candles' : 'down_candles'] !== false;
+      const color = candleSide === 'up' ? '#2dd4bf' : '#fb7185';
       const bodyTop = y(Math.max(candle.open, candle.close));
       const bodyBottom = y(Math.min(candle.open, candle.close));
       const candleTip = embeddedChart
         ? when(candle.time) + '\nO ' + money(candle.open) + '  H ' + money(candle.high) + '\nL ' + money(candle.low) + '  C ' + money(candle.close)
         : when(candle.time) + '\nO ' + money(candle.open) + '  H ' + money(candle.high) + '\nL ' + money(candle.low) + '  C ' + money(candle.close) + '\n成交额 $' + compact(candle.volume_usd) + (candle.complete ? '' : '\n当前K线尚未完成');
-      const group = svgNode('g', { 'data-tip': candleTip });
-      group.appendChild(svgNode('line', { x1: x, y1: y(candle.high), x2: x, y2: y(candle.low), stroke: color, 'stroke-width': 1.15 }));
-      group.appendChild(svgNode('rect', { x: x - bodyWidth / 2, y: bodyTop, width: bodyWidth, height: Math.max(1.5, bodyBottom - bodyTop), fill: color, rx: .8 }));
+      const signals = modelSignals.get(new Date(candle.time).getTime()) || [];
+      if (!candleVisible && !signals.length) return;
+      const group = svgNode('g', candleVisible ? { 'data-tip': candleTip, 'data-candle': candleSide } : {});
+      if (candleVisible) {
+        group.appendChild(svgNode('line', { x1: x, y1: y(candle.high), x2: x, y2: y(candle.low), stroke: color, 'stroke-width': 1.15 }));
+        group.appendChild(svgNode('rect', { x: x - bodyWidth / 2, y: bodyTop, width: bodyWidth, height: Math.max(1.5, bodyBottom - bodyTop), fill: color, rx: .8 }));
+      }
       // Keep candle.patterns in the API payload for compatibility, but do not render
       // pattern annotations on the bubbles page.
-      const signals = embeddedChart ? [] : (modelSignals.get(new Date(candle.time).getTime()) || []);
       signals.forEach(item => {
         const cy = item.side === 'long' ? y(candle.low) + 10 : y(candle.high) - 10;
         const signalColor = item.side === 'long' ? '#2dd4bf' : '#fb7185';
-        group.appendChild(svgNode('path', { d: arrowPath(x, cy, item.side, 5), fill: signalColor, stroke: '#07141d', 'stroke-width': 1, 'data-tip': '模型' + (item.side === 'long' ? '多单' : '空单') + '信号 · ' + pct(item.probability) + '\n预测价 ' + money(item.price) + '\n预测时间 ' + when(item.time) + '\n模型 ' + (item.model_version || '—') + '\n仅表示60分钟先触墙概率' }));
+        group.appendChild(svgNode('path', { d: arrowPath(x, cy, item.side, 5), fill: signalColor, stroke: '#07141d', 'stroke-width': 1, 'data-model-signal': item.side, 'data-tip': '模型' + (item.side === 'long' ? '多单' : '空单') + '信号 · ' + pct(item.probability) + '\n预测价 ' + money(item.price) + '\n预测时间 ' + when(item.time) + '\n模型 ' + (item.model_version || '—') + '\n仅表示60分钟先触墙概率' }));
       });
       plot.appendChild(group);
     });
   }
-  const windowLiquidations = embeddedChart ? [] : window.BubbleChart.windowEvents(chart.liquidations, timeScale.start, timeScale.end).filter(event => event.notional_usd >= chart.liquidationMinimumUSD);
+  const windowLiquidations = embeddedChart ? [] : window.BubbleChart.windowEvents(chart.liquidations, timeScale.start, timeScale.end)
+    .filter(event => event.notional_usd >= chart.liquidationMinimumUSD)
+    .filter(event => chartSignalPreferences[event.position_side === 'long' ? 'long_liquidations' : 'short_liquidations'] !== false);
   const bubbles = embeddedChart ? { points: [], outside: 0 } : drawLiquidationBubbles(plot, windowLiquidations, range, timeScale, y, left, candleRight, top, plotBottom);
   const markerCounts = drawTradeMarkers(plot, [...visibleTradeRows, ...visibleSignalRows, ...visibleAlertRows, ...visibleAlertSignalRows], range, timeScale, y, left, candleRight, top, plotBottom);
   const tradeMarkers = markerCounts.trade;
@@ -1613,13 +1624,14 @@ function draw(view, map, signal, volume) {
       const width = Math.sqrt(bin.total_usd / maximum) * (liquidationRight - liquidationLeft) * chart.liquidationZoom;
       const color = bin.price < (map.mark_price || signal?.mark_price) ? '#fb7185' : '#2dd4bf';
       const leverageRows = Object.entries(bin.leverage_usd || {}).filter(([, amount]) => amount > 0).sort((a, b) => Number(a[0]) - Number(b[0]));
-      const leverageTip = leverageRows.map(([leverage, amount]) => '\n' + leverage + 'x $' + compact(amount)).join('');
+      const visibleLeverageRows = leverageRows.filter(([leverage]) => chartSignalPreferences['leverage_' + leverage + 'x'] !== false);
+      const leverageTip = visibleLeverageRows.map(([leverage, amount]) => '\n' + leverage + 'x $' + compact(amount)).join('');
       const tip = liquidationName + zoomSuffix(chart.liquidationZoom) + '\n价格 ' + money(bin.price) + '\n总清算强度 $' + compact(bin.total_usd) + leverageTip + '\n多仓 $' + compact(bin.long_usd) + '\n空仓 $' + compact(bin.short_usd);
       if (leverageRows.length) {
         let cursor = liquidationLeft;
-        leverageRows.forEach(([leverage, amount]) => {
+        visibleLeverageRows.forEach(([leverage, amount]) => {
           const segmentWidth = width * amount / bin.total_usd;
-          wall.appendChild(svgNode('rect', { x: cursor, y: y(bin.price) - barHeight / 2, width: segmentWidth, height: barHeight, fill: leverageColors[leverage] || color, opacity: .4 + .58 * bin.total_usd / maximum, 'data-tip': tip, 'data-wall': 'segment' }));
+          wall.appendChild(svgNode('rect', { x: cursor, y: y(bin.price) - barHeight / 2, width: segmentWidth, height: barHeight, fill: leverageColors[leverage] || color, opacity: .4 + .58 * bin.total_usd / maximum, 'data-tip': tip, 'data-wall': 'segment', 'data-leverage': leverage }));
           cursor += segmentWidth;
         });
       } else {
@@ -1634,8 +1646,8 @@ function draw(view, map, signal, volume) {
     overlay.appendChild(wall);
     plot.appendChild(overlay);
   }
-  const volumeBins = embeddedChart ? [] : (volume?.bins || []);
-  if (!embeddedChart && volumeBins.length) {
+  const volumeBins = embeddedChart || chartSignalPreferences.volume_profile === false ? [] : (volume?.bins || []);
+  if (!embeddedChart && chartSignalPreferences.volume_profile !== false && volumeBins.length) {
     const maximum = Math.max(...volumeBins.map(item => item.volume_usd), 1);
     const volumeGroup = svgNode('g', { 'clip-path': 'url(#volume-clip)' });
     volumeBins.forEach(bin => {
@@ -1644,15 +1656,16 @@ function draw(view, map, signal, volume) {
       const width = Math.sqrt(bin.volume_usd / maximum) * (volumeRight - volumeLeft) * chart.volumeZoom;
       const barHeight = Math.max(2, Math.abs(y(bin.price_low) - y(bin.price_high)) * .9);
       const topThree = bin.volume_rank >= 1 && bin.volume_rank <= 3;
-      const fill = topThree ? '#a855f7' : '#60a5fa';
-      const opacity = topThree ? .96 : bin.in_value_area ? .88 : .28;
-      const rankTip = topThree ? '\n成交额排名 #' + bin.volume_rank : '';
-      volumeGroup.appendChild(svgNode('rect', { x: volumeRight - width, y: y(center) - barHeight / 2, width, height: barHeight, fill, opacity, 'data-volume-bar': '', 'data-tip': 'Binance 当前时段成交量' + zoomSuffix(chart.volumeZoom) + '\n价格 ' + money(bin.price_low) + ' – ' + money(bin.price_high) + '\n成交额 $' + compact(bin.volume_usd) + '\n占比 ' + (bin.volume_percent || 0).toFixed(2) + '%' + rankTip + (bin.in_value_area ? '\n69%价值区域内' : '\n价值区域外') }));
+      const topThreeHighlighted = topThree && chartSignalPreferences.top_volume_bins !== false;
+      const fill = topThreeHighlighted ? '#a855f7' : '#60a5fa';
+      const opacity = topThreeHighlighted ? .96 : bin.in_value_area ? .88 : .28;
+      const rankTip = topThreeHighlighted ? '\n成交额排名 #' + bin.volume_rank : '';
+      volumeGroup.appendChild(svgNode('rect', { x: volumeRight - width, y: y(center) - barHeight / 2, width, height: barHeight, fill, opacity, 'data-volume-bar': '', 'data-volume-top-three': String(topThree), 'data-volume-highlight': String(topThreeHighlighted), 'data-tip': 'Binance 当前时段成交量' + zoomSuffix(chart.volumeZoom) + '\n价格 ' + money(bin.price_low) + ' – ' + money(bin.price_high) + '\n成交额 $' + compact(bin.volume_usd) + '\n占比 ' + (bin.volume_percent || 0).toFixed(2) + '%' + rankTip + (bin.in_value_area ? '\n69%价值区域内' : '\n价值区域外') }));
     });
     plot.appendChild(volumeGroup);
   }
   svg.appendChild(plot);
-  if (!embeddedChart) svg.appendChild(svgNode('text', { x: (volumeLeft + volumeRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#7dd3fc', 'font-size': 11, 'font-weight': 650 }, '当前时段成交量' + zoomSuffix(chart.volumeZoom)));
+  if (!embeddedChart && chartSignalPreferences.volume_profile !== false) svg.appendChild(svgNode('text', { x: (volumeLeft + volumeRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: '#7dd3fc', 'font-size': 11, 'font-weight': 650, 'data-volume-title': '' }, '当前时段成交量' + zoomSuffix(chart.volumeZoom)));
   if (!embeddedChart) svg.appendChild(svgNode('text', { x: (liquidationLeft + liquidationRight) / 2, y: top + 12, 'text-anchor': 'middle', fill: coinGlassMap ? '#7dd3fc' : '#83a0b2', 'font-size': 11, 'font-weight': 650, 'data-liquidation-title': '' }, liquidationName + zoomSuffix(chart.liquidationZoom)));
   if (!embeddedChart && coinGlassMap) {
     const above = bins.filter(bin => bin.price > high).length;
@@ -1671,6 +1684,7 @@ function draw(view, map, signal, volume) {
   });
   [['VAL', volume?.val, '#22c55e'], ['VAH', volume?.vah, '#ef4444']].forEach(([name, price, color]) => {
     if (embeddedChart) return;
+    if (chartSignalPreferences[name === 'VAL' ? 'val_line' : 'vah_line'] === false) return;
     if (!finite(price) || price < low || price > high) return;
     const provisional = ['backfilling', 'stale', 'unavailable'].includes(volume?.state);
     const yy = y(price);
@@ -1726,11 +1740,11 @@ function setChartSignalPreferenceStatus(message, isError = false) {
 }
 
 function updateChartSignalPreferenceButtons() {
-  document.querySelectorAll('button[data-chart-signal-toggle]').forEach(button => {
-    const key = button.dataset.chartSignalToggle;
+  document.querySelectorAll('button[data-chart-preference-toggle]').forEach(button => {
+    const key = button.dataset.chartPreferenceToggle;
     const enabled = chartSignalPreferences[key] !== false;
     button.setAttribute('aria-pressed', String(enabled));
-    button.classList.toggle('active', enabled);
+    button.classList.toggle('is-on', enabled);
     const saving = pendingChartSignalPreferenceKeys.has(key);
     button.disabled = saving;
     button.setAttribute('aria-busy', String(saving));
@@ -1740,11 +1754,11 @@ function updateChartSignalPreferenceButtons() {
 
 function applyChartSignalPreferences(payload) {
   if (!payload || typeof payload !== 'object' || !Number.isFinite(Number(payload.updated_at)) ||
-      chartSignalPreferenceKeys.some(key => typeof payload[key] !== 'boolean')) return false;
+      chartPreferenceKeys.some(key => typeof payload[key] !== 'boolean')) return false;
   const updatedAt = Number(payload.updated_at);
   if (updatedAt < chartSignalPreferencesUpdatedAt) return true;
   let changed = false;
-  chartSignalPreferenceKeys.forEach(key => {
+  chartPreferenceKeys.forEach(key => {
     if (pendingChartSignalPreferenceKeys.has(key) || chartSignalPreferences[key] === payload[key]) return;
     chartSignalPreferences[key] = payload[key];
     changed = true;
@@ -1783,7 +1797,7 @@ async function syncChartSignalPreferences() {
 }
 
 async function saveChartSignalPreference(key, button) {
-  if (!chartSignalPreferenceKeys.includes(key) || pendingChartSignalPreferenceKeys.has(key)) return;
+  if (!chartPreferenceKeys.includes(key) || pendingChartSignalPreferenceKeys.has(key)) return;
   const previous = chartSignalPreferences[key] !== false;
   const enabled = !previous;
   pendingChartSignalPreferenceKeys.add(key);
@@ -2745,8 +2759,8 @@ if (!embeddedChart) installChartInteractions();
 if (embeddedChart) installEmbeddedChartInteractions();
 if (!embeddedChart) {
   updateChartSignalPreferenceButtons();
-  document.querySelectorAll('button[data-chart-signal-toggle]').forEach(button => {
-    button.addEventListener('click', () => saveChartSignalPreference(button.dataset.chartSignalToggle, button));
+  document.querySelectorAll('button[data-chart-preference-toggle]').forEach(button => {
+    button.addEventListener('click', () => saveChartSignalPreference(button.dataset.chartPreferenceToggle, button));
   });
   void syncChartSignalPreferences();
   setInterval(() => { if (document.visibilityState === 'visible') void syncChartSignalPreferences(); }, 5000);
