@@ -603,13 +603,9 @@ func TestAlertHistoryEndpoints(t *testing.T) {
 	if storedTimelinePage.Code != http.StatusOK || json.Unmarshal(storedTimelinePage.Body.Bytes(), &storedTimeline) != nil || len(storedTimeline.Rows) != 8 || storedTimeline.TotalCount != 8 {
 		t.Fatalf("stored timeline page status=%d body=%s page=%+v", storedTimelinePage.Code, storedTimelinePage.Body.String(), storedTimeline)
 	}
-	storedTimelineWidePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?stored=1&limit=5000", nil)
-	if storedTimelineWidePage.Code != http.StatusOK {
-		t.Fatalf("wide stored timeline page status=%d body=%s", storedTimelineWidePage.Code, storedTimelineWidePage.Body.String())
-	}
-	regularTimelineWidePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?limit=5000", nil)
-	if regularTimelineWidePage.Code != http.StatusBadRequest {
-		t.Fatalf("regular timeline limit should remain bounded at 200, got %d", regularTimelineWidePage.Code)
+	storedTimelineWidePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?stored=1&limit=201", nil)
+	if storedTimelineWidePage.Code != http.StatusBadRequest {
+		t.Fatalf("stored timeline page limit should remain bounded at 200, got %d", storedTimelineWidePage.Code)
 	}
 	smallTimelinePage := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?limit=1", nil)
 	var smallTimeline domain.AlertTimelinePage
