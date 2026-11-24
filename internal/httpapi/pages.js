@@ -255,8 +255,8 @@
     if(help)help.textContent=spot?'默认视野：当前价格上下20%（'+price(spot*.8)+'～'+price(spot*1.2)+' USD）；按住鼠标左右拖动，滚轮缩放，双击恢复默认视野。':'按住鼠标左右拖动，滚轮缩放，双击恢复默认视野。';
     draw();
   }
-  function marketBiasLabel(bias) { return ({bullish:'偏多',bearish:'偏空',neutral:'中性',divergent:'周期分歧',insufficient:'数据不足'})[bias] || '中性'; }
-  function marketBiasClass(bias) { return ({bullish:'market-bias-bullish',bearish:'market-bias-bearish',neutral:'market-bias-neutral',divergent:'market-bias-divergent',insufficient:'market-bias-insufficient'})[bias] || 'market-bias-neutral'; }
+  function marketBiasLabel(bias) { return ({bullish:'偏多',bearish:'偏空',neutral:'中性',divergent:'周期分歧',waiting:'观望',insufficient:'数据不足'})[bias] || '中性'; }
+  function marketBiasClass(bias) { return ({bullish:'market-bias-bullish',bearish:'market-bias-bearish',neutral:'market-bias-neutral',divergent:'market-bias-divergent',waiting:'market-bias-waiting',insufficient:'market-bias-insufficient'})[bias] || 'market-bias-neutral'; }
   function renderMarketAssessment(assessment) {
     const a=assessment||{}, segments=Array.isArray(a.segments)?a.segments:[], cards=[...segments, a.overall&&a.overall.key ? a.overall : null].filter(Boolean);
     $('market-assessment-summary').textContent=a.summary||'等待分析数据';

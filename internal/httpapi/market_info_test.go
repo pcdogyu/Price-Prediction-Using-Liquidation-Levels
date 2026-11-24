@@ -25,6 +25,8 @@ func TestMarketInfoAssessmentUIIsEmbedded(t *testing.T) {
 	for _, marker := range []string{
 		"marketRange = '4h'",
 		"ctx.moveTo(px,pad.t);ctx.lineTo(px,height-pad.b)",
+		"waiting:'观望'",
+		"market-bias-waiting",
 		"function renderMarketAssessment(assessment)",
 		"marketBiasLabel",
 		"delta_exposure",
@@ -39,5 +41,8 @@ func TestMarketInfoAssessmentUIIsEmbedded(t *testing.T) {
 		if !strings.Contains(assets, marker) {
 			t.Fatalf("market information asset is missing %q", marker)
 		}
+	}
+	if !strings.Contains(string(pagesCSS), ".market-bias-waiting .number") {
+		t.Fatal("market assessment waiting state should have a visible style")
 	}
 }

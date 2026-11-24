@@ -19,6 +19,7 @@ const (
 	marketBiasNeutral      = "neutral"
 	marketBiasDivergent    = "divergent"
 	marketBiasInsufficient = "insufficient"
+	marketBiasWaiting      = "waiting"
 )
 
 func classifyMarketChange(value *float64, threshold float64) (int, bool) {
@@ -71,6 +72,8 @@ func marketBiasLabel(bias string) string {
 		return "偏空"
 	case marketBiasDivergent:
 		return "周期分歧"
+	case marketBiasWaiting:
+		return "观望"
 	case marketBiasInsufficient:
 		return "数据不足"
 	default:
@@ -266,32 +269,45 @@ func assessmentSegment(key, label string, windows []domain.MarketWindow) domain.
 	return segment
 }
 
-func overallAssessment(short, medium, long domain.MarketAssessmentSegment) domain.MarketAssessmentSegment {
-	overall := domain.MarketAssessmentSegment{Key: "overall", Label: "总体倾向", Bias: marketBiasInsufficient}
-	if short.Bias == marketBiasInsufficient && medium.Bias == marketBiasInsufficient {
-		overall.Bias = long.Bias
-		overall.Summary = "总体倾向：" + marketBiasLabel(overall.Bias)
-		return overall
-	}
-	if (short.Bias == marketBiasBullish || short.Bias == marketBiasBearish) && short.Bias == medium.Bias {
-		overall.Bias = short.Bias
-		overall.Summary = "总体倾向：" + marketBiasLabel(overall.Bias)
-		if long.Bias != marketBiasInsufficient && long.Bias != overall.Bias {
-			overall.Summary += "；长线为" + marketBiasLabel(long.Bias)
-		}
-		return overall
-	}
-	if (short.Bias == marketBiasBullish || short.Bias == marketBiasBearish) && medium.Bias == marketBiasNeutral {
-		overall.Bias = short.Bias
-	} else if (medium.Bias == marketBiasBullish || medium.Bias == marketBiasBearish) && short.Bias == marketBiasNeutral {
-		overall.Bias = medium.Bias
-	} else if short.Bias == marketBiasDivergent || medium.Bias == marketBiasDivergent || short.Bias != medium.Bias {
-		overall.Bias = marketBiasDivergent
-	} else {
+func overallAssessment(short, long domain.MarketAssessmentSegment, windows map[string]domain.MarketWindow) domain.MarketAssessmentSegment {
+	fourHour, hasFourHour := windows["4h"]
+	twelveHour, hasTwelveHour := windows["12h"]
+	overall := domain.MarketAssessmentSegment{Key: "overall", Label: "总体倾向", Bias: marketBiasWaiting}
+	switch {
+	case hasFourHour && hasTwelveHour && fourHour.Bias == marketBiasBullish && twelveHour.Bias == marketBiasBullish:
+		overall.Bias = marketBiasBullish
+	case hasFourHour && hasTwelveHour && fourHour.Bias == marketBiasBearish && twelveHour.Bias == marketBiasBearish:
+		overall.Bias = marketBiasBearish
+	case hasFourHour && hasTwelveHour && fourHour.Bias == marketBiasNeutral && twelveHour.Bias == marketBiasNeutral:
 		overall.Bias = marketBiasNeutral
 	}
+
 	overall.Summary = "总体倾向：" + marketBiasLabel(overall.Bias)
+	switch overall.Bias {
+	case marketBiasBullish, marketBiasBearish:
+		overall.Summary += "；中线 4H+12H 同向确认"
+	case marketBiasNeutral:
+		overall.Summary += "；4H 与 12H 均为中性"
+	default:
+		fourHourBias, twelveHourBias := marketBiasInsufficient, marketBiasInsufficient
+		if hasFourHour {
+			fourHourBias = fourHour.Bias
+		}
+		if hasTwelveHour {
+			twelveHourBias = twelveHour.Bias
+		}
+		overall.Summary += "；中线未确认（4H " + marketBiasLabel(fourHourBias) + "，12H " + marketBiasLabel(twelveHourBias) + "）"
+	}
+	overall.Summary += "；短线：" + assessmentHorizonContext(short.Bias, overall.Bias) + "；24H：" + assessmentHorizonContext(long.Bias, overall.Bias)
 	return overall
+}
+
+func assessmentHorizonContext(bias, overall string) string {
+	label := marketBiasLabel(bias)
+	if (overall == marketBiasBullish && bias == marketBiasBearish) || (overall == marketBiasBearish && bias == marketBiasBullish) {
+		return label + "（逆中线）"
+	}
+	return label
 }
 
 func buildMarketAssessment(state string, windows []domain.MarketWindow, current *domain.MarketMetric, gamma domain.GammaView) domain.MarketAssessment {
@@ -302,7 +318,7 @@ func buildMarketAssessment(state string, windows []domain.MarketWindow, current 
 	short := assessmentSegment("short", "短线（5M+1H）", []domain.MarketWindow{byLabel["5m"], byLabel["1h"]})
 	medium := assessmentSegment("medium", "中线（4H+12H）", []domain.MarketWindow{byLabel["4h"], byLabel["12h"]})
 	long := assessmentSegment("long", "长线（24H）", []domain.MarketWindow{byLabel["24h"]})
-	assessment := domain.MarketAssessment{Segments: []domain.MarketAssessmentSegment{short, medium, long}, Overall: overallAssessment(short, medium, long), RiskLevel: "low", RiskLabel: "低风险关注", Risks: []string{}}
+	assessment := domain.MarketAssessment{Segments: []domain.MarketAssessmentSegment{short, medium, long}, Overall: overallAssessment(short, long, byLabel), RiskLevel: "low", RiskLabel: "低风险关注", Risks: []string{}}
 	if state == "partial" {
 		assessment.Risks = append(assessment.Risks, "永续指标部分缺失")
 	}

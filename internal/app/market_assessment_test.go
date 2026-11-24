@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
@@ -76,7 +77,53 @@ func TestMarketAssessmentSplitsHorizonsAndRiskFlags(t *testing.T) {
 	if len(assessment.Segments) != 3 || assessment.Segments[0].Bias != marketBiasBullish || assessment.Segments[1].Bias != marketBiasDivergent {
 		t.Fatalf("segments=%+v", assessment.Segments)
 	}
-	if assessment.Overall.Bias != marketBiasDivergent || assessment.RiskLevel != "high" || len(assessment.Risks) < 3 {
+	if assessment.Overall.Bias != marketBiasWaiting || !strings.Contains(assessment.Overall.Summary, "观望") || assessment.RiskLevel != "high" || len(assessment.Risks) < 3 {
 		t.Fatalf("assessment=%+v", assessment)
+	}
+}
+
+func TestOverallAssessmentUsesConfirmedFourAndTwelveHourConsensus(t *testing.T) {
+	tests := []struct {
+		name       string
+		fourHour   string
+		twelveHour string
+		want       string
+	}{
+		{name: "both bullish", fourHour: marketBiasBullish, twelveHour: marketBiasBullish, want: marketBiasBullish},
+		{name: "both bearish", fourHour: marketBiasBearish, twelveHour: marketBiasBearish, want: marketBiasBearish},
+		{name: "both neutral", fourHour: marketBiasNeutral, twelveHour: marketBiasNeutral, want: marketBiasNeutral},
+		{name: "opposing", fourHour: marketBiasBullish, twelveHour: marketBiasBearish, want: marketBiasWaiting},
+		{name: "direction and neutral", fourHour: marketBiasBullish, twelveHour: marketBiasNeutral, want: marketBiasWaiting},
+		{name: "divergent", fourHour: marketBiasDivergent, twelveHour: marketBiasBullish, want: marketBiasWaiting},
+		{name: "insufficient", fourHour: marketBiasInsufficient, twelveHour: marketBiasBearish, want: marketBiasWaiting},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := overallAssessment(
+				domain.MarketAssessmentSegment{Bias: marketBiasBearish},
+				domain.MarketAssessmentSegment{Bias: marketBiasBearish},
+				map[string]domain.MarketWindow{
+					"4h":  {Bias: tc.fourHour},
+					"12h": {Bias: tc.twelveHour},
+				},
+			)
+			if got.Bias != tc.want {
+				t.Fatalf("overall bias=%q, want %q (%s)", got.Bias, tc.want, got.Summary)
+			}
+			if tc.want == marketBiasBullish && (!strings.Contains(got.Summary, "短线：偏空（逆中线）") || !strings.Contains(got.Summary, "24H：偏空（逆中线）")) {
+				t.Fatalf("short-term and long-term opposition should remain context: %q", got.Summary)
+			}
+		})
+	}
+}
+
+func TestOverallAssessmentWaitsWhenMediumWindowIsMissing(t *testing.T) {
+	got := overallAssessment(
+		domain.MarketAssessmentSegment{Bias: marketBiasBullish},
+		domain.MarketAssessmentSegment{Bias: marketBiasBearish},
+		map[string]domain.MarketWindow{"4h": {Bias: marketBiasBullish}},
+	)
+	if got.Bias != marketBiasWaiting || !strings.Contains(got.Summary, "12H 数据不足") {
+		t.Fatalf("missing 12h window should wait: %+v", got)
 	}
 }
