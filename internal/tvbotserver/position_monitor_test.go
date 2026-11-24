@@ -34,8 +34,8 @@ func TestPositionMonitorOKXStartsLimitCloseAtThresholds(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v5/account/positions":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[
-				{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"2","availPos":"2","avgPx":"100","markPx":"106","upl":"12","uplRatio":"0.06","lever":"5","notionalUsd":"212","margin":"42.4"},
-				{"instType":"SWAP","instId":"ETH-USDT-SWAP","mgnMode":"isolated","posSide":"short","pos":"3","availPos":"3","avgPx":"100","markPx":"109","upl":"-27","uplRatio":"-0.09","lever":"5","notionalUsd":"327","margin":"65.4"},
+				{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"2","availPos":"2","avgPx":"100","markPx":"106","upl":"12","uplRatio":"0.01","lever":"5","notionalUsd":"212","margin":"42.4"},
+				{"instType":"SWAP","instId":"ETH-USDT-SWAP","mgnMode":"isolated","posSide":"short","pos":"3","availPos":"3","avgPx":"100","markPx":"109","upl":"-27","uplRatio":"-0.01","lever":"5","notionalUsd":"327","margin":"65.4"},
 				{"instType":"SWAP","instId":"DOGE-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"100","availPos":"100","avgPx":"0.1","markPx":"0.101","upl":"0.1","uplRatio":"0.01","lever":"5","notionalUsd":"10.1","margin":"2.02"},
 				{"instType":"SWAP","instId":"ALGO-USDT-SWAP","mgnMode":"isolated","posSide":"net","pos":"-1098","availPos":"1098","avgPx":"0.0800","markPx":"0.0794","upl":"6.588","lever":"10","notionalUsd":"870.85","margin":"87.84"}
 			]}`))
@@ -548,7 +548,7 @@ func TestPositionMonitorAllPriceClosesWaitAtLeast15Minutes(t *testing.T) {
 		{name: "short", posSide: "short", entrySide: "sell"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			position := okx.Position{InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Pos: "1", UplRatio: "-0.09"}
+			position := okx.Position{InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Pos: "1", Upl: "-9", Margin: "100", UplRatio: "-0.09"}
 			entry := now.Add(-10 * time.Minute)
 			trigger, hit, _, heldFor, entryErr := positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
 				InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Side: tc.entrySide, Size: 1, FillTime: entry,
@@ -557,6 +557,7 @@ func TestPositionMonitorAllPriceClosesWaitAtLeast15Minutes(t *testing.T) {
 				t.Fatalf("early stop-loss should be deferred: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
 			}
 
+			position.Upl = "6"
 			position.UplRatio = "0.06"
 			trigger, hit, _, _, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
 				InstID: "SOL-USDT-SWAP", PosSide: tc.posSide, Side: tc.entrySide, Size: 1, FillTime: now.Add(-10 * time.Minute),
@@ -565,6 +566,7 @@ func TestPositionMonitorAllPriceClosesWaitAtLeast15Minutes(t *testing.T) {
 				t.Fatalf("take-profit before 15 minutes should be deferred: trigger=%q hit=%v err=%q", trigger, hit, entryErr)
 			}
 
+			position.Upl = "-9"
 			position.UplRatio = "-0.09"
 			entry = now.Add(-15 * time.Minute)
 			trigger, hit, _, heldFor, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{
@@ -574,6 +576,7 @@ func TestPositionMonitorAllPriceClosesWaitAtLeast15Minutes(t *testing.T) {
 				t.Fatalf("stop-loss at exactly 15 minutes should be deferred: trigger=%q hit=%v held=%s err=%q", trigger, hit, heldFor, entryErr)
 			}
 
+			position.Upl = "6"
 			position.UplRatio = "0.06"
 			entry = now.Add(-(15*time.Minute + time.Second))
 			trigger, hit, _, heldFor, entryErr = positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{{

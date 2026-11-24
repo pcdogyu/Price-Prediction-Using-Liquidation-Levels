@@ -7479,8 +7479,6 @@ const tvbotHTML = `<!doctype html>
     }
 
     function positionReturnRatio(row) {
-      const uplRatio = positionNumber(row ? row.uplRatio : null);
-      if (uplRatio !== null) return uplRatio;
       const upl = positionNumber(row ? row.upl : null);
       const margin = positionNumber(row ? row.margin : null);
       if (upl !== null && margin !== null && margin !== 0) return upl / Math.abs(margin);
@@ -7489,7 +7487,7 @@ const tvbotHTML = `<!doctype html>
 
     function positionReturnPercent(row) {
       const ratio = positionReturnRatio(row);
-      return ratio === null ? positionPercent(row ? row.uplRatio : null) : formatPct(ratio);
+      return ratio === null ? "-" : formatPct(ratio);
     }
 
     function positionSum(rows, field) {
@@ -7500,10 +7498,17 @@ const tvbotHTML = `<!doctype html>
     }
 
     function positionOverallReturnRatio(rows) {
-      const totalNotional = Math.abs(positionSum(rows, "notionalUsd"));
-      const totalUpl = positionSum(rows, "upl");
-      if (!Number.isFinite(totalNotional) || totalNotional <= 0 || !Number.isFinite(totalUpl)) return null;
-      return totalUpl / totalNotional;
+      let totalMargin = 0;
+      let totalUpl = 0;
+      rows.forEach((row) => {
+        const margin = positionNumber(row ? row.margin : null);
+        const upl = positionNumber(row ? row.upl : null);
+        if (margin === null || margin === 0 || upl === null) return;
+        totalMargin += Math.abs(margin);
+        totalUpl += upl;
+      });
+      if (!Number.isFinite(totalMargin) || totalMargin <= 0 || !Number.isFinite(totalUpl)) return null;
+      return totalUpl / totalMargin;
     }
 
     function positionAmount(row) {

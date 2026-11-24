@@ -2210,9 +2210,6 @@ func (s *Server) closeProfitablePositionsForAPI(ctx context.Context, cfg config.
 }
 
 func positionReturnRatio(position okx.Position) (float64, bool) {
-	if ratio, err := strconv.ParseFloat(strings.TrimSpace(position.UplRatio), 64); err == nil && !math.IsNaN(ratio) && !math.IsInf(ratio, 0) {
-		return ratio, true
-	}
 	upl, uplErr := strconv.ParseFloat(strings.TrimSpace(position.Upl), 64)
 	margin, marginErr := strconv.ParseFloat(strings.TrimSpace(position.Margin), 64)
 	if uplErr != nil || marginErr != nil || margin == 0 || math.IsNaN(upl) || math.IsNaN(margin) || math.IsInf(upl, 0) || math.IsInf(margin, 0) {
@@ -4594,10 +4591,17 @@ func binancePositionToOKX(position binance.Position) okx.Position {
 	}
 	margin := strings.TrimSpace(position.IsolatedMargin)
 	if margin == "" || margin == "0" {
-		margin = strings.TrimSpace(position.InitialMargin)
+		margin = firstNonEmpty(strings.TrimSpace(position.PositionInitialMargin), strings.TrimSpace(position.InitialMargin))
 	}
 	notional := binancePositionNotional(position)
 	lever := binancePositionLeverage(position, notional)
+	if margin == "" || margin == "0" {
+		if notionalValue, notionalErr := strconv.ParseFloat(notional, 64); notionalErr == nil && notionalValue > 0 {
+			if leverage, leverageErr := strconv.ParseFloat(lever, 64); leverageErr == nil && leverage > 0 {
+				margin = trading.NormalizeFloat(notionalValue / leverage)
+			}
+		}
+	}
 	return okx.Position{
 		InstType:    "USDT-M",
 		InstID:      strings.ToUpper(strings.TrimSpace(position.Symbol)),

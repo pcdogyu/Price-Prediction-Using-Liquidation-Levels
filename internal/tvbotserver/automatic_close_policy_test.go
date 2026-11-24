@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -19,7 +20,7 @@ import (
 func TestAutomaticPositionCloseRequiresMoreThan15Minutes(t *testing.T) {
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	monitor := tvbotconfig.PositionMonitorConfig{MinHoldingMinutes: 1, TakeProfitPct: 5}
-	position := tvbotokx.Position{InstID: "BTC-USDT-SWAP", PosSide: "long", Pos: "1", UplRatio: "0.10"}
+	position := tvbotokx.Position{InstID: "BTC-USDT-SWAP", PosSide: "long", Pos: "1", Upl: "10", Margin: "100", UplRatio: "0.10"}
 	entry := positionEntryFill{InstID: position.InstID, PosSide: "long", Side: "buy", Size: 1, FillTime: now.Add(-(15*time.Minute - time.Second))}
 	if trigger, hit, _, _, _ := positionMonitorTriggerForPosition(position, monitor, true, now, []positionEntryFill{entry}, nil, false); hit || trigger != "" {
 		t.Fatal("14:59 automatic close must be skipped")
@@ -34,10 +35,57 @@ func TestAutomaticPositionCloseRequiresMoreThan15Minutes(t *testing.T) {
 	}
 }
 
+func TestPositionReturnRatioUsesUnrealizedPnLOverMargin(t *testing.T) {
+	tests := []struct {
+		name     string
+		position tvbotokx.Position
+		want     float64
+		wantOK   bool
+	}{
+		{
+			name: "margin based ratio overrides exchange ratio",
+			position: tvbotokx.Position{
+				Upl: "-0.21", Margin: "74.92", UplRatio: "-0.0003",
+			},
+			want:   -0.21 / 74.92,
+			wantOK: true,
+		},
+		{
+			name: "negative margin uses absolute value",
+			position: tvbotokx.Position{
+				Upl: "10", Margin: "-50", UplRatio: "0.01",
+			},
+			want:   0.2,
+			wantOK: true,
+		},
+		{
+			name:     "missing margin is unavailable even with exchange ratio",
+			position: tvbotokx.Position{Upl: "1", UplRatio: "0.1"},
+			wantOK:   false,
+		},
+		{
+			name:     "zero margin is unavailable",
+			position: tvbotokx.Position{Upl: "1", Margin: "0", UplRatio: "0.1"},
+			wantOK:   false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := positionReturnRatio(test.position)
+			if ok != test.wantOK {
+				t.Fatalf("positionReturnRatio() ok = %v, want %v", ok, test.wantOK)
+			}
+			if ok && math.Abs(got-test.want) > 1e-12 {
+				t.Fatalf("positionReturnRatio() = %.12f, want %.12f", got, test.want)
+			}
+		})
+	}
+}
+
 func TestAutomaticPositionCloseSkipsWhenEntryTimeIsUnavailable(t *testing.T) {
 	now := time.Now().UTC()
 	monitor := tvbotconfig.PositionMonitorConfig{MinHoldingMinutes: 15, TakeProfitPct: 5}
-	position := tvbotokx.Position{InstID: "BTC-USDT-SWAP", PosSide: "long", Pos: "1", UplRatio: "0.10"}
+	position := tvbotokx.Position{InstID: "BTC-USDT-SWAP", PosSide: "long", Pos: "1", Upl: "10", Margin: "100", UplRatio: "0.10"}
 	if trigger, hit, _, _, err := positionMonitorTriggerForPosition(position, monitor, true, now, nil, nil, false); hit || trigger != "" || !strings.Contains(err, "无法") {
 		t.Fatalf("missing entry time must fail closed: trigger=%q hit=%v err=%q", trigger, hit, err)
 	}

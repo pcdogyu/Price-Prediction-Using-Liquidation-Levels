@@ -743,7 +743,9 @@ func TestRenderTVBotPositionsShowsOverallReturn(t *testing.T) {
 		`id="positions-balance"`,
 		`id="positions-available"`,
 		`function positionOverallReturnRatio(rows)`,
-		`return totalUpl / totalNotional;`,
+		`if (margin === null || margin === 0 || upl === null) return;`,
+		`return totalUpl / totalMargin;`,
+		`return ratio === null ? "-" : formatPct(ratio);`,
 		`$("positions-return").className = ["value", signedToneClass(overallReturn)]`,
 	} {
 		if !strings.Contains(page, want) {

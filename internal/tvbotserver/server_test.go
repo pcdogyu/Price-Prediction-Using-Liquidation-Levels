@@ -216,8 +216,7 @@ func TestRoutes(t *testing.T) {
 		!bytes.Contains(ui.Body.Bytes(), []byte("formatFixed2(row.margin)")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("positionAmount(row)")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("positionReturnRatio")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("const uplRatio = positionNumber(row ? row.uplRatio : null);")) ||
-		!bytes.Contains(ui.Body.Bytes(), []byte("if (uplRatio !== null) return uplRatio;")) ||
+		!bytes.Contains(ui.Body.Bytes(), []byte("if (upl !== null && margin !== null && margin !== 0) return upl / Math.abs(margin);")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("formatHoldingSeconds")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("positionEntryTimeCell")) ||
 		!bytes.Contains(ui.Body.Bytes(), []byte("交易所持仓时间")) ||
@@ -6757,8 +6756,8 @@ func TestAutoProfitPositionMonitorStartsLimitClose(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v5/account/positions":
 			_, _ = w.Write([]byte(`{"code":"0","msg":"","data":[
-				{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"0.5","avgPx":"100","markPx":"101","upl":"1","uplRatio":"0.051","lever":"5","margin":"100","cTime":"1784800000000"},
-				{"instType":"SWAP","instId":"ETH-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"1","avgPx":"100","markPx":"101","upl":"10","uplRatio":"0.05","lever":"5","margin":"100","cTime":"1784800000000"}
+				{"instType":"SWAP","instId":"BTC-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"0.5","avgPx":"100","markPx":"101","upl":"6","uplRatio":"0.01","lever":"5","margin":"100","cTime":"1784800000000"},
+				{"instType":"SWAP","instId":"ETH-USDT-SWAP","mgnMode":"isolated","posSide":"long","pos":"1","avgPx":"100","markPx":"101","upl":"5","uplRatio":"0.10","lever":"5","margin":"100","cTime":"1784800000000"}
 			]}`))
 		case "/api/v5/trade/fills-history":
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"code":"0","msg":"","data":[{"instId":"BTC-USDT-SWAP","ordId":"entry-btc","posSide":"long","side":"buy","fillSz":"0.5","fillTime":%q}]}`, strconv.FormatInt(srv.now().Add(-time.Hour).UnixMilli(), 10))))
@@ -6807,12 +6806,12 @@ func TestAutoProfitPositionMonitorStartsLimitClose(t *testing.T) {
 	}
 }
 
-func TestPositionReturnRatioPrefersExchangeUPLRatio(t *testing.T) {
-	if got, ok := positionReturnRatio(okx.Position{UplRatio: "0.06", Upl: "1", Margin: "100"}); !ok || got != 0.06 {
-		t.Fatalf("exchange upl ratio = %v, %v; want 0.06, true", got, ok)
+func TestPositionReturnRatioUsesMarginBasedFormula(t *testing.T) {
+	if got, ok := positionReturnRatio(okx.Position{UplRatio: "0.06", Upl: "1", Margin: "100"}); !ok || got != 0.01 {
+		t.Fatalf("margin based return ratio = %v, %v; want 0.01, true", got, ok)
 	}
 	if got, ok := positionReturnRatio(okx.Position{UplRatio: "bad", Upl: "10", Margin: "200"}); !ok || got != 0.05 {
-		t.Fatalf("fallback return ratio = %v, %v; want 0.05, true", got, ok)
+		t.Fatalf("margin based return ratio = %v, %v; want 0.05, true", got, ok)
 	}
 }
 
