@@ -259,7 +259,7 @@ func TestSeedReplayIsIdempotent(t *testing.T) {
 func TestZeroConfigKeepsProductionDefaults(t *testing.T) {
 	engine := testEngine(t, Config{}, "BTCUSDT")
 	got := engine.Config()
-	if got.Window != 10*time.Minute || got.Quiet != 10*time.Minute || got.Confirm != 30*time.Minute || got.BTCUSD != 300000 || got.ETHUSD != 200000 || got.OtherUSD != 100000 || got.VWAPRangeMinutes != 1440 || got.VWAPMinDrawdown != .022 || got.VWAPDonchianFraction != .35 || !got.VWAPFilterEnabled || !got.DonchianFilterEnabled {
+	if got.Window != 10*time.Minute || got.Quiet != 10*time.Minute || got.Confirm != 30*time.Minute || got.BTCUSD != 300000 || got.ETHUSD != 200000 || got.OtherUSD != 100000 || got.VWAPRangeMinutes != 1440 || got.VWAPMinDrawdown != .022 || got.VWAPDonchianFraction != .35 || !got.VWAPFilterEnabled || !got.DonchianFilterEnabled || !got.ValueAreaFilterEnabled {
 		t.Fatalf("zero values must fall back to the documented defaults: %+v", got)
 	}
 	thresholds := engine.Thresholds()
@@ -341,6 +341,7 @@ func TestRadarDisabledComponentIgnoresMissingData(t *testing.T) {
 		Ready: true, Price: 100, Candles: radarCandles(100, 101),
 		CurrentCandle: domain.Candle{Time: testStart, Close: 100},
 		DonchianHigh:  102, DonchianLow: 98, DonchianReady: true,
+		ValueAreaVAL: 90, ValueAreaVAH: 99, ValueAreaReady: true,
 	}
 	cfg := Defaults()
 	cfg.VWAPFilterEnabled = false
@@ -385,7 +386,7 @@ func TestRadarInvalidOpeningZoneFailsClosedForBothDirections(t *testing.T) {
 		if decision.OpenAllowed || !decision.CloseAllowed {
 			t.Fatalf("invalid VWAP zone must fail closed for %s liquidation: %+v", side, decision)
 		}
-		if decision.Reason != "vwap_zone_unavailable_"+side+"_liquidation_close_only" {
+		if !strings.Contains(decision.Reason, "vwap_zone_unavailable_"+side+"_liquidation_close_only") {
 			t.Fatalf("invalid VWAP zone reason for %s = %q", side, decision.Reason)
 		}
 	}
@@ -405,13 +406,57 @@ func radarCandles(closes ...float64) []domain.Candle {
 func radarContext(price float64, candles []domain.Candle) MarketContext {
 	current := domain.Candle{Time: testStart, Open: price - 1, High: price + 1, Low: price - 2, Close: price}
 	high, low, ready := DonchianRange(candles, len(candles))
-	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: ready}
+	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: ready,
+		ValueAreaVAL: price + 1, ValueAreaVAH: price + 2, ValueAreaReady: true}
 }
 
 func radarShortContext(price float64, candles []domain.Candle) MarketContext {
 	current := domain.Candle{Time: testStart, Open: price - 1, High: price + 2, Low: price - 1, Close: price}
 	high, low, ready := DonchianRange(candles, len(candles))
-	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: ready}
+	return MarketContext{Ready: true, Price: price, Candles: candles, CurrentCandle: current, DonchianHigh: high, DonchianLow: low, DonchianReady: ready,
+		ValueAreaVAL: price - 2, ValueAreaVAH: price - 1, ValueAreaReady: true}
+}
+
+func TestRadarValueAreaStrictlyGatesLiquidationDirection(t *testing.T) {
+	cfg := Defaults()
+	cfg.VWAPFilterEnabled = false
+	cfg.DonchianFilterEnabled = false
+	cfg.ValueAreaFilterEnabled = true
+	cfg.FilterSettingsSet = true
+	cfg.DeepQuotaUSD = 1
+
+	decision := func(side string, price, val, vah float64, ready bool) FilterDecision {
+		return filterDecision(cfg, side, MarketContext{Ready: true, Price: price, ValueAreaVAL: val, ValueAreaVAH: vah, ValueAreaReady: ready}, symbolState{longLiqCumulative: 100}, 100)
+	}
+	cases := []struct {
+		name      string
+		side      string
+		price     float64
+		val       float64
+		vah       float64
+		ready     bool
+		wantOpen  bool
+		wantBlock string
+	}{
+		{name: "long below VAL", side: "long", price: 99, val: 100, vah: 110, ready: true, wantOpen: true},
+		{name: "short above VAH", side: "short", price: 111, val: 100, vah: 110, ready: true, wantOpen: true},
+		{name: "long at VAL", side: "long", price: 100, val: 100, vah: 110, ready: true, wantBlock: "price_not_below_val"},
+		{name: "short at VAH", side: "short", price: 110, val: 100, vah: 110, ready: true, wantBlock: "price_not_above_vah"},
+		{name: "long inside value area", side: "long", price: 105, val: 100, vah: 110, ready: true, wantBlock: "price_not_below_val"},
+		{name: "short inside value area", side: "short", price: 105, val: 100, vah: 110, ready: true, wantBlock: "price_not_above_vah"},
+		{name: "missing profile", side: "long", price: 99, val: 0, vah: 0, ready: false, wantBlock: "value_area_unavailable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := decision(tc.side, tc.price, tc.val, tc.vah, tc.ready)
+			if got.OpenAllowed != tc.wantOpen {
+				t.Fatalf("open allowed=%v, want %v: %+v", got.OpenAllowed, tc.wantOpen, got)
+			}
+			if tc.wantBlock != "" && (!strings.Contains(got.Reason, tc.wantBlock) || !strings.Contains(strings.Join(got.FilterTags, ","), "value_area")) {
+				t.Fatalf("filter reason/tags do not identify VAL/VAH block: %+v", got)
+			}
+		})
+	}
 }
 
 func TestRadarThresholdFiresWithoutPeakDecayOrAbsorption(t *testing.T) {

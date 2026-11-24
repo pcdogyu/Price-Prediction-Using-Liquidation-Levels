@@ -34,6 +34,9 @@ type MarketContext struct {
 	DonchianLow           float64
 	DonchianReady         bool
 	DonchianComputed      bool
+	ValueAreaVAL          float64
+	ValueAreaVAH          float64
+	ValueAreaReady        bool
 }
 
 // FilterDecision is persisted with every context-aware alert/signal so an
@@ -63,6 +66,9 @@ type FilterDecision struct {
 	RedZoneLower            float64
 	BoundaryOverlap         bool
 	DonchianReady           bool
+	ValueAreaVAL            float64
+	ValueAreaVAH            float64
+	ValueAreaReady          bool
 }
 
 // VWAPZScore returns the volume-weighted close mean, volume-weighted standard
@@ -226,8 +232,17 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 	if price <= 0 {
 		price = ctx.CurrentCandle.Close
 	}
+	d.ValueAreaReady = ctx.ValueAreaReady && ctx.ValueAreaVAL > 0 && ctx.ValueAreaVAH >= ctx.ValueAreaVAL &&
+		!math.IsNaN(ctx.ValueAreaVAL) && !math.IsInf(ctx.ValueAreaVAL, 0) && !math.IsNaN(ctx.ValueAreaVAH) && !math.IsInf(ctx.ValueAreaVAH, 0)
+	if d.ValueAreaReady {
+		d.ValueAreaVAL, d.ValueAreaVAH = ctx.ValueAreaVAL, ctx.ValueAreaVAH
+	}
 	if !ctx.Ready || price <= 0 {
 		d.Reason = "market_context_unavailable"
+		if cfg.ValueAreaFilterEnabled && !d.ValueAreaReady {
+			d.FilterTags = append(d.FilterTags, "value_area")
+			d.Reason += ";value_area_unavailable"
+		}
 		return d
 	}
 
@@ -294,6 +309,18 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 		}
 		d.FilterTags = append(d.FilterTags, tag)
 	}
+	valueAreaAllows := func(direction string) bool {
+		if !cfg.ValueAreaFilterEnabled {
+			return true
+		}
+		if !d.ValueAreaReady {
+			return false
+		}
+		if direction == "long" {
+			return price < d.ValueAreaVAL
+		}
+		return price > d.ValueAreaVAH
+	}
 	longVWAPBlocked := cfg.VWAPFilterEnabled && (!vwapReady || price > vwapGreen)
 	shortVWAPBlocked := cfg.VWAPFilterEnabled && (!vwapReady || price < vwapRed)
 	longDonchianBlocked := cfg.DonchianFilterEnabled && (!donchianReady || price > donGreen)
@@ -310,7 +337,7 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 		return d
 	}
 	if side == "long" {
-		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && (!cfg.VWAPFilterEnabled || price <= vwapGreen) && (!cfg.DonchianFilterEnabled || price <= donGreen)
+		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && (!cfg.VWAPFilterEnabled || price <= vwapGreen) && (!cfg.DonchianFilterEnabled || price <= donGreen) && valueAreaAllows("long")
 		d.CloseAllowed = !d.OpenAllowed
 		if !vwapReady && cfg.VWAPFilterEnabled {
 			addTag("vwap")
@@ -352,7 +379,7 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 			}
 		}
 	} else if side == "short" {
-		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && (!cfg.VWAPFilterEnabled || price >= vwapRed) && (!cfg.DonchianFilterEnabled || price >= donRed)
+		d.OpenAllowed = openingZoneReady && !d.BoundaryOverlap && (!cfg.VWAPFilterEnabled || price >= vwapRed) && (!cfg.DonchianFilterEnabled || price >= donRed) && valueAreaAllows("short")
 		d.CloseAllowed = !d.OpenAllowed
 		if !vwapReady && cfg.VWAPFilterEnabled {
 			addTag("vwap")
@@ -392,6 +419,22 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 			} else {
 				d.Reason = "neutral_zscore_short_liquidation_close_only"
 			}
+		}
+	}
+	if cfg.ValueAreaFilterEnabled && !valueAreaAllows(side) {
+		addTag("value_area")
+		reason := "value_area_unavailable_" + side + "_liquidation_blocked"
+		if d.ValueAreaReady {
+			if side == "long" {
+				reason = "price_not_below_val_long_liquidation_blocked"
+			} else {
+				reason = "price_not_above_vah_short_liquidation_blocked"
+			}
+		}
+		if d.Reason == "" {
+			d.Reason = reason
+		} else {
+			d.Reason += ";" + reason
 		}
 	}
 

@@ -46,12 +46,12 @@ func (s *Service) volumeArchiveLoop(ctx context.Context) {
 
 func (s *Service) importVolumeArchives(ctx context.Context) {
 	today := time.Now().UTC().Truncate(24 * time.Hour)
-	start, before := today.AddDate(0, 0, -31), today.AddDate(0, 0, -1)
+	start, before := today.AddDate(0, 0, -30), today
 	allReady := true
-	// Historical volume archives are as expensive as the live aggregate-trade
-	// feed. Keep them aligned with the bounded volume bootstrap set so the
-	// candidate alert catalog does not fan out dozens of downloads at startup.
-	for _, symbol := range s.volumeBootstrapSymbols() {
+	// Historical archives are processed serially after the live profile path is
+	// ready. Include active liquidation candidates so replay and backtest use the
+	// same session value areas as live signals.
+	for _, symbol := range s.volumeProfileSymbols() {
 		for day := start; day.Before(before); day = day.AddDate(0, 0, 1) {
 			if ctx.Err() != nil {
 				return

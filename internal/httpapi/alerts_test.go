@@ -450,7 +450,7 @@ func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
 	status := waitForReport(nil)
 	report := *status.Report
 	expectedHoldingMinutes := []int{15, 60, 240, 480, 720, 1440}
-	if report.WindowDays != 14 || report.HoldingMinutes != 15 || len(report.HoldingMinutesOptions) != len(expectedHoldingMinutes) || len(report.Rows) != 78 || report.InitialEquity != 10000 || report.Leverage != 1 || report.TakeProfitPct != 1.2 || report.StopLossPct != 1.5 || report.EntryNotionalUSD != 1000 || report.AddOnNotionalUSD != 1000 || report.MaxAddOns != 1 || report.VWAPRangeHours != 24 || report.VWAPMinDrawdownPct != 2 || report.VWAPDonchianPct != 35 || report.FeeBps != 5 || report.SlippageBps != 2 || report.GammaFlipNearPct != 1 || report.GammaFlipConfirmSamples != 2 || report.GammaRows == nil {
+	if report.WindowDays != 14 || report.HoldingMinutes != 15 || len(report.HoldingMinutesOptions) != len(expectedHoldingMinutes) || len(report.Rows) != 150 || report.InitialEquity != 10000 || report.Leverage != 1 || report.TakeProfitPct != 1.2 || report.StopLossPct != 1.5 || report.EntryNotionalUSD != 1000 || report.AddOnNotionalUSD != 1000 || report.MaxAddOns != 1 || report.VWAPRangeHours != 24 || report.VWAPMinDrawdownPct != 2 || report.VWAPDonchianPct != 35 || report.FeeBps != 5 || report.SlippageBps != 2 || report.GammaFlipNearPct != 1 || report.GammaFlipConfirmSamples != 2 || report.GammaRows == nil {
 		t.Fatalf("unexpected default backtest report: %+v", report)
 	}
 	for index, holding := range expectedHoldingMinutes {
@@ -473,7 +473,7 @@ func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
 		t.Fatalf("value-area backtest row missing: %+v", report.Rows)
 	}
 	for _, holding := range expectedHoldingMinutes {
-		if holdingCounts[holding] != 13 {
+		if holdingCounts[holding] != 25 {
 			t.Fatalf("holding period %d must have one row per signal/filter combination: %+v", holding, holdingCounts)
 		}
 	}
@@ -485,7 +485,7 @@ func TestAlertBacktestEndpointReturnsAttachmentShape(t *testing.T) {
 	customBody := `{"initial_equity":25000,"leverage":3,"take_profit_pct":2.5,"stop_loss_pct":4,"entry_notional_usd":750,"max_add_ons":3,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30,"fee_bps_per_side":7.5,"slippage_bps_per_side":3.5,"gamma_flip_near_pct":1.5,"gamma_flip_confirm_samples":3}`
 	custom := waitForReport(strings.NewReader(customBody))
 	customReport := *custom.Report
-	if customReport.InitialEquity != 25000 || customReport.Leverage != 3 || customReport.TakeProfitPct != 2.5 || customReport.StopLossPct != 4 || customReport.EntryNotionalUSD != 750 || customReport.AddOnNotionalUSD != 750 || customReport.MaxAddOns != 3 || customReport.VWAPRangeHours != 18 || customReport.VWAPMinDrawdownPct != 2.5 || customReport.VWAPDonchianPct != 30 || customReport.FeeBps != 7.5 || customReport.SlippageBps != 3.5 || customReport.GammaFlipNearPct != 1.5 || customReport.GammaFlipConfirmSamples != 3 || len(customReport.Rows) != 78 {
+	if customReport.InitialEquity != 25000 || customReport.Leverage != 3 || customReport.TakeProfitPct != 2.5 || customReport.StopLossPct != 4 || customReport.EntryNotionalUSD != 750 || customReport.AddOnNotionalUSD != 750 || customReport.MaxAddOns != 3 || customReport.VWAPRangeHours != 18 || customReport.VWAPMinDrawdownPct != 2.5 || customReport.VWAPDonchianPct != 30 || customReport.FeeBps != 7.5 || customReport.SlippageBps != 3.5 || customReport.GammaFlipNearPct != 1.5 || customReport.GammaFlipConfirmSamples != 3 || len(customReport.Rows) != 150 {
 		t.Fatalf("unexpected custom backtest report: %+v", customReport)
 	}
 	afterSettings := serveAlert(srv, http.MethodGet, "/api/v1/alerts/strategy-settings", nil)

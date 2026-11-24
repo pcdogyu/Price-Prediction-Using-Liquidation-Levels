@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
+	"math"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/alert"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumeprofile"
 )
 
 const (
@@ -54,7 +56,24 @@ func (rtm *alertRuntime) alertChartSignalsWithConfigAt(ctx context.Context, symb
 	if err != nil {
 		return domain.AlertChartSignals{}, err
 	}
-	return rtm.replayAlertChartSignals(ctx, symbol, cfg, generatedAt, since, events, candles), nil
+	profiles, err := rtm.alertChartValueAreaSnapshots(ctx, symbol, since, generatedAt)
+	if err != nil {
+		return domain.AlertChartSignals{}, err
+	}
+	return rtm.replayAlertChartSignals(ctx, symbol, cfg, generatedAt, since, events, candles, profiles), nil
+}
+
+func (rtm *alertRuntime) alertChartValueAreaSnapshots(ctx context.Context, symbol string, since, until time.Time) ([]domain.VolumeProfileSnapshot, error) {
+	source := rtm.sourceStore
+	if source == nil {
+		source = rtm.store
+	}
+	if source == nil {
+		return nil, nil
+	}
+	// The current value-area session can start before the replay range by nearly
+	// one day. Include a two-day lead-in so the first events can use an as-of row.
+	return source.VolumeProfileSnapshots(ctx, symbol, since.Add(-48*time.Hour), until.Add(time.Minute))
 }
 
 // alertChartReplayData reads the raw event and candle windows once. Historical
@@ -86,12 +105,12 @@ func (rtm *alertRuntime) alertChartReplayData(ctx context.Context, symbol string
 	return events, candles, nil
 }
 
-func (rtm *alertRuntime) replayAlertChartSignals(ctx context.Context, symbol string, cfg alert.Config, generatedAt, since time.Time, events []domain.LiquidationEvent, candles []domain.Candle) domain.AlertChartSignals {
-	markets := replayAlertChartMarkets(events, cfg, candles)
-	return rtm.replayAlertChartSignalsWithMarkets(ctx, symbol, cfg, generatedAt, since, events, markets, candles)
+func (rtm *alertRuntime) replayAlertChartSignals(ctx context.Context, symbol string, cfg alert.Config, generatedAt, since time.Time, events []domain.LiquidationEvent, candles []domain.Candle, profiles []domain.VolumeProfileSnapshot) domain.AlertChartSignals {
+	markets := replayAlertChartMarkets(events, cfg, candles, profiles)
+	return rtm.replayAlertChartSignalsWithMarkets(ctx, symbol, cfg, generatedAt, since, events, markets, candles, profiles)
 }
 
-func (rtm *alertRuntime) replayAlertChartSignalsWithMarkets(ctx context.Context, symbol string, cfg alert.Config, generatedAt, since time.Time, events []domain.LiquidationEvent, markets []alert.MarketContext, candles []domain.Candle) domain.AlertChartSignals {
+func (rtm *alertRuntime) replayAlertChartSignalsWithMarkets(ctx context.Context, symbol string, cfg alert.Config, generatedAt, since time.Time, events []domain.LiquidationEvent, markets []alert.MarketContext, candles []domain.Candle, profiles []domain.VolumeProfileSnapshot) domain.AlertChartSignals {
 	replayHours := int(generatedAt.Sub(since).Hours())
 	if replayHours < 1 {
 		replayHours = 1
@@ -123,7 +142,7 @@ func (rtm *alertRuntime) replayAlertChartSignalsWithMarkets(ctx context.Context,
 		if index < len(markets) {
 			market = markets[index]
 		} else {
-			market = replayLiquidationMarketContext(event, cfg, candles)
+			market = applyReplayValueArea(replayLiquidationMarketContext(event, cfg, candles), profiles, event.EventTime)
 		}
 		// Historical recalculation fires the market-aware decision immediately
 		// after each breach. ObserveWithContext captures the current market on
@@ -140,6 +159,7 @@ func (rtm *alertRuntime) replayAlertChartSignalsWithMarkets(ctx context.Context,
 	// that the live engine would emit on its next tick.
 	if len(events) > 0 {
 		market := replayLiquidationMarketContext(domain.LiquidationEvent{Symbol: symbol, EventTime: generatedAt}, cfg, candles)
+		market = applyReplayValueArea(market, profiles, generatedAt)
 		replay.UpdateMarketContext(symbol, market)
 		collect(replay.Tick(view.GeneratedAt))
 	}
@@ -165,7 +185,7 @@ func (rtm *alertRuntime) replayAlertChartSignalsWithMarkets(ctx context.Context,
 	return view
 }
 
-func replayAlertChartMarkets(events []domain.LiquidationEvent, cfg alert.Config, candles []domain.Candle) []alert.MarketContext {
+func replayAlertChartMarkets(events []domain.LiquidationEvent, cfg alert.Config, candles []domain.Candle, profiles []domain.VolumeProfileSnapshot) []alert.MarketContext {
 	markets := make([]alert.MarketContext, len(events))
 	rangeMinutes := cfg.VWAPRangeMinutes
 	if rangeMinutes <= 0 {
@@ -189,8 +209,34 @@ func replayAlertChartMarkets(events []domain.LiquidationEvent, cfg alert.Config,
 		} else {
 			markets[index] = buildLiquidationMarketContextWithDonchian(event, cfg, candles[start:candleEnd], high, low, ready, true)
 		}
+		markets[index] = applyReplayValueArea(markets[index], profiles, event.EventTime)
 	}
 	return markets
+}
+
+func applyReplayValueArea(market alert.MarketContext, profiles []domain.VolumeProfileSnapshot, at time.Time) alert.MarketContext {
+	if at.IsZero() || len(profiles) == 0 {
+		return market
+	}
+	at = at.UTC()
+	index := sort.Search(len(profiles), func(i int) bool { return profiles[i].Time.After(at) }) - 1
+	if index < 0 {
+		return market
+	}
+	snapshot := profiles[index]
+	if !snapshot.Complete || snapshot.Time.IsZero() || at.Before(snapshot.Time) || at.Sub(snapshot.Time) > valueAreaProfileMaxAge ||
+		snapshot.VAL <= 0 || snapshot.VAH < snapshot.VAL || math.IsNaN(snapshot.VAL) || math.IsInf(snapshot.VAL, 0) ||
+		math.IsNaN(snapshot.VAH) || math.IsInf(snapshot.VAH, 0) {
+		return market
+	}
+	session, err := volumeprofile.SessionAt(at)
+	if err != nil || !snapshot.SessionStart.Equal(session.Start) {
+		return market
+	}
+	market.ValueAreaVAL = snapshot.VAL
+	market.ValueAreaVAH = snapshot.VAH
+	market.ValueAreaReady = true
+	return market
 }
 
 type replayDonchianWindow struct {

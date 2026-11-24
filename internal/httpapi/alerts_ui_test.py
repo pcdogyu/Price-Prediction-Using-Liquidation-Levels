@@ -56,6 +56,15 @@ def timeline_fixture():
                 # be reverse-engineered into a false VWAP label.
                 "filter_reason": "neutral_zscore_long_liquidation_close_only",
             })
+        elif index == 5:
+            target = item["alert"] if kind == "alert" else item["signal"]
+            target.update({
+                "filter_applied": True,
+                "open_allowed": False,
+                "close_allowed": True,
+                "filter_reason": "price_not_below_val_long_liquidation_blocked",
+                "filter_tags": ["value_area"],
+            })
         if index == 0:
             target = item["alert"] if kind == "alert" else item["signal"]
             target["filter_tags"] = ["vwap", "donchian"]
@@ -86,7 +95,7 @@ all_rows = timeline_fixture()
 holding_options = [15, 60, 240, 480, 720, 1440]
 backtest_rows = []
 for signal in ("alert", "aggressive", "steady"):
-    for filter_name in ("none", "vwap", "donchian", "vwap_donchian"):
+    for filter_name in ("none", "vwap", "donchian", "vwap_donchian", "value_area", "vwap_value_area", "donchian_value_area", "vwap_donchian_value_area"):
         for holding_minutes in holding_options:
             backtest_rows.append({
                 "signal": signal, "filter": filter_name, "holding_minutes": holding_minutes,
@@ -104,6 +113,7 @@ backtest_report = {
     "initial_equity": 10000, "leverage": 1, "take_profit_pct": 1.2, "stop_loss_pct": 1.5,
     "entry_notional_usd": 1000, "max_add_ons": 1, "vwap_range_hours": 24,
     "vwap_min_drawdown_pct": 2, "vwap_donchian_pct": 35, "symbol_count": 2,
+    "value_area_covered_events": 18, "value_area_total_events": 24,
     "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "rows": backtest_rows,
 }
 
@@ -144,8 +154,18 @@ with sync_playwright() as playwright:
         else:
             route.fulfill(status=404, json={"detail": "not found"})
 
+
+    def route_overview(route):
+        response = route.fetch()
+        packet = response.json()
+        packet.setdefault("data", {})["gamma"] = {
+            "anchor_symbol": "ETHUSDT", "state": "ok", "gamma": -0.12345, "ignored": True,
+        }
+        route.fulfill(response=response, json=packet)
+
     page.route("**/api/v1/alerts/timeline?**", route_timeline)
     page.route("**/api/v1/alerts/backtest", route_backtest)
+    page.route("**/api/v1/alerts", route_overview)
     page.goto(base + "/alerts", wait_until="domcontentloaded")
     expect(page.locator("#alerts-history-status")).to_contain_text("预警 9", timeout=30000)
     expect(page.locator("#alerts-history-rows tr")).to_have_count(20)
@@ -157,15 +177,16 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows")).to_contain_text("稳健")
     expect(page.locator("#alerts-history-rows")).to_contain_text("VWAP过滤")
     expect(page.locator("#alerts-history-rows")).to_contain_text("Donchian过滤")
+    expect(page.locator("#alerts-history-rows")).to_contain_text("VAL/VAH过滤")
     expect(page.locator("#alerts-history-rows")).to_contain_text("交易所刷单策略过滤")
     expect(page.locator("#alerts-history-rows").locator("tr").nth(0).locator("td").nth(2)).to_contain_text("VWAP过滤 · Donchian过滤")
     expect(page.locator("#alerts-history-rows").locator("tr").nth(4).locator("td").nth(2)).not_to_contain_text("VWAP过滤")
     expect(page.locator("#alerts-history-rows").locator("tr").nth(4).locator("td").nth(2)).not_to_contain_text("Donchian过滤")
-    expect(page.locator(".alerts-close-only-prefix")).to_have_count(4)
+    expect(page.locator(".alerts-close-only-prefix")).to_have_count(5)
     expect(page.locator(".alerts-order-trigger")).to_have_count(20)
     expect(page.get_by_text("策略开关", exact=True)).to_be_visible()
     expect(page.locator("#alerts-history-rows")).to_contain_text("做多 gamma忽略")
-    assert page.locator(".gamma-ignored").count() == 1
+    assert page.locator(".gamma-ignored").count() == 2
     expect(page.get_by_text("ETHUSDT Gamma：-0.123450", exact=False)).to_be_visible()
 
     page.locator("#alerts-next").click()
@@ -183,7 +204,8 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows td:nth-child(3)")).to_contain_text(["预警"] * 9)
 
     page.locator("#alerts-backtest-run").click()
-    expect(page.locator("#alerts-backtest-rows tr")).to_have_count(78)
+    expect(page.locator("#alerts-backtest-rows tr")).to_have_count(150)
+    expect(page.locator("#alerts-backtest-value-area-coverage")).to_have_text("VAL/VAH 快照覆盖 18 / 24 个爆仓事件")
     expect(page.locator(".alerts-backtest-table th[data-sort-key='holding_minutes']")).to_contain_text("持有时间")
     expect(page.locator("#alerts-backtest-status")).to_contain_text("持有 15m、1h、4h、8h、12h、24h")
     expect(page.locator("#alerts-backtest-rows tr").nth(0).locator("td").nth(2)).to_have_text("15m")
@@ -195,7 +217,7 @@ with sync_playwright() as playwright:
         page.set_viewport_size({"width": width, "height": 1100})
         for theme in ("dark", "light"):
             page.evaluate("theme => window.LiquidationTheme.set(theme)", theme)
-            assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
+            assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth"), f"horizontal overflow at {width}px in {theme} theme"
             expect(page.get_by_text("每页 20 条", exact=True)).to_be_visible()
             page.screenshot(path=str(artifacts / f"alerts-unified-{width}-{theme}.png"), full_page=True)
 

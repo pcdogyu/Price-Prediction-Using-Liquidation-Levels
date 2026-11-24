@@ -53,7 +53,7 @@ func AlertMonitorMethod(windowMinutes, refreshMinutes, topSymbols int) string {
 	if topSymbols <= 0 {
 		topSymbols = AlertTopSymbolsDefault
 	}
-	return fmt.Sprintf("监控名单来自 APP_SYMBOLS 配置范围内按 Binance 24H 成交额排序的前 %d 个 USDⓈ-M USDT 永续，持仓或挂单币对例外保留（服务启动时刷新，之后每天北京时间 07:50 刷新）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。超过阈值后立即进入 FIRED 评估；爆仓速率衰减和价格吸收不再作为门槛，VWAP Z-Score 加大周期 Donchian 双边边界决定开仓区/仅平仓区，深度配额、指数网格和最小获利间距继续拦截不合格信号。", topSymbols, windowMinutes)
+	return fmt.Sprintf("监控名单来自 APP_SYMBOLS 配置范围内按 Binance 24H 成交额排序的前 %d 个 USDⓈ-M USDT 永续，持仓或挂单币对例外保留（服务启动时刷新，之后每天北京时间 07:50 刷新）。金额为公开采样强平流在 %d 分钟滑动窗口内的累计名义价值；币安每个币对每秒只推送最近一笔，因此窗口金额为下限值。超过阈值后立即进入 FIRED 评估；多单爆仓仅在当前时段价格低于 VAL 时允许开多，空单爆仓仅在价格高于 VAH 时允许开空，VAL/VAH 缺失或过期时禁止新开仓；VWAP Z-Score 加大周期 Donchian 双边边界、深度配额、指数网格和最小获利间距继续共同拦截不合格信号。", topSymbols, windowMinutes)
 }
 
 // LiquidationAlert is one alert cycle for a symbol and the liquidated position
@@ -431,6 +431,8 @@ type AlertBacktestReport struct {
 	GammaFlipConfirmSamples  int                     `json:"gamma_flip_confirm_samples"`
 	GammaFlipCoverageSignals int                     `json:"gamma_flip_coverage_signals"`
 	GammaFlipTotalSignals    int                     `json:"gamma_flip_total_signals"`
+	ValueAreaCoveredEvents   int                     `json:"value_area_covered_events"`
+	ValueAreaTotalEvents     int                     `json:"value_area_total_events"`
 	GammaFlipHistoryFrom     *time.Time              `json:"gamma_flip_history_from,omitempty"`
 	GammaFlipHistoryTo       *time.Time              `json:"gamma_flip_history_to,omitempty"`
 	From                     time.Time               `json:"from"`

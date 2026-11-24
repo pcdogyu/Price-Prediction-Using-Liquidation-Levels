@@ -27,7 +27,7 @@
   const liqLabel = side => side === 'long' ? '多单爆仓' : side === 'short' ? '空单爆仓' : '—';
   const cycleStates = { idle: '空闲', watching: '预警观察中', aggressive: '激进 · 等待反向确认', steady: '稳健 · 已确认', expired: '已过期' };
   const monitorStates = { idle: '监控中', watching: '预警观察中', aggressive: '激进 · 等待确认' };
-  const notifyLabels = { queued: '已入队', suppressed: '已抑制', muted: '类别关闭', restored: '重启回放', disabled: '通知关闭' };
+  const notifyLabels = { queued: '已入队', suppressed: '已抑制', muted: '类别关闭', filtered: 'VAL/VAH过滤', restored: '重启回放', disabled: '通知关闭' };
   const stateClass = state => state === 'watching' ? 'warning' : state === 'aggressive' || state === 'steady' ? 'buy' : 'muted';
   let alertGamma = { anchor_symbol: 'ETHUSDT', state: 'unavailable', ignored: false };
   const gammaValue = gamma => gamma && Number.isFinite(Number(gamma.gamma)) ? Number(gamma.gamma) : null;
@@ -44,6 +44,11 @@
     price_absorption_not_confirmed: '价格尚未止跌吸收',
     market_context_unavailable: '市场 K 线数据未就绪',
     vwap_zscore_unavailable: 'VWAP Z-Score 不可用',
+    value_area_unavailable: 'VAL/VAH 价值区数据不可用，禁止开仓',
+    value_area_unavailable_long_liquidation_blocked: 'VAL/VAH 不可用：禁止多单开仓',
+    value_area_unavailable_short_liquidation_blocked: 'VAL/VAH 不可用：禁止空单开仓',
+    price_not_below_val_long_liquidation_blocked: '价格未严格低于 VAL：禁止多单开仓',
+    price_not_above_vah_short_liquidation_blocked: '价格未严格高于 VAH：禁止空单开仓',
     vwap_zone_unavailable_long_liquidation_close_only: 'VWAP 分区不可用：多单爆仓仅允许平仓',
     vwap_zone_unavailable_short_liquidation_close_only: 'VWAP 分区不可用：空单爆仓仅允许平仓',
     donchian_range_unavailable_long_liquidation_close_only: 'Donchian 大周期数据不足：多单爆仓仅允许平仓',
@@ -60,8 +65,8 @@
     exponential_long_grid_not_ready: '多单指数网格间距未达标',
     unsupported_liquidation_side: '不支持的爆仓方向'
   };
-  const filterTagLabels = { vwap: 'VWAP过滤', donchian: 'Donchian过滤' };
-  const canonicalFilterTags = tags => ['vwap', 'donchian'].filter(tag => Array.isArray(tags) && tags.includes(tag));
+  const filterTagLabels = { vwap: 'VWAP过滤', donchian: 'Donchian过滤', value_area: 'VAL/VAH过滤' };
+  const canonicalFilterTags = tags => ['vwap', 'donchian', 'value_area'].filter(tag => Array.isArray(tags) && tags.includes(tag));
   const legacyFilterTags = () => {
     // Legacy rows have no per-component provenance. Their old z-score and zone
     // reasons describe the radar decision, not which server-side switches were
@@ -197,11 +202,18 @@
   }
 
   const backtestSignalLabels = { alert: '预警', aggressive: '激进', steady: '稳健', value_area: '交易所刷单' };
-  const backtestFilterLabels = { none: '无', vwap: 'VWAP', donchian: 'Donchian', vwap_donchian: 'VWAP + Donchian' };
+  const backtestFilterLabels = {
+    none: '无', vwap: 'VWAP', donchian: 'Donchian', vwap_donchian: 'VWAP + Donchian',
+    value_area: 'VAL/VAH', vwap_value_area: 'VWAP + VAL/VAH', donchian_value_area: 'Donchian + VAL/VAH',
+    vwap_donchian_value_area: 'VWAP + Donchian + VAL/VAH'
+  };
   const BACKTEST_HOLDING_OPTIONS = [15, 60, 240, 480, 720, 1440];
   let backtestHoldingOptions = BACKTEST_HOLDING_OPTIONS.slice(), backtestHoldingDefault = BACKTEST_HOLDING_OPTIONS[0];
   const backtestSignalOrder = { alert: 0, aggressive: 1, steady: 2, value_area: 3 };
-  const backtestFilterOrder = { none: 0, vwap: 1, donchian: 2, vwap_donchian: 3 };
+  const backtestFilterOrder = {
+    none: 0, vwap: 1, donchian: 2, vwap_donchian: 3, value_area: 4,
+    vwap_value_area: 5, donchian_value_area: 6, vwap_donchian_value_area: 7
+  };
   const backtestNumericSortKeys = new Set(['holding_minutes', 'trades', 'additions', 'win_rate', 'profit_factor', 'max_drawdown_pct', 'net_pnl', 'final_equity']);
   const backtestPercent = value => Number.isFinite(Number(value)) ? Number(value).toFixed(2) + '%' : '—';
   const backtestFactor = value => Number(value) > 0 ? Number(value).toFixed(2) : '—';
@@ -332,7 +344,10 @@
     const covered = Number(report && report.gamma_flip_coverage_signals) || 0;
     const total = Number(report && report.gamma_flip_total_signals) || 0;
     $('alerts-backtest-gamma-coverage').textContent = 'Gamma 覆盖 ' + covered + ' / ' + total + ' 个候选信号';
-    $('alerts-backtest-note').textContent = '本次回测参数：持有时间 ' + holdingText + '（最长持有期限，止盈或止损先触发则提前退出）· 本金 $' + moneyValue(initial) + ' · 杠杆 ' + leverage + 'x · 止盈 ' + takeProfit + '% · 止损 ' + stopLoss + '% · 每次下单保证金 $' + moneyValue(orderSize) + ' · 最多加仓 ' + maxAddOns + ' 次 · VWAP Donchian 窗口 ' + vwapRangeHours + ' 小时 · 最小回撤 ' + vwapMinDrawdown + '% · 分位 ' + vwapDonchian + '% · 手续费 ' + feeBps + ' bps/单边 · 滑点 ' + slippageBps + ' bps/单边 · 翻转观望区 ±' + gammaNearPct + '% · 连续确认 ' + gammaConfirmSamples + ' 个样本。手续费和滑点按开平仓成交额扣除，资金费未计入；Gamma 覆盖 ' + covered + ' / ' + total + ' 个候选信号；没有下一根完整 K 线的末端信号不计入交易数。';
+    const valueAreaCovered = Number(report && report.value_area_covered_events) || 0;
+    const valueAreaTotal = Number(report && report.value_area_total_events) || 0;
+    $('alerts-backtest-value-area-coverage').textContent = 'VAL/VAH 快照覆盖 ' + valueAreaCovered + ' / ' + valueAreaTotal + ' 个爆仓事件';
+    $('alerts-backtest-note').textContent = '本次回测参数：持有时间 ' + holdingText + '（最长持有期限，止盈或止损先触发则提前退出）· 本金 $' + moneyValue(initial) + ' · 杠杆 ' + leverage + 'x · 止盈 ' + takeProfit + '% · 止损 ' + stopLoss + '% · 每次下单保证金 $' + moneyValue(orderSize) + ' · 最多加仓 ' + maxAddOns + ' 次 · VWAP Donchian 窗口 ' + vwapRangeHours + ' 小时 · 最小回撤 ' + vwapMinDrawdown + '% · 分位 ' + vwapDonchian + '% · 手续费 ' + feeBps + ' bps/单边 · 滑点 ' + slippageBps + ' bps/单边 · 翻转观望区 ±' + gammaNearPct + '% · 连续确认 ' + gammaConfirmSamples + ' 个样本。VAL/VAH 使用同一时段内不晚于爆仓时刻的完整快照；快照缺失时不计入对应开仓；VAL/VAH 覆盖 ' + valueAreaCovered + ' / ' + valueAreaTotal + ' 个爆仓事件。手续费和滑点按开平仓成交额扣除，资金费未计入；Gamma 覆盖 ' + covered + ' / ' + total + ' 个候选信号；没有下一根完整 K 线的末端信号不计入交易数。';
   }
 
   function backtestParamsBody() {

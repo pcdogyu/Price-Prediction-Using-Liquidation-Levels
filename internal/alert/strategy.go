@@ -65,12 +65,13 @@ type Config struct {
 	// These switches control the corresponding opening-zone component. The
 	// marker preserves true zero-value Config defaults while allowing an
 	// explicit false value from persisted strategy settings.
-	VWAPFilterEnabled     bool
-	DonchianFilterEnabled bool
-	FilterSettingsSet     bool
-	PeakDecayWindow       time.Duration
-	PeakDecayRatio        float64
-	AbsorptionWickRatio   float64
+	VWAPFilterEnabled      bool
+	DonchianFilterEnabled  bool
+	ValueAreaFilterEnabled bool
+	FilterSettingsSet      bool
+	PeakDecayWindow        time.Duration
+	PeakDecayRatio         float64
+	AbsorptionWickRatio    float64
 	// SkipPeakDecay is retained for replay compatibility. Live and historical
 	// radar decisions no longer use peak-decay or price-absorption gates.
 	SkipPeakDecay       bool
@@ -86,34 +87,35 @@ type Config struct {
 // Defaults returns the production strategy configuration.
 func Defaults() Config {
 	return Config{
-		Window:                10 * time.Minute,
-		Quiet:                 10 * time.Minute,
-		Confirm:               30 * time.Minute,
-		Refresh:               10 * time.Minute,
-		BTCUSD:                300000,
-		ETHUSD:                200000,
-		OtherUSD:              100000,
-		FollowUpMinimumUSD:    0,
-		OppositeMinimumUSD:    0,
-		TopSymbols:            domain.AlertTopSymbolsDefault,
-		VWAPPeriodMinutes:     240,
-		VWAPZScore:            0.8,
-		VWAPRangeMinutes:      24 * 60,
-		VWAPMinDrawdown:       0.022,
-		VWAPDonchianFraction:  0.35,
-		VWAPFilterEnabled:     true,
-		DonchianFilterEnabled: true,
-		FilterSettingsSet:     true,
-		PeakDecayWindow:       30 * time.Second,
-		PeakDecayRatio:        0.4,
-		AbsorptionWickRatio:   0.35,
-		DeepQuotaUSD:          0,
-		DeepQuotaMultiplier:   2,
-		MinProfitSpread:       0.007,
-		GridStep0Price:        0,
-		GridStep0Pct:          0.003,
-		GridStepMultiplier:    1.4,
-		GridThresholdSlope:    0.5,
+		Window:                 10 * time.Minute,
+		Quiet:                  10 * time.Minute,
+		Confirm:                30 * time.Minute,
+		Refresh:                10 * time.Minute,
+		BTCUSD:                 300000,
+		ETHUSD:                 200000,
+		OtherUSD:               100000,
+		FollowUpMinimumUSD:     0,
+		OppositeMinimumUSD:     0,
+		TopSymbols:             domain.AlertTopSymbolsDefault,
+		VWAPPeriodMinutes:      240,
+		VWAPZScore:             0.8,
+		VWAPRangeMinutes:       24 * 60,
+		VWAPMinDrawdown:        0.022,
+		VWAPDonchianFraction:   0.35,
+		VWAPFilterEnabled:      true,
+		DonchianFilterEnabled:  true,
+		ValueAreaFilterEnabled: true,
+		FilterSettingsSet:      true,
+		PeakDecayWindow:        30 * time.Second,
+		PeakDecayRatio:         0.4,
+		AbsorptionWickRatio:    0.35,
+		DeepQuotaUSD:           0,
+		DeepQuotaMultiplier:    2,
+		MinProfitSpread:        0.007,
+		GridStep0Price:         0,
+		GridStep0Pct:           0.003,
+		GridStepMultiplier:     1.4,
+		GridThresholdSlope:     0.5,
 	}
 }
 
@@ -122,6 +124,7 @@ func (c Config) withDefaults() Config {
 	if !c.FilterSettingsSet {
 		c.VWAPFilterEnabled = d.VWAPFilterEnabled
 		c.DonchianFilterEnabled = d.DonchianFilterEnabled
+		c.ValueAreaFilterEnabled = d.ValueAreaFilterEnabled
 		c.FilterSettingsSet = true
 	}
 	if c.Window <= 0 {
@@ -749,6 +752,8 @@ func applyDecisionToSignal(signal *domain.TradeSignal, decision FilterDecision) 
 	signal.RequiredGridStepPrice = decision.RequiredGridStepPrice
 	signal.RequiredThresholdUSD = decision.RequiredThresholdUSD
 	signal.MinProfitSpread = decision.MinProfitSpread
+	signal.VAL = decision.ValueAreaVAL
+	signal.VAH = decision.ValueAreaVAH
 }
 
 func (e *Engine) updateMarketState(st *symbolState, side string, notional float64, ctx MarketContext) {

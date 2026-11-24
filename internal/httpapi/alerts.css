@@ -33,5 +33,5 @@
 .alerts-open-block-toggle input{accent-color:var(--buy);width:16px;height:16px}
 .alerts-order-signal-footer{align-items:center}
 .alerts-order-signal-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-left:auto;flex-wrap:wrap}
-@media(max-width:980px){.alerts-order-signal-footer{align-items:flex-start}.alerts-open-block-inline{flex-wrap:wrap}.alerts-order-signal-actions{margin-left:0}}
+@media(max-width:980px){.alerts-order-signal-footer{align-items:flex-start}.alerts-open-block-inline{flex-wrap:wrap}.alerts-open-block-list{flex-wrap:wrap}.alerts-order-signal-actions{margin-left:0}}
 @media(prefers-reduced-motion:reduce){.alerts-toast{transition:none}}

@@ -66,34 +66,35 @@ const alertNotifyCooldown = 5 * time.Minute
 
 func (s *Service) newAlertRuntime() *alertRuntime {
 	cfg := alert.Config{
-		Window:                s.cfg.AlertWindow,
-		Quiet:                 s.cfg.AlertQuiet,
-		Confirm:               s.cfg.AlertConfirm,
-		Refresh:               s.cfg.AlertRefresh,
-		BTCUSD:                s.cfg.AlertThresholdBTCUSD,
-		ETHUSD:                s.cfg.AlertThresholdETHUSD,
-		OtherUSD:              s.cfg.AlertThresholdOtherUSD,
-		FollowUpMinimumUSD:    s.cfg.AlertFollowUpMinimumUSD,
-		OppositeMinimumUSD:    s.cfg.AlertOppositeMinimumUSD,
-		TopSymbols:            s.cfg.AlertTopSymbols,
-		VWAPPeriodMinutes:     s.cfg.AlertVWAPPeriodMinutes,
-		VWAPZScore:            s.cfg.AlertVWAPZScore,
-		VWAPRangeMinutes:      s.cfg.AlertVWAPRangeHours * 60,
-		VWAPMinDrawdown:       s.cfg.AlertVWAPMinDrawdownPct / 100,
-		VWAPDonchianFraction:  s.cfg.AlertVWAPDonchianPct / 100,
-		VWAPFilterEnabled:     true,
-		DonchianFilterEnabled: true,
-		FilterSettingsSet:     true,
-		PeakDecayWindow:       s.cfg.AlertPeakDecayWindow,
-		PeakDecayRatio:        s.cfg.AlertPeakDecayRatio,
-		AbsorptionWickRatio:   s.cfg.AlertAbsorptionWickRatio,
-		DeepQuotaUSD:          s.cfg.AlertDeepQuotaUSD,
-		DeepQuotaMultiplier:   s.cfg.AlertDeepQuotaMultiplier,
-		MinProfitSpread:       s.cfg.AlertMinProfitSpread,
-		GridStep0Price:        s.cfg.AlertGridStep0Price,
-		GridStep0Pct:          s.cfg.AlertGridStep0Pct,
-		GridStepMultiplier:    s.cfg.AlertGridStepMultiplier,
-		GridThresholdSlope:    s.cfg.AlertGridThresholdSlope,
+		Window:                 s.cfg.AlertWindow,
+		Quiet:                  s.cfg.AlertQuiet,
+		Confirm:                s.cfg.AlertConfirm,
+		Refresh:                s.cfg.AlertRefresh,
+		BTCUSD:                 s.cfg.AlertThresholdBTCUSD,
+		ETHUSD:                 s.cfg.AlertThresholdETHUSD,
+		OtherUSD:               s.cfg.AlertThresholdOtherUSD,
+		FollowUpMinimumUSD:     s.cfg.AlertFollowUpMinimumUSD,
+		OppositeMinimumUSD:     s.cfg.AlertOppositeMinimumUSD,
+		TopSymbols:             s.cfg.AlertTopSymbols,
+		VWAPPeriodMinutes:      s.cfg.AlertVWAPPeriodMinutes,
+		VWAPZScore:             s.cfg.AlertVWAPZScore,
+		VWAPRangeMinutes:       s.cfg.AlertVWAPRangeHours * 60,
+		VWAPMinDrawdown:        s.cfg.AlertVWAPMinDrawdownPct / 100,
+		VWAPDonchianFraction:   s.cfg.AlertVWAPDonchianPct / 100,
+		VWAPFilterEnabled:      true,
+		DonchianFilterEnabled:  true,
+		ValueAreaFilterEnabled: true,
+		FilterSettingsSet:      true,
+		PeakDecayWindow:        s.cfg.AlertPeakDecayWindow,
+		PeakDecayRatio:         s.cfg.AlertPeakDecayRatio,
+		AbsorptionWickRatio:    s.cfg.AlertAbsorptionWickRatio,
+		DeepQuotaUSD:           s.cfg.AlertDeepQuotaUSD,
+		DeepQuotaMultiplier:    s.cfg.AlertDeepQuotaMultiplier,
+		MinProfitSpread:        s.cfg.AlertMinProfitSpread,
+		GridStep0Price:         s.cfg.AlertGridStep0Price,
+		GridStep0Pct:           s.cfg.AlertGridStep0Pct,
+		GridStepMultiplier:     s.cfg.AlertGridStepMultiplier,
+		GridThresholdSlope:     s.cfg.AlertGridThresholdSlope,
 	}
 	rtm := &alertRuntime{
 		service: s,
@@ -292,6 +293,7 @@ func (rtm *alertRuntime) applyStrategySettings(in domain.AlertStrategySettings) 
 	cfg.VWAPDonchianFraction = in.VWAPDonchianPct / 100
 	cfg.VWAPFilterEnabled = in.VWAPFilterEnabled
 	cfg.DonchianFilterEnabled = in.DonchianFilterEnabled
+	cfg.ValueAreaFilterEnabled = true
 	cfg.FilterSettingsSet = true
 	rtm.engine.UpdateConfig(cfg)
 	rtm.mu.Lock()
@@ -376,7 +378,6 @@ func (rtm *alertRuntime) valueAreaLoop(ctx context.Context) {
 	}
 	ticks, cancel := rtm.service.SubscribePrices()
 	defer cancel()
-	profiles := make(map[string]valueAreaProfileCache)
 	for {
 		select {
 		case <-ctx.Done():
@@ -386,26 +387,15 @@ func (rtm *alertRuntime) valueAreaLoop(ctx context.Context) {
 				continue
 			}
 			symbol := strings.ToUpper(strings.TrimSpace(tick.Symbol))
-			entry := profiles[symbol]
-			if entry.next.IsZero() || !time.Now().UTC().Before(entry.next) {
-				fetchCtx, cancelFetch := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-				profile, err := rtm.service.VolumeProfile(fetchCtx, symbol)
-				if err == nil && profile.State != "ok" {
-					if backfillErr := rtm.service.EnsureVolumeProfile(fetchCtx, symbol, false); backfillErr != nil {
-						rtm.log.Warn("value-area volume profile backfill request failed", "symbol", symbol, "error", backfillErr)
-					}
-				}
-				cancelFetch()
-				if err != nil {
-					rtm.log.Warn("value-area volume profile read failed", "symbol", symbol, "error", err)
-					profile = domain.VolumeProfile{Symbol: symbol, State: "unavailable"}
-				}
-				entry.profile = profile
-				entry.next = time.Now().UTC().Add(2 * time.Second)
-				profiles[symbol] = entry
+			fetchCtx, cancelFetch := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			profile, err := rtm.service.currentVolumeProfile(fetchCtx, symbol)
+			cancelFetch()
+			if err != nil {
+				rtm.log.Warn("value-area volume profile read failed", "symbol", symbol, "error", err)
+				profile = domain.VolumeProfile{Symbol: symbol, State: "unavailable"}
 			}
 			gamma := rtm.service.alertGammaForSymbol(context.WithoutCancel(ctx), symbol)
-			signal, ok := rtm.valueArea.ProcessWithMode(tick, entry.profile, gamma, rtm.valueAreaStrategyMode())
+			signal, ok := rtm.valueArea.ProcessWithMode(tick, profile, gamma, rtm.valueAreaStrategyMode())
 			if !ok {
 				continue
 			}
@@ -991,6 +981,13 @@ func (rtm *alertRuntime) orderCloseEnabled(category string) bool {
 func (rtm *alertRuntime) submitSignal(signal domain.TradeSignal, allowNotify bool) (string, string) {
 	if !allowNotify {
 		return "restored", "重启回放，不重复通知"
+	}
+	if (signal.Kind == domain.SignalAggressive || signal.Kind == domain.SignalSteady) && signal.FilterApplied && !signal.OpenAllowed {
+		for _, tag := range signal.FilterTags {
+			if tag == "value_area" {
+				return "filtered", "VAL/VAH 开仓过滤未通过，仅保留历史记录"
+			}
+		}
 	}
 	if signal.Kind == domain.SignalValueArea && !rtm.valueAreaWindowSnapshot().Contains(signal.CreatedAt) {
 		return "muted", valueAreaWindowNotificationMessage(rtm.valueAreaWindowSnapshot())

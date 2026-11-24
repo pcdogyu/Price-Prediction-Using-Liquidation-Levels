@@ -149,9 +149,10 @@ func TestRecordLiquidationDrivesAlertAndSignals(t *testing.T) {
 		if row.Side != row.LiquidationSide {
 			t.Fatalf("signal direction must follow the liquidated side: %+v", row)
 		}
-		// Telegram is not configured, so both signals are stored as muted.
-		if row.NotifyStatus != "muted" {
-			t.Fatalf("signal %s notify status = %q", row.ID, row.NotifyStatus)
+		// No current complete value-area profile is provisioned in this test, so
+		// fail-closed signals stay in history without being sent as trade guidance.
+		if row.NotifyStatus != "filtered" || row.FilterTags[len(row.FilterTags)-1] != "value_area" {
+			t.Fatalf("signal %s should be retained but filtered by missing VAL/VAH: %+v", row.ID, row)
 		}
 	}
 	alerts, err = svc.AlertHistory(ctx, "BTCUSDT", "", 10, "")
@@ -484,7 +485,7 @@ func TestAlertSettingsRoundTripAndRestartReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if signals.SignalCount != 1 || signals.Rows[0].NotifyStatus != "muted" {
+	if signals.SignalCount != 1 || signals.Rows[0].NotifyStatus != "filtered" {
 		t.Fatalf("replayed signals = %+v", signals.Rows)
 	}
 	alerts, err := restarted.AlertHistory(ctx, "", "", 10, "")

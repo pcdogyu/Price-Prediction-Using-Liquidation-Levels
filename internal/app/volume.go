@@ -128,7 +128,7 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 			}
 		case now := <-snapshot.C:
 			if now.UTC().Minute()%5 == 0 {
-				s.saveCurrentVolumeSnapshots(ctx, now.UTC().Truncate(5*time.Minute))
+				s.saveCurrentVolumeSnapshots(ctx, time.Now().UTC())
 			}
 		}
 	}
@@ -337,6 +337,28 @@ func (s *Service) volumeBootstrapSymbols() []string {
 	if len(result) == 0 {
 		return []string{"BTCUSDT", "ETHUSDT"}
 	}
+	return result
+}
+
+// volumeProfileSymbols extends historical VAL/VAH snapshots to the live alert
+// watch list while retaining the explicitly configured bootstrap symbols.
+func (s *Service) volumeProfileSymbols() []string {
+	seen := make(map[string]struct{})
+	result := make([]string, 0)
+	for _, group := range [][]string{s.volumeBootstrapSymbols(), s.backgroundSymbols()} {
+		for _, raw := range group {
+			symbol := normalizeVolumeSymbol(raw)
+			if symbol == "" {
+				continue
+			}
+			if _, ok := seen[symbol]; ok {
+				continue
+			}
+			seen[symbol] = struct{}{}
+			result = append(result, symbol)
+		}
+	}
+	sort.Strings(result)
 	return result
 }
 
@@ -612,6 +634,42 @@ func (s *Service) VolumeProfile(ctx context.Context, symbol string) (domain.Volu
 	return profile, nil
 }
 
+const currentVolumeProfileCacheDuration = 2 * time.Second
+
+// currentVolumeProfile shares the current-session profile between the value-area
+// strategy and the liquidation radar. A short cache avoids rebuilding hundreds
+// of price levels for every liquidation tick while keeping live VAL/VAH fresh.
+func (s *Service) currentVolumeProfile(ctx context.Context, symbol string) (domain.VolumeProfile, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	now := time.Now().UTC()
+	s.volumeProfileCacheMu.Lock()
+	if cached, ok := s.volumeProfileCache[symbol]; ok && now.Before(cached.next) {
+		profile := cached.profile
+		s.volumeProfileCacheMu.Unlock()
+		return profile, nil
+	}
+	s.volumeProfileCacheMu.Unlock()
+
+	profile, err := s.VolumeProfile(ctx, symbol)
+	if err == nil && profile.State == "ok" && !volumeProfileFreshAt(profile, now) {
+		profile.State = "stale"
+	}
+	if err == nil && profile.State != "ok" {
+		err = s.EnsureVolumeProfile(ctx, symbol, false)
+	}
+	if err != nil && profile.Symbol == "" {
+		profile = domain.VolumeProfile{Symbol: symbol, Source: domain.DataSourceBinanceUSDM, State: "unavailable", UpdatedAt: now}
+	}
+
+	s.volumeProfileCacheMu.Lock()
+	if s.volumeProfileCache == nil {
+		s.volumeProfileCache = make(map[string]valueAreaProfileCache)
+	}
+	s.volumeProfileCache[symbol] = valueAreaProfileCache{profile: profile, next: now.Add(currentVolumeProfileCacheDuration)}
+	s.volumeProfileCacheMu.Unlock()
+	return profile, err
+}
+
 func (s *Service) volumeRequestedSymbol(symbol string) bool {
 	s.volumeMu.Lock()
 	defer s.volumeMu.Unlock()
@@ -620,11 +678,21 @@ func (s *Service) volumeRequestedSymbol(symbol string) bool {
 }
 
 func (s *Service) saveCurrentVolumeSnapshots(ctx context.Context, at time.Time) {
-	for _, symbol := range s.volumeBootstrapSymbols() {
+	for _, symbol := range s.volumeProfileSymbols() {
 		profile, err := s.VolumeProfile(ctx, symbol)
-		if err != nil || profile.State != "ok" || profile.VAL == nil || profile.VAH == nil {
+		if err != nil || profile.State != "ok" || !volumeProfileFreshAt(profile, at) || profile.VAL == nil || profile.VAH == nil {
 			continue
 		}
-		_ = s.store.SaveVolumeProfileSnapshot(ctx, domain.VolumeProfileSnapshot{Symbol: symbol, Time: at, SessionStart: profile.SessionStart, VAL: *profile.VAL, VAH: *profile.VAH, TotalVolumeUSD: profile.TotalVolumeUSD, Complete: true})
+		// Timestamp the profile at the last source trade it contains. Using the
+		// polling time would let later trades leak into historical as-of lookups.
+		_ = s.store.SaveVolumeProfileSnapshot(ctx, domain.VolumeProfileSnapshot{Symbol: symbol, Time: profile.DataThrough, SessionStart: profile.SessionStart, VAL: *profile.VAL, VAH: *profile.VAH, TotalVolumeUSD: profile.TotalVolumeUSD, Complete: true})
 	}
+}
+
+func volumeProfileFreshAt(profile domain.VolumeProfile, at time.Time) bool {
+	if profile.DataThrough.IsZero() || at.IsZero() {
+		return false
+	}
+	age := at.UTC().Sub(profile.DataThrough.UTC())
+	return age >= -5*time.Second && age <= valueAreaProfileMaxAge
 }

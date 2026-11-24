@@ -43,6 +43,7 @@ func (s *Service) alertStrategyConfigForContext(ctx context.Context, rtm *alertR
 			cfg.FilterSettingsSet = true
 		}
 	}
+	cfg.ValueAreaFilterEnabled = true
 	return cfg, nil
 }
 

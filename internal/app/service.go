@@ -92,6 +92,8 @@ type Service struct {
 	volumeHistoryReady     bool
 	volumeLiveReady        chan struct{}
 	volumeMu               sync.Mutex
+	volumeProfileCacheMu   sync.Mutex
+	volumeProfileCache     map[string]valueAreaProfileCache
 	volumeContext          context.Context
 	volumeLiveInput        chan domain.AggregateTrade
 	marketLiveInput        chan domain.AggregateTrade

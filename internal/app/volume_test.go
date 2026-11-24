@@ -43,6 +43,80 @@ func TestVolumeBootstrapSymbolsFallsBackToBTCAndETH(t *testing.T) {
 	}
 }
 
+func TestVolumeProfileSymbolsIncludesActiveAlertCandidates(t *testing.T) {
+	svc := &Service{
+		cfg:        config.Config{BootstrapSymbols: []string{"BTCUSDT", "SOLUSDT"}},
+		candidates: []string{"ETHUSDT", "BTCUSDT", ""},
+	}
+	got := svc.volumeProfileSymbols()
+	want := []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"}
+	if len(got) != len(want) {
+		t.Fatalf("volume profile symbols=%v, want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("volume profile symbols=%v, want=%v", got, want)
+		}
+	}
+}
+
+func TestCurrentVolumeSnapshotUsesLastSourceTradeAndSkipsStaleProfile(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "volume-snapshot-asof.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	session, err := volumeprofile.SessionAt(time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name string
+		age  time.Duration
+		want int
+	}{
+		{name: "fresh", age: 5 * time.Second, want: 1},
+		{name: "stale", age: valueAreaProfileMaxAge + time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			symbol := "BTCUSDT"
+			if tc.name == "stale" {
+				symbol = "ETHUSDT"
+			}
+			tradeTime := now.Add(-tc.age)
+			if err := st.ApplyAggregateTrades(ctx, symbol, session.Start, []domain.AggregateTrade{{
+				ID: int64(tc.age.Seconds()), Symbol: symbol, Time: tradeTime, Price: 100, Quantity: 2, PriceText: "100",
+			}}, true); err != nil {
+				t.Fatal(err)
+			}
+			svc := &Service{
+				store: st, cfg: config.Config{BootstrapSymbols: []string{symbol}},
+				volumeRequested: map[string]struct{}{symbol: {}},
+			}
+			profile, profileErr := svc.VolumeProfile(ctx, symbol)
+			if profileErr != nil {
+				t.Fatal(profileErr)
+			}
+			if tc.want > 0 && (profile.State != "ok" || !volumeProfileFreshAt(profile, now)) {
+				t.Fatalf("profile=%+v err=%v fresh=%v", profile, profileErr, volumeProfileFreshAt(profile, now))
+			}
+			svc.saveCurrentVolumeSnapshots(ctx, now)
+			rows, err := st.VolumeProfileSnapshots(ctx, symbol, session.Start, now.Add(time.Second))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != tc.want {
+				t.Fatalf("snapshots=%d, want=%d: %+v", len(rows), tc.want, rows)
+			}
+			if tc.want > 0 && !rows[0].Time.Equal(tradeTime.Truncate(time.Millisecond)) {
+				t.Fatalf("snapshot time=%s, want last source trade %s", rows[0].Time, tradeTime)
+			}
+		})
+	}
+}
+
 func TestAggregateTradeGap(t *testing.T) {
 	tests := []struct {
 		name   string

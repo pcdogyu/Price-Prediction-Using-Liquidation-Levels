@@ -225,10 +225,11 @@ func alertBacktestHoldingOptions() []int {
 }
 
 type alertBacktestFilter struct {
-	key      string
-	label    string
-	vwap     bool
-	donchian bool
+	key       string
+	label     string
+	vwap      bool
+	donchian  bool
+	valueArea bool
 }
 
 var alertBacktestFilters = []alertBacktestFilter{
@@ -236,6 +237,10 @@ var alertBacktestFilters = []alertBacktestFilter{
 	{key: "vwap", label: "VWAP", vwap: true},
 	{key: "donchian", label: "Donchian", donchian: true},
 	{key: "vwap_donchian", label: "VWAP + Donchian", vwap: true, donchian: true},
+	{key: "value_area", label: "VAL/VAH", valueArea: true},
+	{key: "vwap_value_area", label: "VWAP + VAL/VAH", vwap: true, valueArea: true},
+	{key: "donchian_value_area", label: "Donchian + VAL/VAH", donchian: true, valueArea: true},
+	{key: "vwap_donchian_value_area", label: "VWAP + Donchian + VAL/VAH", vwap: true, donchian: true, valueArea: true},
 }
 
 var alertBacktestSignals = []struct {
@@ -317,6 +322,7 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 		}
 	}
 
+	valueAreaCoveredEvents, valueAreaTotalEvents := 0, 0
 	for _, symbol := range symbols {
 		// Include the longest forward holding window in the candle read so all
 		// six periods can score the last completed entries without another query.
@@ -325,7 +331,17 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 			return domain.AlertBacktestReport{}, replayErr
 		}
 		events = backtestEventsThrough(events, to)
-		markets := replayAlertChartMarkets(events, cfg, candles)
+		profiles, profileErr := rtm.alertChartValueAreaSnapshots(ctx, symbol, from, to)
+		if profileErr != nil {
+			return domain.AlertBacktestReport{}, profileErr
+		}
+		markets := replayAlertChartMarkets(events, cfg, candles, profiles)
+		valueAreaTotalEvents += len(events)
+		for _, market := range markets {
+			if market.ValueAreaReady {
+				valueAreaCoveredEvents++
+			}
+		}
 		type filterReplay struct {
 			filter string
 			view   domain.AlertChartSignals
@@ -340,8 +356,9 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 				replayCfg := cfg
 				replayCfg.VWAPFilterEnabled = filter.vwap
 				replayCfg.DonchianFilterEnabled = filter.donchian
+				replayCfg.ValueAreaFilterEnabled = filter.valueArea
 				replayCfg.FilterSettingsSet = true
-				results <- filterReplay{filter: filter.key, view: rtm.replayAlertChartSignalsWithMarkets(ctx, symbol, replayCfg, to, from, events, markets, candles)}
+				results <- filterReplay{filter: filter.key, view: rtm.replayAlertChartSignalsWithMarkets(ctx, symbol, replayCfg, to, from, events, markets, candles, profiles)}
 			}()
 		}
 		filters.Wait()
@@ -395,6 +412,8 @@ func (s *Service) AlertBacktestForContext(ctx context.Context, requested ...Aler
 		SlippageBps:             params.SlippageBps,
 		GammaFlipNearPct:        params.GammaFlipNearPct,
 		GammaFlipConfirmSamples: params.GammaFlipConfirmSamples,
+		ValueAreaCoveredEvents:  valueAreaCoveredEvents,
+		ValueAreaTotalEvents:    valueAreaTotalEvents,
 		From:                    from,
 		To:                      to,
 		GeneratedAt:             to,

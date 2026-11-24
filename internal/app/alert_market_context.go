@@ -8,9 +8,12 @@ import (
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/alert"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/volumeprofile"
 )
 
 const (
+	valueAreaProfileMaxAge = 10 * time.Minute
+
 	// A few missing minutes are normally an internal polling gap. Repair those
 	// gaps from Binance, but do not turn a mostly empty local store into a
 	// per-event historical downloader.
@@ -92,9 +95,23 @@ func (s *Service) liquidationMarketContext(ctx context.Context, event domain.Liq
 	from := at.Add(-time.Duration(historyMinutes) * time.Minute)
 	to := at.Add(time.Minute)
 	symbol := strings.ToUpper(strings.TrimSpace(event.Symbol))
+	withValueArea := func(market alert.MarketContext) alert.MarketContext {
+		profile, profileErr := s.currentVolumeProfile(ctx, symbol)
+		if profileErr != nil || profile.State != "ok" || !volumeProfileFreshAt(profile, at) || profile.VAL == nil || profile.VAH == nil {
+			return market
+		}
+		session, sessionErr := volumeprofile.SessionAt(at)
+		if sessionErr != nil || !profile.SessionStart.Equal(session.Start) {
+			return market
+		}
+		market.ValueAreaVAL = *profile.VAL
+		market.ValueAreaVAH = *profile.VAH
+		market.ValueAreaReady = true
+		return market
+	}
 	rows, err := s.store.CandlesRange(ctx, symbol, from, to)
 	if err != nil {
-		return alert.MarketContext{Price: event.Price}
+		return withValueArea(alert.MarketContext{Price: event.Price})
 	}
 	market := buildLiquidationMarketContext(event, cfg, rows)
 	needsRepair := s.alertCandleRepairCandidate(symbol, rows, cfg)
@@ -102,16 +119,16 @@ func (s *Service) liquidationMarketContext(ctx context.Context, event domain.Liq
 		needsRepair = true
 	}
 	if market.DonchianReady || !needsRepair || !s.claimAlertCandleRepair(symbol, time.Now().UTC()) {
-		return market
+		return withValueArea(market)
 	}
 	repaired, ok := s.repairAlertCandleWindow(ctx, symbol, event.EventTime, cfg)
 	if !ok {
-		return market
+		return withValueArea(market)
 	}
 	if err := s.store.UpsertCandles(ctx, repaired); err != nil {
 		s.log.Warn("store alert candle repair failed", "symbol", symbol, "error", err)
 	}
-	return buildLiquidationMarketContext(event, cfg, repaired)
+	return withValueArea(buildLiquidationMarketContext(event, cfg, repaired))
 }
 
 func (s *Service) alertCandleRepairCandidate(symbol string, rows []domain.Candle, cfg alert.Config) bool {
