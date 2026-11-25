@@ -845,14 +845,8 @@ func (s *Server) processPersistedBinanceFill(ctx context.Context, cfg config.Con
 		}
 		return nil
 	}
-	potentialExit := false
-	for _, lifecycle := range lifecycles {
-		if lifecycle.Status == storage.TradeLifecycleOpen && strings.EqualFold(fill.Side, exitSide(lifecycle.Action)) && positionSideMatchesAction(fill.PositionSide, lifecycle.Action) {
-			potentialExit = true
-			break
-		}
-	}
-	if !potentialExit {
+	potentialExitCandidates := matchingExitCandidateCount(lifecycles, fill, binanceExitFillMatch{})
+	if potentialExitCandidates == 0 {
 		return nil
 	}
 	evidence, err := s.binanceExitFillEvidence(fill, lifecycles)
@@ -860,7 +854,7 @@ func (s *Server) processPersistedBinanceFill(ctx context.Context, cfg config.Con
 		return err
 	}
 	if !evidence.managed {
-		return nil
+		return s.Orders.RecordBinanceFillReconciliation(fill, storage.BinanceFillReconciliationUnmatched, "missing_close_order_evidence", potentialExitCandidates, now)
 	}
 	if lifecycle, ok := matchingExitLifecycle(lifecycles, fill, evidence); ok {
 		applied, updated, err := s.Orders.ApplyBinanceFillToLifecycle(fill, lifecycle.LifecycleID, "exit", now)
@@ -891,7 +885,14 @@ func (s *Server) processPersistedBinanceFill(ctx context.Context, cfg config.Con
 		}
 		return nil
 	}
-	return nil
+	matchingCandidates := matchingExitCandidateCount(lifecycles, fill, evidence)
+	status := storage.BinanceFillReconciliationUnmatched
+	reason := "no_unique_exit_candidate"
+	if matchingCandidates > 1 {
+		status = storage.BinanceFillReconciliationAmbiguous
+		reason = "ambiguous_exit_lifecycles"
+	}
+	return s.Orders.RecordBinanceFillReconciliation(fill, status, reason, matchingCandidates, now)
 }
 
 func (s *Server) dispatchPendingBinanceLifecycleActions(ctx context.Context, cfg config.Config, client binance.Client, apiID string, now time.Time) error {
@@ -979,6 +980,23 @@ func matchingExitLifecycle(lifecycles []storage.TradeLifecycle, fill storage.Bin
 		matches++
 	}
 	return match, matches == 1
+}
+
+func matchingExitCandidateCount(lifecycles []storage.TradeLifecycle, fill storage.BinanceFill, evidence binanceExitFillMatch) int {
+	count := 0
+	for _, lifecycle := range lifecycles {
+		if lifecycle.Status != storage.TradeLifecycleOpen || !strings.EqualFold(fill.Side, exitSide(lifecycle.Action)) || !positionSideMatchesAction(fill.PositionSide, lifecycle.Action) {
+			continue
+		}
+		if evidence.lifecycleID != "" && evidence.lifecycleID != lifecycle.LifecycleID {
+			continue
+		}
+		if evidence.positionSide != "" && !positionSideMatchesAction(evidence.positionSide, lifecycle.Action) {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 type binanceExitFillMatch struct {
@@ -1425,22 +1443,24 @@ func (s *Server) handleTradeMonitor(w http.ResponseWriter, r *http.Request) {
 	checkpoints, cpErr := s.Orders.ListTradeMonitorCheckpoints(filter, 200)
 	lifecycles, lcErr := s.Orders.ListTradeLifecycles(filter, 200)
 	events, evErr := s.Orders.ListTradeMonitorEvents(filter, 100)
+	unreconciledFills, reconErr := s.Orders.ListBinanceFillReconciliations(filter, 200)
 	errors := []string{}
-	for _, err := range []error{cpErr, lcErr, evErr} {
+	for _, err := range []error{cpErr, lcErr, evErr, reconErr} {
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":           len(errors) == 0,
-		"running":      tradeFillMonitorBinanceEnabled(cfg),
-		"exchange":     trading.ExchangeBinance,
-		"fill_monitor": cfg.Trading.FillMonitor,
-		"auto_reentry": cfg.Trading.AutoReentry,
-		"checkpoints":  checkpoints,
-		"lifecycles":   lifecycles,
-		"events":       events,
-		"errors":       errors,
-		"updated_at":   s.now(),
+		"ok":                 len(errors) == 0,
+		"running":            tradeFillMonitorBinanceEnabled(cfg),
+		"exchange":           trading.ExchangeBinance,
+		"fill_monitor":       cfg.Trading.FillMonitor,
+		"auto_reentry":       cfg.Trading.AutoReentry,
+		"checkpoints":        checkpoints,
+		"lifecycles":         lifecycles,
+		"events":             events,
+		"unreconciled_fills": unreconciledFills,
+		"errors":             errors,
+		"updated_at":         s.now(),
 	})
 }

@@ -133,6 +133,28 @@ type TradeLifecycleAction struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+const (
+	BinanceFillReconciliationAmbiguous = "ambiguous"
+	BinanceFillReconciliationUnmatched = "unmatched"
+)
+
+type BinanceFillReconciliation struct {
+	APIID                   string    `json:"api_id"`
+	Symbol                  string    `json:"symbol"`
+	TradeID                 string    `json:"trade_id"`
+	OrderID                 string    `json:"order_id,omitempty"`
+	Side                    string    `json:"side,omitempty"`
+	PositionSide            string    `json:"position_side,omitempty"`
+	FillTime                int64     `json:"fill_time"`
+	Status                  string    `json:"status"`
+	Reason                  string    `json:"reason"`
+	CandidateLifecycleCount int       `json:"candidate_lifecycle_count"`
+	AttemptCount            int       `json:"attempt_count"`
+	FirstSeenAt             time.Time `json:"first_seen_at"`
+	LastAttemptedAt         time.Time `json:"last_attempted_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
+}
+
 func BinanceLifecycleActionKey(fill BinanceFill, actionType string) string {
 	fill.normalize(0)
 	return strings.Join([]string{strings.ToLower(strings.TrimSpace(actionType)), fill.APIID, fill.Symbol, fill.TradeID}, ":")
@@ -272,6 +294,12 @@ func (s *OrderStore) ApplyBinanceFillToLifecycle(fill BinanceFill, lifecycleID, 
 		if existingLifecycleID != lifecycleID || existingRole != role {
 			return false, TradeLifecycle{}, fmt.Errorf("Binance fill %s/%s/%s is already linked to lifecycle %s as %s", fill.APIID, fill.Symbol, fill.TradeID, existingLifecycleID, existingRole)
 		}
+		if _, err := tx.Exec(`DELETE FROM binance_fill_reconciliation WHERE api_id=? AND symbol=? AND trade_id=?`, fill.APIID, fill.Symbol, fill.TradeID); err != nil {
+			return false, TradeLifecycle{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return false, TradeLifecycle{}, err
+		}
 		return false, current, nil
 	}
 
@@ -323,11 +351,113 @@ func (s *OrderStore) ApplyBinanceFillToLifecycle(fill BinanceFill, lifecycleID, 
 			return false, TradeLifecycle{}, err
 		}
 	}
+	if _, err := tx.Exec(`DELETE FROM binance_fill_reconciliation WHERE api_id=? AND symbol=? AND trade_id=?`, fill.APIID, fill.Symbol, fill.TradeID); err != nil {
+		return false, TradeLifecycle{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return false, TradeLifecycle{}, err
 	}
 	updated, err := s.findTradeLifecycleSQLiteLocked(lifecycleID)
 	return true, updated, err
+}
+
+// RecordBinanceFillReconciliation persists why a potential exit fill could not
+// be assigned safely. Replays refresh its evidence and increment attempts.
+func (s *OrderStore) RecordBinanceFillReconciliation(fill BinanceFill, status, reason string, candidateCount int, now time.Time) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite database is not configured")
+	}
+	fill.normalize(0)
+	status = strings.ToLower(strings.TrimSpace(status))
+	reason = strings.TrimSpace(reason)
+	if fill.APIID == "" || fill.Symbol == "" || fill.TradeID == "" {
+		return errors.New("Binance fill reconciliation requires account, symbol, and trade IDs")
+	}
+	if status != BinanceFillReconciliationAmbiguous && status != BinanceFillReconciliationUnmatched {
+		return fmt.Errorf("unsupported Binance fill reconciliation status %q", status)
+	}
+	if reason == "" {
+		return errors.New("Binance fill reconciliation reason is required")
+	}
+	if candidateCount < 0 {
+		candidateCount = 0
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRow(`SELECT 1 FROM binance_fills WHERE api_id=? AND symbol=? AND trade_id=?`, fill.APIID, fill.Symbol, fill.TradeID).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("Binance fill must be persisted before reconciliation is recorded")
+		}
+		return err
+	}
+	_, err = tx.Exec(`INSERT INTO binance_fill_reconciliation
+		(api_id,symbol,trade_id,status,reason,candidate_lifecycle_count,attempt_count,first_seen_at,last_attempted_at,updated_at)
+		VALUES(?,?,?,?,?,?,1,?,?,?)
+		ON CONFLICT(api_id,symbol,trade_id) DO UPDATE SET
+		status=excluded.status,reason=excluded.reason,candidate_lifecycle_count=excluded.candidate_lifecycle_count,
+		attempt_count=binance_fill_reconciliation.attempt_count+1,last_attempted_at=excluded.last_attempted_at,updated_at=excluded.updated_at`,
+		fill.APIID, fill.Symbol, fill.TradeID, status, reason, candidateCount, stamp, stamp, stamp)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *OrderStore) ListBinanceFillReconciliations(filter TradeMonitorFilter, limit int) ([]BinanceFillReconciliation, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("sqlite database is not configured")
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	filter.normalize()
+	where := []string{"1=1"}
+	args := []any{}
+	if filter.APIID != "" {
+		where = append(where, "r.api_id=?")
+		args = append(args, filter.APIID)
+	}
+	if filter.Symbol != "" {
+		where = append(where, "r.symbol=?")
+		args = append(args, filter.Symbol)
+	}
+	args = append(args, limit)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(`SELECT r.api_id,r.symbol,r.trade_id,COALESCE(f.order_id,''),COALESCE(f.side,''),COALESCE(f.position_side,''),
+		COALESCE(f.fill_time,0),r.status,r.reason,r.candidate_lifecycle_count,r.attempt_count,r.first_seen_at,r.last_attempted_at,r.updated_at
+		FROM binance_fill_reconciliation r LEFT JOIN binance_fills f
+		ON f.api_id=r.api_id AND f.symbol=r.symbol AND f.trade_id=r.trade_id
+		WHERE `+strings.Join(where, " AND ")+` ORDER BY r.last_attempted_at DESC,r.symbol,r.trade_id LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]BinanceFillReconciliation, 0)
+	for rows.Next() {
+		var item BinanceFillReconciliation
+		var firstSeenAt, lastAttemptedAt, updatedAt string
+		if err := rows.Scan(&item.APIID, &item.Symbol, &item.TradeID, &item.OrderID, &item.Side, &item.PositionSide,
+			&item.FillTime, &item.Status, &item.Reason, &item.CandidateLifecycleCount, &item.AttemptCount,
+			&firstSeenAt, &lastAttemptedAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		item.FirstSeenAt = parseStoreTime(firstSeenAt)
+		item.LastAttemptedAt = parseStoreTime(lastAttemptedAt)
+		item.UpdatedAt = parseStoreTime(updatedAt)
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (s *OrderStore) ClaimTradeLifecycleAction(actionKey string, now time.Time) (TradeLifecycleAction, bool, error) {

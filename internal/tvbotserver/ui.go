@@ -1573,6 +1573,9 @@ const tvbotHTML = `<!doctype html>
     .symbol-metrics {
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
+    .trade-monitor-metrics {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
     .position-metrics {
       grid-template-columns: repeat(7, minmax(0, 1fr));
     }
@@ -3079,10 +3082,11 @@ const tvbotHTML = `<!doctype html>
         </div>
         <button class="btn" type="button" id="refresh-trade-monitor">刷新状态</button>
       </div>
-      <div class="analysis-metrics symbol-metrics">
+      <div class="analysis-metrics symbol-metrics trade-monitor-metrics">
         <div class="analysis-card"><div class="label">监听状态</div><div class="value" id="trade-monitor-running">-</div></div>
         <div class="analysis-card"><div class="label">自动补回</div><div class="value" id="trade-monitor-reentry">-</div></div>
         <div class="analysis-card"><div class="label">Lifecycle</div><div class="value" id="trade-monitor-lifecycle-count">-</div></div>
+        <div class="analysis-card"><div class="label">待核对出场</div><div class="value" id="trade-monitor-unreconciled-count">-</div></div>
         <div class="analysis-card"><div class="label">最近事件</div><div class="value" id="trade-monitor-event-count">-</div></div>
       </div>
       <div class="section-head" style="margin:18px 0 10px">
@@ -3101,6 +3105,15 @@ const tvbotHTML = `<!doctype html>
         <table class="symbol-table">
           <thead><tr><th>最近更新</th><th>状态</th><th>API</th><th>Symbol</th><th>方向</th><th>入口订单</th><th>退出订单</th><th>补回</th></tr></thead>
           <tbody id="trade-monitor-lifecycles"></tbody>
+        </table>
+      </div>
+      <div class="section-head" style="margin:18px 0 10px">
+        <h3>待核对出场成交</h3>
+      </div>
+      <div class="symbol-table-wrap">
+        <table class="symbol-table">
+          <thead><tr><th>成交时间</th><th>API</th><th>Symbol</th><th>订单 / 成交</th><th>方向</th><th>归属状态</th><th>原因</th><th>候选 Lifecycle</th><th>尝试次数 / 最近重试</th></tr></thead>
+          <tbody id="trade-monitor-unreconciled-fills"></tbody>
         </table>
       </div>
       <div class="section-head" style="margin:18px 0 10px">
@@ -9638,6 +9651,21 @@ const tvbotHTML = `<!doctype html>
       return asText(value);
     }
 
+    function tradeMonitorReconciliationReason(value) {
+      const reason = String(value || "").toLowerCase();
+      if (reason === "missing_close_order_evidence") return "缺少平仓订单证据";
+      if (reason === "ambiguous_exit_lifecycles") return "多个持仓生命周期均可能匹配";
+      if (reason === "no_unique_exit_candidate") return "没有唯一可匹配的持仓生命周期";
+      return asText(value);
+    }
+
+    function tradeMonitorReconciliationStatus(value) {
+      const status = String(value || "").toLowerCase();
+      if (status === "ambiguous") return "归属不唯一";
+      if (status === "unmatched") return "待补充证据";
+      return asText(value);
+    }
+
     function tradeMonitorActionText(action) {
       const value = String(action || "").toLowerCase();
       if (value === "buy") return "多";
@@ -9655,6 +9683,7 @@ const tvbotHTML = `<!doctype html>
       const checkpoints = Array.isArray(data.checkpoints) ? data.checkpoints : [];
       const lifecycles = Array.isArray(data.lifecycles) ? data.lifecycles : [];
       const events = Array.isArray(data.events) ? data.events : [];
+      const unreconciledFills = Array.isArray(data.unreconciled_fills) ? data.unreconciled_fills : [];
       const fillMonitor = data.fill_monitor || {};
       const autoReentry = data.auto_reentry || {};
       const statusText = state.tradeMonitorError || (data.updated_at ? "更新于 " + shanghaiTime(data.updated_at) : "-");
@@ -9662,6 +9691,7 @@ const tvbotHTML = `<!doctype html>
       $("trade-monitor-running").textContent = data.running ? "running" : (fillMonitor.enabled ? "waiting" : "disabled");
       $("trade-monitor-reentry").textContent = autoReentry.enabled ? ("enabled / " + asText(autoReentry.reentry_amount_pct) + "%") : "disabled";
       $("trade-monitor-lifecycle-count").textContent = asText(lifecycles.length);
+      $("trade-monitor-unreconciled-count").textContent = asText(unreconciledFills.length);
       $("trade-monitor-event-count").textContent = asText(events.length);
       $("trade-monitor-checkpoints").innerHTML = checkpoints.map((row) => {
         return "<tr>" +
@@ -9688,6 +9718,21 @@ const tvbotHTML = `<!doctype html>
           "<td>" + escapeHTML(reentry) + "</td>" +
           "</tr>";
       }).join("") || '<tr><td colspan="8" class="muted">暂无 lifecycle</td></tr>';
+      $("trade-monitor-unreconciled-fills").innerHTML = unreconciledFills.map((row) => {
+        const orderTrade = (row.order_id ? asText(row.order_id) : "-") + " / " + asText(row.trade_id);
+        const retries = asText(row.attempt_count) + " 次 / " + tradeMonitorTime(row.last_attempted_at);
+        return "<tr>" +
+          '<td class="time">' + escapeHTML(tradeMonitorTime(row.fill_time)) + "</td>" +
+          "<td>" + escapeHTML(asText(row.api_id)) + "</td>" +
+          "<td>" + escapeHTML(asText(row.symbol)) + "</td>" +
+          "<td>" + escapeHTML(orderTrade) + "</td>" +
+          "<td>" + escapeHTML(asText(row.side) + (row.position_side ? " / " + row.position_side : "")) + "</td>" +
+          "<td>" + pill(tradeMonitorReconciliationStatus(row.status), "warn") + "</td>" +
+          "<td>" + escapeHTML(tradeMonitorReconciliationReason(row.reason)) + "</td>" +
+          "<td>" + escapeHTML(asText(row.candidate_lifecycle_count)) + "</td>" +
+          "<td>" + escapeHTML(retries) + "</td>" +
+          "</tr>";
+      }).join("") || '<tr><td colspan="9" class="muted">暂无待核对成交</td></tr>';
       $("trade-monitor-events").innerHTML = events.map((row) => {
         return "<tr>" +
           '<td class="time">' + escapeHTML(tradeMonitorTime(row.event_time)) + "</td>" +

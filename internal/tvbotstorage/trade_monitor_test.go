@@ -138,6 +138,61 @@ func TestTradeMonitorStoragePersistsFillsLifecycleCheckpointAndEvents(t *testing
 	}
 }
 
+func TestBinanceFillReconciliationRetriesAndClearsOnLifecycleLink(t *testing.T) {
+	store, err := NewSQLiteOrderStore(filepath.Join(t.TempDir(), "tvbot-reconciliation.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	now := time.Date(2026, 7, 30, 4, 0, 0, 0, time.UTC)
+	fill := BinanceFill{APIID: "main", Symbol: "BTCUSDT", TradeID: "77", OrderID: "9001", Side: "BUY", Price: "50000", Qty: "0.01", FillTime: now.UnixMilli()}
+	if _, err := store.UpsertBinanceFills([]BinanceFill{fill}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordBinanceFillReconciliation(fill, BinanceFillReconciliationAmbiguous, "ambiguous_exit_lifecycles", 3, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordBinanceFillReconciliation(fill, BinanceFillReconciliationUnmatched, "missing_close_order_evidence", 1, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.ListBinanceFillReconciliations(TradeMonitorFilter{APIID: "main", Symbol: "BTCUSDT"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].AttemptCount != 2 || items[0].Status != BinanceFillReconciliationUnmatched || items[0].Reason != "missing_close_order_evidence" || items[0].CandidateLifecycleCount != 1 || items[0].OrderID != "9001" || items[0].TradeID != "77" {
+		t.Fatalf("reconciliation retry was not refreshed: %#v", items)
+	}
+
+	rec := OrderRecord{
+		SignalID:       "sig-reconcile",
+		Status:         StatusSubmitted,
+		Action:         trading.ActionLong,
+		APIID:          "main",
+		TargetExchange: trading.ExchangeBinance,
+		Coinpair:       "BTC",
+		Ticker:         "BTCUSDT",
+		AcceptedAt:     now,
+		UpdatedAt:      now,
+		Result: trading.OrderResult{
+			APIID: "main", TargetExchange: trading.ExchangeBinance, InstID: "BTCUSDT", OrdID: "9001",
+		},
+	}
+	if _, err := store.UpsertTradeLifecycleFromOrder(rec, "", 0, now); err != nil {
+		t.Fatal(err)
+	}
+	if applied, _, err := store.ApplyBinanceFillToLifecycle(fill, rec.SignalID, "entry", now.Add(2*time.Minute)); err != nil || !applied {
+		t.Fatalf("apply fill: applied=%v err=%v", applied, err)
+	}
+	items, err = store.ListBinanceFillReconciliations(TradeMonitorFilter{}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("linked fill should clear reconciliation row: %#v", items)
+	}
+}
+
 func TestRetentionPrunesOldTradeMonitorEventsAndAnalysisCache(t *testing.T) {
 	store, err := NewSQLiteOrderStore(filepath.Join(t.TempDir(), "tvbot-retention.db"), "")
 	if err != nil {

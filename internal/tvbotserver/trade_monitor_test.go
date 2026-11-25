@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -496,6 +497,10 @@ func TestTradeMonitorAggregatesPartialFillsAndReplaysIdempotently(t *testing.T) 
 	if err := srv.processBinanceFill(context.Background(), cfg, binance.Client{}, exitFills[0], now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	unreconciled, err := store.ListBinanceFillReconciliations(storage.TradeMonitorFilter{APIID: "main", Symbol: "BTCUSDT"}, 10)
+	if err != nil || len(unreconciled) != 1 || unreconciled[0].Reason != "missing_close_order_evidence" || unreconciled[0].CandidateLifecycleCount != 1 {
+		t.Fatalf("unverified exit should be visible for review: fills=%#v err=%v", unreconciled, err)
+	}
 	lifecycle, found, err := store.FindTradeLifecycle(rec.SignalID)
 	if err != nil || !found || lifecycle.Status != storage.TradeLifecycleOpen || lifecycle.ExitQty != "0" {
 		t.Fatalf("unverified opposite-side fill must not close a lifecycle: lifecycle=%#v found=%v err=%v", lifecycle, found, err)
@@ -503,6 +508,10 @@ func TestTradeMonitorAggregatesPartialFillsAndReplaysIdempotently(t *testing.T) 
 	seedManagedBinanceExitOrder(t, store, now, "9101")
 	if err := srv.processBinanceFill(context.Background(), cfg, binance.Client{}, exitFills[0], now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
+	}
+	unreconciled, err = store.ListBinanceFillReconciliations(storage.TradeMonitorFilter{}, 10)
+	if err != nil || len(unreconciled) != 0 {
+		t.Fatalf("reconciled exit should be removed from review queue: fills=%#v err=%v", unreconciled, err)
 	}
 	lifecycle, found, err = store.FindTradeLifecycle(rec.SignalID)
 	if err != nil || !found || lifecycle.Status != storage.TradeLifecycleOpen || lifecycle.ExitQty != "0.005" {
@@ -520,6 +529,86 @@ func TestTradeMonitorAggregatesPartialFillsAndReplaysIdempotently(t *testing.T) 
 	}
 	if lifecycle.Status != storage.TradeLifecycleSLHit || lifecycle.EntryPrice != "50600" || lifecycle.EntryQty != "0.01" || lifecycle.ExitPrice != "49400" || lifecycle.ExitQty != "0.01" || lifecycle.RealizedPnl != "-5" {
 		t.Fatalf("partial fills were not aggregated exactly once: %#v", lifecycle)
+	}
+}
+
+func TestTradeMonitorQueuesAmbiguousExitFillsWithoutAllocatingPnL(t *testing.T) {
+	store, err := storage.NewSQLiteOrderStore(filepath.Join(t.TempDir(), "tvbot-ambiguous-exit.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	now := time.Date(2026, 7, 30, 5, 0, 0, 0, time.UTC)
+	first := submitMonitorTestOrder(t, store, now, "9001")
+	second := first
+	second.SignalID = first.SignalID + "-second"
+	second.Result.OrdID = "9002"
+	second.Result.ClOrdID = "entry-9002"
+	second.Result.RiskOrders = append([]trading.RiskOrderResult(nil), first.Result.RiskOrders...)
+	for i := range second.Result.RiskOrders {
+		second.Result.RiskOrders[i].AlgoID = "8" + second.Result.RiskOrders[i].AlgoID
+		second.Result.RiskOrders[i].ClientAlgoID = "entry-9002" + second.Result.RiskOrders[i].ClientAlgoID[len("entry-9001"):]
+	}
+	for _, rec := range []storage.OrderRecord{first, second} {
+		if _, err := store.UpsertTradeLifecycleFromOrder(rec, "", 0, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.UpdateTradeLifecycle(rec.SignalID, storage.TradeLifecycleUpdate{
+			Status: storage.TradeLifecycleOpen, EntryPrice: "50000", EntryQty: "0.01", UpdatedAt: now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	srv := &Server{Orders: store, Now: func() time.Time { return now }}
+	cfg := config.Default()
+	seedManagedBinanceExitOrder(t, store, now, "9101")
+	exit := storage.BinanceFill{
+		APIID: "main", Symbol: "BTCUSDT", TradeID: "ambiguous-exit", OrderID: "9101", Side: "SELL", PositionSide: "BOTH",
+		Price: "49500", Qty: "0.01", RealizedPnl: "-5", FillTime: now.Add(time.Minute).UnixMilli(),
+	}
+	if err := srv.processBinanceFill(context.Background(), cfg, binance.Client{}, exit, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	unreconciled, err := store.ListBinanceFillReconciliations(storage.TradeMonitorFilter{}, 10)
+	if err != nil || len(unreconciled) != 1 || unreconciled[0].Status != storage.BinanceFillReconciliationAmbiguous || unreconciled[0].Reason != "ambiguous_exit_lifecycles" || unreconciled[0].CandidateLifecycleCount != 2 {
+		t.Fatalf("ambiguous exit should be queued with both candidates: fills=%#v err=%v", unreconciled, err)
+	}
+	for _, lifecycleID := range []string{first.SignalID, second.SignalID} {
+		lifecycle, found, err := store.FindTradeLifecycle(lifecycleID)
+		if err != nil || !found || lifecycle.Status != storage.TradeLifecycleOpen || lifecycle.ExitQty != "" {
+			t.Fatalf("ambiguous fill must not affect lifecycle %s: lifecycle=%#v found=%v err=%v", lifecycleID, lifecycle, found, err)
+		}
+	}
+}
+
+func TestTradeMonitorAPIIncludesUnreconciledFills(t *testing.T) {
+	store, err := storage.NewSQLiteOrderStore(filepath.Join(t.TempDir(), "tvbot-monitor-api.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 7, 30, 6, 0, 0, 0, time.UTC)
+	fill := storage.BinanceFill{APIID: "main", Symbol: "BTCUSDT", TradeID: "api-fill", OrderID: "9101", Side: "SELL", FillTime: now.UnixMilli()}
+	if _, err := store.UpsertBinanceFills([]storage.BinanceFill{fill}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordBinanceFillReconciliation(fill, storage.BinanceFillReconciliationUnmatched, "missing_close_order_evidence", 1, now); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Orders: store, ConfigStore: config.NewStore("", config.Default()), Now: func() time.Time { return now }}
+	response := httptest.NewRecorder()
+	srv.handleTradeMonitor(response, httptest.NewRequest(http.MethodGet, "/tvbot/trade-monitor?exchange=binance&api_id=main", nil))
+	var payload struct {
+		OK                bool                                `json:"ok"`
+		UnreconciledFills []storage.BinanceFillReconciliation `json:"unreconciled_fills"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || !payload.OK || len(payload.UnreconciledFills) != 1 || payload.UnreconciledFills[0].TradeID != "api-fill" {
+		t.Fatalf("monitor API did not expose reconciliation queue: code=%d payload=%#v body=%s", response.Code, payload, response.Body.String())
 	}
 }
 
