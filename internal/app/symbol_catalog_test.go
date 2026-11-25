@@ -33,14 +33,17 @@ func TestDashboardSymbolCatalogCachesAndServesStaleRows(t *testing.T) {
 	svc := New(config.Config{Symbols: []string{"BTCUSDT"}}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	first, err := svc.DashboardSymbolCatalog(context.Background())
-	if err != nil || len(first.Symbols) != 2 || first.Symbols[0].Symbol != "SOLUSDT" || first.Symbols[1].Symbol != "BSPUSDT" {
+	if err != nil || len(first.Symbols) != 3 || first.Symbols[0].Symbol != "SOLUSDT" || first.Symbols[1].Symbol != "BSPUSDT" || first.Symbols[2].Symbol != "EWZUSDT" {
 		t.Fatalf("initial catalog=%+v err=%v", first, err)
 	}
 	if !svc.DashboardSymbolSupported(context.Background(), " bspusdt ") {
 		t.Fatal("BSPUSDT should be supported by the dashboard selector")
 	}
+	if !svc.DashboardSymbolSupported(context.Background(), " ewzusdt ") {
+		t.Fatal("EWZUSDT should be supported by the dashboard selector")
+	}
 	second, err := svc.DashboardSymbolCatalog(context.Background())
-	if err != nil || second.Source != "binance_usdm_exchange_info+local_overrides" || len(second.Symbols) != 2 || calls != 1 {
+	if err != nil || second.Source != "binance_usdm_exchange_info+local_overrides" || len(second.Symbols) != 3 || calls != 1 {
 		t.Fatalf("cached catalog=%+v calls=%d err=%v", second, calls, err)
 	}
 	// Expire the cache without waiting five minutes; the next failed refresh must
@@ -49,7 +52,7 @@ func TestDashboardSymbolCatalogCachesAndServesStaleRows(t *testing.T) {
 	svc.symbolCatalogAt = svc.symbolCatalogAt.Add(-symbolCatalogTTL - 1)
 	svc.symbolCatalogMu.Unlock()
 	stale, err := svc.DashboardSymbolCatalog(context.Background())
-	if err != nil || stale.Source != "binance_usdm_exchange_info_stale+local_overrides" || len(stale.Symbols) != 2 || calls != 2 {
+	if err != nil || stale.Source != "binance_usdm_exchange_info_stale+local_overrides" || len(stale.Symbols) != 3 || calls != 2 {
 		t.Fatalf("stale catalog=%+v calls=%d err=%v", stale, calls, err)
 	}
 }
@@ -69,10 +72,13 @@ func TestDashboardSymbolCatalogKeepsLocalOverridesWhenExchangeUnavailable(t *tes
 	svc := New(config.Config{}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	catalog, err := svc.DashboardSymbolCatalog(context.Background())
-	if err != nil || len(catalog.Symbols) != 1 || catalog.Symbols[0] != (exchange.ContractSymbol{Symbol: "BSPUSDT", BaseAsset: "BSP"}) {
+	if err != nil || len(catalog.Symbols) != 2 || catalog.Symbols[0] != (exchange.ContractSymbol{Symbol: "BSPUSDT", BaseAsset: "BSP"}) || catalog.Symbols[1] != (exchange.ContractSymbol{Symbol: "EWZUSDT", BaseAsset: "EWZ"}) {
 		t.Fatalf("fallback catalog=%+v err=%v", catalog, err)
 	}
 	if !svc.DashboardSymbolSupported(context.Background(), "BSPUSDT") {
 		t.Fatal("BSPUSDT should remain supported when the exchange catalog is unavailable")
+	}
+	if !svc.DashboardSymbolSupported(context.Background(), "EWZUSDT") {
+		t.Fatal("EWZUSDT should remain supported when the exchange catalog is unavailable")
 	}
 }

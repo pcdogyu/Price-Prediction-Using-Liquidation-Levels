@@ -15,7 +15,10 @@ var fetchDashboardSymbols = exchange.BinanceUSDTPerpetualSymbols
 // Binance's USDⓈ-M catalog can omit TradFi perpetuals from exchangeInfo on
 // some routes. Keep explicitly supported contracts selectable in the bubble
 // dashboard even when they are absent from that response.
-var additionalDashboardSymbols = []exchange.ContractSymbol{{Symbol: "BSPUSDT", BaseAsset: "BSP"}}
+var additionalDashboardSymbols = []exchange.ContractSymbol{
+	{Symbol: "BSPUSDT", BaseAsset: "BSP"},
+	{Symbol: "EWZUSDT", BaseAsset: "EWZ"},
+}
 
 // DashboardSymbolCatalog is the exchange-wide selector data used by the
 // bubble page. It is intentionally separate from Config.Symbols: the latter
