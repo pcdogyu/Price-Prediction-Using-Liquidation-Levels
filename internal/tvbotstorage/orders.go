@@ -1274,6 +1274,28 @@ func (s *OrderStore) migrateSQLite() error {
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_status ON trade_lifecycles(exchange, api_id, symbol, status)`,
+		`CREATE TABLE IF NOT EXISTS trade_lifecycle_fills (
+			api_id TEXT NOT NULL,
+			symbol TEXT NOT NULL,
+			trade_id TEXT NOT NULL,
+			lifecycle_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			linked_at TEXT NOT NULL,
+			PRIMARY KEY(api_id, symbol, trade_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_trade_lifecycle_fills_lifecycle ON trade_lifecycle_fills(lifecycle_id, role)`,
+		`CREATE TABLE IF NOT EXISTS trade_lifecycle_actions (
+			action_key TEXT PRIMARY KEY,
+			api_id TEXT NOT NULL,
+			lifecycle_id TEXT NOT NULL,
+			action_type TEXT NOT NULL,
+			status TEXT NOT NULL,
+			event_time TEXT NOT NULL,
+			last_error TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_trade_lifecycle_actions_pending ON trade_lifecycle_actions(api_id,status,created_at)`,
 		`CREATE TABLE IF NOT EXISTS trade_monitor_checkpoints (
 			exchange TEXT NOT NULL,
 			api_id TEXT NOT NULL,

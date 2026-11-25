@@ -2760,6 +2760,12 @@ func (s *Server) syncBinanceAnalysisFills(ctx context.Context, cfg config.Config
 				symbolErr = errors.Join(fetchErr, fmt.Errorf("save Binance fills for %s: %w", symbol, saveErr))
 				break
 			}
+			if tradeFillMonitorBinanceEnabled(cfg) {
+				if reconcileErr := s.processBinanceFills(ctx, cfg, client, fills, now); reconcileErr != nil {
+					symbolErr = errors.Join(fetchErr, fmt.Errorf("reconcile Binance fills for %s: %w", symbol, reconcileErr))
+					break
+				}
+			}
 			if fetchErr != nil {
 				// Local order history can contain contracts Binance has since
 				// delisted. Treat -1121 as a completed no-data range so one stale

@@ -286,11 +286,9 @@ func (s *Server) ingestBinanceUserDataTrade(ctx context.Context, cfg tvbotconfig
 			return err
 		}
 	}
-	for _, insertedFill := range inserted {
-		if tradeFillMonitorBinanceEnabled(cfg) {
-			if err := s.processBinanceFill(ctx, cfg, client, insertedFill, now); err != nil {
-				return err
-			}
+	if tradeFillMonitorBinanceEnabled(cfg) {
+		if err := s.processBinanceFills(ctx, cfg, client, []tvbotstorage.BinanceFill{fill}, now); err != nil {
+			return err
 		}
 	}
 	lastFillTime := checkpoint.LastFillTime

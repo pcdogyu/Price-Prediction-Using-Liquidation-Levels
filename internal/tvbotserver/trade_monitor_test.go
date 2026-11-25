@@ -89,6 +89,7 @@ func TestTradeMonitorStateMachineClassifiesExitFills(t *testing.T) {
 			if err := srv.processBinanceFill(context.Background(), cfg, binance.Client{}, entry, now); err != nil {
 				t.Fatal(err)
 			}
+			seedManagedBinanceExitOrder(t, store, now, "9101")
 			exit := storage.BinanceFill{
 				APIID:       "main",
 				Symbol:      "BTCUSDT",
@@ -424,6 +425,7 @@ func TestTradeMonitorAutoReentrySubmitsOnce(t *testing.T) {
 	if err := srv.processBinanceFill(context.Background(), cfg, client, entry, now); err != nil {
 		t.Fatal(err)
 	}
+	seedManagedBinanceExitOrder(t, store, now, "9101")
 	exit := storage.BinanceFill{
 		APIID:       "main",
 		Symbol:      "BTCUSDT",
@@ -451,11 +453,84 @@ func TestTradeMonitorAutoReentrySubmitsOnce(t *testing.T) {
 	if !found || lifecycle.Status != storage.TradeLifecycleReentrySubmitted || lifecycle.ReentrySignalID == "" {
 		t.Fatalf("bad parent lifecycle after reentry found=%v lifecycle=%#v", found, lifecycle)
 	}
+	pendingActions, err := store.ListPendingTradeLifecycleActions("main", 10)
+	if err != nil || len(pendingActions) != 0 {
+		t.Fatalf("auto reentry outbox action should be completed: pending=%#v err=%v", pendingActions, err)
+	}
 	if err := srv.processBinanceFill(context.Background(), cfg, client, exit, now.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if len(executor.signals) != 1 {
 		t.Fatalf("duplicate stop fill should not submit another reentry, got %#v", executor.signals)
+	}
+}
+
+func TestTradeMonitorAggregatesPartialFillsAndReplaysIdempotently(t *testing.T) {
+	store, err := storage.NewSQLiteOrderStore(filepath.Join(t.TempDir(), "tvbot-partial-fills.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	now := time.Date(2026, 7, 30, 4, 0, 0, 0, time.UTC)
+	rec := submitMonitorTestOrder(t, store, now, "9001")
+	if _, err := store.UpsertTradeLifecycleFromOrder(rec, "", 0, now); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Orders: store, Now: func() time.Time { return now }}
+	cfg := config.Default()
+	entryFills := []storage.BinanceFill{
+		{APIID: "main", Symbol: "BTCUSDT", TradeID: "entry-a", OrderID: "9001", Side: "BUY", Price: "50000", Qty: "0.004", FillTime: now.UnixMilli()},
+		{APIID: "main", Symbol: "BTCUSDT", TradeID: "entry-b", OrderID: "9001", Side: "BUY", Price: "51000", Qty: "0.006", FillTime: now.Add(time.Second).UnixMilli()},
+	}
+	if _, err := store.UpsertBinanceFills(entryFills, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.processBinanceFills(context.Background(), cfg, binance.Client{}, entryFills, now); err != nil {
+		t.Fatal(err)
+	}
+	exitFills := []storage.BinanceFill{
+		{APIID: "main", Symbol: "BTCUSDT", TradeID: "exit-a", OrderID: "9101", Side: "SELL", PositionSide: "BOTH", Price: "49500", Qty: "0.005", RealizedPnl: "-2.5", FillTime: now.Add(2 * time.Second).UnixMilli()},
+		{APIID: "main", Symbol: "BTCUSDT", TradeID: "exit-b", OrderID: "9101", Side: "SELL", PositionSide: "BOTH", Price: "49300", Qty: "0.005", RealizedPnl: "-2.5", FillTime: now.Add(3 * time.Second).UnixMilli()},
+	}
+	if err := srv.processBinanceFill(context.Background(), cfg, binance.Client{}, exitFills[0], now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, found, err := store.FindTradeLifecycle(rec.SignalID)
+	if err != nil || !found || lifecycle.Status != storage.TradeLifecycleOpen || lifecycle.ExitQty != "0" {
+		t.Fatalf("unverified opposite-side fill must not close a lifecycle: lifecycle=%#v found=%v err=%v", lifecycle, found, err)
+	}
+	seedManagedBinanceExitOrder(t, store, now, "9101")
+	if err := srv.processBinanceFill(context.Background(), cfg, binance.Client{}, exitFills[0], now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, found, err = store.FindTradeLifecycle(rec.SignalID)
+	if err != nil || !found || lifecycle.Status != storage.TradeLifecycleOpen || lifecycle.ExitQty != "0.005" {
+		t.Fatalf("partial exit must stay open with cumulative quantity: lifecycle=%#v found=%v err=%v", lifecycle, found, err)
+	}
+	if err := srv.processBinanceFill(context.Background(), cfg, binance.Client{}, exitFills[1], now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.processBinanceFills(context.Background(), cfg, binance.Client{}, append(entryFills, exitFills...), now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, found, err = store.FindTradeLifecycle(rec.SignalID)
+	if err != nil || !found {
+		t.Fatalf("load lifecycle found=%v err=%v", found, err)
+	}
+	if lifecycle.Status != storage.TradeLifecycleSLHit || lifecycle.EntryPrice != "50600" || lifecycle.EntryQty != "0.01" || lifecycle.ExitPrice != "49400" || lifecycle.ExitQty != "0.01" || lifecycle.RealizedPnl != "-5" {
+		t.Fatalf("partial fills were not aggregated exactly once: %#v", lifecycle)
+	}
+}
+
+func seedManagedBinanceExitOrder(t *testing.T, store *storage.OrderStore, now time.Time, orderID string) {
+	t.Helper()
+	if _, err := store.UpsertExchangeOrders([]storage.ExchangeOrder{{
+		Exchange: trading.ExchangeBinance, APIID: "main", TradeEnv: "demo", RemoteOrderID: orderID,
+		InstID: "BTCUSDT", Side: "SELL", PositionSide: "BOTH", Status: "FILLED", ReduceOnly: true,
+		CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second), FinishedAt: now.Add(time.Second),
+	}}, now); err != nil {
+		t.Fatal(err)
 	}
 }
 

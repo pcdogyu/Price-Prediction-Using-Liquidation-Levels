@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -25,6 +26,7 @@ const (
 	tradeMonitorPollTimeout         = 45 * time.Second
 	tradeMonitorOrderTimeout        = 20 * time.Second
 	tradeMonitorHistoryLimit        = 1000
+	tradeMonitorAutoReentryMaxDelay = 5 * time.Minute
 	binanceTradeMonitorMaxWindow    = 7 * 24 * time.Hour
 	binanceTradeMonitorWindowMargin = time.Second
 	binanceTradeMonitorCatalogTTL   = 30 * time.Minute
@@ -240,6 +242,19 @@ func (s *Server) runTradeFillMonitorOnce(ctx context.Context) {
 				s.Logger.Warn("failed to create Binance trade monitor client", "api_id", requestedAPIID, "error", err)
 			}
 			continue
+		}
+		if lifecycleEnabled {
+			storedFills, fillErr := s.Orders.ListBinanceFills(apiID, now.Add(-lookback))
+			if fillErr != nil {
+				if s.Logger != nil {
+					s.Logger.Warn("failed to load Binance fills for lifecycle reconciliation", "api_id", apiID, "error", fillErr)
+				}
+			} else if err := s.processBinanceFills(ctx, cfg, client, storedFills, now); err != nil && s.Logger != nil {
+				s.Logger.Warn("failed to reconcile persisted Binance fills", "api_id", apiID, "error", err)
+			}
+			if err := s.dispatchPendingBinanceLifecycleActions(ctx, cfg, client, apiID, now); err != nil && s.Logger != nil {
+				s.Logger.Warn("failed to dispatch pending Binance lifecycle actions", "api_id", apiID, "error", err)
+			}
 		}
 		if binanceUserStreamIsActive(client, apiID) {
 			continue
@@ -538,7 +553,7 @@ func (s *Server) ensureRecentBinanceTradeLifecycles(cfg config.Config, now time.
 		if rec.UpdatedAt.Before(cutoff) && rec.AcceptedAt.Before(cutoff) {
 			continue
 		}
-		if rec.Status != storage.StatusSubmitted || trading.NormalizeExchange(rec.TargetExchange) != trading.ExchangeBinance {
+		if (rec.Status != storage.StatusSubmitted && rec.Status != storage.StatusPartial) || trading.NormalizeExchange(rec.TargetExchange) != trading.ExchangeBinance {
 			continue
 		}
 		if _, err := s.Orders.UpsertTradeLifecycleFromOrder(rec, "", 0, now); err != nil && s.Logger != nil {
@@ -666,11 +681,9 @@ func (s *Server) pollBinanceSymbolFills(ctx context.Context, cfg config.Config, 
 			return err
 		}
 	}
-	for _, fill := range inserted {
-		if processLifecycles {
-			if err := s.processBinanceFill(ctx, cfg, client, fill, now); err != nil && s.Logger != nil {
-				s.Logger.Warn("failed to process Binance fill", "api_id", apiID, "symbol", symbol, "trade_id", fill.TradeID, "error", err)
-			}
+	if processLifecycles {
+		if err := s.processBinanceFills(ctx, cfg, client, fills, now); err != nil {
+			return err
 		}
 	}
 	lastFillTime := queryCheckpoint.LastFillTime
@@ -763,7 +776,41 @@ func (s *Server) recordBinanceFillLossCooldowns(cfg config.Config, fills []stora
 	return nil
 }
 
+func (s *Server) processBinanceFills(ctx context.Context, cfg config.Config, client binance.Client, fills []storage.BinanceFill, now time.Time) error {
+	sort.SliceStable(fills, func(i, j int) bool {
+		if fills[i].FillTime == fills[j].FillTime {
+			return fills[i].TradeID < fills[j].TradeID
+		}
+		return fills[i].FillTime < fills[j].FillTime
+	})
+	var firstErr error
+	for _, fill := range fills {
+		if err := s.processPersistedBinanceFill(ctx, cfg, client, fill, now); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			if s.Logger != nil {
+				s.Logger.Warn("failed to process Binance fill", "api_id", fill.APIID, "symbol", fill.Symbol, "trade_id", fill.TradeID, "error", err)
+			}
+		}
+	}
+	return firstErr
+}
+
 func (s *Server) processBinanceFill(ctx context.Context, cfg config.Config, client binance.Client, fill storage.BinanceFill, now time.Time) error {
+	fill.Normalize()
+	if _, err := s.Orders.UpsertBinanceFills([]storage.BinanceFill{fill}, now); err != nil {
+		return err
+	}
+	return s.processPersistedBinanceFill(ctx, cfg, client, fill, now)
+}
+
+func (s *Server) processPersistedBinanceFill(ctx context.Context, cfg config.Config, client binance.Client, fill storage.BinanceFill, now time.Time) error {
+	fill.Normalize()
+	alreadyApplied, err := s.Orders.HasBinanceFillLifecycleAssociation(fill.APIID, fill.Symbol, fill.TradeID)
+	if err != nil || alreadyApplied {
+		return err
+	}
 	filter := storage.TradeMonitorFilter{
 		Exchange: trading.ExchangeBinance,
 		APIID:    fill.APIID,
@@ -774,41 +821,58 @@ func (s *Server) processBinanceFill(ctx context.Context, cfg config.Config, clie
 		return err
 	}
 	if lifecycle, ok := matchingEntryLifecycle(lifecycles, fill); ok {
-		updated, err := s.Orders.UpdateTradeLifecycle(lifecycle.LifecycleID, storage.TradeLifecycleUpdate{
-			Status:       storage.TradeLifecycleOpen,
-			EntryPrice:   fill.Price,
-			EntryQty:     fill.Qty,
-			LastFillTime: fill.FillTime,
-			UpdatedAt:    now,
-		})
+		applied, updated, err := s.Orders.ApplyBinanceFillToLifecycle(fill, lifecycle.LifecycleID, "entry", now)
 		if err != nil {
 			return err
 		}
-		s.recordTradeMonitorEvent(storage.TradeMonitorEvent{
-			EventTime:      now,
-			Exchange:       trading.ExchangeBinance,
-			APIID:          fill.APIID,
-			Symbol:         fill.Symbol,
-			LifecycleID:    updated.LifecycleID,
-			SourceSignalID: updated.SourceSignalID,
-			EventType:      "lifecycle_open",
-			Status:         updated.Status,
-			Message:        "Binance entry fill detected",
-			RawJSON:        storage.TradeMonitorEventRawJSON(fill),
-		})
+		if applied {
+			eventType := "lifecycle_entry_fill"
+			if lifecycle.Status == storage.TradeLifecycleEntryPending {
+				eventType = "lifecycle_open"
+			}
+			s.recordTradeMonitorEvent(storage.TradeMonitorEvent{
+				EventTime:      now,
+				Exchange:       trading.ExchangeBinance,
+				APIID:          fill.APIID,
+				Symbol:         fill.Symbol,
+				LifecycleID:    updated.LifecycleID,
+				SourceSignalID: updated.SourceSignalID,
+				EventType:      eventType,
+				Status:         updated.Status,
+				Message:        "Binance entry fill reconciled",
+				RawJSON:        storage.TradeMonitorEventRawJSON(fill),
+			})
+		}
 		return nil
 	}
-	if lifecycle, status, ok := matchingExitLifecycle(lifecycles, fill); ok {
-		updated, err := s.Orders.UpdateTradeLifecycle(lifecycle.LifecycleID, storage.TradeLifecycleUpdate{
-			Status:       status,
-			ExitPrice:    fill.Price,
-			ExitQty:      fill.Qty,
-			RealizedPnl:  fill.RealizedPnl,
-			LastFillTime: fill.FillTime,
-			UpdatedAt:    now,
-		})
+	potentialExit := false
+	for _, lifecycle := range lifecycles {
+		if lifecycle.Status == storage.TradeLifecycleOpen && strings.EqualFold(fill.Side, exitSide(lifecycle.Action)) && positionSideMatchesAction(fill.PositionSide, lifecycle.Action) {
+			potentialExit = true
+			break
+		}
+	}
+	if !potentialExit {
+		return nil
+	}
+	evidence, err := s.binanceExitFillEvidence(fill, lifecycles)
+	if err != nil {
+		return err
+	}
+	if !evidence.managed {
+		return nil
+	}
+	if lifecycle, ok := matchingExitLifecycle(lifecycles, fill, evidence); ok {
+		applied, updated, err := s.Orders.ApplyBinanceFillToLifecycle(fill, lifecycle.LifecycleID, "exit", now)
 		if err != nil {
 			return err
+		}
+		if !applied {
+			return nil
+		}
+		eventType := "lifecycle_exit_fill"
+		if updated.Status != storage.TradeLifecycleOpen {
+			eventType = "lifecycle_exit"
 		}
 		s.recordTradeMonitorEvent(storage.TradeMonitorEvent{
 			EventTime:      now,
@@ -817,32 +881,84 @@ func (s *Server) processBinanceFill(ctx context.Context, cfg config.Config, clie
 			Symbol:         fill.Symbol,
 			LifecycleID:    updated.LifecycleID,
 			SourceSignalID: updated.SourceSignalID,
-			EventType:      "lifecycle_exit",
+			EventType:      eventType,
 			Status:         updated.Status,
-			Message:        "Binance exit fill classified by realized PnL",
+			Message:        "Binance exit fill reconciled",
 			RawJSON:        storage.TradeMonitorEventRawJSON(fill),
 		})
-		if status == storage.TradeLifecycleSLHit {
-			return s.maybeSubmitAutoReentry(ctx, cfg, client, updated, now)
+		if updated.Status == storage.TradeLifecycleSLHit {
+			return s.dispatchBinanceLifecycleAction(ctx, cfg, client, storage.BinanceLifecycleActionKey(fill, "auto_reentry"), now)
 		}
 		return nil
 	}
 	return nil
 }
 
+func (s *Server) dispatchPendingBinanceLifecycleActions(ctx context.Context, cfg config.Config, client binance.Client, apiID string, now time.Time) error {
+	actions, err := s.Orders.ListPendingTradeLifecycleActions(apiID, 100)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, action := range actions {
+		if err := s.dispatchBinanceLifecycleAction(ctx, cfg, client, action.ActionKey, now); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (s *Server) dispatchBinanceLifecycleAction(ctx context.Context, cfg config.Config, client binance.Client, actionKey string, now time.Time) error {
+	action, claimed, err := s.Orders.ClaimTradeLifecycleAction(actionKey, now)
+	if err != nil || !claimed {
+		return err
+	}
+	status := "done"
+	lastError := ""
+	if action.ActionType != "auto_reentry" || !cfg.Trading.AutoReentry.Enabled {
+		status = "skipped"
+	} else if action.EventTime.IsZero() || now.Sub(action.EventTime) > tradeMonitorAutoReentryMaxDelay || action.EventTime.After(now.Add(time.Minute)) {
+		status = "skipped"
+	} else {
+		lifecycle, found, loadErr := s.Orders.FindTradeLifecycle(action.LifecycleID)
+		if loadErr != nil {
+			err = loadErr
+		} else if !found {
+			err = fmt.Errorf("trade lifecycle %s for pending action was not found", action.LifecycleID)
+		} else {
+			err = s.maybeSubmitAutoReentry(ctx, cfg, client, lifecycle, now)
+		}
+		if err != nil {
+			status = "failed"
+			lastError = err.Error()
+			s.recordTradeMonitorEvent(storage.TradeMonitorEvent{
+				EventTime: now, Exchange: trading.ExchangeBinance, APIID: action.APIID,
+				LifecycleID: action.LifecycleID, EventType: "auto_reentry_action_failed",
+				Status: storage.TradeLifecycleSLHit, Message: "queued Binance auto-reentry action failed",
+			})
+		}
+	}
+	if finishErr := s.Orders.FinishTradeLifecycleAction(action.ActionKey, status, lastError, now); finishErr != nil {
+		return errors.Join(err, finishErr)
+	}
+	return err
+}
+
 func matchingEntryLifecycle(lifecycles []storage.TradeLifecycle, fill storage.BinanceFill) (storage.TradeLifecycle, bool) {
 	for _, lifecycle := range lifecycles {
-		if lifecycle.Status != storage.TradeLifecycleEntryPending {
+		if lifecycle.Status != storage.TradeLifecycleEntryPending && lifecycle.Status != storage.TradeLifecycleOpen {
 			continue
 		}
-		if storage.MonitorListContains(lifecycle.EntryOrderIDs, fill.OrderID) && strings.EqualFold(fill.Side, entrySide(lifecycle.Action)) {
+		if storage.MonitorListContains(lifecycle.EntryOrderIDs, fill.OrderID) && strings.EqualFold(fill.Side, entrySide(lifecycle.Action)) && positionSideMatchesAction(fill.PositionSide, lifecycle.Action) {
 			return lifecycle, true
 		}
 	}
 	return storage.TradeLifecycle{}, false
 }
 
-func matchingExitLifecycle(lifecycles []storage.TradeLifecycle, fill storage.BinanceFill) (storage.TradeLifecycle, string, bool) {
+func matchingExitLifecycle(lifecycles []storage.TradeLifecycle, fill storage.BinanceFill, evidence binanceExitFillMatch) (storage.TradeLifecycle, bool) {
+	var match storage.TradeLifecycle
+	matches := 0
 	for _, lifecycle := range lifecycles {
 		if lifecycle.Status != storage.TradeLifecycleOpen {
 			continue
@@ -850,16 +966,94 @@ func matchingExitLifecycle(lifecycles []storage.TradeLifecycle, fill storage.Bin
 		if !strings.EqualFold(fill.Side, exitSide(lifecycle.Action)) {
 			continue
 		}
-		pnl, ok := storage.ParseMonitorFloat(fill.RealizedPnl)
-		if !ok || math.Abs(pnl) < 1e-12 {
-			return lifecycle, storage.TradeLifecycleExited, true
+		if !positionSideMatchesAction(fill.PositionSide, lifecycle.Action) {
+			continue
 		}
-		if pnl < 0 {
-			return lifecycle, storage.TradeLifecycleSLHit, true
+		if evidence.lifecycleID != "" && evidence.lifecycleID != lifecycle.LifecycleID {
+			continue
 		}
-		return lifecycle, storage.TradeLifecycleTPHit, true
+		if evidence.positionSide != "" && !positionSideMatchesAction(evidence.positionSide, lifecycle.Action) {
+			continue
+		}
+		match = lifecycle
+		matches++
 	}
-	return storage.TradeLifecycle{}, "", false
+	return match, matches == 1
+}
+
+type binanceExitFillMatch struct {
+	managed      bool
+	lifecycleID  string
+	positionSide string
+}
+
+func (s *Server) binanceExitFillEvidence(fill storage.BinanceFill, lifecycles []storage.TradeLifecycle) (binanceExitFillMatch, error) {
+	for _, rec := range s.Orders.List(10000) {
+		recAPIID := strings.TrimSpace(rec.APIID)
+		if recAPIID == "" {
+			recAPIID = strings.TrimSpace(rec.Result.APIID)
+		}
+		recExchange := rec.TargetExchange
+		if strings.TrimSpace(recExchange) == "" {
+			recExchange = rec.Result.TargetExchange
+		}
+		if trading.NormalizeExchange(recExchange) != trading.ExchangeBinance || recAPIID != fill.APIID {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(rec.PositionEffect), trading.PositionEffectClose) && !strings.EqualFold(strings.TrimSpace(rec.Result.PositionEffect), trading.PositionEffectClose) {
+			continue
+		}
+		recordSymbol := strings.TrimSpace(rec.Result.InstID)
+		if recordSymbol == "" {
+			if derived, ok := deriveBinanceAnalysisSymbol(rec.Coinpair, rec.Ticker); ok {
+				recordSymbol = derived
+			}
+		}
+		if recordSymbol != "" && !strings.EqualFold(recordSymbol, fill.Symbol) {
+			continue
+		}
+		if storage.MonitorListContains(splitAnalysisOrderIDs(rec.Result.OrdID), fill.OrderID) {
+			return binanceExitFillMatch{managed: true, positionSide: firstNonEmptyString(rec.PositionSide, rec.Result.PositionSide)}, nil
+		}
+	}
+	page, err := s.Orders.ListExchangeOrders(storage.ExchangeOrderFilter{
+		Exchange: trading.ExchangeBinance,
+		APIID:    fill.APIID,
+		Query:    fill.OrderID,
+		Limit:    200,
+	})
+	if err != nil {
+		return binanceExitFillMatch{}, err
+	}
+	for _, order := range page.Orders {
+		if strings.TrimSpace(order.RemoteOrderID) != fill.OrderID || !strings.EqualFold(strings.TrimSpace(order.InstID), fill.Symbol) {
+			continue
+		}
+		for _, lifecycle := range lifecycles {
+			if lifecycle.Status != storage.TradeLifecycleOpen {
+				continue
+			}
+			if storage.MonitorListContains(lifecycle.TPClientAlgoIDs, order.ClientOrderID) || storage.MonitorListContains(lifecycle.SLClientAlgoIDs, order.ClientOrderID) {
+				return binanceExitFillMatch{managed: true, lifecycleID: lifecycle.LifecycleID, positionSide: order.PositionSide}, nil
+			}
+		}
+		if order.ReduceOnly || order.ClosePosition {
+			return binanceExitFillMatch{managed: true, positionSide: order.PositionSide}, nil
+		}
+	}
+	return binanceExitFillMatch{}, nil
+}
+
+func positionSideMatchesAction(positionSide, action string) bool {
+	action = strings.ToLower(strings.TrimSpace(action))
+	switch strings.ToUpper(strings.TrimSpace(positionSide)) {
+	case "LONG":
+		return action == string(trading.ActionLong)
+	case "SHORT":
+		return action == string(trading.ActionShort)
+	default:
+		return true
+	}
 }
 
 func entrySide(action string) string {

@@ -1238,6 +1238,14 @@ func TestBinanceAnalysisSyncIncrementallyMergesLocalAndRemoteFills(t *testing.T)
 	}}, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := srv.Orders.UpsertTradeLifecycleFromOrder(storage.OrderRecord{
+		SignalID: "eth-entry-signal", Status: storage.StatusSubmitted, Action: trading.ActionShort,
+		APIID: apiID, TargetExchange: trading.ExchangeBinance, Coinpair: "ETHUSDC", Ticker: "ETHUSDC",
+		AcceptedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
+		Result: trading.OrderResult{APIID: apiID, TargetExchange: trading.ExchangeBinance, InstID: "ETHUSDC", OrdID: "100"},
+	}, "", 0, now); err != nil {
+		t.Fatal(err)
+	}
 
 	var requested []string
 	tradeTime := strconv.FormatInt(now.Add(-15*time.Second).UnixMilli(), 10)
@@ -1313,6 +1321,10 @@ func TestBinanceAnalysisSyncIncrementallyMergesLocalAndRemoteFills(t *testing.T)
 	}
 	if !foundBTC || !foundETH {
 		t.Fatalf("analysis sync should preserve local and insert remote history: %#v", fills)
+	}
+	lifecycle, foundLifecycle, err := srv.Orders.FindTradeLifecycle("eth-entry-signal")
+	if err != nil || !foundLifecycle || lifecycle.Status != storage.TradeLifecycleOpen || lifecycle.EntryQty != "1" || lifecycle.EntryPrice != "2500" {
+		t.Fatalf("analysis sync must reconcile a fill even when it is the path that first stores it: lifecycle=%#v found=%v err=%v", lifecycle, foundLifecycle, err)
 	}
 	before, found, err := srv.Orders.LoadBinanceAnalysisFillSyncState(apiID, "ETHUSDC")
 	if err != nil || !found {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -120,6 +121,23 @@ type TradeMonitorFilter struct {
 	Status   string
 }
 
+type TradeLifecycleAction struct {
+	ActionKey   string    `json:"action_key"`
+	APIID       string    `json:"api_id"`
+	LifecycleID string    `json:"lifecycle_id"`
+	ActionType  string    `json:"action_type"`
+	Status      string    `json:"status"`
+	EventTime   time.Time `json:"event_time"`
+	LastError   string    `json:"last_error,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func BinanceLifecycleActionKey(fill BinanceFill, actionType string) string {
+	fill.normalize(0)
+	return strings.Join([]string{strings.ToLower(strings.TrimSpace(actionType)), fill.APIID, fill.Symbol, fill.TradeID}, ":")
+}
+
 func (s *OrderStore) UpsertBinanceFills(fills []BinanceFill, fetchedAt time.Time) ([]BinanceFill, error) {
 	if s.db == nil {
 		return nil, errors.New("sqlite database is not configured")
@@ -173,6 +191,307 @@ func (s *OrderStore) UpsertBinanceFills(fills []BinanceFill, fetchedAt time.Time
 	return inserted, tx.Commit()
 }
 
+// HasBinanceFillLifecycleAssociation reports whether a Binance fill has
+// already been applied to a lifecycle. The association key is the same
+// account/symbol/trade identity used by binance_fills.
+func (s *OrderStore) HasBinanceFillLifecycleAssociation(apiID, symbol, tradeID string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, errors.New("sqlite database is not configured")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var found int
+	err := s.db.QueryRow(`SELECT 1 FROM trade_lifecycle_fills WHERE api_id=? AND symbol=? AND trade_id=?`,
+		strings.TrimSpace(apiID), strings.ToUpper(strings.TrimSpace(symbol)), strings.TrimSpace(tradeID)).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// ApplyBinanceFillToLifecycle atomically links a fill to one lifecycle and
+// rebuilds its entry/exit aggregates from the canonical fill table. Replays
+// are safe: a fill can be linked only once, and the lifecycle projection is
+// committed in the same transaction as that link.
+func (s *OrderStore) ApplyBinanceFillToLifecycle(fill BinanceFill, lifecycleID, role string, now time.Time) (bool, TradeLifecycle, error) {
+	if s == nil || s.db == nil {
+		return false, TradeLifecycle{}, errors.New("sqlite database is not configured")
+	}
+	fill.normalize(0)
+	lifecycleID = strings.TrimSpace(lifecycleID)
+	role = strings.ToLower(strings.TrimSpace(role))
+	if fill.APIID == "" || fill.Symbol == "" || fill.TradeID == "" || lifecycleID == "" {
+		return false, TradeLifecycle{}, errors.New("Binance fill lifecycle association requires account, symbol, trade, and lifecycle IDs")
+	}
+	if role != "entry" && role != "exit" {
+		return false, TradeLifecycle{}, fmt.Errorf("unsupported Binance lifecycle fill role %q", role)
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, TradeLifecycle{}, err
+	}
+	defer tx.Rollback()
+
+	current, err := scanTradeLifecycle(tx.QueryRow(`SELECT lifecycle_id, source_signal_id, root_signal_id, reentry_of_lifecycle_id, reentry_signal_id,
+		exchange, api_id, symbol, action, status, entry_order_ids, entry_client_order_ids, tp_algo_ids, tp_client_algo_ids,
+		tp_trigger_prices, sl_algo_ids, sl_client_algo_ids, sl_trigger_prices, entry_price, entry_qty, exit_price, exit_qty,
+		realized_pnl, reentry_count, cooldown_until, last_fill_time, created_at, updated_at
+		FROM trade_lifecycles WHERE lifecycle_id=?`, lifecycleID).Scan)
+	if err != nil {
+		return false, TradeLifecycle{}, err
+	}
+	if trading.NormalizeExchange(current.Exchange) != trading.ExchangeBinance || current.APIID != fill.APIID || !strings.EqualFold(current.Symbol, fill.Symbol) {
+		return false, TradeLifecycle{}, fmt.Errorf("Binance fill %s/%s/%s does not belong to lifecycle %s", fill.APIID, fill.Symbol, fill.TradeID, lifecycleID)
+	}
+	res, err := tx.Exec(`INSERT OR IGNORE INTO trade_lifecycle_fills(api_id,symbol,trade_id,lifecycle_id,role,linked_at)
+		SELECT ?,?,?,?,?,? WHERE EXISTS (
+			SELECT 1 FROM binance_fills WHERE api_id=? AND symbol=? AND trade_id=?
+		)`, fill.APIID, fill.Symbol, fill.TradeID, lifecycleID, role, now.UTC().Format(time.RFC3339Nano), fill.APIID, fill.Symbol, fill.TradeID)
+	if err != nil {
+		return false, TradeLifecycle{}, err
+	}
+	inserted, err := res.RowsAffected()
+	if err != nil {
+		return false, TradeLifecycle{}, err
+	}
+	if inserted == 0 {
+		var existingLifecycleID, existingRole string
+		lookupErr := tx.QueryRow(`SELECT lifecycle_id,role FROM trade_lifecycle_fills WHERE api_id=? AND symbol=? AND trade_id=?`, fill.APIID, fill.Symbol, fill.TradeID).Scan(&existingLifecycleID, &existingRole)
+		if lookupErr != nil {
+			if errors.Is(lookupErr, sql.ErrNoRows) {
+				return false, TradeLifecycle{}, errors.New("Binance fill must be persisted before lifecycle reconciliation")
+			}
+			return false, TradeLifecycle{}, lookupErr
+		}
+		if existingLifecycleID != lifecycleID || existingRole != role {
+			return false, TradeLifecycle{}, fmt.Errorf("Binance fill %s/%s/%s is already linked to lifecycle %s as %s", fill.APIID, fill.Symbol, fill.TradeID, existingLifecycleID, existingRole)
+		}
+		return false, current, nil
+	}
+
+	entry, err := aggregateLifecycleFills(tx, lifecycleID, "entry")
+	if err != nil {
+		return false, TradeLifecycle{}, err
+	}
+	exit, err := aggregateLifecycleFills(tx, lifecycleID, "exit")
+	if err != nil {
+		return false, TradeLifecycle{}, err
+	}
+	status := TradeLifecycleOpen
+	if entry.qty.Sign() > 0 && exit.qty.Cmp(entry.qty) >= 0 {
+		if absRat(exit.realizedPnl).Cmp(big.NewRat(1, 1_000_000_000_000)) <= 0 {
+			status = TradeLifecycleExited
+		} else if exit.realizedPnl.Sign() < 0 {
+			status = TradeLifecycleSLHit
+		} else {
+			status = TradeLifecycleTPHit
+		}
+	}
+	lastFill := entry.lastFillTime
+	if exit.lastFillTime > lastFill {
+		lastFill = exit.lastFillTime
+	}
+	_, err = tx.Exec(`UPDATE trade_lifecycles SET status=?,entry_price=?,entry_qty=?,exit_price=?,exit_qty=?,realized_pnl=?,last_fill_time=?,updated_at=? WHERE lifecycle_id=?`,
+		status,
+		aggregateAverage(entry),
+		ratString(entry.qty),
+		aggregateAverage(exit),
+		ratString(exit.qty),
+		ratString(exit.realizedPnl),
+		lastFill,
+		now.UTC().Format(time.RFC3339Nano),
+		lifecycleID,
+	)
+	if err != nil {
+		return false, TradeLifecycle{}, err
+	}
+	if role == "exit" && status == TradeLifecycleSLHit {
+		eventTime := now.UTC()
+		if fill.FillTime > 0 {
+			eventTime = time.UnixMilli(fill.FillTime).UTC()
+		}
+		_, err = tx.Exec(`INSERT OR IGNORE INTO trade_lifecycle_actions(action_key,api_id,lifecycle_id,action_type,status,event_time,created_at,updated_at)
+			VALUES(?,?,?,'auto_reentry','pending',?,?,?)`, BinanceLifecycleActionKey(fill, "auto_reentry"), fill.APIID, lifecycleID,
+			eventTime.Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano))
+		if err != nil {
+			return false, TradeLifecycle{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, TradeLifecycle{}, err
+	}
+	updated, err := s.findTradeLifecycleSQLiteLocked(lifecycleID)
+	return true, updated, err
+}
+
+func (s *OrderStore) ClaimTradeLifecycleAction(actionKey string, now time.Time) (TradeLifecycleAction, bool, error) {
+	if s == nil || s.db == nil {
+		return TradeLifecycleAction{}, false, errors.New("sqlite database is not configured")
+	}
+	actionKey = strings.TrimSpace(actionKey)
+	if actionKey == "" {
+		return TradeLifecycleAction{}, false, errors.New("action_key is required")
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res, err := s.db.Exec(`UPDATE trade_lifecycle_actions SET status='running',updated_at=? WHERE action_key=? AND status='pending'`, now.UTC().Format(time.RFC3339Nano), actionKey)
+	if err != nil {
+		return TradeLifecycleAction{}, false, err
+	}
+	claimed, err := res.RowsAffected()
+	if err != nil || claimed == 0 {
+		return TradeLifecycleAction{}, false, err
+	}
+	action, err := scanTradeLifecycleAction(s.db.QueryRow(`SELECT action_key,api_id,lifecycle_id,action_type,status,event_time,last_error,created_at,updated_at FROM trade_lifecycle_actions WHERE action_key=?`, actionKey).Scan)
+	return action, err == nil, err
+}
+
+func (s *OrderStore) ListPendingTradeLifecycleActions(apiID string, limit int) ([]TradeLifecycleAction, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("sqlite database is not configured")
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(`SELECT action_key,api_id,lifecycle_id,action_type,status,event_time,last_error,created_at,updated_at
+		FROM trade_lifecycle_actions WHERE api_id=? AND status='pending' ORDER BY created_at,action_key LIMIT ?`, strings.TrimSpace(apiID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]TradeLifecycleAction, 0)
+	for rows.Next() {
+		action, err := scanTradeLifecycleAction(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, action)
+	}
+	return out, rows.Err()
+}
+
+func (s *OrderStore) FinishTradeLifecycleAction(actionKey, status, lastError string, now time.Time) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite database is not configured")
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status != "done" && status != "failed" && status != "skipped" {
+		return fmt.Errorf("unsupported trade lifecycle action status %q", status)
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res, err := s.db.Exec(`UPDATE trade_lifecycle_actions SET status=?,last_error=?,updated_at=? WHERE action_key=? AND status='running'`,
+		status, strings.TrimSpace(lastError), now.UTC().Format(time.RFC3339Nano), strings.TrimSpace(actionKey))
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err == nil && changed == 0 {
+		return errors.New("trade lifecycle action is not claimed")
+	}
+	return err
+}
+
+func scanTradeLifecycleAction(scan func(dest ...any) error) (TradeLifecycleAction, error) {
+	var action TradeLifecycleAction
+	var eventTime, createdAt, updatedAt string
+	var lastError sql.NullString
+	if err := scan(&action.ActionKey, &action.APIID, &action.LifecycleID, &action.ActionType, &action.Status, &eventTime, &lastError, &createdAt, &updatedAt); err != nil {
+		return TradeLifecycleAction{}, err
+	}
+	action.LastError = lastError.String
+	action.EventTime = parseStoreTime(eventTime)
+	action.CreatedAt = parseStoreTime(createdAt)
+	action.UpdatedAt = parseStoreTime(updatedAt)
+	return action, nil
+}
+
+type binanceLifecycleFillAggregate struct {
+	qty          *big.Rat
+	notional     *big.Rat
+	realizedPnl  *big.Rat
+	lastFillTime int64
+}
+
+func aggregateLifecycleFills(tx *sql.Tx, lifecycleID, role string) (binanceLifecycleFillAggregate, error) {
+	out := binanceLifecycleFillAggregate{qty: new(big.Rat), notional: new(big.Rat), realizedPnl: new(big.Rat)}
+	rows, err := tx.Query(`SELECT f.price,f.qty,f.realized_pnl,f.fill_time FROM trade_lifecycle_fills l
+		JOIN binance_fills f ON f.api_id=l.api_id AND f.symbol=l.symbol AND f.trade_id=l.trade_id
+		WHERE l.lifecycle_id=? AND l.role=? ORDER BY f.fill_time,f.trade_id`, lifecycleID, role)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rawPrice, rawQty, rawPnL string
+		var fillTime int64
+		if err := rows.Scan(&rawPrice, &rawQty, &rawPnL, &fillTime); err != nil {
+			return out, err
+		}
+		price, ok := new(big.Rat).SetString(strings.TrimSpace(rawPrice))
+		if !ok {
+			return out, fmt.Errorf("invalid Binance fill price %q", rawPrice)
+		}
+		qty, ok := new(big.Rat).SetString(strings.TrimSpace(rawQty))
+		if !ok || qty.Sign() <= 0 {
+			return out, fmt.Errorf("invalid Binance fill quantity %q", rawQty)
+		}
+		pnl := new(big.Rat)
+		if strings.TrimSpace(rawPnL) != "" {
+			if _, ok := pnl.SetString(strings.TrimSpace(rawPnL)); !ok {
+				return out, fmt.Errorf("invalid Binance realized PnL %q", rawPnL)
+			}
+		}
+		out.qty.Add(out.qty, qty)
+		out.notional.Add(out.notional, new(big.Rat).Mul(price, qty))
+		out.realizedPnl.Add(out.realizedPnl, pnl)
+		if fillTime > out.lastFillTime {
+			out.lastFillTime = fillTime
+		}
+	}
+	return out, rows.Err()
+}
+
+func aggregateAverage(aggregate binanceLifecycleFillAggregate) string {
+	if aggregate.qty == nil || aggregate.qty.Sign() == 0 {
+		return "0"
+	}
+	return ratString(new(big.Rat).Quo(aggregate.notional, aggregate.qty))
+}
+
+func absRat(value *big.Rat) *big.Rat {
+	if value == nil {
+		return new(big.Rat)
+	}
+	return new(big.Rat).Abs(value)
+}
+
+func ratString(value *big.Rat) string {
+	if value == nil || value.Sign() == 0 {
+		return "0"
+	}
+	text := value.FloatString(16)
+	text = strings.TrimRight(strings.TrimRight(text, "0"), ".")
+	if text == "-0" || text == "" {
+		return "0"
+	}
+	return text
+}
+
 // ListBinanceFills returns fills already persisted by the Binance user stream.
 // Analysis uses this local source while the stream is active, avoiding a
 // repeated UserTrades REST scan for data the process already owns.
@@ -218,6 +537,11 @@ func (f *BinanceFill) normalize(index int) {
 	f.Commission = strings.TrimSpace(f.Commission)
 	f.CommissionAsset = strings.TrimSpace(f.CommissionAsset)
 	f.RawJSON = strings.TrimSpace(f.RawJSON)
+}
+
+// Normalize prepares a fill for lookups and lifecycle reconciliation.
+func (f *BinanceFill) Normalize() {
+	f.normalize(0)
 }
 
 func fallbackBinanceTradeID(fill BinanceFill, index int) string {
@@ -317,6 +641,9 @@ func (s *OrderStore) UpsertTradeLifecycleFromOrder(rec OrderRecord, reentryOfLif
 
 func tradeLifecycleFromOrder(rec OrderRecord, reentryOfLifecycleID string, reentryCount int, now time.Time) (TradeLifecycle, bool) {
 	if rec.SignalID == "" || (rec.Status != StatusSubmitted && rec.Status != StatusPartial) || trading.NormalizeExchange(rec.TargetExchange) != trading.ExchangeBinance {
+		return TradeLifecycle{}, false
+	}
+	if strings.EqualFold(strings.TrimSpace(rec.PositionEffect), trading.PositionEffectClose) || strings.EqualFold(strings.TrimSpace(rec.Result.PositionEffect), trading.PositionEffectClose) {
 		return TradeLifecycle{}, false
 	}
 	symbol := strings.ToUpper(strings.TrimSpace(rec.Result.InstID))
