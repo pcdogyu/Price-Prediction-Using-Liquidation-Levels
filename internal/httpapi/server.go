@@ -287,9 +287,12 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	page := s.renderPage(indexHTML, "bubbles", "气泡图", r)
-	coinglassLoginDisabled := `disabled aria-disabled="true" title="仅管理员可登录 CoinGlass"`
-	if cookie, err := r.Cookie(sessionCookie); err == nil && s.auth.IsAdmin(cookie.Value) {
-		coinglassLoginDisabled = ""
+	coinglassLoginDisabled := `disabled aria-disabled="true" title="仅主管理员账号可登录 CoinGlass"`
+	if cookie, err := r.Cookie(sessionCookie); err == nil {
+		username, role, authenticated := s.auth.Identity(cookie.Value)
+		if authenticated && role == "admin" && username == s.auth.PrimaryUsername() {
+			coinglassLoginDisabled = ""
+		}
 	}
 	page = []byte(strings.NewReplacer(
 		`{{DASHBOARD_SYMBOL_SEARCH}}`, s.dashboardSymbolSearch(),

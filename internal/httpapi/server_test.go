@@ -589,10 +589,19 @@ func TestUserThemeAPIIsUserScoped(t *testing.T) {
 	if err = st.CreateAuthUser(context.Background(), "other", otherHash, "user"); err != nil {
 		t.Fatal(err)
 	}
+	const otherAdminPassword = "other-admin-theme-password"
+	otherAdminHash, err := authn.HashPassword(otherAdminPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.CreateAuthUser(context.Background(), "other-admin", otherAdminHash, "admin"); err != nil {
+		t.Fatal(err)
+	}
 	if err = srv.auth.ReloadUsers(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	otherSession := login("other", otherPassword)
+	otherAdminSession := login("other-admin", otherAdminPassword)
 	bubbles := func(session *http.Cookie) string {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodGet, "/bubbles", nil)
@@ -605,10 +614,13 @@ func TestUserThemeAPIIsUserScoped(t *testing.T) {
 		return w.Body.String()
 	}
 	if strings.Contains(bubbles(adminSession), `id="coinglass-button" class="secondary" disabled`) {
-		t.Fatal("administrator CoinGlass login button should be enabled")
+		t.Fatal("primary administrator CoinGlass login button should be enabled")
 	}
 	if !strings.Contains(bubbles(otherSession), `id="coinglass-button" class="secondary" disabled aria-disabled="true"`) {
 		t.Fatal("regular-user CoinGlass login button should be disabled")
+	}
+	if !strings.Contains(bubbles(otherAdminSession), `id="coinglass-button" class="secondary" disabled aria-disabled="true"`) {
+		t.Fatal("non-primary administrator CoinGlass login button should be disabled")
 	}
 	if w := request(http.MethodGet, "", otherSession); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"theme":"dark"`) {
 		t.Fatalf("other user theme status=%d body=%s", w.Code, w.Body.String())
