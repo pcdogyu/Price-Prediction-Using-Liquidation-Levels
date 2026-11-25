@@ -34,7 +34,7 @@ func (s *Service) Alerts(ctx context.Context) (domain.AlertsView, error) {
 	view.Thresholds.BlockOpen2130To2230 = strategy.BlockOpen2130To2230
 	view.Thresholds.ValueAreaStartMinute = strategy.ValueAreaStartMinute
 	view.Thresholds.ValueAreaEndMinute = strategy.ValueAreaEndMinute
-	view.Method = domain.AlertMonitorMethod(view.Thresholds.WindowMinutes, view.Thresholds.RefreshMinutes, view.Thresholds.TopSymbols)
+	view.Method = domain.AlertMonitorMethod(view.Thresholds.WindowMinutes, view.Thresholds.RefreshMinutes, view.Thresholds.TopSymbols, view.Thresholds.ValueAreaFilterEnabled)
 	rtm.mu.RLock()
 	view.Watch = append(view.Watch, rtm.watch...)
 	view.WatchError = rtm.watchErr
@@ -117,11 +117,17 @@ func (s *Service) AlertTimeline(ctx context.Context, symbol, kind string, limit 
 // persisted filter-state selection. An empty filter keeps legacy callers
 // unchanged.
 func (s *Service) AlertTimelineFiltered(ctx context.Context, symbol, kind, filter string, limit int, cursor string) (domain.AlertTimelinePage, error) {
+	return s.AlertTimelineWithNotifications(ctx, symbol, kind, filter, "", limit, cursor)
+}
+
+// AlertTimelineWithNotifications reads persisted history with optional radar
+// and notification outcome filters. Notification filters always use stored rows.
+func (s *Service) AlertTimelineWithNotifications(ctx context.Context, symbol, kind, filter, notification string, limit int, cursor string) (domain.AlertTimelinePage, error) {
 	rtm, err := s.alertRuntimeForContext(ctx)
 	if err != nil {
 		return domain.AlertTimelinePage{}, err
 	}
-	page, err := rtm.store.AlertTimelineSinceFiltered(ctx, symbol, kind, filter, limit, cursor, time.Now().UTC().Add(-alertTimelineHistoryWindow))
+	page, err := rtm.store.AlertTimelineSinceWithNotifications(ctx, symbol, kind, filter, notification, limit, cursor, time.Now().UTC().Add(-alertTimelineHistoryWindow))
 	if err != nil {
 		return page, err
 	}
@@ -133,6 +139,12 @@ func (s *Service) AlertTimelineFiltered(ctx context.Context, symbol, kind, filte
 // tenant alert runtime. Chart pages only need stored audit rows, and should not
 // wait for the live alert engine to seed itself from recent market events.
 func (s *Service) AlertTimelineStoredForContext(ctx context.Context, symbol, kind, filter string, limit int, cursor string) (domain.AlertTimelinePage, error) {
+	return s.AlertTimelineStoredWithNotificationsForContext(ctx, symbol, kind, filter, "", limit, cursor)
+}
+
+// AlertTimelineStoredWithNotificationsForContext reads the audit timeline with
+// notification filtering without starting a tenant alert runtime.
+func (s *Service) AlertTimelineStoredWithNotificationsForContext(ctx context.Context, symbol, kind, filter, notification string, limit int, cursor string) (domain.AlertTimelinePage, error) {
 	storeForTenant := s.store
 	tenantID := tenantIDFromContext(ctx)
 	if tenantID != "" {
@@ -154,7 +166,7 @@ func (s *Service) AlertTimelineStoredForContext(ctx context.Context, symbol, kin
 			storeForTenant = tenantStore
 		}
 	}
-	return storeForTenant.AlertTimelineSinceFiltered(ctx, symbol, kind, filter, limit, cursor, time.Now().UTC().Add(-alertTimelineHistoryWindow))
+	return storeForTenant.AlertTimelineSinceWithNotifications(ctx, symbol, kind, filter, notification, limit, cursor, time.Now().UTC().Add(-alertTimelineHistoryWindow))
 }
 
 const alertTimelineHistoryWindow = 30 * 24 * time.Hour

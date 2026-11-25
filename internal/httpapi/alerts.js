@@ -27,7 +27,7 @@
   const liqLabel = side => side === 'long' ? '多单爆仓' : side === 'short' ? '空单爆仓' : '—';
   const cycleStates = { idle: '空闲', watching: '预警观察中', aggressive: '激进 · 等待反向确认', steady: '稳健 · 已确认', expired: '已过期' };
   const monitorStates = { idle: '监控中', watching: '预警观察中', aggressive: '激进 · 等待确认' };
-  const notifyLabels = { queued: '已入队', suppressed: '已抑制', muted: '类别关闭', filtered: 'VAL/VAH过滤', restored: '重启回放', disabled: '通知关闭' };
+  const notifyLabels = { queued: '已入队', sent: '已发送', suppressed: '已抑制', muted: '类别关闭', filtered: 'VAL/VAH过滤', restored: '重启回放', disabled: '通知关闭' };
   const stateClass = state => state === 'watching' ? 'warning' : state === 'aggressive' || state === 'steady' ? 'buy' : 'muted';
   let alertGamma = { anchor_symbol: 'ETHUSDT', state: 'unavailable', ignored: false };
   const gammaValue = gamma => gamma && Number.isFinite(Number(gamma.gamma)) ? Number(gamma.gamma) : null;
@@ -450,7 +450,7 @@
       '<td' + directionClass(signal.side, historicalGammaIgnored(signal)) + '>' + escape(valueArea ? valueDirection : directionLabel(signal.side, historicalGammaIgnored(signal))) + (valueArea ? '' : '<span class="muted"> · ' + escape(liqLabel(signal.liquidation_side)) + '</span>') + '</td>' +
       '<td>' + money(signal.alert_notional_usd) + '<span class="muted"> / ' + money(signal.threshold_usd) + '</span></td>' +
       '<td>' + detail + (valueArea ? '<span class="muted"> · VAL/VAH 来回刷</span>' : '') + radarFilterStatus(signal) + '</td><td>' + price(signal.reference_price) + '</td><td>' + triggerLink(signal.kind, signal.id, signal.symbol, signal.side, signal.reference_price, valueArea && signal.position_effect !== 'close') + '</td><td>' + notifyLink(signal.kind, signal.id) + '</td>' +
-      '<td>' + escape(notifyLabels[signal.notify_status] || signal.notify_status || '未推送') + (signal.notify_error ? '<span class="muted" title="' + escape(signal.notify_error) + '"> ⓘ</span>' : '') + '</td>';
+      '<td>' + escape(notifyLabels[signal.notify_status] || signal.notify_status || '未记录') + (signal.notify_error ? '<span class="muted" title="' + escape(signal.notify_error) + '"> ⓘ</span>' : '') + '</td>';
   }
 
   function alertCells(row) {
@@ -461,7 +461,7 @@
       '<td class="warning">' + recordTypeLabel(row, '预警') + '</td>' +
       '<td' + directionClass(row.trade_side, historicalGammaIgnored(row)) + '>' + escape(directionLabel(row.trade_side, historicalGammaIgnored(row))) + '<span class="muted"> · ' + escape(liqLabel(row.side)) + '</span></td>' +
       '<td>' + money(row.notional_usd) + '<span class="muted"> / ' + money(row.threshold_usd) + '</span></td>' +
-      '<td>' + detail + radarFilterStatus(row) + '</td><td>' + price(row.reference_price) + '</td><td>' + triggerLink('alert', row.id, row.symbol, row.trade_side, row.reference_price) + '</td><td>' + notifyLink('alert', row.id) + '</td><td>—</td>';
+      '<td>' + detail + radarFilterStatus(row) + '</td><td>' + price(row.reference_price) + '</td><td>' + triggerLink('alert', row.id, row.symbol, row.trade_side, row.reference_price) + '</td><td>' + notifyLink('alert', row.id) + '</td><td>' + escape(notifyLabels[row.notify_status] || row.notify_status || '未记录') + (row.notify_error ? '<span class="muted" title="' + escape(row.notify_error) + '"> ⓘ</span>' : '') + '</td>';
   }
 
   function timelineRows(rows) {
@@ -580,8 +580,10 @@
     }
     const vwapFilter = $('alerts-vwap-filter');
     const donchianFilter = $('alerts-donchian-filter');
+    const valueAreaFilter = $('alerts-value-area-filter');
     if (document.activeElement !== vwapFilter) vwapFilter.checked = settings.vwap_filter_enabled !== false;
     if (document.activeElement !== donchianFilter) donchianFilter.checked = settings.donchian_filter_enabled !== false;
+    if (document.activeElement !== valueAreaFilter) valueAreaFilter.checked = settings.value_area_filter_enabled !== false;
     const blockOpen0800 = $('alerts-block-open-0800-0900');
     const blockOpen1600 = $('alerts-block-open-1600-1700');
     const blockOpen2130 = $('alerts-block-open-2130-2230');
@@ -631,9 +633,10 @@
     historySequence++;
     const current = historySequence;
     historyBusy = true;
-    const params = new URLSearchParams({ symbol: $('alerts-symbol').value.trim(), kind: $('alerts-kind').value, filter: $('alerts-filter').value });
+    const notification = $('alerts-notification-filter').value;
+    const params = new URLSearchParams({ symbol: $('alerts-symbol').value.trim(), kind: $('alerts-kind').value, filter: $('alerts-filter').value, notification });
     if (cursor) params.set('cursor', cursor);
-    if (replay) params.set('replay', '1');
+    if (replay && !notification) params.set('replay', '1');
     $('alerts-history-status').textContent = '正在读取…';
     $('alerts-prev').disabled = true;
     $('alerts-next').disabled = true;
@@ -697,6 +700,7 @@
       vwap_donchian_pct: Number($('alerts-vwap-donchian').value),
       vwap_filter_enabled: $('alerts-vwap-filter').checked,
       donchian_filter_enabled: $('alerts-donchian-filter').checked,
+      value_area_filter_enabled: $('alerts-value-area-filter').checked,
       block_open_0800_0900: $('alerts-block-open-0800-0900').checked,
       block_open_1600_1700: $('alerts-block-open-1600-1700').checked,
       block_open_2130_2230: $('alerts-block-open-2130-2230').checked,
@@ -927,7 +931,7 @@
   $('alerts-settings').addEventListener('submit', saveSettings);
   $('alerts-strategy-settings').addEventListener('submit', saveStrategySettings);
   ['alerts-threshold-btc', 'alerts-threshold-eth', 'alerts-threshold-other', 'alerts-window-minutes', 'alerts-vwap-range-hours', 'alerts-vwap-min-drawdown', 'alerts-vwap-donchian', 'alerts-value-area-start', 'alerts-value-area-end'].forEach(id => $(id).addEventListener('blur', () => { void saveStrategySettings(null, true); }));
-  ['alerts-vwap-filter', 'alerts-donchian-filter', 'alerts-block-open-0800-0900', 'alerts-block-open-1600-1700', 'alerts-block-open-2130-2230'].forEach(id => $(id).addEventListener('change', () => { void saveStrategySettings(null, true); }));
+  ['alerts-vwap-filter', 'alerts-donchian-filter', 'alerts-value-area-filter', 'alerts-block-open-0800-0900', 'alerts-block-open-1600-1700', 'alerts-block-open-2130-2230'].forEach(id => $(id).addEventListener('change', () => { void saveStrategySettings(null, true); }));
   $('alerts-signal-recalculate').addEventListener('click', recalculateSignals);
   $('alerts-backtest-run').addEventListener('click', runBacktest);
   document.querySelectorAll('.alerts-backtest-sort').forEach(button => button.addEventListener('click', () => sortBacktest(button.dataset.sortKey)));

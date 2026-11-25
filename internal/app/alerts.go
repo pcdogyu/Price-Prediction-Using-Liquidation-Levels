@@ -215,15 +215,16 @@ func fillStrategyVWAPDefaults(in, current domain.AlertStrategySettings) domain.A
 
 func strategySettingsFromConfig(cfg alert.Config) domain.AlertStrategySettings {
 	return domain.AlertStrategySettings{
-		WindowMinutes:         int(cfg.Window / time.Minute),
-		BTCUSD:                cfg.BTCUSD,
-		ETHUSD:                cfg.ETHUSD,
-		OtherUSD:              cfg.OtherUSD,
-		VWAPRangeHours:        cfg.VWAPRangeMinutes / 60,
-		VWAPMinDrawdownPct:    cfg.VWAPMinDrawdown * 100,
-		VWAPDonchianPct:       cfg.VWAPDonchianFraction * 100,
-		VWAPFilterEnabled:     cfg.VWAPFilterEnabled,
-		DonchianFilterEnabled: cfg.DonchianFilterEnabled,
+		WindowMinutes:          int(cfg.Window / time.Minute),
+		BTCUSD:                 cfg.BTCUSD,
+		ETHUSD:                 cfg.ETHUSD,
+		OtherUSD:               cfg.OtherUSD,
+		VWAPRangeHours:         cfg.VWAPRangeMinutes / 60,
+		VWAPMinDrawdownPct:     cfg.VWAPMinDrawdown * 100,
+		VWAPDonchianPct:        cfg.VWAPDonchianFraction * 100,
+		VWAPFilterEnabled:      cfg.VWAPFilterEnabled,
+		DonchianFilterEnabled:  cfg.DonchianFilterEnabled,
+		ValueAreaFilterEnabled: cfg.ValueAreaFilterEnabled,
 	}
 }
 
@@ -293,7 +294,7 @@ func (rtm *alertRuntime) applyStrategySettings(in domain.AlertStrategySettings) 
 	cfg.VWAPDonchianFraction = in.VWAPDonchianPct / 100
 	cfg.VWAPFilterEnabled = in.VWAPFilterEnabled
 	cfg.DonchianFilterEnabled = in.DonchianFilterEnabled
-	cfg.ValueAreaFilterEnabled = true
+	cfg.ValueAreaFilterEnabled = in.ValueAreaFilterEnabled
 	cfg.FilterSettingsSet = true
 	rtm.engine.UpdateConfig(cfg)
 	rtm.mu.Lock()
@@ -562,10 +563,10 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 		if created {
 			rtm.submitAlertWebhook(item, allowNotify)
 		}
-		if created && allowNotify && rtm.categoryEnabled("alert") {
-			textTask := notify.Task{Key: "alert|" + item.Symbol + "|" + item.Side, Text: alertMessage(item)}
-			if rtm.notifier.Submit(textTask) {
-				rtm.submitChart(item.Symbol, item.Side, item.TriggeredAt, item.ReferencePrice)
+		if created {
+			status, message := rtm.submitAlertNotification(item, allowNotify)
+			if err = rtm.store.MarkLiquidationAlertNotified(ctx, item.ID, status, message); err != nil && ctx.Err() == nil {
+				rtm.log.Warn("record alert notification status failed", "id", item.ID, "error", err)
 			}
 		}
 	}
@@ -591,6 +592,20 @@ func (rtm *alertRuntime) persist(ctx context.Context, res alert.Result, allowNot
 			rtm.log.Warn("record signal notification status failed", "id", item.ID, "error", err)
 		}
 	}
+}
+
+func (rtm *alertRuntime) submitAlertNotification(item domain.LiquidationAlert, allowNotify bool) (string, string) {
+	if !allowNotify {
+		return "restored", "重启回放，不重复通知"
+	}
+	if !rtm.categoryEnabled("alert") {
+		return "muted", "Telegram 通知未启用或预警类别已关闭"
+	}
+	if !rtm.notifier.Submit(notify.Task{Key: "alert|" + item.Symbol + "|" + item.Side, Text: alertMessage(item)}) {
+		return "suppressed", "已抑制：冷却期内、未配置或队列已满"
+	}
+	rtm.submitChart(item.Symbol, item.Side, item.TriggeredAt, item.ReferencePrice)
+	return "queued", ""
 }
 
 func (rtm *alertRuntime) submitSignalWebhook(signal domain.TradeSignal, allowNotify bool) {
@@ -911,6 +926,16 @@ func (rtm *alertRuntime) notifyTelegramUsing(ctx context.Context, recordType, re
 	}
 	if err = rtm.sender.SendPhoto(send, token, chatID, photo, photoTask.PhotoName, photoTask.PhotoCaption); err != nil {
 		return manualNotifyResult{}, fmt.Errorf("文字报警已发送，但 K 线截图发送失败: %w", err)
+	}
+	statusContext := context.WithoutCancel(ctx)
+	var markErr error
+	if recordType == "alert" {
+		markErr = rtm.store.MarkLiquidationAlertNotified(statusContext, recordID, "sent", "")
+	} else {
+		markErr = rtm.store.MarkTradeSignalNotified(statusContext, recordID, "sent", "")
+	}
+	if markErr != nil {
+		rtm.log.Warn("record manual notification status failed", "record_type", recordType, "record_id", recordID, "error", markErr)
 	}
 	return manualNotifyResult{RecordType: recordType, RecordID: recordID, Symbol: symbol, Side: side, Status: "accepted"}, nil
 }

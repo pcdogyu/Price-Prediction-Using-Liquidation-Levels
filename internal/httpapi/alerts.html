@@ -13,6 +13,7 @@
       <label for="alerts-symbol">币对<input id="alerts-symbol" name="symbol" type="text" placeholder="全部或输入 DOGE" autocomplete="off" maxlength="32"></label>
       <label for="alerts-kind">类型<select id="alerts-kind" name="kind"><option value="all">全部</option><option value="alert">预警</option><option value="aggressive">激进信号</option><option value="steady">稳健信号</option><option value="value_area">交易所刷单</option></select></label>
       <label for="alerts-filter">过滤<select id="alerts-filter" name="filter"><option value="" selected>全部</option><option value="unfiltered">未过滤</option><option value="filtered">过滤</option></select></label>
+      <label for="alerts-notification-filter">通知状态<select id="alerts-notification-filter" name="notification"><option value="" selected>全部</option><option value="notified">已入队 / 已发送</option><option value="not_notified">未入队 / 已抑制</option><option value="unknown">旧记录无状态</option></select></label>
       <span class="muted alerts-page-size">每页 20 条</span>
       <button id="alerts-apply" type="submit">查询</button>
       <button id="alerts-prev" type="button" disabled>上一页</button>
@@ -60,13 +61,14 @@
         <span class="muted alerts-filter-switch-label">服务端过滤</span>
         <label class="alerts-check alerts-toggle"><input id="alerts-vwap-filter" type="checkbox" class="alerts-toggle-input"><span class="alerts-toggle-track" aria-hidden="true"></span><span>VWAP过滤</span></label>
         <label class="alerts-check alerts-toggle"><input id="alerts-donchian-filter" type="checkbox" class="alerts-toggle-input"><span class="alerts-toggle-track" aria-hidden="true"></span><span>Donchian过滤</span></label>
+        <label class="alerts-check alerts-toggle"><input id="alerts-value-area-filter" type="checkbox" class="alerts-toggle-input"><span class="alerts-toggle-track" aria-hidden="true"></span><span>VAL/VAH过滤</span></label>
       </div>
       <div class="alerts-settings-actions"><button id="alerts-strategy-save" type="submit">保存报警参数</button><button id="alerts-signal-recalculate" type="button">信号重算</button></div>
       <div id="alerts-signal-progress" class="alerts-signal-progress" hidden aria-live="polite">
         <div class="alerts-signal-progress-head"><span id="alerts-signal-progress-label">过去 7 天信号重算进度</span><output id="alerts-signal-progress-value">1%</output></div>
         <div id="alerts-signal-progress-track" class="alerts-signal-progress-track" role="progressbar" aria-label="过去 7 天信号重算进度" aria-valuemin="1" aria-valuemax="100" aria-valuenow="1"><span id="alerts-signal-progress-fill"></span></div>
       </div>
-      <p class="muted">修改任一参数并切换焦点后自动保存并立即用于实时监控；VWAP、Donchian 服务端过滤开关影响实时雷达、过去 7 天信号重算和 K 线回放。VAL/VAH 过滤始终启用：当前交易时段价格严格低于 VAL 才允许多单爆仓开多，严格高于 VAH 才允许空单爆仓开空；价值区缺失或过期时不放行新开仓。刷单时间请在下方“交易所刷单”行配置，使用北京时间，结束时间可填 24:00，开始晚于结束表示跨午夜；也可点击保存按钮。关闭某个 VWAP/Donchian 开关只跳过对应边界，VAL/VAH、深度爆仓配额、网格、Gamma 和开平仓类别开关仍生效。阈值突破后不再等待爆仓速率衰减或价格吸收，剩余过滤条件会继续决定开仓或仅平仓；点击“信号重算”会按当前参数回放过去 7 天，并通知已打开的币对图表刷新；历史预警和信号保留产生时的阈值与周期。</p>
+      <p class="muted">修改任一参数并切换焦点后自动保存并立即用于实时监控；VWAP、Donchian、VAL/VAH 服务端过滤开关影响实时雷达、过去 7 天信号重算和 K 线回放。启用 VAL/VAH 过滤时，当前交易时段价格严格低于 VAL 才允许多单爆仓开多，严格高于 VAH 才允许空单爆仓开空；价值区缺失或过期时不放行新开仓。关闭该过滤后，雷达开仓评估跳过 VAL/VAH 边界；交易所刷单策略本身仍须依赖 VAL/VAH。刷单时间请在下方“交易所刷单”行配置，使用北京时间，结束时间可填 24:00，开始晚于结束表示跨午夜；也可点击保存按钮。关闭任一过滤只跳过对应边界，深度爆仓配额、网格、Gamma 和开平仓类别开关仍生效。阈值突破后不再等待爆仓速率衰减或价格吸收，剩余过滤条件会继续决定开仓或仅平仓；点击“信号重算”会按当前参数回放过去 7 天，并通知已打开的币对图表刷新；历史预警和信号保留产生时的阈值与周期。</p>
     </form>
     <div class="alerts-strategy-switches">
       <div class="section-head alerts-strategy-switch-head"><div><h3>策略开关</h3><p class="muted alerts-section-lead">四类实时信号分别控制平仓和开仓，可单独打开或关闭；交易所刷单策略按 VAL/VAH 来回穿越触发，BTCUSDT 使用 BTCUSDT Gamma，ETHUSDT 及其他币对使用 ETHUSDT Gamma；Gamma&lt;0 时按“下单设置”的开仓策略处理。</p></div><span id="alerts-order-signal-status" class="muted" role="status">读取设置</span></div>

@@ -185,11 +185,11 @@ INSERT INTO alert_tenant_strategy_settings(tenant_id,window_minutes,btc_usd,eth_
 	defer store.Close()
 	ctx := context.Background()
 	global, found, err := store.AlertStrategySettings(ctx)
-	if err != nil || !found || !global.VWAPFilterEnabled || !global.DonchianFilterEnabled || !global.BlockOpen0800To0900 || !global.BlockOpen1600To1700 || !global.BlockOpen2130To2230 {
+	if err != nil || !found || !global.VWAPFilterEnabled || !global.DonchianFilterEnabled || !global.ValueAreaFilterEnabled || !global.BlockOpen0800To0900 || !global.BlockOpen1600To1700 || !global.BlockOpen2130To2230 {
 		t.Fatalf("legacy global strategy filters and open blocks must default on: %+v found=%v err=%v", global, found, err)
 	}
 	tenant, found, err := store.AlertStrategySettingsForTenant(ctx, "alice")
-	if err != nil || !found || !tenant.VWAPFilterEnabled || !tenant.DonchianFilterEnabled || !tenant.BlockOpen0800To0900 || !tenant.BlockOpen1600To1700 || !tenant.BlockOpen2130To2230 {
+	if err != nil || !found || !tenant.VWAPFilterEnabled || !tenant.DonchianFilterEnabled || !tenant.ValueAreaFilterEnabled || !tenant.BlockOpen0800To0900 || !tenant.BlockOpen1600To1700 || !tenant.BlockOpen2130To2230 {
 		t.Fatalf("legacy tenant strategy filters and open blocks must default on: %+v found=%v err=%v", tenant, found, err)
 	}
 }
@@ -495,6 +495,56 @@ func TestAlertTimelineFilterState(t *testing.T) {
 	}
 }
 
+func TestAlertTimelineNotificationFilter(t *testing.T) {
+	store, ctx := openAlertStore(t)
+	base := time.Now().UTC().Truncate(time.Second)
+	queuedAlert := alertRow("notify-alert-queued", "BTCUSDT", "long", base, domain.AlertStateWatching)
+	if _, err := store.SaveLiquidationAlert(ctx, queuedAlert); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkLiquidationAlertNotified(ctx, queuedAlert.ID, "queued", ""); err != nil {
+		t.Fatal(err)
+	}
+	queuedAlert.Status = domain.AlertStateAggressive
+	if _, err := store.SaveLiquidationAlert(ctx, queuedAlert); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveLiquidationAlert(ctx, alertRow("notify-alert-unknown", "ETHUSDT", "short", base.Add(time.Minute), domain.AlertStateWatching)); err != nil {
+		t.Fatal(err)
+	}
+	sentSignal := signalRow("notify-signal-sent", "BTCUSDT", domain.SignalAggressive, "long", base.Add(2*time.Minute))
+	if _, err := store.SaveTradeSignal(ctx, sentSignal); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkTradeSignalNotified(ctx, sentSignal.ID, "sent", ""); err != nil {
+		t.Fatal(err)
+	}
+	mutedSignal := signalRow("notify-signal-muted", "ETHUSDT", domain.SignalSteady, "short", base.Add(3*time.Minute))
+	if _, err := store.SaveTradeSignal(ctx, mutedSignal); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkTradeSignalNotified(ctx, mutedSignal.ID, "muted", "类别已关闭"); err != nil {
+		t.Fatal(err)
+	}
+	assertPage := func(filter string, rows, alerts, aggressive, steady int64) {
+		t.Helper()
+		page, err := store.AlertTimelineSinceWithNotifications(ctx, "", "", "", filter, 20, "", time.Time{})
+		if err != nil || int64(len(page.Rows)) != rows || page.TotalCount != rows || page.AlertCount != alerts || page.AggressiveCount != aggressive || page.SteadyCount != steady {
+			t.Fatalf("notification filter %q counts: %+v err=%v", filter, page, err)
+		}
+	}
+	assertPage("notified", 2, 1, 1, 0)
+	assertPage("not_notified", 1, 0, 0, 1)
+	assertPage("unknown", 1, 1, 0, 0)
+	if _, err := store.AlertTimelineSinceWithNotifications(ctx, "", "", "", "invalid", 20, "", time.Time{}); err == nil {
+		t.Fatal("an invalid notification filter must be rejected")
+	}
+	row, err := store.LiquidationAlertByID(ctx, queuedAlert.ID)
+	if err != nil || row.NotifyStatus != "queued" || row.NotifiedAt.IsZero() {
+		t.Fatalf("updating an alert cycle must preserve its notification state: %+v err=%v", row, err)
+	}
+}
+
 // TestWatchListAndSettingsPersistence covers the two small stores the alert page
 // manages: the top volume watch list and the Telegram settings row.
 func TestWatchListAndSettingsPersistence(t *testing.T) {
@@ -540,12 +590,12 @@ func TestWatchListAndSettingsPersistence(t *testing.T) {
 	if err != nil || stored.TelegramEnabled || stored.TelegramToken != "123:secret" {
 		t.Fatalf("the settings row must be updated in place: %+v err %v", stored, err)
 	}
-	strategy := domain.AlertStrategySettings{WindowMinutes: 5, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 100000, VWAPFilterEnabled: true, DonchianFilterEnabled: true, BlockOpen0800To0900: true, BlockOpen1600To1700: false, BlockOpen2130To2230: true}
+	strategy := domain.AlertStrategySettings{WindowMinutes: 5, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 100000, VWAPFilterEnabled: true, DonchianFilterEnabled: true, ValueAreaFilterEnabled: false, BlockOpen0800To0900: true, BlockOpen1600To1700: false, BlockOpen2130To2230: true}
 	if err := store.SaveAlertStrategySettings(ctx, strategy); err != nil {
 		t.Fatal(err)
 	}
 	storedStrategy, found, err := store.AlertStrategySettings(ctx)
-	if err != nil || !found || storedStrategy.WindowMinutes != 5 || storedStrategy.ETHUSD != 200000 || storedStrategy.OtherUSD != 100000 || !storedStrategy.VWAPFilterEnabled || !storedStrategy.DonchianFilterEnabled || !storedStrategy.BlockOpen0800To0900 || storedStrategy.BlockOpen1600To1700 || !storedStrategy.BlockOpen2130To2230 {
+	if err != nil || !found || storedStrategy.WindowMinutes != 5 || storedStrategy.ETHUSD != 200000 || storedStrategy.OtherUSD != 100000 || !storedStrategy.VWAPFilterEnabled || !storedStrategy.DonchianFilterEnabled || storedStrategy.ValueAreaFilterEnabled || !storedStrategy.BlockOpen0800To0900 || storedStrategy.BlockOpen1600To1700 || !storedStrategy.BlockOpen2130To2230 {
 		t.Fatalf("the strategy settings did not round trip: %+v found=%v err=%v", storedStrategy, found, err)
 	}
 }

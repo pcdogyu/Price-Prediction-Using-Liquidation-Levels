@@ -196,6 +196,11 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err)
 		return
 	}
+	notification, err := alertTimelineNotificationFilter(query.Get("notification"))
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
 	if err = alertCursor(query.Get("cursor")); err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return
@@ -210,8 +215,8 @@ func (s *Server) alertTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := s.alertContext(r)
 	var page domain.AlertTimelinePage
-	if query.Get("stored") == "1" {
-		page, err = s.svc.AlertTimelineStoredForContext(ctx, symbol, kind, filter, limit, query.Get("cursor"))
+	if notification != "" || query.Get("stored") == "1" {
+		page, err = s.svc.AlertTimelineStoredWithNotificationsForContext(ctx, symbol, kind, filter, notification, limit, query.Get("cursor"))
 	} else if query.Get("replay") == "1" {
 		replayed, ready, replayErr := s.svc.AlertTimelineReplayedFiltered(ctx, symbol, kind, filter, limit, query.Get("cursor"))
 		if replayErr != nil {
@@ -255,10 +260,11 @@ func (s *Server) alertOverview(w http.ResponseWriter, r *http.Request) {
 	view.Thresholds.VWAPDonchianPct = strategy.VWAPDonchianPct
 	view.Thresholds.VWAPFilterEnabled = strategy.VWAPFilterEnabled
 	view.Thresholds.DonchianFilterEnabled = strategy.DonchianFilterEnabled
+	view.Thresholds.ValueAreaFilterEnabled = strategy.ValueAreaFilterEnabled
 	view.Thresholds.BlockOpen0800To0900 = strategy.BlockOpen0800To0900
 	view.Thresholds.BlockOpen1600To1700 = strategy.BlockOpen1600To1700
 	view.Thresholds.BlockOpen2130To2230 = strategy.BlockOpen2130To2230
-	view.Method = domain.AlertMonitorMethod(view.Thresholds.WindowMinutes, view.Thresholds.RefreshMinutes, view.Thresholds.TopSymbols)
+	view.Method = domain.AlertMonitorMethod(view.Thresholds.WindowMinutes, view.Thresholds.RefreshMinutes, view.Thresholds.TopSymbols, view.Thresholds.ValueAreaFilterEnabled)
 	w.Header().Set("Cache-Control", "no-store")
 	settings, settingsErr := s.svc.AlertSettingsForContext(ctx)
 	if settingsErr != nil {
@@ -283,6 +289,14 @@ func alertTimelineFilter(value string) (string, error) {
 		return value, nil
 	}
 	return "", errors.New("filter must be filtered or unfiltered")
+}
+
+func alertTimelineNotificationFilter(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || value == "notified" || value == "not_notified" || value == "unknown" {
+		return value, nil
+	}
+	return "", errors.New("notification must be notified, not_notified or unknown")
 }
 
 // alertHistory reads stored alerts with cursor pagination.
@@ -826,6 +840,9 @@ func (s *Server) alertStrategySettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := fields["donchian_filter_enabled"]; !ok {
 		in.DonchianFilterEnabled = current.DonchianFilterEnabled
+	}
+	if _, ok := fields["value_area_filter_enabled"]; !ok {
+		in.ValueAreaFilterEnabled = current.ValueAreaFilterEnabled
 	}
 	if _, ok := fields["block_open_0800_0900"]; !ok {
 		in.BlockOpen0800To0900 = current.BlockOpen0800To0900

@@ -40,6 +40,11 @@ def timeline_fixture():
                 "opposite_usd": 120000, "opposite_count": 2, "opposite_elapsed_seconds": 90,
                 "reference_price": 68000, "notify_status": "queued", "gamma_ignored": index == 0,
             }
+        row_data = item["alert"] if kind == "alert" else item["signal"]
+        if index == 8:
+            row_data.pop("notify_status", None)
+        else:
+            row_data["notify_status"] = "muted" if index in (6, 7) else "queued"
         if index < 3:
             target = item["alert"] if kind == "alert" else item["signal"]
             target.update({"filter_applied": True, "open_allowed": False, "close_allowed": True})
@@ -131,17 +136,29 @@ with sync_playwright() as playwright:
     def route_timeline(route):
         query = parse_qs(urlsplit(route.request.url).query)
         kind = query.get("kind", ["all"])[0]
+        notification = query.get("notification", [""])[0]
         cursor = query.get("cursor", [""])[0]
-        requests.append({"kind": kind, "cursor": cursor})
+        requests.append({"kind": kind, "cursor": cursor, "notification": notification})
         selected = all_rows if kind == "all" else [row for row in all_rows if row["type"] == kind]
+        if notification:
+            def notification_status(row):
+                data = row.get("alert") or row.get("signal") or {}
+                return data.get("notify_status", "")
+            if notification == "notified":
+                selected = [row for row in selected if notification_status(row) in ("queued", "sent")]
+            elif notification == "not_notified":
+                selected = [row for row in selected if notification_status(row) and notification_status(row) not in ("queued", "sent")]
+            elif notification == "unknown":
+                selected = [row for row in selected if not notification_status(row)]
         offset = 20 if cursor else 0
         page_rows = selected[offset:offset + 20]
         packet = {
             "rows": page_rows,
             "total_count": len(selected),
-            "alert_count": 9,
-            "aggressive_count": 8,
-            "steady_count": 8,
+            "alert_count": sum(row["type"] == "alert" for row in selected),
+            "aggressive_count": sum(row["type"] == "aggressive" for row in selected),
+            "steady_count": sum(row["type"] == "steady" for row in selected),
+            "value_area_count": sum(row["type"] == "value_area" for row in selected),
             "gamma": {"anchor_symbol": "ETHUSDT", "state": "ok", "gamma": -0.12345, "ignored": True},
         }
         if offset + 20 < len(selected):
@@ -154,10 +171,22 @@ with sync_playwright() as playwright:
         else:
             route.fulfill(status=404, json={"detail": "not found"})
 
+    strategy_posts = []
+    strategy_state = {"value_area_filter_enabled": True}
+    def route_strategy_settings(route):
+        if route.request.method == "POST":
+            body = json.loads(route.request.post_data or "{}")
+            strategy_posts.append(body)
+            strategy_state.update(body)
+            route.fulfill(status=200, json=strategy_state)
+        else:
+            route.continue_()
+
 
     def route_overview(route):
         response = route.fetch()
         packet = response.json()
+        packet.setdefault("data", {}).setdefault("thresholds", {})["value_area_filter_enabled"] = strategy_state["value_area_filter_enabled"]
         packet.setdefault("data", {})["gamma"] = {
             "anchor_symbol": "ETHUSDT", "state": "ok", "gamma": -0.12345, "ignored": True,
         }
@@ -165,6 +194,7 @@ with sync_playwright() as playwright:
 
     page.route("**/api/v1/alerts/timeline?**", route_timeline)
     page.route("**/api/v1/alerts/backtest", route_backtest)
+    page.route("**/api/v1/alerts/strategy-settings", route_strategy_settings)
     page.route("**/api/v1/alerts", route_overview)
     page.goto(base + "/alerts", wait_until="domcontentloaded")
     expect(page.locator("#alerts-history-status")).to_contain_text("预警 9", timeout=30000)
@@ -202,6 +232,31 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows tr")).to_have_count(9)
     expect(page.locator("#alerts-count")).to_have_text("第 1 页 · 本页 9 条")
     expect(page.locator("#alerts-history-rows td:nth-child(3)")).to_contain_text(["预警"] * 9)
+
+    page.locator("#alerts-kind").select_option("all")
+    page.locator("#alerts-notification-filter").select_option("not_notified")
+    page.locator("#alerts-apply").click()
+    expect(page.locator("#alerts-history-rows tr")).to_have_count(3)
+    expect(page.locator("#alerts-history-rows")).to_contain_text("类别关闭")
+    assert requests[-1]["notification"] == "not_notified"
+    page.locator("#alerts-notification-filter").select_option("unknown")
+    page.locator("#alerts-apply").click()
+    expect(page.locator("#alerts-history-rows tr")).to_have_count(1)
+    expect(page.locator("#alerts-history-rows")).to_contain_text("未记录")
+    assert requests[-1]["notification"] == "unknown"
+    page.locator("#alerts-notification-filter").select_option("")
+    page.locator("#alerts-apply").click()
+    expect(page.locator("#alerts-history-rows tr")).to_have_count(20)
+
+    value_area_filter = page.locator("#alerts-value-area-filter")
+    expect(value_area_filter).to_be_checked()
+    value_area_filter.uncheck()
+    expect(page.locator("#alerts-strategy-status")).to_contain_text("已自动保存", timeout=10000)
+    assert strategy_posts and strategy_posts[-1]["value_area_filter_enabled"] is False
+    expect(value_area_filter).not_to_be_checked()
+    value_area_filter.check()
+    expect(page.locator("#alerts-strategy-status")).to_contain_text("已自动保存", timeout=10000)
+    assert strategy_posts[-1]["value_area_filter_enabled"] is True
 
     page.locator("#alerts-backtest-run").click()
     expect(page.locator("#alerts-backtest-rows tr")).to_have_count(150)

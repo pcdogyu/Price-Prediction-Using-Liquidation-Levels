@@ -31,9 +31,9 @@ CREATE INDEX IF NOT EXISTS trade_signals_kind ON trade_signals(kind,created_ts D
 CREATE INDEX IF NOT EXISTS trade_signals_symbol ON trade_signals(symbol,created_ts DESC);
 CREATE TABLE IF NOT EXISTS alert_watch_symbols(symbol TEXT PRIMARY KEY,rank INTEGER NOT NULL,quote_volume_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_settings(id INTEGER PRIMARY KEY CHECK(id=1),telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,notify_value_area INTEGER NOT NULL DEFAULT 1,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_value_area INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,order_value_area_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,value_area_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_tenant_settings(tenant_id TEXT PRIMARY KEY,telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,notify_value_area INTEGER NOT NULL DEFAULT 1,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_value_area INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,order_value_area_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY KEY,window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);`)
+CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY KEY,window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,value_area_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);`)
 	if err != nil {
 		return err
 	}
@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY
 			{"vwap_donchian_pct", "REAL NOT NULL DEFAULT 35"},
 			{"vwap_filter_enabled", "INTEGER NOT NULL DEFAULT 1"},
 			{"donchian_filter_enabled", "INTEGER NOT NULL DEFAULT 1"},
+			{"value_area_filter_enabled", "INTEGER NOT NULL DEFAULT 1"},
 			{"block_open_0800_0900", "INTEGER NOT NULL DEFAULT 1"},
 			{"block_open_1600_1700", "INTEGER NOT NULL DEFAULT 1"},
 			{"block_open_2130_2230", "INTEGER NOT NULL DEFAULT 1"},
@@ -94,9 +95,9 @@ func migrateAlertSettingsOn(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS alert_watch_symbols(symbol TEXT PRIMARY KEY,rank INTEGER NOT NULL,quote_volume_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_settings(id INTEGER PRIMARY KEY CHECK(id=1),telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,notify_value_area INTEGER NOT NULL DEFAULT 1,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_value_area INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,order_value_area_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,value_area_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_tenant_settings(tenant_id TEXT PRIMARY KEY,telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,notify_value_area INTEGER NOT NULL DEFAULT 1,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_value_area INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,order_value_area_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY KEY,window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);`); err != nil {
+CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY KEY,window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,value_area_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);`); err != nil {
 		return err
 	}
 	for _, table := range []string{"alert_settings", "alert_tenant_settings"} {
@@ -116,6 +117,7 @@ CREATE TABLE IF NOT EXISTS alert_tenant_strategy_settings(tenant_id TEXT PRIMARY
 			{"vwap_donchian_pct", "REAL NOT NULL DEFAULT 35"},
 			{"vwap_filter_enabled", "INTEGER NOT NULL DEFAULT 1"},
 			{"donchian_filter_enabled", "INTEGER NOT NULL DEFAULT 1"},
+			{"value_area_filter_enabled", "INTEGER NOT NULL DEFAULT 1"},
 			{"block_open_0800_0900", "INTEGER NOT NULL DEFAULT 1"},
 			{"block_open_1600_1700", "INTEGER NOT NULL DEFAULT 1"},
 			{"block_open_2130_2230", "INTEGER NOT NULL DEFAULT 1"},
@@ -281,6 +283,9 @@ func (s *Store) SaveLiquidationAlert(ctx context.Context, alert domain.Liquidati
 			return false, err
 		}
 		alert.GammaIgnored = previous.GammaIgnored
+		alert.NotifyStatus = previous.NotifyStatus
+		alert.NotifyError = previous.NotifyError
+		alert.NotifiedAt = previous.NotifiedAt
 		payload, err = json.Marshal(alert)
 		if err != nil {
 			return false, err
@@ -294,6 +299,31 @@ func (s *Store) SaveLiquidationAlert(ctx context.Context, alert domain.Liquidati
 		return false, err
 	}
 	return prior == 0, nil
+}
+
+// MarkLiquidationAlertNotified records the notification decision on the alert
+// payload so history queries can filter alerts and signals consistently.
+func (s *Store) MarkLiquidationAlertNotified(ctx context.Context, id, status, message string) error {
+	if id == "" {
+		return errors.New("alert id is required")
+	}
+	var payload []byte
+	if err := s.alerts().QueryRowContext(ctx, `SELECT payload FROM liquidation_alerts WHERE id=?`, id).Scan(&payload); err != nil {
+		return err
+	}
+	var alert domain.LiquidationAlert
+	if err := json.Unmarshal(payload, &alert); err != nil {
+		return err
+	}
+	alert.NotifyStatus = status
+	alert.NotifyError = message
+	alert.NotifiedAt = time.Now().UTC()
+	raw, err := json.Marshal(alert)
+	if err != nil {
+		return err
+	}
+	_, err = s.alerts().ExecContext(ctx, `UPDATE liquidation_alerts SET payload=?,updated_ts=? WHERE id=?`, raw, time.Now().UTC().UnixMilli(), id)
+	return err
 }
 
 // LiquidationAlertByID reads one persisted alert for a manual order trigger.
@@ -589,6 +619,14 @@ func (s *Store) AlertTimelineFiltered(ctx context.Context, symbol, kind, filter 
 // AlertTimelineSinceFiltered is the bounded timeline query used by the alerts
 // page. Legacy rows without filter_applied are treated as unfiltered.
 func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, filter string, limit int, cursor string, since time.Time) (domain.AlertTimelinePage, error) {
+	return s.AlertTimelineSinceWithNotifications(ctx, symbol, kind, filter, "", limit, cursor, since)
+}
+
+// AlertTimelineSinceWithNotifications filters the persisted audit timeline by
+// radar filter state and notification outcome. "notified" includes queued or
+// sent messages; "not_notified" includes known outcomes without a queued send;
+// "unknown" identifies legacy rows without notification metadata.
+func (s *Store) AlertTimelineSinceWithNotifications(ctx context.Context, symbol, kind, filter, notification string, limit int, cursor string, since time.Time) (domain.AlertTimelinePage, error) {
 	out := domain.AlertTimelinePage{Rows: []domain.AlertTimelineItem{}}
 	if limit < 1 || limit > 200 {
 		return out, errors.New("invalid timeline limit")
@@ -602,6 +640,9 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 	}
 	if filter != "" && filter != "filtered" && filter != "unfiltered" {
 		return out, errors.New("invalid timeline filter")
+	}
+	if notification != "" && notification != "notified" && notification != "not_notified" && notification != "unknown" {
+		return out, errors.New("invalid timeline notification filter")
 	}
 	whereSQL := func(clauses []string) string {
 		if len(clauses) == 0 {
@@ -618,6 +659,15 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 		// "unfiltered" view while leaving them visible in the "filtered" view.
 		filterClause = "COALESCE(json_extract(payload,'$.filter_applied'),0)=0 AND COALESCE(json_extract(payload,'$.gamma_ignored'),0)=0"
 	}
+	notificationClause := ""
+	switch notification {
+	case "notified":
+		notificationClause = "COALESCE(json_extract(payload,'$.notify_status'),'') IN ('queued','sent')"
+	case "not_notified":
+		notificationClause = "COALESCE(json_extract(payload,'$.notify_status'),'')<>'' AND COALESCE(json_extract(payload,'$.notify_status'),'') NOT IN ('queued','sent')"
+	case "unknown":
+		notificationClause = "COALESCE(json_extract(payload,'$.notify_status'),'')=''"
+	}
 	parts := []string{}
 	args := []any{}
 	if kind == "" || kind == "alert" {
@@ -629,6 +679,9 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 		}
 		if filterClause != "" {
 			clauses = append(clauses, filterClause)
+		}
+		if notificationClause != "" {
+			clauses = append(clauses, notificationClause)
 		}
 		parts = append(parts, `SELECT 'alert' AS record_type,trigger_ts AS event_ts,'alert:'||id AS sort_id,payload FROM liquidation_alerts`+whereSQL(clauses))
 		args = append(args, partArgs...)
@@ -646,6 +699,9 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 		}
 		if filterClause != "" {
 			clauses = append(clauses, filterClause)
+		}
+		if notificationClause != "" {
+			clauses = append(clauses, notificationClause)
 		}
 		parts = append(parts, `SELECT kind AS record_type,created_ts AS event_ts,'signal:'||id AS sort_id,payload FROM trade_signals`+whereSQL(clauses))
 		args = append(args, partArgs...)
@@ -722,6 +778,9 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 	if filterClause != "" {
 		alertCountWhereParts = append(alertCountWhereParts, filterClause)
 	}
+	if notificationClause != "" {
+		alertCountWhereParts = append(alertCountWhereParts, notificationClause)
+	}
 	if !since.IsZero() {
 		alertCountWhereParts = append(alertCountWhereParts, "trigger_ts>=?")
 		alertCountArgs = append(alertCountArgs, since.UTC().UnixMilli())
@@ -741,6 +800,9 @@ func (s *Store) AlertTimelineSinceFiltered(ctx context.Context, symbol, kind, fi
 	}
 	if filterClause != "" {
 		signalCountWhereParts = append(signalCountWhereParts, filterClause)
+	}
+	if notificationClause != "" {
+		signalCountWhereParts = append(signalCountWhereParts, notificationClause)
 	}
 	if !since.IsZero() {
 		signalCountWhereParts = append(signalCountWhereParts, "created_ts>=?")
@@ -887,10 +949,10 @@ ON CONFLICT(tenant_id) DO UPDATE SET telegram_enabled=excluded.telegram_enabled,
 // strategy form. A missing row means the environment/default values are active.
 func (s *Store) AlertStrategySettings(ctx context.Context) (domain.AlertStrategySettings, bool, error) {
 	var out domain.AlertStrategySettings
-	var window, vwapFilter, donchianFilter, blockOpen0800To0900, blockOpen1600To1700, blockOpen2130To2230 int
+	var window, vwapFilter, donchianFilter, valueAreaFilter, blockOpen0800To0900, blockOpen1600To1700, blockOpen2130To2230 int
 	var updated int64
-	err := s.alerts().QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts FROM alert_strategy_settings WHERE id=1`).
-		Scan(&window, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &out.VWAPRangeHours, &out.VWAPMinDrawdownPct, &out.VWAPDonchianPct, &vwapFilter, &donchianFilter, &blockOpen0800To0900, &blockOpen1600To1700, &blockOpen2130To2230, &out.ValueAreaStartMinute, &out.ValueAreaEndMinute, &updated)
+	err := s.alerts().QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,value_area_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts FROM alert_strategy_settings WHERE id=1`).
+		Scan(&window, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &out.VWAPRangeHours, &out.VWAPMinDrawdownPct, &out.VWAPDonchianPct, &vwapFilter, &donchianFilter, &valueAreaFilter, &blockOpen0800To0900, &blockOpen1600To1700, &blockOpen2130To2230, &out.ValueAreaStartMinute, &out.ValueAreaEndMinute, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
 	}
@@ -900,6 +962,7 @@ func (s *Store) AlertStrategySettings(ctx context.Context) (domain.AlertStrategy
 	out.WindowMinutes = window
 	out.VWAPFilterEnabled = vwapFilter != 0
 	out.DonchianFilterEnabled = donchianFilter != 0
+	out.ValueAreaFilterEnabled = valueAreaFilter != 0
 	out.BlockOpen0800To0900 = blockOpen0800To0900 != 0
 	out.BlockOpen1600To1700 = blockOpen1600To1700 != 0
 	out.BlockOpen2130To2230 = blockOpen2130To2230 != 0
@@ -910,9 +973,9 @@ func (s *Store) AlertStrategySettings(ctx context.Context) (domain.AlertStrategy
 // SaveAlertStrategySettings stores the editable threshold and rolling-window
 // parameters as a single row.
 func (s *Store) SaveAlertStrategySettings(ctx context.Context, in domain.AlertStrategySettings) error {
-	_, err := s.alerts().ExecContext(ctx, `INSERT INTO alert_strategy_settings(id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,vwap_range_hours=excluded.vwap_range_hours,vwap_min_drawdown_pct=excluded.vwap_min_drawdown_pct,vwap_donchian_pct=excluded.vwap_donchian_pct,vwap_filter_enabled=excluded.vwap_filter_enabled,donchian_filter_enabled=excluded.donchian_filter_enabled,block_open_0800_0900=excluded.block_open_0800_0900,block_open_1600_1700=excluded.block_open_1600_1700,block_open_2130_2230=excluded.block_open_2130_2230,value_area_start_minute=excluded.value_area_start_minute,value_area_end_minute=excluded.value_area_end_minute,updated_ts=excluded.updated_ts`,
-		in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, in.VWAPRangeHours, in.VWAPMinDrawdownPct, in.VWAPDonchianPct, boolInt(in.VWAPFilterEnabled), boolInt(in.DonchianFilterEnabled), boolInt(in.BlockOpen0800To0900), boolInt(in.BlockOpen1600To1700), boolInt(in.BlockOpen2130To2230), in.ValueAreaStartMinute, in.ValueAreaEndMinute, time.Now().UTC().UnixMilli())
+	_, err := s.alerts().ExecContext(ctx, `INSERT INTO alert_strategy_settings(id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,value_area_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,vwap_range_hours=excluded.vwap_range_hours,vwap_min_drawdown_pct=excluded.vwap_min_drawdown_pct,vwap_donchian_pct=excluded.vwap_donchian_pct,vwap_filter_enabled=excluded.vwap_filter_enabled,donchian_filter_enabled=excluded.donchian_filter_enabled,value_area_filter_enabled=excluded.value_area_filter_enabled,block_open_0800_0900=excluded.block_open_0800_0900,block_open_1600_1700=excluded.block_open_1600_1700,block_open_2130_2230=excluded.block_open_2130_2230,value_area_start_minute=excluded.value_area_start_minute,value_area_end_minute=excluded.value_area_end_minute,updated_ts=excluded.updated_ts`,
+		in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, in.VWAPRangeHours, in.VWAPMinDrawdownPct, in.VWAPDonchianPct, boolInt(in.VWAPFilterEnabled), boolInt(in.DonchianFilterEnabled), boolInt(in.ValueAreaFilterEnabled), boolInt(in.BlockOpen0800To0900), boolInt(in.BlockOpen1600To1700), boolInt(in.BlockOpen2130To2230), in.ValueAreaStartMinute, in.ValueAreaEndMinute, time.Now().UTC().UnixMilli())
 	return err
 }
 
@@ -924,10 +987,10 @@ func (s *Store) AlertStrategySettingsForTenant(ctx context.Context, tenantID str
 		return s.AlertStrategySettings(ctx)
 	}
 	var out domain.AlertStrategySettings
-	var vwapFilter, donchianFilter, blockOpen0800To0900, blockOpen1600To1700, blockOpen2130To2230 int
+	var vwapFilter, donchianFilter, valueAreaFilter, blockOpen0800To0900, blockOpen1600To1700, blockOpen2130To2230 int
 	var updated int64
-	err := s.alerts().QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts FROM alert_tenant_strategy_settings WHERE tenant_id=?`, tenantID).
-		Scan(&out.WindowMinutes, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &out.VWAPRangeHours, &out.VWAPMinDrawdownPct, &out.VWAPDonchianPct, &vwapFilter, &donchianFilter, &blockOpen0800To0900, &blockOpen1600To1700, &blockOpen2130To2230, &out.ValueAreaStartMinute, &out.ValueAreaEndMinute, &updated)
+	err := s.alerts().QueryRowContext(ctx, `SELECT window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,value_area_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts FROM alert_tenant_strategy_settings WHERE tenant_id=?`, tenantID).
+		Scan(&out.WindowMinutes, &out.BTCUSD, &out.ETHUSD, &out.OtherUSD, &out.VWAPRangeHours, &out.VWAPMinDrawdownPct, &out.VWAPDonchianPct, &vwapFilter, &donchianFilter, &valueAreaFilter, &blockOpen0800To0900, &blockOpen1600To1700, &blockOpen2130To2230, &out.ValueAreaStartMinute, &out.ValueAreaEndMinute, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, false, nil
 	}
@@ -937,6 +1000,7 @@ func (s *Store) AlertStrategySettingsForTenant(ctx context.Context, tenantID str
 	out.UpdatedAt = time.UnixMilli(updated).UTC()
 	out.VWAPFilterEnabled = vwapFilter != 0
 	out.DonchianFilterEnabled = donchianFilter != 0
+	out.ValueAreaFilterEnabled = valueAreaFilter != 0
 	out.BlockOpen0800To0900 = blockOpen0800To0900 != 0
 	out.BlockOpen1600To1700 = blockOpen1600To1700 != 0
 	out.BlockOpen2130To2230 = blockOpen2130To2230 != 0
@@ -949,9 +1013,9 @@ func (s *Store) SaveAlertStrategySettingsForTenant(ctx context.Context, tenantID
 	if tenantID == "" {
 		return s.SaveAlertStrategySettings(ctx, in)
 	}
-	_, err := s.alerts().ExecContext(ctx, `INSERT INTO alert_tenant_strategy_settings(tenant_id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(tenant_id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,vwap_range_hours=excluded.vwap_range_hours,vwap_min_drawdown_pct=excluded.vwap_min_drawdown_pct,vwap_donchian_pct=excluded.vwap_donchian_pct,vwap_filter_enabled=excluded.vwap_filter_enabled,donchian_filter_enabled=excluded.donchian_filter_enabled,block_open_0800_0900=excluded.block_open_0800_0900,block_open_1600_1700=excluded.block_open_1600_1700,block_open_2130_2230=excluded.block_open_2130_2230,value_area_start_minute=excluded.value_area_start_minute,value_area_end_minute=excluded.value_area_end_minute,updated_ts=excluded.updated_ts`,
-		tenantID, in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, in.VWAPRangeHours, in.VWAPMinDrawdownPct, in.VWAPDonchianPct, boolInt(in.VWAPFilterEnabled), boolInt(in.DonchianFilterEnabled), boolInt(in.BlockOpen0800To0900), boolInt(in.BlockOpen1600To1700), boolInt(in.BlockOpen2130To2230), in.ValueAreaStartMinute, in.ValueAreaEndMinute, time.Now().UTC().UnixMilli())
+	_, err := s.alerts().ExecContext(ctx, `INSERT INTO alert_tenant_strategy_settings(tenant_id,window_minutes,btc_usd,eth_usd,other_usd,vwap_range_hours,vwap_min_drawdown_pct,vwap_donchian_pct,vwap_filter_enabled,donchian_filter_enabled,value_area_filter_enabled,block_open_0800_0900,block_open_1600_1700,block_open_2130_2230,value_area_start_minute,value_area_end_minute,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(tenant_id) DO UPDATE SET window_minutes=excluded.window_minutes,btc_usd=excluded.btc_usd,eth_usd=excluded.eth_usd,other_usd=excluded.other_usd,vwap_range_hours=excluded.vwap_range_hours,vwap_min_drawdown_pct=excluded.vwap_min_drawdown_pct,vwap_donchian_pct=excluded.vwap_donchian_pct,vwap_filter_enabled=excluded.vwap_filter_enabled,donchian_filter_enabled=excluded.donchian_filter_enabled,value_area_filter_enabled=excluded.value_area_filter_enabled,block_open_0800_0900=excluded.block_open_0800_0900,block_open_1600_1700=excluded.block_open_1600_1700,block_open_2130_2230=excluded.block_open_2130_2230,value_area_start_minute=excluded.value_area_start_minute,value_area_end_minute=excluded.value_area_end_minute,updated_ts=excluded.updated_ts`,
+		tenantID, in.WindowMinutes, in.BTCUSD, in.ETHUSD, in.OtherUSD, in.VWAPRangeHours, in.VWAPMinDrawdownPct, in.VWAPDonchianPct, boolInt(in.VWAPFilterEnabled), boolInt(in.DonchianFilterEnabled), boolInt(in.ValueAreaFilterEnabled), boolInt(in.BlockOpen0800To0900), boolInt(in.BlockOpen1600To1700), boolInt(in.BlockOpen2130To2230), in.ValueAreaStartMinute, in.ValueAreaEndMinute, time.Now().UTC().UnixMilli())
 	return err
 }
 

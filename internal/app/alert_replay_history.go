@@ -40,10 +40,10 @@ func (s *Service) alertStrategyConfigForContext(ctx context.Context, rtm *alertR
 			cfg.VWAPDonchianFraction = strategy.VWAPDonchianPct / 100
 			cfg.VWAPFilterEnabled = strategy.VWAPFilterEnabled
 			cfg.DonchianFilterEnabled = strategy.DonchianFilterEnabled
+			cfg.ValueAreaFilterEnabled = strategy.ValueAreaFilterEnabled
 			cfg.FilterSettingsSet = true
 		}
 	}
-	cfg.ValueAreaFilterEnabled = true
 	return cfg, nil
 }
 

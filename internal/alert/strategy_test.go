@@ -457,6 +457,15 @@ func TestRadarValueAreaStrictlyGatesLiquidationDirection(t *testing.T) {
 			}
 		})
 	}
+	cfg.ValueAreaFilterEnabled = false
+	disabled := decision("long", 105, 100, 110, true)
+	if !disabled.OpenAllowed || strings.Contains(strings.Join(disabled.FilterTags, ","), "value_area") {
+		t.Fatalf("disabled VAL/VAH filter must not block the opening decision: %+v", disabled)
+	}
+	missingProfile := filterDecision(cfg, "long", MarketContext{Ready: true, Price: 99}, symbolState{longLiqCumulative: 100}, 100)
+	if !missingProfile.OpenAllowed || strings.Contains(strings.Join(missingProfile.FilterTags, ","), "value_area") {
+		t.Fatalf("disabled VAL/VAH filter must not require a value-area profile: %+v", missingProfile)
+	}
 }
 
 func TestRadarThresholdFiresWithoutPeakDecayOrAbsorption(t *testing.T) {

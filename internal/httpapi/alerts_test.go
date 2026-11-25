@@ -63,6 +63,11 @@ func TestAlertPageAndAssets(t *testing.T) {
 			t.Fatalf("the merged history must contain %q", want)
 		}
 	}
+	for _, want := range []string{"alerts-notification-filter", `<option value="notified">已入队 / 已发送</option>`, `<option value="not_notified">未入队 / 已抑制</option>`, `<option value="unknown">旧记录无状态</option>`, `id="alerts-value-area-filter" type="checkbox"`, "VAL/VAH过滤", "VAL/VAH 服务端过滤开关"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the alerts filters must expose %q", want)
+		}
+	}
 	for _, want := range []string{"alerts-backtest-gamma-rows", "alerts-backtest-gamma-coverage", "alerts-backtest-fee-bps", "alerts-backtest-slippage-bps", "alerts-backtest-gamma-near-pct", "alerts-backtest-gamma-confirm-samples", "手续费（bps / 单边）", "滑点（bps / 单边）", "Gamma 连续确认样本", "净盈亏（USD）"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the alerts backtest must expose %q", want)
@@ -364,26 +369,29 @@ func TestAlertStrategySettingsEndpoint(t *testing.T) {
 	defer st.Close()
 
 	initial := serveAlert(srv, http.MethodGet, "/api/v1/alerts/strategy-settings", nil)
-	if initial.Code != http.StatusOK || !strings.Contains(initial.Body.String(), `"window_minutes":10`) || !strings.Contains(initial.Body.String(), `"eth_usd":200000`) || !strings.Contains(initial.Body.String(), `"other_usd":100000`) || !strings.Contains(initial.Body.String(), `"vwap_filter_enabled":true`) || !strings.Contains(initial.Body.String(), `"donchian_filter_enabled":true`) || !strings.Contains(initial.Body.String(), `"block_open_0800_0900":true`) || !strings.Contains(initial.Body.String(), `"block_open_1600_1700":true`) || !strings.Contains(initial.Body.String(), `"block_open_2130_2230":true`) || !strings.Contains(initial.Body.String(), `"value_area_start_minute":1200`) || !strings.Contains(initial.Body.String(), `"value_area_end_minute":1440`) {
+	if initial.Code != http.StatusOK || !strings.Contains(initial.Body.String(), `"window_minutes":10`) || !strings.Contains(initial.Body.String(), `"eth_usd":200000`) || !strings.Contains(initial.Body.String(), `"other_usd":100000`) || !strings.Contains(initial.Body.String(), `"vwap_filter_enabled":true`) || !strings.Contains(initial.Body.String(), `"donchian_filter_enabled":true`) || !strings.Contains(initial.Body.String(), `"value_area_filter_enabled":true`) || !strings.Contains(initial.Body.String(), `"block_open_0800_0900":true`) || !strings.Contains(initial.Body.String(), `"block_open_1600_1700":true`) || !strings.Contains(initial.Body.String(), `"block_open_2130_2230":true`) || !strings.Contains(initial.Body.String(), `"value_area_start_minute":1200`) || !strings.Contains(initial.Body.String(), `"value_area_end_minute":1440`) {
 		t.Fatalf("default strategy settings status=%d body=%s", initial.Code, initial.Body.String())
 	}
-	saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":5,"btc_usd":300000,"eth_usd":200000,"other_usd":100000,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30,"vwap_filter_enabled":false,"donchian_filter_enabled":true,"block_open_0800_0900":false,"block_open_1600_1700":true,"block_open_2130_2230":false,"value_area_start_minute":1080,"value_area_end_minute":1320}`))
-	if saved.Code != http.StatusOK || !strings.Contains(saved.Body.String(), `"window_minutes":5`) || !strings.Contains(saved.Body.String(), `"vwap_range_hours":18`) || !strings.Contains(saved.Body.String(), `"vwap_min_drawdown_pct":2.5`) || !strings.Contains(saved.Body.String(), `"vwap_donchian_pct":30`) || !strings.Contains(saved.Body.String(), `"vwap_filter_enabled":false`) || !strings.Contains(saved.Body.String(), `"donchian_filter_enabled":true`) || !strings.Contains(saved.Body.String(), `"block_open_0800_0900":false`) || !strings.Contains(saved.Body.String(), `"block_open_1600_1700":true`) || !strings.Contains(saved.Body.String(), `"block_open_2130_2230":false`) || !strings.Contains(saved.Body.String(), `"value_area_start_minute":1080`) || !strings.Contains(saved.Body.String(), `"value_area_end_minute":1320`) {
+	saved := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":5,"btc_usd":300000,"eth_usd":200000,"other_usd":100000,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30,"vwap_filter_enabled":false,"donchian_filter_enabled":true,"value_area_filter_enabled":false,"block_open_0800_0900":false,"block_open_1600_1700":true,"block_open_2130_2230":false,"value_area_start_minute":1080,"value_area_end_minute":1320}`))
+	if saved.Code != http.StatusOK || !strings.Contains(saved.Body.String(), `"window_minutes":5`) || !strings.Contains(saved.Body.String(), `"vwap_range_hours":18`) || !strings.Contains(saved.Body.String(), `"vwap_min_drawdown_pct":2.5`) || !strings.Contains(saved.Body.String(), `"vwap_donchian_pct":30`) || !strings.Contains(saved.Body.String(), `"vwap_filter_enabled":false`) || !strings.Contains(saved.Body.String(), `"donchian_filter_enabled":true`) || !strings.Contains(saved.Body.String(), `"value_area_filter_enabled":false`) || !strings.Contains(saved.Body.String(), `"block_open_0800_0900":false`) || !strings.Contains(saved.Body.String(), `"block_open_1600_1700":true`) || !strings.Contains(saved.Body.String(), `"block_open_2130_2230":false`) || !strings.Contains(saved.Body.String(), `"value_area_start_minute":1080`) || !strings.Contains(saved.Body.String(), `"value_area_end_minute":1320`) {
 		t.Fatalf("saved strategy settings status=%d body=%s", saved.Code, saved.Body.String())
 	}
 	legacy := serveAlert(srv, http.MethodPost, "/api/v1/alerts/strategy-settings", strings.NewReader(`{"window_minutes":5,"btc_usd":300000,"eth_usd":200000,"other_usd":100000,"vwap_range_hours":18,"vwap_min_drawdown_pct":2.5,"vwap_donchian_pct":30}`))
-	if legacy.Code != http.StatusOK || !strings.Contains(legacy.Body.String(), `"vwap_filter_enabled":false`) || !strings.Contains(legacy.Body.String(), `"donchian_filter_enabled":true`) || !strings.Contains(legacy.Body.String(), `"block_open_0800_0900":false`) || !strings.Contains(legacy.Body.String(), `"block_open_1600_1700":true`) || !strings.Contains(legacy.Body.String(), `"block_open_2130_2230":false`) || !strings.Contains(legacy.Body.String(), `"value_area_start_minute":1080`) || !strings.Contains(legacy.Body.String(), `"value_area_end_minute":1320`) {
+	if legacy.Code != http.StatusOK || !strings.Contains(legacy.Body.String(), `"vwap_filter_enabled":false`) || !strings.Contains(legacy.Body.String(), `"donchian_filter_enabled":true`) || !strings.Contains(legacy.Body.String(), `"value_area_filter_enabled":false`) || !strings.Contains(legacy.Body.String(), `"block_open_0800_0900":false`) || !strings.Contains(legacy.Body.String(), `"block_open_1600_1700":true`) || !strings.Contains(legacy.Body.String(), `"block_open_2130_2230":false`) || !strings.Contains(legacy.Body.String(), `"value_area_start_minute":1080`) || !strings.Contains(legacy.Body.String(), `"value_area_end_minute":1320`) {
 		t.Fatalf("legacy strategy settings submission must preserve switches: status=%d body=%s", legacy.Code, legacy.Body.String())
 	}
 	view, err := srv.svc.Alerts(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Thresholds.WindowMinutes != 5 || view.Thresholds.ETHUSD != 200000 || view.Thresholds.OtherUSD != 100000 || view.Thresholds.VWAPRangeHours != 18 || view.Thresholds.VWAPMinDrawdownPct != 2.5 || view.Thresholds.VWAPDonchianPct != 30 || view.Thresholds.VWAPFilterEnabled || !view.Thresholds.DonchianFilterEnabled || view.Thresholds.BlockOpen0800To0900 || !view.Thresholds.BlockOpen1600To1700 || view.Thresholds.BlockOpen2130To2230 || view.Thresholds.ValueAreaStartMinute != 1080 || view.Thresholds.ValueAreaEndMinute != 1320 {
+	if view.Thresholds.WindowMinutes != 5 || view.Thresholds.ETHUSD != 200000 || view.Thresholds.OtherUSD != 100000 || view.Thresholds.VWAPRangeHours != 18 || view.Thresholds.VWAPMinDrawdownPct != 2.5 || view.Thresholds.VWAPDonchianPct != 30 || view.Thresholds.VWAPFilterEnabled || !view.Thresholds.DonchianFilterEnabled || view.Thresholds.ValueAreaFilterEnabled || view.Thresholds.BlockOpen0800To0900 || !view.Thresholds.BlockOpen1600To1700 || view.Thresholds.BlockOpen2130To2230 || view.Thresholds.ValueAreaStartMinute != 1080 || view.Thresholds.ValueAreaEndMinute != 1320 {
 		t.Fatalf("live strategy settings = %+v", view.Thresholds)
 	}
+	if !strings.Contains(view.Method, "VAL/VAH 服务端过滤关闭") {
+		t.Fatalf("the strategy description must reflect the disabled VAL/VAH filter: %s", view.Method)
+	}
 	chart := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=BTCUSDT", nil)
-	if chart.Code != http.StatusOK || !strings.Contains(chart.Body.String(), `"btc_usd":300000`) || !strings.Contains(chart.Body.String(), `"window_minutes":5`) {
+	if chart.Code != http.StatusOK || !strings.Contains(chart.Body.String(), `"btc_usd":300000`) || !strings.Contains(chart.Body.String(), `"window_minutes":5`) || !strings.Contains(chart.Body.String(), `"value_area_filter_enabled":false`) {
 		t.Fatalf("chart signals must expose the saved strategy settings: %d %s", chart.Code, chart.Body.String())
 	}
 	chart168 := serveAlert(srv, http.MethodGet, "/api/v1/alerts/chart-signals?symbol=BTCUSDT&window_hours=168", nil)
@@ -685,6 +693,52 @@ func TestAlertHistoryEndpoints(t *testing.T) {
 
 // TestAlertSettingsEndpoints covers the token secrecy rules: the form may set a token,
 // but no response may return it, and an empty submission keeps the stored value.
+func TestAlertTimelineNotificationFilter(t *testing.T) {
+	srv, st := alertTestServer(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Truncate(time.Second)
+	queued := domain.LiquidationAlert{ID: "notify-queued", Symbol: "BTCUSDT", Side: "long", TradeSide: "long", TriggeredAt: at, Status: domain.AlertStateWatching}
+	if _, err := st.SaveLiquidationAlert(ctx, queued); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkLiquidationAlertNotified(ctx, queued.ID, "queued", ""); err != nil {
+		t.Fatal(err)
+	}
+	unknown := domain.LiquidationAlert{ID: "notify-unknown", Symbol: "ETHUSDT", Side: "short", TradeSide: "short", TriggeredAt: at.Add(time.Minute), Status: domain.AlertStateWatching}
+	if _, err := st.SaveLiquidationAlert(ctx, unknown); err != nil {
+		t.Fatal(err)
+	}
+	muted := domain.TradeSignal{ID: "notify-muted", AlertID: "notify-queued", Symbol: "BTCUSDT", Kind: domain.SignalAggressive, Side: "long", LiquidationSide: "long", CreatedAt: at.Add(2 * time.Minute)}
+	if _, err := st.SaveTradeSignal(ctx, muted); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkTradeSignalNotified(ctx, muted.ID, "muted", "类别已关闭"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		filter string
+		want   int
+	}{
+		{filter: "notified", want: 1},
+		{filter: "not_notified", want: 1},
+		{filter: "unknown", want: 1},
+	} {
+		response := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?notification="+tc.filter, nil)
+		var page domain.AlertTimelinePage
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &page) != nil || page.TotalCount != int64(tc.want) || len(page.Rows) != tc.want {
+			t.Fatalf("notification filter %q failed: status=%d body=%s page=%+v", tc.filter, response.Code, response.Body.String(), page)
+		}
+	}
+	replayed := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?notification=notified&replay=1", nil)
+	if replayed.Code != http.StatusOK || strings.Contains(replayed.Body.String(), `"replayed":true`) {
+		t.Fatalf("notification filtering must use persisted audit rows: status=%d body=%s", replayed.Code, replayed.Body.String())
+	}
+	invalid := serveAlert(srv, http.MethodGet, "/api/v1/alerts/timeline?notification=invalid", nil)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid notification filter status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
 func TestAlertSettingsEndpoints(t *testing.T) {
 	srv, _ := alertTestServer(t)
 	invalid := serveAlert(srv, http.MethodPost, "/api/v1/alerts/settings", strings.NewReader(`{"telegram_enabled":false,"telegram_token":"not-a-token","telegram_chat_id":"1"}`))

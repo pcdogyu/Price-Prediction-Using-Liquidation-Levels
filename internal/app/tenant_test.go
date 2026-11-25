@@ -24,7 +24,7 @@ func TestTenantAlertSettingsAreIsolated(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SaveAlertStrategySettingsForContext(alice, domain.AlertStrategySettings{WindowMinutes: 7, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 150000, VWAPFilterEnabled: false, DonchianFilterEnabled: true, BlockOpen0800To0900: false, BlockOpen1600To1700: true, BlockOpen2130To2230: false}); err != nil {
+	if _, err := svc.SaveAlertStrategySettingsForContext(alice, domain.AlertStrategySettings{WindowMinutes: 7, BTCUSD: 300000, ETHUSD: 200000, OtherUSD: 150000, VWAPFilterEnabled: false, DonchianFilterEnabled: true, ValueAreaFilterEnabled: false, BlockOpen0800To0900: false, BlockOpen1600To1700: true, BlockOpen2130To2230: false}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -39,7 +39,7 @@ func TestTenantAlertSettingsAreIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bobStrategy.WindowMinutes == 7 || bobStrategy.BTCUSD == 300000 || !bobStrategy.VWAPFilterEnabled || !bobStrategy.DonchianFilterEnabled || !bobStrategy.BlockOpen0800To0900 || !bobStrategy.BlockOpen1600To1700 || !bobStrategy.BlockOpen2130To2230 {
+	if bobStrategy.WindowMinutes == 7 || bobStrategy.BTCUSD == 300000 || !bobStrategy.VWAPFilterEnabled || !bobStrategy.DonchianFilterEnabled || !bobStrategy.ValueAreaFilterEnabled || !bobStrategy.BlockOpen0800To0900 || !bobStrategy.BlockOpen1600To1700 || !bobStrategy.BlockOpen2130To2230 {
 		t.Fatalf("bob inherited alice strategy: %+v", bobStrategy)
 	}
 
@@ -54,7 +54,7 @@ func TestTenantAlertSettingsAreIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if aliceStrategy.WindowMinutes != 7 || aliceStrategy.BTCUSD != 300000 || aliceStrategy.VWAPFilterEnabled || !aliceStrategy.DonchianFilterEnabled || aliceStrategy.BlockOpen0800To0900 || !aliceStrategy.BlockOpen1600To1700 || aliceStrategy.BlockOpen2130To2230 {
+	if aliceStrategy.WindowMinutes != 7 || aliceStrategy.BTCUSD != 300000 || aliceStrategy.VWAPFilterEnabled || !aliceStrategy.DonchianFilterEnabled || aliceStrategy.ValueAreaFilterEnabled || aliceStrategy.BlockOpen0800To0900 || !aliceStrategy.BlockOpen1600To1700 || aliceStrategy.BlockOpen2130To2230 {
 		t.Fatalf("alice strategy did not round trip: %+v", aliceStrategy)
 	}
 }
