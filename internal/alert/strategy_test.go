@@ -417,7 +417,7 @@ func radarShortContext(price float64, candles []domain.Candle) MarketContext {
 		ValueAreaVAL: price - 2, ValueAreaVAH: price - 1, ValueAreaReady: true}
 }
 
-func TestRadarValueAreaStrictlyGatesLiquidationDirection(t *testing.T) {
+func TestRadarValueAreaGatesValidBoundsAndBypassesUnavailableProfile(t *testing.T) {
 	cfg := Defaults()
 	cfg.VWAPFilterEnabled = false
 	cfg.DonchianFilterEnabled = false
@@ -429,14 +429,15 @@ func TestRadarValueAreaStrictlyGatesLiquidationDirection(t *testing.T) {
 		return filterDecision(cfg, side, MarketContext{Ready: true, Price: price, ValueAreaVAL: val, ValueAreaVAH: vah, ValueAreaReady: ready}, symbolState{longLiqCumulative: 100}, 100)
 	}
 	cases := []struct {
-		name      string
-		side      string
-		price     float64
-		val       float64
-		vah       float64
-		ready     bool
-		wantOpen  bool
-		wantBlock string
+		name       string
+		side       string
+		price      float64
+		val        float64
+		vah        float64
+		ready      bool
+		wantOpen   bool
+		wantBlock  string
+		wantBypass bool
 	}{
 		{name: "long below VAL", side: "long", price: 99, val: 100, vah: 110, ready: true, wantOpen: true},
 		{name: "short above VAH", side: "short", price: 111, val: 100, vah: 110, ready: true, wantOpen: true},
@@ -444,7 +445,8 @@ func TestRadarValueAreaStrictlyGatesLiquidationDirection(t *testing.T) {
 		{name: "short at VAH", side: "short", price: 110, val: 100, vah: 110, ready: true, wantBlock: "price_not_above_vah"},
 		{name: "long inside value area", side: "long", price: 105, val: 100, vah: 110, ready: true, wantBlock: "price_not_below_val"},
 		{name: "short inside value area", side: "short", price: 105, val: 100, vah: 110, ready: true, wantBlock: "price_not_above_vah"},
-		{name: "missing profile", side: "long", price: 99, val: 0, vah: 0, ready: false, wantBlock: "value_area_unavailable"},
+		{name: "missing profile", side: "long", price: 99, val: 0, vah: 0, ready: false, wantOpen: true, wantBypass: true},
+		{name: "invalid profile bounds", side: "short", price: 111, val: 120, vah: 110, ready: true, wantOpen: true, wantBypass: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -454,6 +456,9 @@ func TestRadarValueAreaStrictlyGatesLiquidationDirection(t *testing.T) {
 			}
 			if tc.wantBlock != "" && (!strings.Contains(got.Reason, tc.wantBlock) || !strings.Contains(strings.Join(got.FilterTags, ","), "value_area")) {
 				t.Fatalf("filter reason/tags do not identify VAL/VAH block: %+v", got)
+			}
+			if tc.wantBypass && (!strings.Contains(got.Reason, "value_area_unavailable_bypassed") || strings.Contains(strings.Join(got.FilterTags, ","), "value_area")) {
+				t.Fatalf("unavailable VAL/VAH should be recorded as bypassed, not blocked: %+v", got)
 			}
 		})
 	}

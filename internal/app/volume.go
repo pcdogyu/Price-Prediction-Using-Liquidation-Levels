@@ -161,7 +161,12 @@ func (s *Service) volumeBackfillLoop(ctx context.Context) {
 				continue
 			}
 			delete(s.volumeBackfillError, symbol)
-			delete(s.volumeBackfillRetryAt, symbol)
+			// A profile can remain stale after a successful sync when the exchange
+			// has no newer trades. Cool down repeated session refreshes in that case.
+			if s.volumeBackfillRetryAt == nil {
+				s.volumeBackfillRetryAt = make(map[string]time.Time)
+			}
+			s.volumeBackfillRetryAt[symbol] = time.Now().Add(volumeProfileBackfillRetryDelay)
 			_, alreadyStreaming := s.volumeStreamSymbols[symbol]
 			if !alreadyStreaming {
 				s.volumeStreamSymbols[symbol] = struct{}{}
@@ -194,7 +199,7 @@ func (s *Service) requeueIncompleteVolumeProfile(ctx context.Context, symbol str
 	if complete {
 		return
 	}
-	if err := s.EnsureVolumeProfile(ctx, symbol, false); err != nil && ctx.Err() == nil && s.log != nil {
+	if err := s.enqueueVolumeProfileBackfill(ctx, symbol, false, true); err != nil && ctx.Err() == nil && s.log != nil {
 		s.log.Warn("incomplete aggregate trade backfill could not be requeued", "symbol", symbol, "error", err)
 	}
 }
@@ -245,6 +250,14 @@ func normalizeVolumeSymbol(symbol string) string {
 // volume session for aggregate-trade synchronization. The queue is idempotent;
 // force only retries an incomplete or failed session.
 func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force bool) error {
+	return s.enqueueVolumeProfileBackfill(ctx, symbol, force, force)
+}
+
+// enqueueVolumeProfileBackfill requests an asynchronous current-session sync.
+// refreshCompleted lets the radar repair stale or unusable profiles even when
+// the cursor was previously marked complete. bypassRetry is reserved for an
+// explicit force request and the worker's immediate incomplete-session retry.
+func (s *Service) enqueueVolumeProfileBackfill(ctx context.Context, symbol string, refreshCompleted, bypassRetry bool) error {
 	symbol = normalizeVolumeSymbol(symbol)
 	if symbol == "" {
 		return fmt.Errorf("symbol must be a Binance USDT perpetual")
@@ -274,21 +287,28 @@ func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force 
 		s.volumeBackfillRetryAt = make(map[string]time.Time)
 	}
 	s.volumeRequested[symbol] = struct{}{}
-	if (complete && !force) || s.volumeContext == nil || s.volumeBackfillQueue == nil {
+	if complete && !refreshCompleted {
 		s.volumeMu.Unlock()
 		return nil
+	}
+	if s.volumeContext == nil || s.volumeBackfillQueue == nil {
+		s.volumeMu.Unlock()
+		return errors.New("volume profile backfill worker unavailable")
 	}
 	if _, pending := s.volumePending[symbol]; pending {
 		s.volumeMu.Unlock()
 		return nil
 	}
-	if !force && time.Now().Before(s.volumeBackfillRetryAt[symbol]) {
+	if !bypassRetry && time.Now().Before(s.volumeBackfillRetryAt[symbol]) {
 		s.volumeMu.Unlock()
 		return nil
 	}
 	s.volumePending[symbol] = struct{}{}
 	delete(s.volumeBackfillError, symbol)
-	delete(s.volumeBackfillRetryAt, symbol)
+	if s.volumeBackfillRetryAt == nil {
+		s.volumeBackfillRetryAt = make(map[string]time.Time)
+	}
+	s.volumeBackfillRetryAt[symbol] = time.Now().Add(volumeProfileBackfillRetryDelay)
 	queue := s.volumeBackfillQueue
 	s.volumeMu.Unlock()
 	select {
@@ -297,6 +317,7 @@ func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force 
 	case <-ctx.Done():
 		s.volumeMu.Lock()
 		delete(s.volumePending, symbol)
+		delete(s.volumeBackfillRetryAt, symbol)
 		s.volumeMu.Unlock()
 		return ctx.Err()
 	default:
@@ -655,7 +676,10 @@ func (s *Service) currentVolumeProfile(ctx context.Context, symbol string) (doma
 		profile.State = "stale"
 	}
 	if err == nil && profile.State != "ok" {
-		err = s.EnsureVolumeProfile(ctx, symbol, false)
+		err = s.enqueueVolumeProfileBackfill(ctx, symbol, true, false)
+		if err != nil && ctx.Err() == nil && s.log != nil {
+			s.log.Warn("value-area refresh request failed", "symbol", symbol, "error", err)
+		}
 	}
 	if err != nil && profile.Symbol == "" {
 		profile = domain.VolumeProfile{Symbol: symbol, Source: domain.DataSourceBinanceUSDM, State: "unavailable", UpdatedAt: now}

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,10 +150,10 @@ func TestRecordLiquidationDrivesAlertAndSignals(t *testing.T) {
 		if row.Side != row.LiquidationSide {
 			t.Fatalf("signal direction must follow the liquidated side: %+v", row)
 		}
-		// No current complete value-area profile is provisioned in this test, so
-		// fail-closed signals stay in history without being sent as trade guidance.
-		if row.NotifyStatus != "filtered" || row.FilterTags[len(row.FilterTags)-1] != "value_area" {
-			t.Fatalf("signal %s should be retained but filtered by missing VAL/VAH: %+v", row.ID, row)
+		// Missing VAL/VAH is bypassed for this signal; the value-area tag is not
+		// treated as a block, while other configured radar filters remain active.
+		if row.NotifyStatus == "filtered" || !strings.Contains(row.FilterReason, "value_area_unavailable_bypassed") || strings.Contains(strings.Join(row.FilterTags, ","), "value_area") {
+			t.Fatalf("signal %s should continue without the unavailable VAL/VAH gate: %+v", row.ID, row)
 		}
 	}
 	alerts, err = svc.AlertHistory(ctx, "BTCUSDT", "", 10, "")
@@ -485,7 +486,7 @@ func TestAlertSettingsRoundTripAndRestartReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if signals.SignalCount != 1 || signals.Rows[0].NotifyStatus != "filtered" {
+	if signals.SignalCount != 1 || signals.Rows[0].NotifyStatus == "filtered" || !strings.Contains(signals.Rows[0].FilterReason, "value_area_unavailable_bypassed") {
 		t.Fatalf("replayed signals = %+v", signals.Rows)
 	}
 	alerts, err := restarted.AlertHistory(ctx, "", "", 10, "")

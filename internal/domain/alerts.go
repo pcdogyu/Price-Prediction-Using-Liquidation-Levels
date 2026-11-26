@@ -53,7 +53,7 @@ func AlertMonitorMethod(windowMinutes, refreshMinutes, topSymbols int, valueArea
 	if topSymbols <= 0 {
 		topSymbols = AlertTopSymbolsDefault
 	}
-	valueAreaRule := "VAL/VAH 过滤开启：多单爆仓仅在当前时段价格低于 VAL 时允许开多，空单爆仓仅在价格高于 VAH 时允许开空，VAL/VAH 缺失或过期时禁止新开仓"
+	valueAreaRule := "VAL/VAH 过滤开启：多单爆仓仅在当前时段价格低于 VAL 时允许开多，空单爆仓仅在价格高于 VAH 时允许开空；价值区缺失或过期时跳过该边界并异步回溯，其他雷达过滤仍生效"
 	if !valueAreaFilterEnabled {
 		valueAreaRule = "VAL/VAH 服务端过滤关闭：爆仓方向评估不受价值区边界限制"
 	}

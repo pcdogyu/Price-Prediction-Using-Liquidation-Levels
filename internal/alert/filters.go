@@ -313,8 +313,10 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 		if !cfg.ValueAreaFilterEnabled {
 			return true
 		}
+		// An unusable profile bypasses only the value-area boundary. The rest of
+		// the radar gates still decide whether this signal can open.
 		if !d.ValueAreaReady {
-			return false
+			return true
 		}
 		if direction == "long" {
 			return price < d.ValueAreaVAL
@@ -421,15 +423,17 @@ func filterDecision(cfg Config, side string, ctx MarketContext, state symbolStat
 			}
 		}
 	}
-	if cfg.ValueAreaFilterEnabled && !valueAreaAllows(side) {
+	if cfg.ValueAreaFilterEnabled && !d.ValueAreaReady {
+		if d.Reason == "" {
+			d.Reason = "value_area_unavailable_bypassed"
+		} else {
+			d.Reason += ";value_area_unavailable_bypassed"
+		}
+	} else if cfg.ValueAreaFilterEnabled && !valueAreaAllows(side) {
 		addTag("value_area")
-		reason := "value_area_unavailable_" + side + "_liquidation_blocked"
-		if d.ValueAreaReady {
-			if side == "long" {
-				reason = "price_not_below_val_long_liquidation_blocked"
-			} else {
-				reason = "price_not_above_vah_short_liquidation_blocked"
-			}
+		reason := "price_not_above_vah_short_liquidation_blocked"
+		if side == "long" {
+			reason = "price_not_below_val_long_liquidation_blocked"
 		}
 		if d.Reason == "" {
 			d.Reason = reason

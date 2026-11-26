@@ -177,7 +177,7 @@ func TestRoutesAndDashboardAssets(t *testing.T) {
 	r = httptest.NewRequest(http.MethodPost, "/api/v1/volume-profile/backfill?symbol=BTCUSDT", nil)
 	w = httptest.NewRecorder()
 	srv.http.Handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"binance_usdm"`) || !strings.Contains(w.Body.String(), `"val":`) || !strings.Contains(w.Body.String(), `"vah":`) {
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "volume profile backfill worker unavailable") {
 		t.Fatalf("volume profile backfill status=%d body=%s", w.Code, w.Body.String())
 	}
 	r = httptest.NewRequest(http.MethodGet, "/api/v1/volume-profile/backfill?symbol=BTCUSDT", nil)

@@ -292,6 +292,58 @@ func TestEnsureVolumeProfileForceQueuesCompletedSession(t *testing.T) {
 	}
 }
 
+func TestCurrentVolumeProfileQueuesRefreshForCompletedUnavailableSession(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "volume-refresh-complete.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	session, err := volumeprofile.SessionAt(time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetVolumeProfileComplete(context.Background(), "SOLUSDT", session.Start, true); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{
+		store:                 st,
+		volumeContext:         context.Background(),
+		volumeRequested:       map[string]struct{}{"SOLUSDT": {}},
+		volumePending:         make(map[string]struct{}),
+		volumeBackfillError:   make(map[string]string),
+		volumeBackfillRetryAt: make(map[string]time.Time),
+		volumeBackfillQueue:   make(chan string, 4),
+	}
+	profile, err := svc.currentVolumeProfile(context.Background(), "SOLUSDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.State == "ok" || len(svc.volumeBackfillQueue) != 1 {
+		t.Fatalf("unavailable completed profile should queue one refresh: profile=%+v queued=%d", profile, len(svc.volumeBackfillQueue))
+	}
+	if symbol := <-svc.volumeBackfillQueue; symbol != "SOLUSDT" {
+		t.Fatalf("queued symbol=%q, want SOLUSDT", symbol)
+	}
+
+	// Simulate the worker finishing. Repeated stale reads should honor the
+	// cooldown rather than immediately replaying the same session again.
+	delete(svc.volumePending, "SOLUSDT")
+	if err := svc.enqueueVolumeProfileBackfill(context.Background(), "SOLUSDT", true, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.volumeBackfillQueue) != 0 {
+		t.Fatalf("refresh queued during cooldown: %d", len(svc.volumeBackfillQueue))
+	}
+	svc.volumeBackfillRetryAt["SOLUSDT"] = time.Now().Add(-time.Second)
+	if err := svc.enqueueVolumeProfileBackfill(context.Background(), "SOLUSDT", true, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.volumeBackfillQueue) != 1 {
+		t.Fatalf("refresh after cooldown queued=%d, want one", len(svc.volumeBackfillQueue))
+	}
+}
+
 func TestIncompleteVolumeBackfillIsRequeuedAfterPendingClears(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "volume-incomplete-requeue.db"))
 	if err != nil {

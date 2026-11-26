@@ -47,6 +47,7 @@
     value_area_unavailable: 'VAL/VAH 价值区数据不可用，禁止开仓',
     value_area_unavailable_long_liquidation_blocked: 'VAL/VAH 不可用：禁止多单开仓',
     value_area_unavailable_short_liquidation_blocked: 'VAL/VAH 不可用：禁止空单开仓',
+    value_area_unavailable_bypassed: 'VAL/VAH 不可用：本次跳过边界过滤',
     price_not_below_val_long_liquidation_blocked: '价格未严格低于 VAL：禁止多单开仓',
     price_not_above_vah_short_liquidation_blocked: '价格未严格高于 VAH：禁止空单开仓',
     vwap_zone_unavailable_long_liquidation_close_only: 'VWAP 分区不可用：多单爆仓仅允许平仓',
