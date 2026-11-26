@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,8 @@ CREATE TABLE IF NOT EXISTS trade_signals(id TEXT PRIMARY KEY,symbol TEXT NOT NUL
 CREATE INDEX IF NOT EXISTS trade_signals_time ON trade_signals(created_ts DESC,id DESC);
 CREATE INDEX IF NOT EXISTS trade_signals_kind ON trade_signals(kind,created_ts DESC);
 CREATE INDEX IF NOT EXISTS trade_signals_symbol ON trade_signals(symbol,created_ts DESC);
+CREATE INDEX IF NOT EXISTS liquidation_alerts_timeline_filter_time ON liquidation_alerts(COALESCE(json_extract(payload,'$.filter_applied'),0),COALESCE(json_extract(payload,'$.gamma_ignored'),0),trigger_ts DESC,id DESC,COALESCE(json_extract(payload,'$.notify_status'),''));
+CREATE INDEX IF NOT EXISTS trade_signals_timeline_filter_time ON trade_signals(COALESCE(json_extract(payload,'$.filter_applied'),0),COALESCE(json_extract(payload,'$.gamma_ignored'),0),created_ts DESC,id DESC,COALESCE(json_extract(payload,'$.notify_status'),''),kind);
 CREATE TABLE IF NOT EXISTS alert_watch_symbols(symbol TEXT PRIMARY KEY,rank INTEGER NOT NULL,quote_volume_usd REAL NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_settings(id INTEGER PRIMARY KEY CHECK(id=1),telegram_enabled INTEGER NOT NULL,telegram_token TEXT NOT NULL,telegram_chat_id TEXT NOT NULL,notify_alerts INTEGER NOT NULL,notify_aggressive INTEGER NOT NULL,notify_steady INTEGER NOT NULL,notify_value_area INTEGER NOT NULL DEFAULT 1,order_alerts INTEGER NOT NULL DEFAULT 1,order_aggressive INTEGER NOT NULL DEFAULT 1,order_steady INTEGER NOT NULL DEFAULT 1,order_value_area INTEGER NOT NULL DEFAULT 1,order_alerts_close INTEGER NOT NULL DEFAULT 1,order_aggressive_close INTEGER NOT NULL DEFAULT 1,order_steady_close INTEGER NOT NULL DEFAULT 1,order_value_area_close INTEGER NOT NULL DEFAULT 1,updated_ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_strategy_settings(id INTEGER PRIMARY KEY CHECK(id=1),window_minutes INTEGER NOT NULL,btc_usd REAL NOT NULL,eth_usd REAL NOT NULL,other_usd REAL NOT NULL,vwap_range_hours INTEGER NOT NULL DEFAULT 24,vwap_min_drawdown_pct REAL NOT NULL DEFAULT 2.2,vwap_donchian_pct REAL NOT NULL DEFAULT 35,vwap_filter_enabled INTEGER NOT NULL DEFAULT 1,donchian_filter_enabled INTEGER NOT NULL DEFAULT 1,value_area_filter_enabled INTEGER NOT NULL DEFAULT 1,block_open_0800_0900 INTEGER NOT NULL DEFAULT 1,block_open_1600_1700 INTEGER NOT NULL DEFAULT 1,block_open_2130_2230 INTEGER NOT NULL DEFAULT 1,value_area_start_minute INTEGER NOT NULL DEFAULT 1200,value_area_end_minute INTEGER NOT NULL DEFAULT 1440,updated_ts INTEGER NOT NULL);
@@ -82,7 +85,9 @@ CREATE INDEX IF NOT EXISTS liquidation_alerts_symbol ON liquidation_alerts(symbo
 CREATE TABLE IF NOT EXISTS trade_signals(id TEXT PRIMARY KEY,symbol TEXT NOT NULL,kind TEXT NOT NULL,side TEXT NOT NULL,alert_id TEXT NOT NULL DEFAULT '',created_ts INTEGER NOT NULL,notified INTEGER NOT NULL DEFAULT 0,payload BLOB NOT NULL,updated_ts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS trade_signals_time ON trade_signals(created_ts DESC,id DESC);
 CREATE INDEX IF NOT EXISTS trade_signals_kind ON trade_signals(kind,created_ts DESC);
-CREATE INDEX IF NOT EXISTS trade_signals_symbol ON trade_signals(symbol,created_ts DESC);`); err != nil {
+CREATE INDEX IF NOT EXISTS trade_signals_symbol ON trade_signals(symbol,created_ts DESC);
+CREATE INDEX IF NOT EXISTS liquidation_alerts_timeline_filter_time ON liquidation_alerts(COALESCE(json_extract(payload,'$.filter_applied'),0),COALESCE(json_extract(payload,'$.gamma_ignored'),0),trigger_ts DESC,id DESC,COALESCE(json_extract(payload,'$.notify_status'),''));
+CREATE INDEX IF NOT EXISTS trade_signals_timeline_filter_time ON trade_signals(COALESCE(json_extract(payload,'$.filter_applied'),0),COALESCE(json_extract(payload,'$.gamma_ignored'),0),created_ts DESC,id DESC,COALESCE(json_extract(payload,'$.notify_status'),''),kind);`); err != nil {
 		return err
 	}
 	if err := migrateAlertSettingsOn(ctx, s.alerts()); err != nil {
@@ -668,8 +673,57 @@ func (s *Store) AlertTimelineSinceWithNotifications(ctx context.Context, symbol,
 	case "unknown":
 		notificationClause = "COALESCE(json_extract(payload,'$.notify_status'),'')=''"
 	}
-	parts := []string{}
-	args := []any{}
+	type timelineRow struct {
+		item   domain.AlertTimelineItem
+		sortID string
+	}
+	loaded := []timelineRow{}
+	loadPart := func(query string, partArgs []any) error {
+		rows, queryErr := s.alerts().QueryContext(ctx, query, partArgs...)
+		if queryErr != nil {
+			return queryErr
+		}
+		for rows.Next() {
+			var recordType, sortID string
+			var eventMS int64
+			var payload []byte
+			if queryErr = rows.Scan(&recordType, &eventMS, &sortID, &payload); queryErr != nil {
+				_ = rows.Close()
+				return queryErr
+			}
+			item := domain.AlertTimelineItem{Type: recordType, EventAt: time.UnixMilli(eventMS).UTC()}
+			if recordType == "alert" {
+				item.Alert = &domain.LiquidationAlert{}
+				queryErr = json.Unmarshal(payload, item.Alert)
+			} else {
+				item.Signal = &domain.TradeSignal{}
+				queryErr = json.Unmarshal(payload, item.Signal)
+			}
+			if queryErr != nil {
+				_ = rows.Close()
+				return fmt.Errorf("decode %s timeline row: %w", recordType, queryErr)
+			}
+			loaded = append(loaded, timelineRow{item: item, sortID: sortID})
+		}
+		if queryErr = rows.Err(); queryErr != nil {
+			_ = rows.Close()
+			return queryErr
+		}
+		return rows.Close()
+	}
+	buildPart := func(recordTypeExpr, table, timestampColumn, sortPrefix string, clauses []string, partArgs []any) (string, []any) {
+		if !since.IsZero() {
+			clauses = append(clauses, timestampColumn+">=?")
+			partArgs = append(partArgs, since.UTC().UnixMilli())
+		}
+		if !at.IsZero() {
+			clauses = append(clauses, "("+timestampColumn+"<? OR ("+timestampColumn+"=? AND ('"+sortPrefix+"'||id)<?))")
+			partArgs = append(partArgs, at.UnixMilli(), at.UnixMilli(), cursorID)
+		}
+		query := "SELECT " + recordTypeExpr + " AS record_type," + timestampColumn + " AS event_ts,'" + sortPrefix + "'||id AS sort_id,payload FROM " + table + whereSQL(clauses) + " ORDER BY " + timestampColumn + " DESC,id DESC LIMIT ?"
+		partArgs = append(partArgs, limit+1)
+		return query, partArgs
+	}
 	if kind == "" || kind == "alert" {
 		clauses := []string{}
 		partArgs := []any{}
@@ -683,8 +737,10 @@ func (s *Store) AlertTimelineSinceWithNotifications(ctx context.Context, symbol,
 		if notificationClause != "" {
 			clauses = append(clauses, notificationClause)
 		}
-		parts = append(parts, `SELECT 'alert' AS record_type,trigger_ts AS event_ts,'alert:'||id AS sort_id,payload FROM liquidation_alerts`+whereSQL(clauses))
-		args = append(args, partArgs...)
+		query, partArgs := buildPart("'alert'", "liquidation_alerts", "trigger_ts", "alert:", clauses, partArgs)
+		if err := loadPart(query, partArgs); err != nil {
+			return out, err
+		}
 	}
 	if kind == "" || kind == domain.SignalAggressive || kind == domain.SignalSteady || kind == domain.SignalValueArea {
 		clauses := []string{}
@@ -703,63 +759,17 @@ func (s *Store) AlertTimelineSinceWithNotifications(ctx context.Context, symbol,
 		if notificationClause != "" {
 			clauses = append(clauses, notificationClause)
 		}
-		parts = append(parts, `SELECT kind AS record_type,created_ts AS event_ts,'signal:'||id AS sort_id,payload FROM trade_signals`+whereSQL(clauses))
-		args = append(args, partArgs...)
-	}
-
-	query := "SELECT record_type,event_ts,sort_id,payload FROM (" + strings.Join(parts, " UNION ALL ") + ")"
-	outerWhere := []string{}
-	outerArgs := []any{}
-	if !since.IsZero() {
-		outerWhere = append(outerWhere, "event_ts>=?")
-		outerArgs = append(outerArgs, since.UTC().UnixMilli())
-	}
-	if !at.IsZero() {
-		outerWhere = append(outerWhere, "(event_ts<? OR (event_ts=? AND sort_id<?))")
-		outerArgs = append(outerArgs, at.UnixMilli(), at.UnixMilli(), cursorID)
-	}
-	if len(outerWhere) > 0 {
-		query += " WHERE " + strings.Join(outerWhere, " AND ")
-	}
-	query += " ORDER BY event_ts DESC,sort_id DESC LIMIT ?"
-	args = append(args, outerArgs...)
-	args = append(args, limit+1)
-	rows, err := s.alerts().QueryContext(ctx, query, args...)
-	if err != nil {
-		return out, err
-	}
-	defer rows.Close()
-	type timelineRow struct {
-		item   domain.AlertTimelineItem
-		sortID string
-	}
-	loaded := []timelineRow{}
-	for rows.Next() {
-		var recordType, sortID string
-		var eventMS int64
-		var payload []byte
-		if err = rows.Scan(&recordType, &eventMS, &sortID, &payload); err != nil {
+		query, partArgs := buildPart("kind", "trade_signals", "created_ts", "signal:", clauses, partArgs)
+		if err := loadPart(query, partArgs); err != nil {
 			return out, err
 		}
-		item := domain.AlertTimelineItem{Type: recordType, EventAt: time.UnixMilli(eventMS).UTC()}
-		if recordType == "alert" {
-			item.Alert = &domain.LiquidationAlert{}
-			err = json.Unmarshal(payload, item.Alert)
-		} else {
-			item.Signal = &domain.TradeSignal{}
-			err = json.Unmarshal(payload, item.Signal)
+	}
+	sort.Slice(loaded, func(i, j int) bool {
+		if loaded[i].item.EventAt.Equal(loaded[j].item.EventAt) {
+			return loaded[i].sortID > loaded[j].sortID
 		}
-		if err != nil {
-			return out, fmt.Errorf("decode %s timeline row: %w", recordType, err)
-		}
-		loaded = append(loaded, timelineRow{item: item, sortID: sortID})
-	}
-	if err = rows.Err(); err != nil {
-		return out, err
-	}
-	if err = rows.Close(); err != nil {
-		return out, err
-	}
+		return loaded[i].item.EventAt.After(loaded[j].item.EventAt)
+	})
 	if len(loaded) > limit {
 		loaded = loaded[:limit]
 		last := loaded[len(loaded)-1]
