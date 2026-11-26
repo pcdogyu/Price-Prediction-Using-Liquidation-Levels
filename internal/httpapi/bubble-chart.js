@@ -242,6 +242,38 @@
     return result.sort((a, b) => a.time - b.time || String(a.id || '').localeCompare(String(b.id || '')));
   }
 
+  function keepFirstVisibleValueAreaLongOpen(markers, range, scale) {
+    if (!Array.isArray(markers) || !Array.isArray(range) || !scale || !Number.isFinite(scale.start) || !Number.isFinite(scale.end)) {
+      return Array.isArray(markers) ? markers.slice() : [];
+    }
+    const isVisible = marker => Number.isFinite(marker.time) && Number.isFinite(marker.price) &&
+      marker.time >= scale.start && marker.time < scale.end && marker.price >= range[0] && marker.price <= range[1];
+    const isRegionLongOpen = marker => marker && marker.phase === 'alert_signal' && marker.kind === 'value_area' && marker.side === 'long' && marker.operation === 'open';
+    const result = [];
+    let firstVisible = null;
+    let suppressedCount = 0;
+    for (const marker of markers) {
+      if (!isRegionLongOpen(marker) || !isVisible(marker)) {
+        result.push(marker);
+        continue;
+      }
+      if (!firstVisible) {
+        firstVisible = Object.assign({}, marker);
+        result.push(firstVisible);
+        continue;
+      }
+      suppressedCount += Number.isFinite(marker.collapsed_count) ? marker.collapsed_count : 1;
+    }
+    if (firstVisible && suppressedCount) firstVisible.suppressed_count = (Number(firstVisible.suppressed_count) || 0) + suppressedCount;
+    return result;
+  }
+
+  function nextIntervalRefreshAt(now, intervalMs, graceMs = 1500) {
+    const current = Number(now), step = Number(intervalMs), grace = Math.max(0, Number(graceMs) || 0);
+    if (!Number.isFinite(current) || !Number.isFinite(step) || step <= 0) return NaN;
+    return (Math.floor(current / step) + 1) * step + grace;
+  }
+
   function tradeMarkerLabel(marker) {
     const side = marker && marker.side === 'short' ? '空' : '多';
     const englishSide = marker && marker.side === 'short' ? 'Short' : 'Long';
@@ -488,7 +520,7 @@
     }
   }
 
-  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, normalizeSignalMarkers, normalizeAlertHistoryMarkers, chartSignalPreferenceKey, filterChartMarkers, collapseTradeMarkers, tradeMarkerLabel, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
+  const exported = { candleRange, normalizeMarketSymbol, tradeTime, normalizeTradeMarkers, normalizeSignalMarkers, normalizeAlertHistoryMarkers, chartSignalPreferenceKey, filterChartMarkers, collapseTradeMarkers, keepFirstVisibleValueAreaLongOpen, nextIntervalRefreshAt, tradeMarkerLabel, tradeMarkerPlacements, mergeEvents, windowEvents, radius, placements, hitIndex, timeGridTicks, WindowLoader };
   if (typeof module === 'object' && module.exports) module.exports = exported;
   else root.BubbleChart = exported;
 })(typeof window === 'object' ? window : globalThis);

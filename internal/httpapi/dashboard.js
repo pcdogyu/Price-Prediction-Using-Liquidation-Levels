@@ -128,6 +128,8 @@ const historicalTradeRetryDelays = [2000, 5000, 15000, 30000];
 let refreshing = false;
 let refreshSequence = 0;
 let refreshController;
+let intervalMarketRefreshTimer = 0;
+let lastIntervalMarketRefreshKey = '';
 let olderController;
 const marketHistoryCache = new Map();
 const automaticMarketBackfill = {
@@ -608,6 +610,8 @@ function activateSymbol(next) {
   showSymbolLoading(symbol);
   draw(null, null, null, null);
   $('chart-context').textContent = '正在加载 ' + symbol + ' 的 K 线和清算数据…';
+  lastIntervalMarketRefreshKey = '';
+  scheduleIntervalMarketRefresh();
   refresh(true);
 }
 
@@ -1360,6 +1364,7 @@ function tradeMarkerTip(marker) {
     const typeLabels = { alert: '预警', aggressive: '激进信号', steady: '稳健信号', value_area: '价值区信号' };
     const statusLabels = { watching: '监控中', aggressive: '激活', steady: '稳健确认', expired: '已结束', sent: '已推送', suppressed: '已抑制', skipped: '未启用', disabled: '已关闭', failed: '推送失败', replayed: '历史记录', mixed: '状态混合' };
     if (marker.collapsed_count > 1) details.push('同K线合并 ' + marker.collapsed_count + ' 条记录');
+    if (marker.suppressed_count > 0) details.push('当前视野内隐藏重复区域做多信号 ' + marker.suppressed_count + ' 条');
     if (marker.status) details.push('状态 ' + (statusLabels[marker.status] || marker.status));
     if (marker.liquidation_side) details.push('爆仓方向 ' + (marker.liquidation_side === 'short' ? '空单爆仓' : '多单爆仓'));
     if (marker.event_count) details.push('爆仓笔数 ' + marker.event_count);
@@ -1395,7 +1400,9 @@ function tradeMarkerTip(marker) {
 
 function drawTradeMarkers(plot, markers, range, scale, y, left, candleRight, top, plotBottom) {
   const interval = intervalMilliseconds[chart.interval] || 900000;
-  const collapsed = window.BubbleChart.collapseTradeMarkers(markers, interval);
+  const collapsed = window.BubbleChart.keepFirstVisibleValueAreaLongOpen(
+    window.BubbleChart.collapseTradeMarkers(markers, interval), range, scale
+  );
   const layout = window.BubbleChart.tradeMarkerPlacements(collapsed, range, scale, y, { left, right: candleRight, top, bottom: plotBottom });
   layout.markers.forEach(({ marker, x, priceY, labelX, labelCenterY, labelBelow, labelText, labelWidth }) => {
     const isSignal = marker.phase === 'signal';
@@ -2553,6 +2560,37 @@ function resetChartState(options = {}) {
   chart.newData = false;
   $('new-data').classList.add('hidden');
   updateMarketBackfillButton();
+}
+
+function scheduleIntervalMarketRefresh(refreshIfDue = false) {
+  clearTimeout(intervalMarketRefreshTimer);
+  intervalMarketRefreshTimer = 0;
+  const interval = intervalMilliseconds[chart.interval] || 900000;
+  const grace = 1500;
+  const now = Date.now();
+  const latestBoundary = Math.floor((now - grace) / interval) * interval;
+  const dueAt = latestBoundary + grace;
+  const currentKey = symbol + ':' + chart.interval + ':' + latestBoundary;
+  if (refreshIfDue && now >= dueAt && lastIntervalMarketRefreshKey !== currentKey && !document.hidden) {
+    lastIntervalMarketRefreshKey = currentKey;
+    void refresh(false);
+  }
+  const nextAt = window.BubbleChart.nextIntervalRefreshAt(now, interval, grace);
+  intervalMarketRefreshTimer = setTimeout(() => {
+    const boundary = Math.floor((Date.now() - grace) / interval) * interval;
+    const key = symbol + ':' + chart.interval + ':' + boundary;
+    if (key !== lastIntervalMarketRefreshKey && !document.hidden) {
+      if (manualMarketBackfill.active) {
+        intervalMarketRefreshTimer = setTimeout(() => scheduleIntervalMarketRefresh(true), 1000);
+      } else {
+        lastIntervalMarketRefreshKey = key;
+        void refresh(false);
+        scheduleIntervalMarketRefresh();
+      }
+    } else {
+      scheduleIntervalMarketRefresh();
+    }
+  }, Math.max(0, nextAt - now));
 }
 
 function formatLog(entry) {

@@ -174,6 +174,28 @@ test('collapseTradeMarkers shows one opening or closing action per direction and
   assert.equal(shortLayout.markers[0].labelText, '平空×3');
 });
 
+test('only the earliest visible value-area long open is kept, without hiding other signals', () => {
+  const markers = [
+    { id: 'outside-time', time: 500, price: 100, phase: 'alert_signal', kind: 'value_area', side: 'long', operation: 'open' },
+    { id: 'first', time: 1100, price: 100, phase: 'alert_signal', kind: 'value_area', side: 'long', operation: 'open', collapsed_count: 2 },
+    { id: 'second', time: 1200, price: 101, phase: 'alert_signal', kind: 'value_area', side: 'long', operation: 'open' },
+    { id: 'short', time: 1300, price: 100, phase: 'alert_signal', kind: 'value_area', side: 'short', operation: 'open' },
+    { id: 'steady', time: 1400, price: 100, phase: 'alert_signal', kind: 'steady', side: 'long', operation: 'open' },
+    { id: 'close', time: 1500, price: 100, phase: 'alert_signal', kind: 'value_area', side: 'long', operation: 'close' },
+    { id: 'outside-price', time: 1600, price: 120, phase: 'alert_signal', kind: 'value_area', side: 'long', operation: 'open' }
+  ];
+  const visible = B.keepFirstVisibleValueAreaLongOpen(markers, [90, 110], { start: 1000, end: 2000 });
+  assert.deepEqual(visible.map(marker => marker.id), ['outside-time', 'first', 'short', 'steady', 'close', 'outside-price']);
+  assert.equal(visible.find(marker => marker.id === 'first').suppressed_count, 1);
+  assert.equal(markers[1].suppressed_count, undefined);
+});
+
+test('next interval refresh is scheduled after the next timeframe boundary', () => {
+  assert.equal(B.nextIntervalRefreshAt(120000, 60000, 1500), 181500);
+  assert.equal(B.nextIntervalRefreshAt(120001, 60000, 1500), 181500);
+  assert.ok(Number.isNaN(B.nextIntervalRefreshAt(120000, 0)));
+});
+
 test('opening markers use direction labels below long and above short candles', () => {
   const firstAt = Date.parse('2026-01-01T00:00:00Z');
   const markers = B.normalizeTradeMarkers([
