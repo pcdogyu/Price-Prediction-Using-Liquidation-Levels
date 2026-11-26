@@ -2325,9 +2325,9 @@ const tvbotHTML = `<!doctype html>
       </div>
     </div>
     <div class="status" id="order-info-status" hidden>
-      <div class="metric"><div class="label">交易环境</div><div class="value" id="metric-env">-</div></div>
-      <div class="metric"><div class="label">交易 API</div><div class="value" id="metric-api-keys">-</div></div>
-      <div class="metric"><div class="label">下单金额</div><div class="value" id="metric-amount">-</div></div>
+      <div class="metric"><div class="label">交易环境</div><div class="value" id="metric-env">读取中…</div></div>
+      <div class="metric"><div class="label">交易 API</div><div class="value" id="metric-api-keys">读取中…</div></div>
+      <div class="metric"><div class="label">下单金额</div><div class="value" id="metric-amount">读取中…</div></div>
       <div class="metric"><div class="label">最近信号</div><div class="value" id="metric-orders">-</div></div>
     </div>
 
@@ -3182,6 +3182,7 @@ const tvbotHTML = `<!doctype html>
   <script>
     const state = {
       config: null,
+      configLoadError: "",
       apiKeys: null,
       apiKeysByExchange: { okx: null, binance: null, gate: null },
       apiKeysByEnvironment: { demo: { okx: null, binance: null, gate: null }, live: { okx: null, binance: null, gate: null } },
@@ -3643,7 +3644,10 @@ const tvbotHTML = `<!doctype html>
       try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
       if (!res.ok) {
         const msg = data && data.message ? data.message : res.status + " " + res.statusText;
-        throw new Error(localizeErrorMessage(msg));
+        const error = new Error(localizeErrorMessage(msg));
+        error.code = data && (data.error || data.code) ? String(data.error || data.code) : "";
+        error.status = res.status;
+        throw error;
       }
       return data;
     }
@@ -4927,7 +4931,7 @@ const tvbotHTML = `<!doctype html>
       // exchange fallback is resolved consistently.
       const ordersPromise = loadOrders();
       const configPromise = loadConfig();
-      const apiKeysPromise = configPromise.then(() => loadInitialAPIKeys(), () => loadAPIKeys(activeExchange(), "demo"));
+      const apiKeysPromise = configPromise.then(() => loadInitialAPIKeys(), () => loadInitialAPIKeys());
       const bootstrapPromise = Promise.allSettled([configPromise, apiKeysPromise, loadCoinpairBlocks(), loadOrderCoinpairOptions(), loadUpgrade()]);
       await Promise.allSettled([ordersPromise, bootstrapPromise]);
       const target = activeTabID();
@@ -4950,7 +4954,14 @@ const tvbotHTML = `<!doctype html>
     }
 
     async function loadConfig() {
-      state.config = await api("/tvbot/config");
+      try {
+        state.config = await api("/tvbot/config");
+        state.configLoadError = "";
+      } catch (error) {
+        state.configLoadError = error && error.message ? error.message : "配置读取失败";
+        updateMetrics();
+        throw error;
+      }
       applyMenuSettings();
       syncActiveTabAfterMenuSettings();
       renderConfig();
@@ -4977,7 +4988,12 @@ const tvbotHTML = `<!doctype html>
         state.apiKeysByEnvironment[env][exchange] = value;
         return value;
       }).catch((error) => {
-        const value = { configured: false, credentials: [], error: error && error.message ? error.message : exchangeLabel(exchange) + " API Key 读取失败" };
+        const value = {
+          configured: false,
+          credentials: [],
+          error: error && error.message ? error.message : exchangeLabel(exchange) + " API Key 读取失败",
+          error_code: error && error.code ? error.code : ""
+        };
         state.apiKeysByEnvironment[env][exchange] = value;
         return value;
       });
@@ -5863,9 +5879,17 @@ const tvbotHTML = `<!doctype html>
     }
 
     function updateMetrics() {
-      $("metric-env").textContent = state.config && state.config.trading ? state.config.trading.env : "-";
+      const configLoaded = !!state.config;
+      const configStatus = configLoaded ? "" : (state.configLoadError ? "读取失败" : "读取中…");
+      $("metric-env").textContent = state.config && state.config.trading ? state.config.trading.env : configStatus;
       $("metric-api-keys").textContent = configuredAPIExchangeSummary();
-      $("metric-amount").textContent = state.config && state.config.trading ? formatUSDTLabel(state.config.trading.order_amount_usdt) : "-";
+      $("metric-api-keys").title = ["okx", "binance", "gate"].map((exchange) => {
+        const status = apiKeyStatusForEnv(exchange, state.apiKeyEnv);
+        return status && status.error && status.error_code !== "not_configured" ? exchangeLabel(exchange) + ": " + status.error : "";
+      }).filter(Boolean).join("\n");
+      $("metric-env").title = configLoaded ? "" : state.configLoadError;
+      $("metric-amount").textContent = state.config && state.config.trading ? formatUSDTLabel(state.config.trading.order_amount_usdt) : configStatus;
+      $("metric-amount").title = configLoaded ? "" : state.configLoadError;
       $("metric-orders").textContent = Number.isFinite(Number(state.ordersTotal)) ? String(Number(state.ordersTotal || 0)) : (state.orders ? state.orders.length : "-");
     }
 
@@ -6799,11 +6823,18 @@ const tvbotHTML = `<!doctype html>
     }
 
     function configuredAPIExchangeSummary() {
-      const configured = ["okx", "binance", "gate"].filter((exchange) => {
+      const exchanges = positionExchanges;
+      const loaded = exchanges.filter((exchange) => apiKeyStatusLoaded(exchange, state.apiKeyEnv));
+      const statuses = loaded.map((exchange) => apiKeyStatusForEnv(exchange, state.apiKeyEnv));
+      const failed = statuses.filter((status) => status && status.error && status.error_code !== "not_configured");
+      const configured = exchanges.filter((exchange) => {
         const status = apiKeyStatus(exchange);
         return !!(status && status.configured);
       }).map((exchange) => exchangeLabel(exchange) + " " + apiMetricText(exchange));
-      return configured.join(" / ") || "无已配置交易所";
+      const summary = configured.join(" / ");
+      if (summary) return summary + (failed.length ? "（部分状态读取失败）" : "");
+      if (loaded.length < exchanges.length) return "读取中…";
+      return failed.length ? "API 状态读取失败" : "无已配置交易所";
     }
 
     function activeAPIID(exchange, env) {
