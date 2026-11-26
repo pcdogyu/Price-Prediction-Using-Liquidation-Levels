@@ -232,6 +232,10 @@ with sync_playwright() as playwright:
     expect(page.locator("#alerts-history-rows tr")).to_have_count(9)
     expect(page.locator("#alerts-count")).to_have_text("第 1 页 · 本页 9 条")
     expect(page.locator("#alerts-history-rows td:nth-child(3)")).to_contain_text(["预警"] * 9)
+    expect(page.locator("#alerts-filter option[value='unfiltered']")).to_have_text("未运行过滤器")
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#alerts-kind")).to_have_value("alert")
+    expect(page.locator("#alerts-history-rows tr")).to_have_count(9)
 
     page.locator("#alerts-kind").select_option("all")
     page.locator("#alerts-notification-filter").select_option("not_notified")

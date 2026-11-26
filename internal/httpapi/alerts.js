@@ -117,11 +117,24 @@
   };
 
   const SIGNAL_RECALCULATE_STORAGE = 'liquidation.alerts.signal-recalculate';
+  const ALERT_HISTORY_KIND_STORAGE = 'liquidation.alerts.history-kind:' + base;
   let overviewSequence = 0, historySequence = 0, historyRows = [], historyBusy = false, historyPage = 0, historyCursors = [''], historyNextCursor = '', historyReplayed = (() => { try { return !!localStorage.getItem(SIGNAL_RECALCULATE_STORAGE); } catch (_) { return false; } })(), settingsLoaded = false, orderSignalSettingsLoaded = false, strategyLoaded = false, strategySaveBusy = false, strategySavePending = false, strategySavePendingAuto = false, strategyRecalculatePending = false, signalRecalculateBusy = false, signalProgressTimer = 0, signalProgressValue = 1, orderSignalSaveBusy = false, toastTimer = 0, backtestBusy = false, backtestRows = [], backtestSortKey = '', backtestSortDirection = 'asc';
 
   function error(message) { const node = $('alerts-error'); node.classList.remove('success'); node.textContent = message; node.hidden = false; }
   function success(message) { const node = $('alerts-error'); node.classList.add('success'); node.innerHTML = message; node.hidden = false; }
   function clearError() { const node = $('alerts-error'); node.classList.remove('success'); node.hidden = true; }
+
+  function restoreAlertHistoryKind() {
+    try {
+      const kind = localStorage.getItem(ALERT_HISTORY_KIND_STORAGE);
+      if (['all', 'alert', 'aggressive', 'steady', 'value_area'].includes(kind)) $('alerts-kind').value = kind;
+    } catch (_) { /* storage may be unavailable in private browsing */ }
+  }
+
+  function saveAlertHistoryKind() {
+    try { localStorage.setItem(ALERT_HISTORY_KIND_STORAGE, $('alerts-kind').value); }
+    catch (_) { /* filtering still works when storage is unavailable */ }
+  }
 
   function showToast(message, type = 'success', duration = 2600) {
     const node = $('alerts-toast');
@@ -926,7 +939,8 @@
     }
   }
 
-  $('alerts-filters').addEventListener('submit', event => { event.preventDefault(); historyCursors = ['']; loadHistory('', 0, historyReplayed); });
+  $('alerts-kind').addEventListener('change', saveAlertHistoryKind);
+  $('alerts-filters').addEventListener('submit', event => { event.preventDefault(); saveAlertHistoryKind(); historyCursors = ['']; loadHistory('', 0, historyReplayed); });
   $('alerts-prev').addEventListener('click', () => { if (historyPage > 0) loadHistory(historyCursors[historyPage - 1], historyPage - 1, historyReplayed); });
   $('alerts-next').addEventListener('click', () => { if (!historyNextCursor) return; historyCursors[historyPage + 1] = historyNextCursor; loadHistory(historyNextCursor, historyPage + 1, historyReplayed); });
   $('alerts-settings').addEventListener('submit', saveSettings);
@@ -945,6 +959,7 @@
     if (button.dataset.action === 'notify') triggerNotify(button);
     else triggerOrder(button);
   });
+  restoreAlertHistoryKind();
   loadOverview();
   loadHistory('', 0, historyReplayed);
   setInterval(() => { if (!document.hidden) { loadOverview(); if (historyPage === 0 && !historyBusy) loadHistory('', 0, historyReplayed); } }, 5000);
