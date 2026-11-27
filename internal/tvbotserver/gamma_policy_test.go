@@ -10,7 +10,7 @@ import (
 	tvbottrading "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbottrading"
 )
 
-func TestTVOrderGammaFlipGuardUsesNearZoneAndConsecutiveConfirmation(t *testing.T) {
+func TestTVOrderGammaFlipGuardDoesNotBlockNearZoneOrUnconfirmedSignals(t *testing.T) {
 	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 	cfg := tvbotconfig.Default()
 	makeSnapshot := func(at time.Time, spot, gamma, flip float64) domain.GammaFlipSnapshot {
@@ -20,7 +20,7 @@ func TestTVOrderGammaFlipGuardUsesNearZoneAndConsecutiveConfirmation(t *testing.
 		return tvbottrading.Signal{Action: tvbottrading.ActionLong, PositionEffect: tvbottrading.PositionEffectOpen, PositionSide: tvbottrading.PositionSideLong, Ticker: "BTCUSDT"}
 	}
 
-	t.Run("near flip is ignored", func(t *testing.T) {
+	t.Run("near flip passes through", func(t *testing.T) {
 		current := makeSnapshot(now, 100, 10, 100.5)
 		srv := &Server{
 			GammaFlipProvider: func(context.Context, string) domain.GammaFlipSnapshot { return current },
@@ -29,12 +29,12 @@ func TestTVOrderGammaFlipGuardUsesNearZoneAndConsecutiveConfirmation(t *testing.
 			},
 		}
 		signal := openSignal()
-		if got := srv.applyTVOrderGammaFlipGuard(context.Background(), &signal, cfg, now); got != "gamma_flip_near" {
-			t.Fatalf("reason=%q, want near-flip guard", got)
+		if got := srv.applyTVOrderGammaFlipGuard(context.Background(), &signal, cfg, now); got != "" {
+			t.Fatalf("near-flip state must not block the order, reason=%q", got)
 		}
 	})
 
-	t.Run("single sample is unconfirmed", func(t *testing.T) {
+	t.Run("single sample unconfirmed passes through", func(t *testing.T) {
 		current := makeSnapshot(now, 100, 10, 105)
 		srv := &Server{
 			GammaFlipProvider: func(context.Context, string) domain.GammaFlipSnapshot { return current },
@@ -43,8 +43,8 @@ func TestTVOrderGammaFlipGuardUsesNearZoneAndConsecutiveConfirmation(t *testing.
 			},
 		}
 		signal := openSignal()
-		if got := srv.applyTVOrderGammaFlipGuard(context.Background(), &signal, cfg, now); got != "gamma_flip_unconfirmed" {
-			t.Fatalf("reason=%q, want confirmation guard", got)
+		if got := srv.applyTVOrderGammaFlipGuard(context.Background(), &signal, cfg, now); got != "" {
+			t.Fatalf("unconfirmed state must not block the order, reason=%q", got)
 		}
 	})
 
@@ -72,6 +72,50 @@ func TestTVOrderGammaFlipGuardUsesNearZoneAndConsecutiveConfirmation(t *testing.
 			t.Fatalf("unavailable Gamma should pass through, reason=%q", got)
 		}
 	})
+}
+
+func TestTVOrderGammaFlipStatesKeepNegativeGammaPolicyIndependent(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	negative := -0.25
+	for _, tc := range []struct {
+		name string
+		spot float64
+		flip float64
+	}{
+		{name: "near flip", spot: 100, flip: 100.5},
+		{name: "unconfirmed", spot: 100, flip: 105},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := domain.GammaFlipSnapshot{
+				Symbol: "BTCUSDT", State: "ok", FlipState: "ok", Time: now,
+				SpotPrice: tc.spot, GammaValue: negative, GammaFlip: &tc.flip,
+			}
+			srv := &Server{
+				GammaFlipProvider: func(context.Context, string) domain.GammaFlipSnapshot { return current },
+				GammaFlipHistoryProvider: func(context.Context, string, time.Time, time.Time) ([]domain.GammaFlipSnapshot, error) {
+					return []domain.GammaFlipSnapshot{current}, nil
+				},
+			}
+			signal := tvbottrading.Signal{
+				Action: tvbottrading.ActionLong, PositionEffect: tvbottrading.PositionEffectOpen,
+				PositionSide: tvbottrading.PositionSideLong, Ticker: "BTCUSDT",
+				GammaValue: &negative, GammaState: "ok",
+			}
+			cfg := tvbotconfig.Default()
+			cfg.Trading.GammaNegativePolicy = tvbotconfig.GammaNegativePolicyPassthrough
+			if got := srv.applyTVOrderGammaFlipGuard(context.Background(), &signal, cfg, now); got != "" {
+				t.Fatalf("Gamma Flip state must not block the order, reason=%q", got)
+			}
+			if srv.applyTVOrderGammaPolicy(context.Background(), &signal, cfg) {
+				t.Fatal("the existing passthrough negative-Gamma policy should continue to allow the signal")
+			}
+
+			cfg.Trading.GammaNegativePolicy = tvbotconfig.GammaNegativePolicyIgnore
+			if !srv.applyTVOrderGammaPolicy(context.Background(), &signal, cfg) {
+				t.Fatal("the existing ignore negative-Gamma policy should continue to block the signal")
+			}
+		})
+	}
 }
 
 func TestTVOrderGammaPolicyFailsOpenForPositiveUnavailableAndStaleGamma(t *testing.T) {

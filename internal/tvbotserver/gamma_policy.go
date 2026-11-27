@@ -58,7 +58,15 @@ func (s *Server) applyTVOrderGammaFlipGuard(ctx context.Context, signal *tvbottr
 	if !decision.Available {
 		return ""
 	}
-	return decision.Reason
+	// Proximity to Gamma Flip and insufficient confirmation are informational
+	// states only. They must not prevent an order; the separate negative-Gamma
+	// policy remains responsible for its existing opening behavior.
+	switch decision.Reason {
+	case "gamma_flip_near", "gamma_flip_unconfirmed":
+		return ""
+	default:
+		return decision.Reason
+	}
 }
 
 func (s *Server) SetGammaProvider(provider GammaProvider) {
