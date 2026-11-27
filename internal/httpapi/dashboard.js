@@ -2572,6 +2572,10 @@ function scheduleIntervalMarketRefresh(refreshIfDue = false) {
   const dueAt = latestBoundary + grace;
   const currentKey = symbol + ':' + chart.interval + ':' + latestBoundary;
   if (refreshIfDue && now >= dueAt && lastIntervalMarketRefreshKey !== currentKey && !document.hidden) {
+    if (manualMarketBackfill.active) {
+      intervalMarketRefreshTimer = setTimeout(() => scheduleIntervalMarketRefresh(true), 1000);
+      return;
+    }
     lastIntervalMarketRefreshKey = currentKey;
     void refresh(false);
   }
