@@ -56,6 +56,7 @@ type Config struct {
 	MarketPollInterval           time.Duration
 	MarketInfoInterval           time.Duration
 	MarketFetchConcurrency       int
+	VolumeBackfillWorkers        int
 	// Liquidation alert strategy (top volume watch list plus alert engine).
 	AlertTopSymbols int
 	AlertWindow     time.Duration
@@ -135,6 +136,7 @@ func Load() Config {
 		MarketPollInterval:       envDuration("APP_MARKET_POLL_INTERVAL", 10*time.Minute),
 		MarketInfoInterval:       envDuration("APP_MARKET_INFO_INTERVAL", time.Minute),
 		MarketFetchConcurrency:   envInt("APP_MARKET_FETCH_CONCURRENCY", 5),
+		VolumeBackfillWorkers:    envIntBounded("APP_VOLUME_BACKFILL_WORKERS", 2, 1, 4),
 		AlertTopSymbols:          envInt("APP_ALERT_TOP_SYMBOLS", domain.AlertTopSymbolsDefault),
 		AlertWindow:              envDuration("APP_ALERT_WINDOW", 10*time.Minute),
 		AlertQuiet:               envDuration("APP_ALERT_QUIET", 10*time.Minute),
@@ -197,6 +199,19 @@ func envInt(k string, d int) int {
 		return v
 	}
 	return d
+}
+func envIntBounded(k string, d, min, max int) int {
+	v, e := strconv.Atoi(env(k, ""))
+	if e != nil || v <= 0 {
+		return d
+	}
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
 }
 func envDuration(k string, d time.Duration) time.Duration {
 	v, e := time.ParseDuration(env(k, ""))

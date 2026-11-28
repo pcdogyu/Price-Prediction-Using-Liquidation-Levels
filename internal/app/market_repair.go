@@ -75,11 +75,6 @@ func (s *Service) RepairMarketGaps(ctx context.Context, symbol, intervalName str
 
 	repairCtx, cancel := context.WithTimeout(ctx, marketGapRepairTimeout)
 	defer cancel()
-	release, ok := s.beginBackfill(repairCtx)
-	if !ok {
-		return repairCtx.Err()
-	}
-	defer release()
 
 	remainingMinutes := exchange.KlinePageLimit
 	for _, gap := range gaps {
@@ -107,7 +102,9 @@ func (s *Service) RepairMarketGaps(ctx context.Context, symbol, intervalName str
 		if len(repaired) == 0 {
 			return fmt.Errorf("market gap fetch returned no candles: %s to %s", gap.from.Format(time.RFC3339), gap.until.Format(time.RFC3339))
 		}
-		if err := s.store.UpsertCandles(repairCtx, repaired); err != nil {
+		if err := s.withBackfillWrite(repairCtx, false, func() error {
+			return s.store.UpsertCandles(repairCtx, repaired)
+		}); err != nil {
 			return fmt.Errorf("market gap store failed: %w", err)
 		}
 		remainingMinutes -= gap.minutes

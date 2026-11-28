@@ -163,11 +163,6 @@ func (s *Service) gammaSymbols() []string {
 }
 
 func (s *Service) backfillMarketMetrics(ctx context.Context) {
-	release, ok := s.beginBackfill(ctx)
-	if !ok {
-		return
-	}
-	defer release()
 	started := time.Now()
 	now := started.UTC()
 	backfillDays := s.cfg.BackfillDays
@@ -178,22 +173,37 @@ func (s *Service) backfillMarketMetrics(ctx context.Context) {
 	symbols := s.bootstrapSymbols()
 	skipped, completed, failed, rowsWritten := 0, 0, 0, 0
 	for _, symbol := range symbols {
-		first, last, exists, err := s.store.MarketMetricBounds(ctx, symbol)
+		if ctx.Err() != nil {
+			return
+		}
+		symbolCtx, cancel := context.WithTimeout(ctx, marketSyncJobTimeout)
+		first, last, exists, err := s.store.MarketMetricBounds(symbolCtx, symbol)
 		if err != nil {
+			cancel()
 			failed++
 			s.log.Warn("market metrics bounds failed", "symbol", symbol, "error", err)
 			continue
 		}
 		ranges := marketMetricBackfillRanges(first, last, exists, target, now)
 		if len(ranges) == 0 {
+			cancel()
 			skipped++
 			continue
 		}
 		for _, window := range ranges {
+			if symbolCtx.Err() != nil {
+				failed++
+				break
+			}
 			var count int
-			err = s.withMarketFetchSlot(ctx, func() error {
+			err = s.withMarketFetchSlot(symbolCtx, func() error {
 				var historyErr error
-				count, historyErr = exchange.BinanceMetricHistory(ctx, symbol, window.from, window.until, s.store.SaveMarketMetric)
+				writeMetric := func(writeCtx context.Context, metric domain.MarketMetric) error {
+					return s.withBackfillWrite(writeCtx, false, func() error {
+						return s.store.SaveMarketMetric(writeCtx, metric)
+					})
+				}
+				count, historyErr = exchange.BinanceMetricHistory(symbolCtx, symbol, window.from, window.until, writeMetric)
 				return historyErr
 			})
 			rowsWritten += count
@@ -204,6 +214,7 @@ func (s *Service) backfillMarketMetrics(ctx context.Context) {
 			}
 			completed++
 		}
+		cancel()
 	}
 	if ctx.Err() == nil {
 		s.log.Info("market metrics backfill complete", "symbols", len(symbols), "completed", completed, "skipped", skipped, "failed", failed, "rows", rowsWritten, "elapsed", time.Since(started))

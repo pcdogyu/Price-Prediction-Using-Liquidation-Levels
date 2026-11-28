@@ -198,9 +198,9 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	return s
 }
 
-// beginBackfill serializes the historical jobs that can otherwise flood the
-// small SQLite instance during startup or a candidate refresh. The gate is
-// context-aware so shutdown does not wait behind a queued historical job.
+// beginBackfill serializes short historical database writes and exclusive
+// maintenance. Callers must leave network requests outside this gate so one
+// slow exchange response cannot block unrelated backfill work.
 func (s *Service) beginBackfill(ctx context.Context) (func(), bool) {
 	if s.backfillGate == nil {
 		return func() {}, true
@@ -237,6 +237,21 @@ func (s *Service) beginVolumeBackfill(ctx context.Context) (func(), bool) {
 	case <-ctx.Done():
 		return nil, false
 	}
+}
+
+func (s *Service) withBackfillWrite(ctx context.Context, volume bool, write func() error) error {
+	var release func()
+	var ok bool
+	if volume {
+		release, ok = s.beginVolumeBackfill(ctx)
+	} else {
+		release, ok = s.beginBackfill(ctx)
+	}
+	if !ok {
+		return ctx.Err()
+	}
+	defer release()
+	return write()
 }
 
 func (s *Service) Start(ctx context.Context) {
@@ -385,15 +400,9 @@ func (s *Service) bootstrap(ctx context.Context) {
 }
 
 // backfillSymbols synchronizes the selected background set with the configured
-// history window. The shared historical-work gate prevents a scheduled
-// candidate refresh from overlapping any other large database backfill.
+// history window. Network requests run outside the shared write gate, which is
+// acquired only for each short SQLite batch.
 func (s *Service) backfillSymbols(ctx context.Context, symbols []string) bool {
-	release, ok := s.beginBackfill(ctx)
-	if !ok {
-		return false
-	}
-	defer release()
-
 	now := time.Now().UTC()
 	backfillDays := s.cfg.BackfillDays
 	if backfillDays <= 0 {
@@ -406,49 +415,68 @@ func (s *Service) backfillSymbols(ctx context.Context, symbols []string) bool {
 			if ctx.Err() != nil {
 				return false
 			}
-			first, last, exists, e := s.store.CandleBounds(ctx, c.Name(), sym)
-			if e != nil {
+			if !s.backfillCandleSymbol(ctx, c, sym, target, now) {
 				complete = false
-				s.log.Warn("backfill bounds failed", "exchange", c.Name(), "symbol", sym, "error", e)
-				continue
 			}
-			type backfillRange struct{ from, until time.Time }
-			var ranges []backfillRange
-			if !exists {
-				ranges = append(ranges, backfillRange{target, now.Add(time.Minute)})
-			} else {
-				if first.After(target.Add(2 * time.Minute)) {
-					ranges = append(ranges, backfillRange{target, first})
-				}
-				if last.Before(now.Add(-2 * time.Minute)) {
-					ranges = append(ranges, backfillRange{last.Add(time.Minute), now.Add(time.Minute)})
-				}
+		}
+	}
+	return complete
+}
+
+func (s *Service) backfillCandleSymbol(ctx context.Context, client exchange.Client, symbol string, target, now time.Time) bool {
+	workCtx, cancel := context.WithTimeout(ctx, marketSyncJobTimeout)
+	defer cancel()
+	first, last, exists, err := s.store.CandleBounds(workCtx, client.Name(), symbol)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.log.Warn("backfill bounds failed", "exchange", client.Name(), "symbol", symbol, "error", err)
+		}
+		return false
+	}
+	type backfillRange struct{ from, until time.Time }
+	var ranges []backfillRange
+	if !exists {
+		ranges = append(ranges, backfillRange{target, now.Add(time.Minute)})
+	} else {
+		if first.After(target.Add(2 * time.Minute)) {
+			ranges = append(ranges, backfillRange{target, first})
+		}
+		if last.Before(now.Add(-2 * time.Minute)) {
+			ranges = append(ranges, backfillRange{last.Add(time.Minute), now.Add(time.Minute)})
+		}
+	}
+	complete := true
+	for _, window := range ranges {
+		if workCtx.Err() != nil {
+			return false
+		}
+		s.log.Info("backfill started", "exchange", client.Name(), "symbol", symbol, "from", window.from, "until", window.until)
+		var rows []domain.Candle
+		historyErr := s.withMarketSyncSlot(workCtx, func() error {
+			var fetchErr error
+			rows, fetchErr = s.historyWithRetry(workCtx, client, symbol, window.from, window.until)
+			return fetchErr
+		})
+		if historyErr != nil {
+			complete = false
+			s.log.Warn("backfill failed", "exchange", client.Name(), "symbol", symbol, "from", window.from, "until", window.until, "error", historyErr)
+			if workCtx.Err() != nil {
+				return false
 			}
-			for _, window := range ranges {
-				s.log.Info("backfill started", "exchange", c.Name(), "symbol", sym, "from", window.from, "until", window.until)
-				var rows []domain.Candle
-				var historyErr error
-				historyErr = s.withMarketSyncSlot(ctx, func() error {
-					rows, historyErr = s.historyWithRetry(ctx, c, sym, window.from, window.until)
-					return historyErr
-				})
-				if historyErr != nil {
-					complete = false
-					s.log.Warn("backfill failed", "exchange", c.Name(), "symbol", sym, "from", window.from, "until", window.until, "error", historyErr)
-					continue
-				}
-				expected := int(window.until.Sub(window.from) / time.Minute)
-				if expected > 0 && len(rows)*5 < expected*4 {
-					complete = false
-					s.log.Warn("backfill range has insufficient coverage", "exchange", c.Name(), "symbol", sym, "from", window.from, "until", window.until, "candles", len(rows), "expected", expected)
-				}
-				if historyErr = s.store.UpsertCandles(ctx, rows); historyErr != nil {
-					complete = false
-					s.log.Error("backfill store failed", "exchange", c.Name(), "symbol", sym, "error", historyErr)
-				} else {
-					s.log.Info("backfill range complete", "exchange", c.Name(), "symbol", sym, "from", window.from, "until", window.until, "candles", len(rows))
-				}
-			}
+			continue
+		}
+		expected := int(window.until.Sub(window.from) / time.Minute)
+		if expected > 0 && len(rows)*5 < expected*4 {
+			complete = false
+			s.log.Warn("backfill range has insufficient coverage", "exchange", client.Name(), "symbol", symbol, "from", window.from, "until", window.until, "candles", len(rows), "expected", expected)
+		}
+		if historyErr = s.withBackfillWrite(workCtx, false, func() error {
+			return s.store.UpsertCandles(workCtx, rows)
+		}); historyErr != nil {
+			complete = false
+			s.log.Error("backfill store failed", "exchange", client.Name(), "symbol", symbol, "error", historyErr)
+		} else {
+			s.log.Info("backfill range complete", "exchange", client.Name(), "symbol", symbol, "from", window.from, "until", window.until, "candles", len(rows))
 		}
 	}
 	return complete
@@ -518,6 +546,7 @@ func (s *Service) historyWithRetry(ctx context.Context, client exchange.Client, 
 
 func (s *Service) retentionLoop(ctx context.Context) {
 	s.runDailyMaintenance(ctx)
+	s.enqueueNightlyVolumeBackfills()
 	for {
 		timer := time.NewTimer(time.Until(nextDailyMaintenance(time.Now())))
 		select {
@@ -526,7 +555,19 @@ func (s *Service) retentionLoop(ctx context.Context) {
 			return
 		case <-timer.C:
 			s.runDailyMaintenance(ctx)
+			s.enqueueNightlyVolumeBackfills()
 		}
+	}
+}
+
+func (s *Service) enqueueNightlyVolumeBackfills() {
+	snapshot := s.backgroundCandidateSnapshot()
+	if len(snapshot.VolumeBackfillSymbols) == 0 {
+		return
+	}
+	s.enqueueRankedVolumeBackfills(snapshot.VolumeBackfillSymbols)
+	if s.log != nil {
+		s.log.Info("nightly ranked volume backfill reconciliation started", "symbols", len(snapshot.VolumeBackfillSymbols))
 	}
 }
 

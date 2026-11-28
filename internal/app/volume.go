@@ -16,6 +16,7 @@ import (
 var fetchAggregateTrades = exchange.BinanceAggregateTrades
 
 const volumeProfileBackfillRetryDelay = 30 * time.Second
+const volumeBackfillTaskTimeout = 30 * time.Second
 
 var errVolumeBackfillQueueFull = errors.New("volume profile backfill queue is full")
 
@@ -37,8 +38,29 @@ func (s *Service) startVolumeProfiles(ctx context.Context) {
 	s.marketLiveInput = make(chan domain.AggregateTrade, 100000)
 	s.volumeMu.Unlock()
 	go s.volumeProfileLoop(ctx)
-	go s.volumeBackfillLoop(ctx)
+	s.startVolumeBackfillWorkers(ctx)
 	go s.marketCandleLoop(ctx)
+}
+
+func (s *Service) startVolumeBackfillWorkers(ctx context.Context) {
+	workers := s.volumeBackfillWorkerCount()
+	for i := 0; i < workers; i++ {
+		go s.volumeBackfillLoop(ctx)
+	}
+	if s.log != nil {
+		s.log.Info("aggregate trade backfill workers started", "workers", workers)
+	}
+}
+
+func (s *Service) volumeBackfillWorkerCount() int {
+	workers := s.cfg.VolumeBackfillWorkers
+	if workers <= 0 {
+		workers = 2
+	}
+	if workers > 4 {
+		workers = 4
+	}
+	return workers
 }
 
 func (s *Service) registerVolumeSymbols(symbols []string) {
@@ -160,19 +182,24 @@ func (s *Service) volumeBackfillLoop(ctx context.Context) {
 		}
 		s.volumeMu.Lock()
 		_, pending := s.volumePending[symbol]
+		_, active := s.volumeActive[symbol]
 		delete(s.volumePriorityPending, symbol)
-		if pending {
+		claimed := pending && !active
+		if claimed {
 			if s.volumeActive == nil {
 				s.volumeActive = make(map[string]struct{})
 			}
 			s.volumeActive[symbol] = struct{}{}
 		}
 		s.volumeMu.Unlock()
-		if !pending {
+		if !claimed {
 			continue
 		}
+		if s.log != nil {
+			s.log.Info("aggregate trade replay started", "symbol", symbol, "timeout", volumeBackfillTaskTimeout)
+		}
 		{
-			workCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			workCtx, cancel := context.WithTimeout(ctx, volumeBackfillTaskTimeout)
 			err := s.syncVolumeSessionExclusive(workCtx, symbol, time.Now().UTC())
 			timedOut := errors.Is(workCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 			cancel()
@@ -182,6 +209,9 @@ func (s *Service) volumeBackfillLoop(ctx context.Context) {
 			if timedOut {
 				delete(s.volumeBackfillRetryAt, symbol)
 				s.volumeMu.Unlock()
+				if s.log != nil {
+					s.log.Warn("aggregate trade replay timed out; resuming from saved cursor", "symbol", symbol, "timeout", volumeBackfillTaskTimeout)
+				}
 				if err := s.enqueueVolumeProfileBackfill(ctx, symbol, false, true); err != nil && ctx.Err() == nil && s.log != nil {
 					s.log.Warn("aggregate trade replay could not be rescheduled", "symbol", symbol, "error", err)
 				}
@@ -245,13 +275,14 @@ func (s *Service) requeueIncompleteVolumeProfile(ctx context.Context, symbol str
 
 func (s *Service) syncVolumeSymbols(ctx context.Context, symbols []string) {
 	s.registerVolumeSymbols(symbols)
-	release, ok := s.beginBackfill(ctx)
-	if !ok {
-		return
-	}
-	defer release()
 	for _, symbol := range symbols {
-		if err := s.syncVolumeSession(ctx, symbol, time.Now().UTC()); err != nil && ctx.Err() == nil {
+		if ctx.Err() != nil {
+			return
+		}
+		workCtx, cancel := context.WithTimeout(ctx, volumeBackfillTaskTimeout)
+		err := s.syncVolumeSession(workCtx, symbol, time.Now().UTC())
+		cancel()
+		if err != nil && ctx.Err() == nil {
 			s.log.Warn("aggregate trade initial backfill failed", "symbol", symbol, "error", err)
 		}
 	}
@@ -400,11 +431,9 @@ func (s *Service) enqueueVolumeProfileBackfillPriority(ctx context.Context, symb
 }
 
 func (s *Service) syncVolumeSessionExclusive(ctx context.Context, symbol string, target time.Time) error {
-	release, ok := s.beginVolumeBackfill(ctx)
-	if !ok {
-		return ctx.Err()
-	}
-	defer release()
+	// The session may contain many REST pages. Keep the shared gate only around
+	// each page write in syncVolumeSession so a waiting writer can make progress
+	// while this symbol waits on Binance.
 	return s.syncVolumeSession(ctx, symbol, target)
 }
 
@@ -562,7 +591,11 @@ func (s *Service) syncVolumeSession(ctx context.Context, symbol string, target t
 	if err != nil {
 		return err
 	}
-	_ = s.store.SetVolumeProfileComplete(ctx, symbol, session.Start, false)
+	if err = s.withBackfillWrite(ctx, true, func() error {
+		return s.store.SetVolumeProfileComplete(ctx, symbol, session.Start, false)
+	}); err != nil {
+		return err
+	}
 	nextID := lastID + 1
 	if lastID == 0 {
 		first, findErr := s.firstAggregateTrade(ctx, symbol, session.Start, target)
@@ -570,7 +603,9 @@ func (s *Service) syncVolumeSession(ctx context.Context, symbol string, target t
 			return findErr
 		}
 		if first == 0 {
-			return s.store.ApplyAggregateTrades(ctx, symbol, session.Start, nil, true)
+			return s.withBackfillWrite(ctx, true, func() error {
+				return s.store.ApplyAggregateTrades(ctx, symbol, session.Start, nil, true)
+			})
 		}
 		nextID = first
 	}
@@ -604,7 +639,9 @@ func (s *Service) syncVolumeSession(ctx context.Context, symbol string, target t
 			expectedID++
 		}
 		if len(page) > 0 {
-			if err = s.store.ApplyAggregateTrades(ctx, symbol, session.Start, page, false); err != nil {
+			if err = s.withBackfillWrite(ctx, true, func() error {
+				return s.store.ApplyAggregateTrades(ctx, symbol, session.Start, page, false)
+			}); err != nil {
 				return err
 			}
 			nextID = page[len(page)-1].ID + 1
@@ -619,7 +656,9 @@ func (s *Service) syncVolumeSession(ctx context.Context, symbol string, target t
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if err = s.store.SetVolumeProfileComplete(ctx, symbol, session.Start, true); err == nil {
+	if err = s.withBackfillWrite(ctx, true, func() error {
+		return s.store.SetVolumeProfileComplete(ctx, symbol, session.Start, true)
+	}); err == nil {
 		s.log.Info("aggregate trade session synchronized", "symbol", symbol, "session_start", session.Start, "through", target)
 	}
 	return err

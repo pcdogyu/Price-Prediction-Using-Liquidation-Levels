@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -372,6 +373,262 @@ func TestIncompleteVolumeBackfillIsRequeuedAfterPendingClears(t *testing.T) {
 	}
 	if symbol := <-svc.volumeBackfillQueue; symbol != "SOLUSDT" {
 		t.Fatalf("queued symbol=%q, want SOLUSDT", symbol)
+	}
+}
+
+func TestVolumeBackfillWorkersRunDistinctSymbolsAndYieldSharedGate(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "volume-worker-pool.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	session, err := volumeprofile.SessionAt(time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tradeTime := time.Now().UTC().Add(-time.Second)
+	for _, symbol := range []string{"BNBUSDT", "SOLUSDT"} {
+		if err := st.ApplyAggregateTrades(ctx, symbol, session.Start, []domain.AggregateTrade{{
+			ID: 100, Symbol: symbol, Time: tradeTime, Price: 100, Quantity: 1, PriceText: "100",
+		}}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	originalFetch := fetchAggregateTrades
+	t.Cleanup(func() { fetchAggregateTrades = originalFetch })
+	var mu sync.Mutex
+	active, maximum := 0, 0
+	perSymbolActive := make(map[string]int)
+	perSymbolMax := make(map[string]int)
+	started := make(chan string, 4)
+	releaseFetch := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(releaseFetch) })
+	fetchAggregateTrades = func(callCtx context.Context, symbol string, fromID int64, _, _ time.Time) ([]domain.AggregateTrade, error) {
+		mu.Lock()
+		active++
+		perSymbolActive[symbol]++
+		if active > maximum {
+			maximum = active
+		}
+		if perSymbolActive[symbol] > perSymbolMax[symbol] {
+			perSymbolMax[symbol] = perSymbolActive[symbol]
+		}
+		mu.Unlock()
+		defer func() {
+			mu.Lock()
+			active--
+			perSymbolActive[symbol]--
+			mu.Unlock()
+		}()
+		started <- symbol
+		select {
+		case <-callCtx.Done():
+			return nil, callCtx.Err()
+		case <-releaseFetch:
+			return []domain.AggregateTrade{{
+				ID: fromID, Symbol: symbol, Time: tradeTime, Price: 101, Quantity: 1, PriceText: "101",
+			}}, nil
+		}
+	}
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	svc := &Service{
+		cfg:                   config.Config{VolumeBackfillWorkers: 2},
+		store:                 st,
+		log:                   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		backfillGate:          make(chan struct{}, 1),
+		volumeLiveReady:       make(chan struct{}),
+		volumeContext:         workerCtx,
+		volumeStreamSymbols:   map[string]struct{}{"BNBUSDT": {}, "SOLUSDT": {}},
+		volumePending:         map[string]struct{}{"BNBUSDT": {}, "SOLUSDT": {}},
+		volumePriorityPending: map[string]struct{}{"BNBUSDT": {}, "SOLUSDT": {}},
+		volumeBackfillError:   make(map[string]string),
+		volumeBackfillRetryAt: make(map[string]time.Time),
+		volumeBackfillQueue:   make(chan string, 4),
+		volumePriorityQueue:   make(chan string, 4),
+	}
+	close(svc.volumeLiveReady)
+	svc.volumePriorityQueue <- "BNBUSDT"
+	svc.volumePriorityQueue <- "BNBUSDT" // a duplicate queue entry must not run concurrently
+	svc.volumePriorityQueue <- "SOLUSDT"
+	var workers sync.WaitGroup
+	for i := 0; i < svc.volumeBackfillWorkerCount(); i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			svc.volumeBackfillLoop(workerCtx)
+		}()
+	}
+
+	seen := make(map[string]bool)
+	for range 2 {
+		select {
+		case symbol := <-started:
+			seen[symbol] = true
+		case <-time.After(2 * time.Second):
+			cancel()
+			t.Fatal("two distinct symbols did not reach Binance concurrently")
+		}
+	}
+	if !seen["BNBUSDT"] || !seen["SOLUSDT"] {
+		cancel()
+		t.Fatalf("concurrent requests were for the wrong symbols: %v", seen)
+	}
+	gateCtx, gateCancel := context.WithTimeout(workerCtx, 200*time.Millisecond)
+	releaseGate, ok := svc.beginBackfill(gateCtx)
+	gateCancel()
+	if !ok {
+		cancel()
+		t.Fatal("network waits held the shared backfill gate")
+	}
+	releaseGate()
+	releaseOnce.Do(func() { close(releaseFetch) })
+
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		_, _, bnbComplete, bnbErr := st.VolumeProfileCursor(ctx, "BNBUSDT", session.Start)
+		_, _, solComplete, solErr := st.VolumeProfileCursor(ctx, "SOLUSDT", session.Start)
+		if bnbErr != nil || solErr != nil {
+			cancel()
+			t.Fatalf("cursor read errors: BNB=%v SOL=%v", bnbErr, solErr)
+		}
+		if bnbComplete && solComplete {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_, _, bnbComplete, _ := st.VolumeProfileCursor(ctx, "BNBUSDT", session.Start)
+	_, _, solComplete, _ := st.VolumeProfileCursor(ctx, "SOLUSDT", session.Start)
+	cancel()
+	workers.Wait()
+	if !bnbComplete || !solComplete {
+		t.Fatalf("profiles did not complete: BNB=%v SOL=%v", bnbComplete, solComplete)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if maximum != 2 {
+		t.Fatalf("maximum concurrent requests=%d, want 2", maximum)
+	}
+	if perSymbolMax["BNBUSDT"] != 1 {
+		t.Fatalf("BNB concurrent requests=%d, want 1", perSymbolMax["BNBUSDT"])
+	}
+}
+
+func TestTimedOutVolumeSessionResumesFromDurablePageCursor(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "volume-cursor-resume.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	session, err := volumeprofile.SessionAt(time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tradeTime := time.Now().UTC().Add(-time.Second)
+	if err := st.ApplyAggregateTrades(ctx, "BNBUSDT", session.Start, []domain.AggregateTrade{{
+		ID: 100, Symbol: "BNBUSDT", Time: tradeTime, Price: 100, Quantity: 1, PriceText: "100",
+	}}, false); err != nil {
+		t.Fatal(err)
+	}
+	originalFetch := fetchAggregateTrades
+	t.Cleanup(func() { fetchAggregateTrades = originalFetch })
+	secondPage := make(chan struct{})
+	var secondOnce sync.Once
+	fetchAggregateTrades = func(callCtx context.Context, symbol string, fromID int64, _, _ time.Time) ([]domain.AggregateTrade, error) {
+		if fromID == 101 {
+			rows := make([]domain.AggregateTrade, 1000)
+			for i := range rows {
+				rows[i] = domain.AggregateTrade{ID: fromID + int64(i), Symbol: symbol, Time: tradeTime, Price: 100, Quantity: 1, PriceText: "100"}
+			}
+			return rows, nil
+		}
+		secondOnce.Do(func() { close(secondPage) })
+		<-callCtx.Done()
+		return nil, callCtx.Err()
+	}
+
+	workCtx, cancel := context.WithCancel(ctx)
+	svc := &Service{store: st, backfillGate: make(chan struct{}, 1), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	result := make(chan error, 1)
+	go func() { result <- svc.syncVolumeSession(workCtx, "BNBUSDT", time.Now().UTC()) }()
+	select {
+	case <-secondPage:
+		cancel()
+	case <-time.After(4 * time.Second):
+		cancel()
+		t.Fatal("replay did not advance to its second page")
+	}
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("timed out session error=%v, want context cancellation", err)
+	}
+	lastID, _, complete, err := st.VolumeProfileCursor(ctx, "BNBUSDT", session.Start)
+	if err != nil || lastID != 1100 || complete {
+		t.Fatalf("partial cursor id=%d complete=%v err=%v, want id=1100 incomplete", lastID, complete, err)
+	}
+
+	fetchAggregateTrades = func(_ context.Context, symbol string, fromID int64, _, _ time.Time) ([]domain.AggregateTrade, error) {
+		return []domain.AggregateTrade{{ID: fromID, Symbol: symbol, Time: tradeTime, Price: 101, Quantity: 1, PriceText: "101"}}, nil
+	}
+	if err := svc.syncVolumeSession(ctx, "BNBUSDT", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	lastID, _, complete, err = st.VolumeProfileCursor(ctx, "BNBUSDT", session.Start)
+	if err != nil || lastID != 1101 || !complete {
+		t.Fatalf("resumed cursor id=%d complete=%v err=%v, want id=1101 complete", lastID, complete, err)
+	}
+	levels, _, _, _, err := st.VolumeProfileLevels(ctx, "BNBUSDT", session.Start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total float64
+	for _, level := range levels {
+		total += level.VolumeUSD
+	}
+	if total != 100201 {
+		t.Fatalf("replayed volume=%v, want 100201 without duplicate page writes", total)
+	}
+}
+
+func TestNightlyRankedBackfillQueuesIncompleteVolumeProfiles(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "nightly-volume-queue.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	session, err := volumeprofile.SessionAt(time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetVolumeProfileComplete(ctx, "BNBUSDT", session.Start, false); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{
+		store:                 st,
+		volumeContext:         ctx,
+		volumeBackfillQueue:   make(chan string, 2),
+		volumePriorityQueue:   make(chan string, 2),
+		volumeRequested:       make(map[string]struct{}),
+		volumePending:         make(map[string]struct{}),
+		volumePriorityPending: make(map[string]struct{}),
+		volumeBackfillError:   make(map[string]string),
+		volumeBackfillRetryAt: make(map[string]time.Time),
+		candidateSnapshot: domain.BackgroundSymbolSnapshot{
+			VolumeBackfillSymbols: []string{"BNBUSDT"},
+		},
+	}
+	svc.enqueueNightlyVolumeBackfills()
+	select {
+	case symbol := <-svc.volumePriorityQueue:
+		if symbol != "BNBUSDT" {
+			t.Fatalf("nightly queued symbol=%q, want BNBUSDT", symbol)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("nightly pass did not queue the incomplete BNB profile")
 	}
 }
 

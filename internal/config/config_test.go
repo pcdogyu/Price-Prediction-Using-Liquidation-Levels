@@ -31,6 +31,7 @@ func TestLoadUsesSeparateBackfillAndRetentionDefaults(t *testing.T) {
 	t.Setenv("APP_MARKET_POLL_INTERVAL", "")
 	t.Setenv("APP_MARKET_INFO_INTERVAL", "")
 	t.Setenv("APP_MARKET_FETCH_CONCURRENCY", "")
+	t.Setenv("APP_VOLUME_BACKFILL_WORKERS", "")
 	t.Setenv("APP_ALERT_WINDOW", "")
 	cfg := Load()
 	if cfg.BackfillDays != 1 || cfg.RetentionDays != 180 {
@@ -39,8 +40,29 @@ func TestLoadUsesSeparateBackfillAndRetentionDefaults(t *testing.T) {
 	if cfg.MarketPollInterval != 10*time.Minute || cfg.MarketInfoInterval != time.Minute || cfg.MarketFetchConcurrency != 5 {
 		t.Fatalf("market poll=%s info=%s concurrency=%d", cfg.MarketPollInterval, cfg.MarketInfoInterval, cfg.MarketFetchConcurrency)
 	}
+	if cfg.VolumeBackfillWorkers != 2 {
+		t.Fatalf("default volume backfill workers=%d, want 2", cfg.VolumeBackfillWorkers)
+	}
 	if cfg.AlertWindow != 10*time.Minute {
 		t.Fatalf("default alert window=%s, want 10m", cfg.AlertWindow)
+	}
+}
+
+func TestLoadBoundsVolumeBackfillWorkers(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  int
+	}{
+		{value: "1", want: 1},
+		{value: "3", want: 3},
+		{value: "9", want: 4},
+		{value: "0", want: 2},
+		{value: "invalid", want: 2},
+	} {
+		t.Setenv("APP_VOLUME_BACKFILL_WORKERS", tc.value)
+		if got := Load().VolumeBackfillWorkers; got != tc.want {
+			t.Errorf("APP_VOLUME_BACKFILL_WORKERS=%q loaded %d, want %d", tc.value, got, tc.want)
+		}
 	}
 }
 
