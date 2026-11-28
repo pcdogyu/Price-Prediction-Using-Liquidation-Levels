@@ -1037,3 +1037,12 @@ func TestBuildInfoFooterUsesShanghaiTimeAndShortHash(t *testing.T) {
 		t.Fatalf("unexpected footer: got %q, want %q", footer, want)
 	}
 }
+
+func TestAPIKeyPageStateButtonAndTenantStorage(t *testing.T) {
+	page := renderTVBotHTMLWithTenantMenuAndUser(BuildInfo{}, httptest.NewRequest("GET", "/apiKeys", nil), defaultTopMenu(), "tenant-a", "alice")
+	saveKey := strings.Index(page, `id="save-api-keys"`)
+	savePage := strings.Index(page, `id="save-api-key-page"`)
+	if saveKey < 0 || savePage <= saveKey || !strings.Contains(page, `const apiKeyPageStorageKey = "tvbot.apiKeyPage.v1.tenant.tenant-a";`) {
+		t.Fatal("page state button must follow the API Key save button and use tenant-scoped storage")
+	}
+}

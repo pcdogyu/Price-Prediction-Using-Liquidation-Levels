@@ -141,6 +141,7 @@ func renderTVBotHTMLWithTenantMenuAndUser(info BuildInfo, r *http.Request, menu 
 		// safe to embed in these localStorage key literals.
 		suffix := ".tenant." + tenantID
 		page = strings.Replace(page, `const globalExchangeStorageKey = "tvbot.selectedExchange";`, `const globalExchangeStorageKey = "tvbot.selectedExchange`+suffix+`";`, 1)
+		page = strings.Replace(page, `const apiKeyPageStorageKey = "tvbot.apiKeyPage.v1";`, `const apiKeyPageStorageKey = "tvbot.apiKeyPage.v1`+suffix+`";`, 1)
 		page = strings.Replace(page, `const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3";`, `const analysisTradeColumnStorageKey = "tvbot.analysisTradeColumns.v3`+suffix+`";`, 1)
 		page = strings.Replace(page, `const positionSnapshotStorageKey = "tvbot.positionSnapshot.v1";`, `const positionSnapshotStorageKey = "tvbot.positionSnapshot.v1`+suffix+`";`, 1)
 	}
@@ -2810,6 +2811,7 @@ const tvbotHTML = `<!doctype html>
           <div class="actions api-key-actions">
             <button class="btn success" type="button" id="test-api-keys">测试 API</button>
             <button class="btn primary" type="button" id="save-api-keys" disabled>保存 API Key</button>
+            <button class="btn" type="button" id="save-api-key-page">保存页面状态</button>
           </div>
         </div>
         <div>
@@ -3320,6 +3322,7 @@ const tvbotHTML = `<!doctype html>
     ];
     const positionExchanges = ["okx", "binance", "gate"];
     const globalExchangeStorageKey = "tvbot.selectedExchange";
+    const apiKeyPageStorageKey = "tvbot.apiKeyPage.v1";
     const positionSnapshotStorageKey = "tvbot.positionSnapshot.v1";
     const ordersPageSize = 20;
     const analysisTradePageSize = 20;
@@ -5027,14 +5030,37 @@ const tvbotHTML = `<!doctype html>
       updateMetrics();
     }
 
+    function readAPIKeyPageState() {
+      try {
+        const saved = JSON.parse(window.localStorage.getItem(apiKeyPageStorageKey) || "null");
+        if (!saved || !positionExchanges.includes(saved.exchange) || !["demo", "live"].includes(saved.env)) return null;
+        return { exchange: saved.exchange, env: saved.env };
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function saveAPIKeyPageState() {
+      try {
+        window.localStorage.setItem(apiKeyPageStorageKey, JSON.stringify({
+          exchange: normalizeExchange(state.apiKeyExchange),
+          env: state.apiKeyEnv === "live" ? "live" : "demo"
+        }));
+        toast("页面状态已保存，刷新后恢复交易所和交易环境");
+      } catch (_) {
+        toast("页面状态保存失败，请检查浏览器存储设置");
+      }
+    }
+
     async function loadInitialAPIKeys() {
       const target = configuredAPIKeyTarget();
-      const env = requestedPositionEnvironment() || target.env;
-      state.apiKeyExchange = target.exchange;
+      const savedPage = tabFromRoute() === "apiKeys" ? readAPIKeyPageState() : null;
+      const env = savedPage ? savedPage.env : (requestedPositionEnvironment() || target.env);
+      state.apiKeyExchange = savedPage ? savedPage.exchange : target.exchange;
       state.apiKeyEnv = env;
       await Promise.all(positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, target.env)));
       await Promise.all(["demo", "live"].flatMap((statusEnv) => positionExchanges.map((exchange) => loadAPIKeyStatus(exchange, statusEnv))));
-      return loadAPIKeys(target.exchange, env);
+      return loadAPIKeys(state.apiKeyExchange, state.apiKeyEnv);
     }
 
     async function loadBalanceOverview(forceRefresh, minutes) {
@@ -10676,6 +10702,7 @@ const tvbotHTML = `<!doctype html>
       moveMenuItem(Number(button.dataset.menuIndex), Number(button.dataset.menuMove));
     });
     $("save-api-keys").addEventListener("click", () => saveAPIKeys().catch((err) => toast(err.message)));
+    $("save-api-key-page").addEventListener("click", saveAPIKeyPageState);
     $("test-api-keys").addEventListener("click", () => testAPIKeys().catch((err) => {
       $("okx-output").textContent = err.message;
       toast(err.message);
