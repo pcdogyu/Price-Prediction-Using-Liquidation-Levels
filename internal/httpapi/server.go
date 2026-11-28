@@ -100,6 +100,9 @@ func New(cfg config.Config, svc *app.Service, log *slog.Logger, logs *observabil
 	mux.Handle("/tvbot/", http.HandlerFunc(s.tvbotRoute))
 	mux.Handle("/tvorder", http.HandlerFunc(s.tvbotRoute))
 	mux.Handle("/upgrade", http.HandlerFunc(s.tvbotRoute))
+	for _, path := range []string{"/orders", "/positions", "/analysis", "/historyOrders", "/stopLossAnalysis", "/symbols", "/oderConfig", "/apiKeys", "/orderSettings", "/template", "/tradeMonitor", "/upgradePage"} {
+		mux.Handle(path, http.HandlerFunc(s.tvbotRoute))
+	}
 	mux.HandleFunc("/api/v1/auth/check", getOnly(s.authCheck))
 	mux.HandleFunc("/api/v1/user/theme", s.userTheme)
 	mux.HandleFunc("/api/v1/user/chart-signal-preferences", s.userChartSignalPreferences)
@@ -393,7 +396,7 @@ func (s *Server) renderLoginForRequest(w http.ResponseWriter, r *http.Request, s
 	html := strings.ReplaceAll(string(loginHTML), "{{LOGIN_ACTION}}", s.auth.BasePath()+"auth/login")
 	html = strings.ReplaceAll(html, "{{ERROR}}", message)
 	next := ""
-	if r.URL.Path == "/system" || r.URL.Path == "/logs" || r.URL.Path == "/tvbot" || strings.HasPrefix(r.URL.Path, "/tvbot/") || r.URL.Path == "/upgrade" {
+	if tvbotserver.TVBotPageTab(r.URL.Path) != "" || r.URL.Path == "/system" || r.URL.Path == "/logs" || r.URL.Path == "/tvbot" || strings.HasPrefix(r.URL.Path, "/tvbot/") || r.URL.Path == "/upgrade" {
 		next = htmlEscapeAttribute(sanitizeLoginNext(r.URL.RequestURI()))
 	}
 	html = strings.ReplaceAll(html, "{{NEXT}}", next)
@@ -837,7 +840,7 @@ func (s *Server) authorize(next http.Handler) http.Handler {
 // routes under /tvbot remain content-negotiated so programmatic callers still
 // receive JSON 401 responses.
 func isTVBotPage(path string) bool {
-	return path == "/tvbot" || path == "/tvbot/"
+	return tvbotserver.TVBotPageTab(path) != "" || path == "/tvbot" || path == "/tvbot/"
 }
 
 func localProbe(r *http.Request) bool {

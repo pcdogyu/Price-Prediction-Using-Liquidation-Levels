@@ -91,18 +91,18 @@ func defaultTopMenu() []TopMenuItem {
 		{Key: "hedge-wall", Title: "对冲墙", Href: "/hedge-wall"},
 		{Key: "market-info", Title: "市场信息", Href: "/market-info"},
 		{Key: "options", Title: "期权", Href: "/options"},
-		{Key: "orders", Title: "信号", Href: "/tvbot?tab=orders"},
-		{Key: "positions", Title: "持仓", Href: "/tvbot?tab=positions"},
-		{Key: "analysis", Title: "订单分析", Href: "/tvbot?tab=analysis"},
-		{Key: "history-orders", Title: "历史订单", Href: "/tvbot?tab=historyOrders"},
-		{Key: "stop-loss-analysis", Title: "止盈止损分析", Href: "/tvbot?tab=stopLossAnalysis"},
-		{Key: "symbols", Title: "币对配置", Href: "/tvbot?tab=symbols"},
-		{Key: "config", Title: "订单配置", Href: "/tvbot?tab=config"},
-		{Key: "api-keys", Title: "API Key", Href: "/tvbot?tab=apiKeys"},
-		{Key: "order-settings", Title: "下单设置", Href: "/tvbot?tab=orderSettings"},
-		{Key: "template", Title: "告警模板", Href: "/tvbot?tab=template"},
-		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot?tab=tradeMonitor"},
-		{Key: "upgrade", Title: "升级", Href: "/tvbot?tab=upgrade"},
+		{Key: "orders", Title: "信号", Href: "/orders"},
+		{Key: "positions", Title: "持仓", Href: "/positions"},
+		{Key: "analysis", Title: "订单分析", Href: "/analysis"},
+		{Key: "history-orders", Title: "历史订单", Href: "/historyOrders"},
+		{Key: "stop-loss-analysis", Title: "止盈止损分析", Href: "/stopLossAnalysis"},
+		{Key: "symbols", Title: "币对配置", Href: "/symbols"},
+		{Key: "config", Title: "订单配置", Href: "/oderConfig"},
+		{Key: "api-keys", Title: "API Key", Href: "/apiKeys"},
+		{Key: "order-settings", Title: "下单设置", Href: "/orderSettings"},
+		{Key: "template", Title: "告警模板", Href: "/template"},
+		{Key: "trade-monitor", Title: "成交监听", Href: "/tradeMonitor"},
+		{Key: "upgrade", Title: "升级", Href: "/upgradePage"},
 		{Key: "system-info", Title: "系统信息", Href: "/system"},
 		{Key: "menu", Title: "菜单管理", Href: "/menu"},
 		{Key: "system", Title: "用户管理", Href: "/admin"},
@@ -125,7 +125,7 @@ func renderTVBotHTMLWithTenantMenuAndUser(info BuildInfo, r *http.Request, menu 
 	link := func(path string) string { return prefix + path }
 	assets := `<meta name="app-base" content="` + html.EscapeString(link("/")) + `"><script src="` + html.EscapeString(link("/assets/theme.js")) + `"></script><link rel="stylesheet" href="` + html.EscapeString(link("/assets/pages.css")) + `"><link rel="stylesheet" href="` + html.EscapeString(link("/assets/theme.css")) + `"><script src="` + html.EscapeString(link("/assets/shared.js")) + `" defer></script>`
 	page := strings.Replace(tvbotHTML, "</head>", assets+"</head>", 1)
-	currentTab := ""
+	currentTab := TVBotPageTab(r.URL.Path)
 	if strings.TrimSuffix(r.URL.Path, "/") == "/system" {
 		currentTab = "system"
 	}
@@ -152,6 +152,9 @@ func topMenuTab(item TopMenuItem) string {
 		return "system"
 	}
 	parsed, err := url.Parse(item.Href)
+	if err == nil && TVBotPageTab(parsed.Path) != "" {
+		return TVBotPageTab(parsed.Path)
+	}
 	if err == nil && parsed.Path == "/tvbot" {
 		return parsed.Query().Get("tab")
 	}
@@ -4842,13 +4845,15 @@ const tvbotHTML = `<!doctype html>
       const requested = new URLSearchParams(location.search).get("tab");
       if (requested && $(requested)) return requested;
       const path = location.pathname.replace(/\/+$/, "");
-      return path.endsWith("/system") ? "system" : "";
+      const routes = {"orders": "orders", "positions": "positions", "analysis": "analysis", "historyOrders": "historyOrders", "stopLossAnalysis": "stopLossAnalysis", "symbols": "symbols", "oderConfig": "config", "apiKeys": "apiKeys", "orderSettings": "orderSettings", "template": "template", "tradeMonitor": "tradeMonitor", "upgradePage": "upgrade"};
+      return routes[path.split("/").pop()] || (path.endsWith("/system") ? "system" : "");
     }
 
     function tvbotPageURL(tab) {
       const appBase = (document.querySelector('meta[name="app-base"]') || {}).content || "/";
-      const url = new URL("tvbot", new URL(appBase, window.location.origin));
-      if (tab) url.searchParams.set("tab", tab);
+      const routes = {"orders": "orders", "positions": "positions", "analysis": "analysis", "historyOrders": "historyOrders", "stopLossAnalysis": "stopLossAnalysis", "symbols": "symbols", "config": "oderConfig", "apiKeys": "apiKeys", "orderSettings": "orderSettings", "template": "template", "tradeMonitor": "tradeMonitor", "upgrade": "upgradePage"};
+      const url = new URL(routes[tab] || "tvbot", new URL(appBase, window.location.origin));
+      if (tab && !routes[tab]) url.searchParams.set("tab", tab);
       return url;
     }
 

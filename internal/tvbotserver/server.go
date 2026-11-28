@@ -142,7 +142,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://www.mext.go.jp/", http.StatusFound)
 	case r.URL.Path == "/tvorder":
 		s.handleTVOrder(w, r)
-	case r.URL.Path == "/tvbot" || strings.HasPrefix(r.URL.Path, "/tvbot/"):
+	case TVBotPageTab(r.URL.Path) != "" || r.URL.Path == "/tvbot" || strings.HasPrefix(r.URL.Path, "/tvbot/"):
 		s.handleTVBot(w, r)
 	case r.URL.Path == "/upgrade" || r.URL.Path == "/upgrade/":
 		s.handleUpgrade(w, r)
@@ -764,6 +764,9 @@ func disableProtectionRiskIfNeeded(signal *trading.Signal, cfg config.Config) {
 
 func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/tvbot")
+	if TVBotPageTab(r.URL.Path) != "" {
+		path = ""
+	}
 	if path == "/login" || path == "/login/" {
 		if s.RedirectUnifiedLogin != nil {
 			s.RedirectUnifiedLogin(w, r)

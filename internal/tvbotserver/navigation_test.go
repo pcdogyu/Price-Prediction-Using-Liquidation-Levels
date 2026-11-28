@@ -31,16 +31,16 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 		`href="/hedge-wall"`,
 		`href="/market-info"`,
 		`href="/options"`,
-		`data-tab="orders" href="/tvbot?tab=orders"`,
-		`data-tab="positions" href="/tvbot?tab=positions"`,
-		`data-tab="analysis" href="/tvbot?tab=analysis"`,
-		`data-tab="historyOrders" href="/tvbot?tab=historyOrders">历史订单`,
-		`data-tab="stopLossAnalysis" href="/tvbot?tab=stopLossAnalysis">止盈止损分析`,
-		`data-tab="symbols" href="/tvbot?tab=symbols"`,
-		`data-tab="config" href="/tvbot?tab=config"`,
-		`data-tab="apiKeys" href="/tvbot?tab=apiKeys"`,
-		`data-tab="orderSettings" href="/tvbot?tab=orderSettings"`,
-		`data-tab="template" href="/tvbot?tab=template"`,
+		`data-tab="orders" href="/orders"`,
+		`data-tab="positions" href="/positions"`,
+		`data-tab="analysis" href="/analysis"`,
+		`data-tab="historyOrders" href="/historyOrders">历史订单`,
+		`data-tab="stopLossAnalysis" href="/stopLossAnalysis">止盈止损分析`,
+		`data-tab="symbols" href="/symbols"`,
+		`data-tab="config" href="/oderConfig"`,
+		`data-tab="apiKeys" href="/apiKeys"`,
+		`data-tab="orderSettings" href="/orderSettings"`,
+		`data-tab="template" href="/template"`,
 	}
 	last := -1
 	for _, marker := range want {
@@ -61,9 +61,9 @@ func TestUnifiedNavigationUsesRequestedOrder(t *testing.T) {
 	systemWant := []string{
 		`href="/admin">用户管理`,
 		`href="/menu">菜单管理`,
-		`data-tab="tradeMonitor" href="/tvbot?tab=tradeMonitor">成交监听`,
+		`data-tab="tradeMonitor" href="/tradeMonitor">成交监听`,
 		`href="/system">交易所信息`,
-		`data-tab="upgrade" href="/tvbot?tab=upgrade">升级`,
+		`data-tab="upgrade" href="/upgradePage">升级`,
 	}
 	last = -1
 	for _, marker := range systemWant {

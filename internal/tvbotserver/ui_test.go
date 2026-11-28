@@ -83,7 +83,7 @@ func TestRenderTVBotHTMLUsesOneUnifiedHeader(t *testing.T) {
 		`window.confirm("确认一键平掉当前 "`,
 		`return !!$(tabID) && (!button || !button.hidden);`,
 		`if ((!button || button.hidden || !section) && routeTab !== target)`,
-		`new URL("tvbot", new URL(appBase, window.location.origin))`,
+		`new URL(routes[tab] || "tvbot", new URL(appBase, window.location.origin))`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("unified header missing %q", want)

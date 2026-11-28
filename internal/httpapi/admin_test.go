@@ -33,10 +33,10 @@ func TestMigrateAdminMenuMovesLegacyMenuItem(t *testing.T) {
 		t.Fatalf("migrated menu item=%#v", migrated[0])
 	}
 	wantHrefs := map[string]string{
-		"positions":          "/tvbot?tab=positions",
-		"orders":             "/tvbot?tab=orders",
-		"analysis":           "/tvbot?tab=analysis",
-		"stop-loss-analysis": "/tvbot?tab=stopLossAnalysis",
+		"positions":          "/positions",
+		"orders":             "/orders",
+		"analysis":           "/analysis",
+		"stop-loss-analysis": "/stopLossAnalysis",
 	}
 	for _, item := range migrated {
 		if want, ok := wantHrefs[item.Key]; ok && item.Href != want {
@@ -184,7 +184,7 @@ func TestMigrateAdminMenuRenamesSystemManagement(t *testing.T) {
 func TestMigrateAdminMenuRemovesRetiredUpgradePage(t *testing.T) {
 	legacy := []adminMenuItem{{Key: "upgrade", Title: "升级", Href: "/upgrade", Group: "admin"}}
 	migrated, changed := migrateAdminMenu(legacy)
-	if !changed || len(migrated) != 1 || migrated[0].Href != "/tvbot?tab=upgrade" {
+	if !changed || len(migrated) != 1 || migrated[0].Href != "/upgradePage" {
 		t.Fatalf("upgrade menu should migrate to the TVBot route: changed=%v menu=%#v", changed, migrated)
 	}
 }
@@ -326,6 +326,16 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 		t.Fatal("login response leaked a password or hash")
 	}
 
+	for _, item := range defaultTVBotMenuItems() {
+		response := serve(http.MethodGet, item.Href, "", ordinaryCookie)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `data-tab="`+tvbotMenuTabs[item.Key]+`" href="`+item.Href+`" aria-current="page"`) {
+			t.Fatalf("page route %s did not render the active view: status=%d", item.Href, response.Code)
+		}
+		unauthenticated := serve(http.MethodGet, item.Href, "", nil)
+		if unauthenticated.Code != http.StatusFound {
+			t.Fatalf("page route %s must require login: %d", item.Href, unauthenticated.Code)
+		}
+	}
 	positions := serve(http.MethodGet, "/tvbot", "", ordinaryCookie)
 	if positions.Code != http.StatusOK || !strings.Contains(positions.Body.String(), "positions") || strings.Contains(positions.Body.String(), `class="app-logo"`) {
 		t.Fatalf("unified tvbot page status=%d body prefix=%s", positions.Code, positions.Body.String()[:minInt(180, positions.Body.Len())])
@@ -335,8 +345,8 @@ func TestUnifiedAdminAndTVBotAuthorization(t *testing.T) {
 		"main-menu":       strings.Count(tvbotPage, `aria-label="主菜单"`) == 1,
 		"menu-link":       strings.Contains(tvbotPage, `href="/menu">菜单管理`),
 		"exchange-link":   strings.Contains(tvbotPage, `data-tab="system" href="/system">交易所信息`),
-		"orders-link":     strings.Contains(tvbotPage, `data-tab="orders" href="/tvbot?tab=orders">信号`),
-		"positions-link":  strings.Contains(tvbotPage, `data-tab="positions" href="/tvbot?tab=positions">持仓`),
+		"orders-link":     strings.Contains(tvbotPage, `data-tab="orders" href="/orders">信号`),
+		"positions-link":  strings.Contains(tvbotPage, `data-tab="positions" href="/positions">持仓`),
 		"system-dropdown": strings.Contains(tvbotPage, `data-system-menu="true"`),
 	}
 	for name, ok := range menuChecks {

@@ -159,9 +159,9 @@ func TestDashboardNavigationUsesScrollableMobileMenu(t *testing.T) {
 		}
 	}
 	for _, marker := range []string{
-		`data-tab="orders" href="/liquidation/tvbot?tab=orders">信号`,
-		`data-tab="positions" href="/liquidation/tvbot?tab=positions">持仓`,
-		`data-tab="orderSettings" href="/liquidation/tvbot?tab=orderSettings">下单设置`,
+		`data-tab="orders" href="/liquidation/orders">信号`,
+		`data-tab="positions" href="/liquidation/positions">持仓`,
+		`data-tab="orderSettings" href="/liquidation/orderSettings">下单设置`,
 	} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("alerts navigation missing restored TVBot route %q", marker)

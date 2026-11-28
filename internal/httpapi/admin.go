@@ -13,6 +13,7 @@ import (
 
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/authn"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/store"
+	tvbotserver "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotserver"
 )
 
 //go:embed admin.html
@@ -44,18 +45,18 @@ type adminMenuItem struct {
 
 func defaultTVBotMenuItems() []adminMenuItem {
 	return []adminMenuItem{
-		{Key: "orders", Title: "信号", Href: "/tvbot?tab=orders", Group: "trading"},
-		{Key: "positions", Title: "持仓", Href: "/tvbot?tab=positions", Group: "trading"},
-		{Key: "analysis", Title: "订单分析", Href: "/tvbot?tab=analysis", Group: "trading"},
-		{Key: "history-orders", Title: "历史订单", Href: "/tvbot?tab=historyOrders", Group: "trading"},
-		{Key: "stop-loss-analysis", Title: "止盈止损分析", Href: "/tvbot?tab=stopLossAnalysis", Group: "trading"},
-		{Key: "symbols", Title: "币对配置", Href: "/tvbot?tab=symbols", Group: "trading"},
-		{Key: "config", Title: "订单配置", Href: "/tvbot?tab=config", Group: "trading"},
-		{Key: "api-keys", Title: "API Key", Href: "/tvbot?tab=apiKeys", Group: "trading"},
-		{Key: "order-settings", Title: "下单设置", Href: "/tvbot?tab=orderSettings", Group: "trading"},
-		{Key: "template", Title: "告警模板", Href: "/tvbot?tab=template", Group: "trading"},
-		{Key: "trade-monitor", Title: "成交监听", Href: "/tvbot?tab=tradeMonitor", Group: "trading"},
-		{Key: "upgrade", Title: "升级", Href: "/tvbot?tab=upgrade", Group: "admin"},
+		{Key: "orders", Title: "信号", Href: "/orders", Group: "trading"},
+		{Key: "positions", Title: "持仓", Href: "/positions", Group: "trading"},
+		{Key: "analysis", Title: "订单分析", Href: "/analysis", Group: "trading"},
+		{Key: "history-orders", Title: "历史订单", Href: "/historyOrders", Group: "trading"},
+		{Key: "stop-loss-analysis", Title: "止盈止损分析", Href: "/stopLossAnalysis", Group: "trading"},
+		{Key: "symbols", Title: "币对配置", Href: "/symbols", Group: "trading"},
+		{Key: "config", Title: "订单配置", Href: "/oderConfig", Group: "trading"},
+		{Key: "api-keys", Title: "API Key", Href: "/apiKeys", Group: "trading"},
+		{Key: "order-settings", Title: "下单设置", Href: "/orderSettings", Group: "trading"},
+		{Key: "template", Title: "告警模板", Href: "/template", Group: "trading"},
+		{Key: "trade-monitor", Title: "成交监听", Href: "/tradeMonitor", Group: "trading"},
+		{Key: "upgrade", Title: "升级", Href: "/upgradePage", Group: "admin"},
 	}
 }
 
@@ -282,7 +283,8 @@ func tvbotMenuHref(item adminMenuItem) (string, bool) {
 	} else if tab == "" {
 		return "", false
 	}
-	return "/tvbot?tab=" + url.QueryEscape(tab), true
+	path := tvbotserver.TVBotTabPath(tab)
+	return path, path != ""
 }
 
 func removeRetiredTVBotMenuItems(menu []adminMenuItem) ([]adminMenuItem, bool) {

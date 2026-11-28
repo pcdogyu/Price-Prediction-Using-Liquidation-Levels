@@ -5,6 +5,67 @@ import (
 	"strings"
 )
 
+// TVBotPageTab maps public page routes to the corresponding trading view.
+func TVBotPageTab(path string) string {
+	switch strings.TrimSuffix(path, "/") {
+	case "/orders":
+		return "orders"
+	case "/positions":
+		return "positions"
+	case "/analysis":
+		return "analysis"
+	case "/historyOrders":
+		return "historyOrders"
+	case "/stopLossAnalysis":
+		return "stopLossAnalysis"
+	case "/symbols":
+		return "symbols"
+	case "/oderConfig":
+		return "config"
+	case "/apiKeys":
+		return "apiKeys"
+	case "/orderSettings":
+		return "orderSettings"
+	case "/template":
+		return "template"
+	case "/tradeMonitor":
+		return "tradeMonitor"
+	case "/upgradePage":
+		return "upgrade"
+	}
+	return ""
+}
+
+func TVBotTabPath(tab string) string {
+	switch tab {
+	case "orders":
+		return "/orders"
+	case "positions":
+		return "/positions"
+	case "analysis":
+		return "/analysis"
+	case "historyOrders":
+		return "/historyOrders"
+	case "stopLossAnalysis":
+		return "/stopLossAnalysis"
+	case "symbols":
+		return "/symbols"
+	case "config":
+		return "/oderConfig"
+	case "apiKeys":
+		return "/apiKeys"
+	case "orderSettings":
+		return "/orderSettings"
+	case "template":
+		return "/template"
+	case "tradeMonitor":
+		return "/tradeMonitor"
+	case "upgrade":
+		return "/upgradePage"
+	}
+	return ""
+}
+
 // RenderTopMenuLinks renders the main links for the shared top navigation.
 // System-information links are intentionally rendered by RenderSystemMenu as
 // one compact dropdown so the primary navigation stays focused on operating
