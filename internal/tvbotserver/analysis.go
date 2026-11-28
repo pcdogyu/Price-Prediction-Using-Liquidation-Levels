@@ -542,6 +542,8 @@ type analysisTrade struct {
 	PosSide           string                    `json:"pos_side,omitempty"`
 	PositionEffect    string                    `json:"position_effect,omitempty"`
 	FillPx            string                    `json:"fill_px,omitempty"`
+	EntryPx           string                    `json:"entry_px,omitempty"`
+	EntrySide         string                    `json:"entry_side,omitempty"`
 	FillSz            string                    `json:"fill_sz,omitempty"`
 	Turnover          string                    `json:"turnover,omitempty"`
 	FillPnl           string                    `json:"fill_pnl,omitempty"`
@@ -1215,6 +1217,9 @@ func (s *Server) handleAnalysisRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := filterAnalysisFills(resp.RawTrades, r)
+	if normalizeAnalysisExchange(r.URL.Query().Get("exchange")) == trading.ExchangeBinance {
+		rows = binanceAnalysisClosingRecords(rows)
+	}
 	since := analysisPNLSince(s.now().UTC(), resp.PNLMinutes).UnixMilli()
 	filtered := rows[:0]
 	for _, row := range rows {
@@ -1245,6 +1250,142 @@ func (s *Server) handleAnalysisRecords(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": resp.OK, "page": page, "page_size": size, "total": total, "total_pages": pages, "trades": filtered[start:end], "sync_state": syncStatus.State, "sync_error": syncStatus.Error})
+}
+
+// binanceAnalysisClosingRecords matches fills in chronological order before pagination.
+// Hidden zero-PnL fill fees are carried to the last visible close of a completed position.
+func binanceAnalysisClosingRecords(rows []analysisTrade) []analysisTrade {
+	type lot struct{ qty, price float64 }
+	type book struct {
+		lots []lot
+		fees map[string]float64
+		last int
+	}
+	ordered := append([]analysisTrade(nil), rows...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].FillTS == ordered[j].FillTS {
+			return ordered[i].TradeID < ordered[j].TradeID
+		}
+		return ordered[i].FillTS < ordered[j].FillTS
+	})
+	books := map[string]*book{}
+	out := make([]analysisTrade, 0, len(rows))
+	for _, row := range ordered {
+		orderedFee := row
+		pnl, parsed := parseAnyFloat(row.FillPnl)
+		visible := !parsed || pnl != 0
+		qty, qtyOK := parsePositiveFloat(row.FillSz)
+		price, priceOK := parsePositiveFloat(row.FillPx)
+		side := normalizeAnalysisPositionSide(row.PosSide)
+		netMode := side == ""
+		var matchedQty float64
+		opening := analysisOpeningSideFromTradeSide(row.Side)
+		closing := analysisClosingSideFromTradeSide(row.Side)
+		base := strings.ToUpper(row.InstID) + "|" + row.APIID + "|"
+		if side == "" {
+			if b := books[base+closing]; b != nil && len(b.lots) > 0 {
+				side = closing
+			} else if visible {
+				side = closing
+			} else {
+				side = opening
+			}
+		}
+		key := base + side
+		b := books[key]
+		if b == nil {
+			b = &book{fees: map[string]float64{}, last: -1}
+			books[key] = b
+		}
+		isClose := side == closing
+		if visible {
+			row.EntrySide = side
+			var matched, value float64
+			left := qty
+			if qtyOK && isClose {
+				for left > positionEntrySizeEpsilon && len(b.lots) > 0 {
+					l := &b.lots[0]
+					n := math.Min(left, l.qty)
+					matched += n
+					matchedQty += n
+					value += n * l.price
+					l.qty -= n
+					left -= n
+					if l.qty <= positionEntrySizeEpsilon {
+						b.lots = b.lots[1:]
+					}
+				}
+			}
+			if matched > 0 {
+				row.EntryPx = trading.NormalizeFloat(value / matched)
+			}
+			if b.last >= 0 {
+				out[b.last].Fee, out[b.last].FeeCcy = "", ""
+			}
+			row.Fee, row.FeeCcy = "", ""
+			out = append(out, row)
+			b.last = len(out) - 1
+		} else if isClose && qtyOK {
+			left := qty
+			for left > positionEntrySizeEpsilon && len(b.lots) > 0 {
+				l := &b.lots[0]
+				n := math.Min(left, l.qty)
+				matchedQty += n
+				l.qty -= n
+				left -= n
+				if l.qty <= positionEntrySizeEpsilon {
+					b.lots = b.lots[1:]
+				}
+			}
+		}
+		fee, feeOK := parseAnyFloat(orderedFee.Fee)
+		feeCurrency := strings.ToUpper(strings.TrimSpace(orderedFee.FeeCcy))
+		reversal := netMode && isClose && matchedQty > positionEntrySizeEpsilon && qty-matchedQty > positionEntrySizeEpsilon && priceOK
+		if feeOK {
+			if reversal {
+				b.fees[feeCurrency] += fee * matchedQty / qty
+			} else {
+				b.fees[feeCurrency] += fee
+			}
+		}
+		if reversal {
+			nextKey := base + opening
+			next := books[nextKey]
+			if next == nil {
+				next = &book{fees: map[string]float64{}, last: -1}
+				books[nextKey] = next
+			}
+			next.lots = append(next.lots, lot{qty - matchedQty, price})
+			if feeOK {
+				next.fees[feeCurrency] += fee * (qty - matchedQty) / qty
+			}
+		}
+		if !isClose && qtyOK && priceOK {
+			b.lots = append(b.lots, lot{qty, price})
+		}
+		if b.last >= 0 {
+			target := &out[b.last]
+			currencies := make([]string, 0, len(b.fees))
+			for c := range b.fees {
+				currencies = append(currencies, c)
+			}
+			sort.Strings(currencies)
+			parts := make([]string, 0, len(currencies))
+			for _, c := range currencies {
+				parts = append(parts, strings.TrimSpace(trading.NormalizeFloat(b.fees[c])+" "+c))
+			}
+			if len(parts) > 0 {
+				target.Fee = strings.Join(parts, " + ")
+				target.FeeCcy = ""
+			}
+		}
+		if isClose && len(b.lots) == 0 && b.last >= 0 {
+			b.fees = map[string]float64{}
+			b.last = -1
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].FillTS > out[j].FillTS })
+	return out
 }
 
 func (s *Server) handleAnalysisFills(w http.ResponseWriter, r *http.Request) {

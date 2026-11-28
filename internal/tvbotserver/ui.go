@@ -8584,11 +8584,11 @@ const tvbotHTML = `<!doctype html>
       const cols = $("analysis-trade-cols");
       if (cols) cols.innerHTML = "";
       const head = $("analysis-trade-head");
-      if (head) head.innerHTML = "<tr><th>成交时间（北京时间）</th><th>币对</th><th>成交编号</th><th>订单编号</th><th>买卖</th><th>持仓方向</th><th>成交价</th><th>成交数量</th><th>已实现盈亏</th><th>手续费</th></tr>";
+      if (head) head.innerHTML = exchange === "binance" ? "<tr><th>平仓时间（北京时间）</th><th>币对</th><th>开仓方向</th><th>开仓价格</th><th>平仓价格</th><th>成交数量</th><th>已实现盈亏</th><th>手续费</th></tr>" : "<tr><th>成交时间（北京时间）</th><th>币对</th><th>成交编号</th><th>订单编号</th><th>买卖</th><th>持仓方向</th><th>成交价</th><th>成交数量</th><th>已实现盈亏</th><th>手续费</th></tr>";
       if (!rowsEl) return;
       if (errorText || !state.analysisTrades) {
         const message = errorText || "正在加载逐笔成交记录…";
-        rowsEl.innerHTML = '<tr><td colspan="10" class="muted">' + escapeHTML(message) + '</td></tr>';
+        rowsEl.innerHTML = '<tr><td colspan="' + (exchange === "binance" ? 8 : 10) + '" class="muted">' + escapeHTML(message) + '</td></tr>';
         if (status) status.textContent = message;
         if (pageInfo) pageInfo.textContent = "-";
         if (prev) prev.disabled = true;
@@ -8599,14 +8599,14 @@ const tvbotHTML = `<!doctype html>
       const rows = Array.isArray(packet.trades) ? packet.trades : [];
       const amount = (value) => value === null || value === undefined || String(value).trim() === "" ? "-" : analysisAmountText(value);
       rowsEl.innerHTML = rows.map((row) => {
-        const values = [analysisTimeText(row.fill_time), row.inst_id || "-", row.trade_id || "-", row.ord_id || "-", row.side || "-", row.pos_side || "-", amount(row.fill_px), amount(row.fill_sz), amount(row.fill_pnl), amount(row.fee) + (row.fee_ccy ? " " + row.fee_ccy : "")];
-        return "<tr>" + values.map((value, index) => '<td' + (index === 8 ? ' class="' + escapeHTML(signedToneClass(row.fill_pnl)) + '"' : '') + '>' + escapeHTML(value) + '</td>').join("") + "</tr>";
-      }).join("") || '<tr><td colspan="10" class="muted">暂无逐笔成交记录</td></tr>';
+        const values = exchange === "binance" ? [analysisTimeText(row.fill_time), row.inst_id || "-", row.entry_side || "-", amount(row.entry_px), amount(row.fill_px), amount(row.fill_sz), amount(row.fill_pnl), (row.fee || "-") + (row.fee_ccy ? " " + row.fee_ccy : "")] : [analysisTimeText(row.fill_time), row.inst_id || "-", row.trade_id || "-", row.ord_id || "-", row.side || "-", row.pos_side || "-", amount(row.fill_px), amount(row.fill_sz), amount(row.fill_pnl), amount(row.fee) + (row.fee_ccy ? " " + row.fee_ccy : "")];
+        return "<tr>" + values.map((value, index) => '<td' + (index === (exchange === "binance" ? 6 : 8) ? ' class="' + escapeHTML(signedToneClass(row.fill_pnl)) + '"' : '') + '>' + escapeHTML(value) + '</td>').join("") + "</tr>";
+      }).join("") || '<tr><td colspan="' + (exchange === "binance" ? 8 : 10) + '" class="muted">暂无逐笔成交记录</td></tr>';
       const total = Number(packet.total || 0);
       const pages = Math.max(1, Number(packet.total_pages || 1));
       state.analysisTradePage = Math.min(Math.max(1, Number(packet.page || 1)), pages);
       const syncNote = packet.sync_state === "syncing" ? " · 正在同步" : packet.sync_state === "failed" ? " · 同步失败，显示本地记录" : "";
-      if (status) { status.textContent = "共 " + total + " 笔 · 盈亏为交易所已实现盈亏，手续费单列" + syncNote; status.title = packet.sync_error || ""; }
+      if (status) { status.textContent = "共 " + total + " 笔 · 盈亏为交易所已实现盈亏" + (exchange === "binance" ? "，归集的手续费计入最后平仓记录" : "，手续费单列") + syncNote; status.title = packet.sync_error || ""; }
       if (pageInfo) pageInfo.textContent = total ? "第 " + state.analysisTradePage + " / " + pages + " 页" : "-";
       if (prev) prev.disabled = state.analysisTradePage <= 1;
       if (next) next.disabled = state.analysisTradePage >= pages;

@@ -2046,3 +2046,15 @@ func TestBalanceWindowStatsWarnsAboutFundingLikeCashJumpAndSourceMix(t *testing.
 		t.Fatalf("unexpected warnings=%#v", got.Warnings)
 	}
 }
+
+func TestBinanceAnalysisClosingRecords(t *testing.T) {
+	rows := []analysisTrade{
+		{InstID: "BTCUSDT", APIID: "a", TradeID: "1", Side: "BUY", PosSide: "long", FillTS: 1, FillSz: "2", FillPx: "100", FillPnl: "0", Fee: "-0.2", FeeCcy: "USDT"},
+		{InstID: "BTCUSDT", APIID: "a", TradeID: "2", Side: "SELL", PosSide: "long", FillTS: 2, FillSz: "1", FillPx: "110", FillPnl: "10", Fee: "-0.1", FeeCcy: "USDT"},
+		{InstID: "BTCUSDT", APIID: "a", TradeID: "3", Side: "SELL", PosSide: "long", FillTS: 3, FillSz: "1", FillPx: "120", FillPnl: "20", Fee: "-0.1", FeeCcy: "USDT"},
+	}
+	got := binanceAnalysisClosingRecords(rows)
+	if len(got) != 2 || got[0].EntryPx != "100" || got[0].EntrySide != "long" || got[0].Fee != "-0.4 USDT" || got[1].Fee != "" {
+		t.Fatalf("unexpected records: %+v", got)
+	}
+}
