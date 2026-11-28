@@ -2702,7 +2702,7 @@ const tvbotHTML = `<!doctype html>
         <div class="section-head" style="margin-bottom:10px">
           <h3 id="analysis-trade-history-title">下单盈亏分析</h3>
           <div class="analysis-trade-history-actions">
-            <button class="btn small" type="button" id="analysis-trade-aggregate-toggle" aria-pressed="false" aria-label="开启按币对和平仓时间聚合订单" title="按币对和平仓时间聚合订单">聚合</button>
+            <button class="btn small" type="button" id="analysis-trade-aggregate-toggle" hidden aria-pressed="false" aria-label="开启按币对和平仓时间聚合订单" title="按币对和平仓时间聚合订单">聚合</button>
             <span class="muted" id="analysis-trade-history-status">-</span>
           </div>
         </div>
@@ -5238,7 +5238,7 @@ const tvbotHTML = `<!doctype html>
         page: String(requestedPage),
         page_size: String(analysisTradePageSize)
       });
-      let endpoint = "/tvbot/analysis/trades";
+      let endpoint = "/tvbot/analysis/records";
       if (exchange === "binance") {
         qs.set("exchange", exchange);
         if (state.analysis && state.analysis.binance_api_id) qs.set("binance_api_id", state.analysis.binance_api_id);
@@ -8553,51 +8553,37 @@ const tvbotHTML = `<!doctype html>
       const pageInfo = $("analysis-trade-page-info");
       const prev = $("analysis-trade-prev");
       const next = $("analysis-trade-next");
-      const binanceIncome = exchange === "binance";
-      if (section) section.hidden = binanceIncome;
-      if (title) title.textContent = binanceIncome ? ("Binance 订单盈亏 · " + balanceWindowLabel(analysisPNLWindowMinutes())) : label + " 下单盈亏分析";
-      const aggregateToggle = $("analysis-trade-aggregate-toggle");
-      if (aggregateToggle) aggregateToggle.hidden = binanceIncome;
-      if (!binanceIncome) renderAnalysisTradeAggregateToggle();
-      renderAnalysisTradeHead();
+      if (section) section.hidden = false;
+      if (title) title.textContent = label + " 逐笔成交盈亏";
+      const cols = $("analysis-trade-cols");
+      if (cols) cols.innerHTML = "";
+      const head = $("analysis-trade-head");
+      if (head) head.innerHTML = "<tr><th>成交时间（北京时间）</th><th>币对</th><th>成交编号</th><th>订单编号</th><th>买卖</th><th>持仓方向</th><th>成交价</th><th>成交数量</th><th>已实现盈亏</th><th>手续费</th></tr>";
       if (!rowsEl) return;
-      if (errorText) {
-        rowsEl.innerHTML = '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">' + escapeHTML(errorText) + '</td></tr>';
-        if (status) status.textContent = errorText;
+      if (errorText || !state.analysisTrades) {
+        const message = errorText || "正在加载逐笔成交记录…";
+        rowsEl.innerHTML = '<tr><td colspan="10" class="muted">' + escapeHTML(message) + '</td></tr>';
+        if (status) status.textContent = message;
         if (pageInfo) pageInfo.textContent = "-";
         if (prev) prev.disabled = true;
         if (next) next.disabled = true;
         return;
       }
-      if (!state.analysisTrades) {
-        rowsEl.innerHTML = '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">正在加载 ' + escapeHTML(binanceIncome ? "Binance 订单盈亏" : label + " 下单盈亏记录") + '…</td></tr>';
-        if (status) status.textContent = "正在加载…";
-        if (pageInfo) pageInfo.textContent = "-";
-        if (prev) prev.disabled = true;
-        if (next) next.disabled = true;
-        return;
-      }
-      const rawTrades = analysisTradesForActiveExchange();
-      const trades = binanceIncome ? rawTrades : analysisTradesForDisplay();
-      const total = state.analysisTrades && Number.isFinite(Number(state.analysisTrades.total))
-        ? Number(state.analysisTrades.total)
-        : trades.length;
-      const totalPages = Math.max(1, Number(state.analysisTrades && state.analysisTrades.total_pages || (total ? Math.ceil(total / analysisTradePageSize) : 0)));
-      state.analysisTradePage = Math.min(Math.max(1, Number(state.analysisTradePage || 1)), totalPages);
-      const pageRows = trades;
-      const columns = currentAnalysisTradeColumns();
-      rowsEl.innerHTML = pageRows.map((row) => {
-        return "<tr>" + columns.map((col) => analysisTradeCellHTML(col, row)).join("") + "</tr>";
-      }).join("") || '<tr><td colspan="' + analysisTradeColumnCount() + '" class="muted">暂无 ' + escapeHTML(label) + ' 下单盈亏记录</td></tr>';
-      const syncNote = binanceIncome && state.analysisTrades ? (state.analysisTrades.sync_state === "syncing" ? " · 本地订单已显示，Binance 增量同步中" : state.analysisTrades.sync_state === "failed" ? " · 增量同步失败，当前显示本地订单" : state.analysisTrades.sync_state === "synced" ? " · 已完成增量同步" : "") : "";
-      if (status) {
-        const syncError = binanceIncome && state.analysisTrades && state.analysisTrades.sync_state === "failed" ? String(state.analysisTrades.sync_error || "") : "";
-        status.title = syncError ? "Binance 增量同步详情：" + syncError : "";
-        status.textContent = (total ? (binanceIncome ? ("共 " + total + " 个完整仓位") : (state.analysisTradeAggregate ? ("共 " + total + " 条（当前页 " + trades.length + " 组）") : ("共 " + total + " 条"))) : "-") + syncNote;
-      }
-      if (pageInfo) pageInfo.textContent = total ? ("第 " + state.analysisTradePage + " / " + totalPages + " 页") : "-";
+      const packet = state.analysisTrades;
+      const rows = Array.isArray(packet.trades) ? packet.trades : [];
+      const amount = (value) => value === null || value === undefined || String(value).trim() === "" ? "-" : analysisAmountText(value);
+      rowsEl.innerHTML = rows.map((row) => {
+        const values = [analysisTimeText(row.fill_time), row.inst_id || "-", row.trade_id || "-", row.ord_id || "-", row.side || "-", row.pos_side || "-", amount(row.fill_px), amount(row.fill_sz), amount(row.fill_pnl), amount(row.fee) + (row.fee_ccy ? " " + row.fee_ccy : "")];
+        return "<tr>" + values.map((value, index) => '<td' + (index === 8 ? ' class="' + escapeHTML(signedToneClass(row.fill_pnl)) + '"' : '') + '>' + escapeHTML(value) + '</td>').join("") + "</tr>";
+      }).join("") || '<tr><td colspan="10" class="muted">暂无逐笔成交记录</td></tr>';
+      const total = Number(packet.total || 0);
+      const pages = Math.max(1, Number(packet.total_pages || 1));
+      state.analysisTradePage = Math.min(Math.max(1, Number(packet.page || 1)), pages);
+      const syncNote = packet.sync_state === "syncing" ? " · 正在同步" : packet.sync_state === "failed" ? " · 同步失败，显示本地记录" : "";
+      if (status) { status.textContent = "共 " + total + " 笔 · 盈亏为交易所已实现盈亏，手续费单列" + syncNote; status.title = packet.sync_error || ""; }
+      if (pageInfo) pageInfo.textContent = total ? "第 " + state.analysisTradePage + " / " + pages + " 页" : "-";
       if (prev) prev.disabled = state.analysisTradePage <= 1;
-      if (next) next.disabled = state.analysisTradePage >= totalPages;
+      if (next) next.disabled = state.analysisTradePage >= pages;
     }
 
     function changeAnalysisTradePage(delta) {

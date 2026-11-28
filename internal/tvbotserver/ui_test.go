@@ -534,50 +534,12 @@ func TestRenderTVBotAnalysisAddsTradeTimeColumns(t *testing.T) {
 	}
 }
 
-func TestRenderTVBotAnalysisAddsTradeAggregationToggle(t *testing.T) {
+func TestRenderTVBotAnalysisShowsIndividualFills(t *testing.T) {
 	page := renderTVBotHTML(BuildInfo{CommitHash: "test"}, httptest.NewRequest("GET", "/tvbot", nil))
-	title := strings.Index(page, `id="analysis-trade-history-title"`)
-	toggle := strings.Index(page, `id="analysis-trade-aggregate-toggle"`)
-	status := strings.Index(page, `id="analysis-trade-history-status"`)
-	if title < 0 || toggle < 0 || status < 0 || !(title < toggle && toggle < status) {
-		t.Fatalf("analysis aggregation toggle should be placed on the right side of the trade history heading: title=%d toggle=%d status=%d", title, toggle, status)
-	}
-	for _, want := range []string{
-		`id="analysis-trade-history-section"`,
-		`if (section) section.hidden = binanceIncome;`,
-		`id="analysis-api-badge"`,
-		`id="analysis-connection-indicator"`,
-		`/tvbot/exchange-connection?`,
-		`Binance 用户数据 WebSocket 已连接`,
-		`15000);`,
-		`qs.set("exchange", exchange)`,
-		`Binance 订单盈亏`,
-		`result.sync_state === "syncing"`,
-		`本地订单已显示，Binance 增量同步中`,
-		`title: "手续费"`,
-		`id: "net_pnl"`,
-		`id="analysis-trade-aggregate-toggle" aria-pressed="false"`,
-		`type="button"`,
-		`analysis-trade-history-actions`,
-		`analysisTradeAggregate: false`,
-		`const analysisTradeAggregateWindowMs = 1000;`,
-		`function aggregateAnalysisTrades(rows)`,
-		`function analysisTradesForDisplay()`,
-		`analysisTradeWeightedAverage(members, "entry_px")`,
-		`analysisTradeWeightedAverage(members, "exit_px")`,
-		`analysisTradeSum(members, "fill_count", 1)`,
-		`entry_time_end: entryBounds.end`,
-		`exit_time_end: exitBounds.end`,
-		`analysis-trade-aggregate-toggle").addEventListener("click"`,
-		`state.analysisTradePage = 1`,
-		`共 " + total + " 条（当前页 " + trades.length + " 组）`,
-	} {
+	for _, want := range []string{`/tvbot/analysis/records`, `id="analysis-trade-aggregate-toggle" hidden`, `逐笔成交盈亏`, `<th>已实现盈亏</th><th>手续费</th>`, `amount(row.fill_pnl)`, `amount(row.fee)`, `if (section) section.hidden = false;`} {
 		if !strings.Contains(page, want) {
-			t.Fatalf("analysis trade aggregation marker is missing %q", want)
+			t.Fatalf("analysis fill history missing %q", want)
 		}
-	}
-	if strings.Contains(page, `id: "funding_fee"`) || strings.Contains(page, "unallocated_funding") || strings.Contains(page, "未分配资金费") {
-		t.Fatal("Binance analysis table should not show funding fee rows or column")
 	}
 }
 

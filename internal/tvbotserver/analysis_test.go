@@ -324,6 +324,11 @@ func TestAnalysisSplitEndpointsUseCachedSnapshotAndPaginate(t *testing.T) {
 			FillTS:         now.UnixMilli(),
 		}},
 	}
+	full.RawTrades = []analysisTrade{
+		{Exchange: trading.ExchangeOKX, APIID: "default", InstID: "BTC-USDT-SWAP", OrdID: "same-order", TradeID: "first", FillPnl: "2.5", Fee: "-0.1", FillTS: now.Add(-time.Minute).UnixMilli()},
+		{Exchange: trading.ExchangeOKX, APIID: "default", InstID: "BTC-USDT-SWAP", OrdID: "same-order", TradeID: "second", FillPnl: "-1", Fee: "-0.2", FillTS: now.UnixMilli()},
+		{Exchange: trading.ExchangeOKX, APIID: "default", InstID: "BTC-USDT-SWAP", TradeID: "old", FillTS: now.Add(-25 * time.Hour).UnixMilli()},
+	}
 	cacheKey := analysisCacheKey("default", "", config.EnvDemo, 3, 1440)
 	if err := srv.Orders.CachePayload(cacheKey, full, now); err != nil {
 		t.Fatal(err)
@@ -352,6 +357,21 @@ func TestAnalysisSplitEndpointsUseCachedSnapshotAndPaginate(t *testing.T) {
 	}
 	if page.Trades[0].ExitTS != positions[20].ExitTS {
 		t.Fatalf("page ordering mismatch: got=%d want=%d", page.Trades[0].ExitTS, positions[20].ExitTS)
+	}
+
+	recordsRR := httptest.NewRecorder()
+	srv.handleAnalysisRecords(recordsRR, httptest.NewRequest(http.MethodGet, "/tvbot/analysis/records?price_days=3&pnl_minutes=1440&exchange=okx&page=2&page_size=1", nil))
+	var records struct {
+		Page       int             `json:"page"`
+		Total      int             `json:"total"`
+		TotalPages int             `json:"total_pages"`
+		Trades     []analysisTrade `json:"trades"`
+	}
+	if err := json.NewDecoder(recordsRR.Body).Decode(&records); err != nil {
+		t.Fatal(err)
+	}
+	if recordsRR.Code != http.StatusOK || records.Total != 2 || records.TotalPages != 2 || records.Page != 2 || len(records.Trades) != 1 || records.Trades[0].TradeID != "first" || records.Trades[0].FillPnl != "2.5" || records.Trades[0].Fee != "-0.1" {
+		t.Fatalf("individual records: status=%d page=%+v", recordsRR.Code, records)
 	}
 
 	openRR := httptest.NewRecorder()
@@ -1613,8 +1633,8 @@ func TestBuildAnalysisPositionTradesCountsClosedPositionsOnly(t *testing.T) {
 
 func TestAnalysisCacheKeyUsesUpdatedSummarySchema(t *testing.T) {
 	key := analysisCacheKey("default", "binance", "demo", 3, 1440, "gate")
-	if !strings.HasPrefix(key, "analysis|v5|") {
-		t.Fatalf("analysis cache key=%q, want v5 schema key", key)
+	if !strings.HasPrefix(key, "analysis|v6|") {
+		t.Fatalf("analysis cache key=%q, want v6 schema key", key)
 	}
 }
 

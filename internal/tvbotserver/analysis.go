@@ -173,6 +173,7 @@ type analysisResponse struct {
 	ExchangeSummaries  []analysisSymbolStats   `json:"exchange_summaries"`
 	Symbols            []analysisSymbolStats   `json:"symbols"`
 	Trades             []analysisTrade         `json:"trades"`
+	RawTrades          []analysisTrade         `json:"raw_trades"`
 	PositionTrades     []analysisPositionTrade `json:"position_trades"`
 	OpenPositionTrades []analysisPositionTrade `json:"open_position_trades"`
 }
@@ -211,6 +212,7 @@ type analysisTradeProjectionCache struct {
 	RefreshedAt        time.Time               `json:"refreshed_at"`
 	Cache              analysisCacheStatus     `json:"cache"`
 	Source             analysisSourceStatus    `json:"source"`
+	RawTrades          []analysisTrade         `json:"raw_trades"`
 	PositionTrades     []analysisPositionTrade `json:"position_trades"`
 	OpenPositionTrades []analysisPositionTrade `json:"open_position_trades"`
 }
@@ -1202,6 +1204,49 @@ func (s *Server) handleAnalysisOpenPositions(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+func (s *Server) handleAnalysisRecords(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	resp, err := s.loadAnalysisTradeSnapshot(r.Context(), r)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "analysis_failed", err.Error())
+		return
+	}
+	rows := filterAnalysisFills(resp.RawTrades, r)
+	since := analysisPNLSince(s.now().UTC(), resp.PNLMinutes).UnixMilli()
+	filtered := rows[:0]
+	for _, row := range rows {
+		if row.FillTS >= since {
+			filtered = append(filtered, row)
+		}
+	}
+	page, size := analysisPageQuery(r)
+	total := len(filtered)
+	pages := (total + size - 1) / size
+	if pages > 0 && page > pages {
+		page = pages
+	}
+	start := (page - 1) * size
+	if start > total {
+		start = total
+	}
+	end := start + size
+	if end > total {
+		end = total
+	}
+	syncStatus := binanceAnalysisFillSyncStatus{State: "idle"}
+	if normalizeAnalysisExchange(r.URL.Query().Get("exchange")) == trading.ExchangeBinance && strings.TrimSpace(resp.BinanceAPIID) != "" {
+		if request, requestErr := s.analysisProjectionRequest(r); requestErr == nil {
+			refreshKey := fmt.Sprintf("%p|%s", s.Orders, request.cacheKey)
+			s.startAnalysisRefresh(refreshKey, request.cacheKey, request.cfg, request.requestedAPIID, request.requestedBinanceAPIID, request.requestedGateAPIID, request.priceDays, request.pnlMinutes)
+			syncStatus = globalBinanceAnalysisFillSyncManager.status(binanceAnalysisFillSyncKey(s.Orders, resp.BinanceAPIID, resp.Env))
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": resp.OK, "page": page, "page_size": size, "total": total, "total_pages": pages, "trades": filtered[start:end], "sync_state": syncStatus.State, "sync_error": syncStatus.Error})
+}
+
 func (s *Server) handleAnalysisFills(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	metricWriter := &analysisMetricResponseWriter{ResponseWriter: w}
@@ -1409,6 +1454,7 @@ func analysisResponseFromTradeProjection(projection analysisTradeProjectionCache
 		PNLMinutes:         projection.PNLMinutes,
 		RefreshedAt:        projection.RefreshedAt,
 		Source:             projection.Source,
+		RawTrades:          projection.RawTrades,
 		PositionTrades:     projection.PositionTrades,
 		OpenPositionTrades: projection.OpenPositionTrades,
 	}
@@ -1448,6 +1494,7 @@ func (s *Server) cacheAnalysisProjections(cacheKey string, resp analysisResponse
 		RefreshedAt:        resp.RefreshedAt,
 		Cache:              resp.Cache,
 		Source:             resp.Source,
+		RawTrades:          resp.RawTrades,
 		PositionTrades:     resp.PositionTrades,
 		OpenPositionTrades: resp.OpenPositionTrades,
 	}, refreshedAt); err != nil && s.Logger != nil {
@@ -2155,7 +2202,7 @@ func analysisCacheKey(apiID, binanceAPIID, envName string, priceDays, pnlMinutes
 	if len(gateAPIIDs) > 0 {
 		gateAPIID = strings.TrimSpace(gateAPIIDs[0])
 	}
-	return "analysis|v5|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
+	return "analysis|v6|" + apiID + "|binance:" + binanceAPIID + "|gate:" + gateAPIID + "|" + envName + "|" + strconv.Itoa(priceDays) + "|pnlm:" + strconv.Itoa(normalizeAnalysisPNLMinutes(pnlMinutes))
 }
 
 func (s *Server) refreshAnalysisData(ctx context.Context, client okx.Client, apiID string, priceDays, pnlMinutes int, now time.Time) error {
@@ -2657,7 +2704,7 @@ func (s *Server) fetchBinanceAnalysisTrades(ctx context.Context, client binance.
 				trades = append(trades, trade)
 			}
 		}
-		return aggregateAnalysisTrades(trades), nil
+		return trades, nil
 	}
 	out := []analysisTrade{}
 	symbols := s.analysisBinanceSymbols(cfg, apiID, analysisEnvName(cfg), since, true)
@@ -4729,10 +4776,12 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, gateA
 	trades = append(trades, binanceTrades...)
 	positionTradesInput := append([]analysisTrade(nil), trades...)
 	trades = append(trades, gateTrades...)
+	rawTrades := append([]analysisTrade(nil), trades...)
 	trades = aggregateAnalysisTrades(trades)
 	records := s.Orders.List(10000)
 	events := s.analysisTradeMonitorEvents()
 	enrichAnalysisTradesWithEvents(cfg, trades, records, events)
+	enrichAnalysisTradesWithEvents(cfg, rawTrades, records, events)
 	enrichAnalysisTradesWithEvents(cfg, positionTradesInput, records, events)
 	enrichAnalysisTradesWithEvents(cfg, gateTrades, records, events)
 	applyGatePositionStrategies(gatePositions, gateTrades)
@@ -4770,6 +4819,7 @@ func (s *Server) analysisFromStore(cfg config.Config, apiID, binanceAPIID, gateA
 		ExchangeSummaries:  exchangeSummaries,
 		Symbols:            symbols,
 		Trades:             trades,
+		RawTrades:          rawTrades,
 		PositionTrades:     positionTrades,
 		OpenPositionTrades: openPositionTrades,
 	}, nil
@@ -4783,11 +4833,13 @@ func (s *Server) analysisFromExternalData(cfg config.Config, apiID, binanceAPIID
 	trades := make([]analysisTrade, 0, len(binanceTrades)+len(gateTrades))
 	trades = append(trades, binanceTrades...)
 	trades = append(trades, gateTrades...)
+	rawTrades := append([]analysisTrade(nil), trades...)
 	trades = aggregateAnalysisTrades(trades)
 	positionTradesInput := append([]analysisTrade(nil), binanceTrades...)
 	records := s.Orders.List(10000)
 	events := s.analysisTradeMonitorEvents()
 	enrichAnalysisTradesWithEvents(cfg, trades, records, events)
+	enrichAnalysisTradesWithEvents(cfg, rawTrades, records, events)
 	enrichAnalysisTradesWithEvents(cfg, positionTradesInput, records, events)
 	enrichAnalysisTradesWithEvents(cfg, gateTrades, records, events)
 	applyGatePositionStrategies(gatePositions, gateTrades)
@@ -4819,6 +4871,7 @@ func (s *Server) analysisFromExternalData(cfg config.Config, apiID, binanceAPIID
 		ExchangeSummaries:  exchangeSummaries,
 		Symbols:            symbols,
 		Trades:             trades,
+		RawTrades:          rawTrades,
 		PositionTrades:     positionTrades,
 		OpenPositionTrades: openPositionTrades,
 	}

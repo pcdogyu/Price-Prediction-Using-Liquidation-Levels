@@ -852,6 +852,8 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 		s.handleAnalysisIncome(w, r)
 	case path == "/analysis/open-positions":
 		s.handleAnalysisOpenPositions(w, r)
+	case path == "/analysis/records":
+		s.handleAnalysisRecords(w, r)
 	case path == "/analysis/fills":
 		s.handleAnalysisFills(w, r)
 	case path == "/analysis":
