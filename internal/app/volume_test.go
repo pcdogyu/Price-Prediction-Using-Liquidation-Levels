@@ -498,3 +498,27 @@ func TestPageRequestPromotesQueuedVolumeReplay(t *testing.T) {
 		t.Fatal("page request did not promote exactly once")
 	}
 }
+
+func TestPageRequestRefreshesStaleCompletedCursor(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "stale-page.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC()
+	session, err := volumeprofile.SessionAt(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ApplyAggregateTrades(ctx, "BNBUSDT", session.Start, []domain.AggregateTrade{{ID: 1, Symbol: "BNBUSDT", Time: now.Add(-valueAreaProfileMaxAge - time.Minute), Price: 100, Quantity: 1, PriceText: "100"}}, true); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{store: st, volumeContext: ctx, volumeBackfillQueue: make(chan string, 2), volumePriorityQueue: make(chan string, 2)}
+	if err := svc.EnsureVolumeProfile(ctx, "BNBUSDT", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.volumePriorityQueue) != 1 || <-svc.volumePriorityQueue != "BNBUSDT" {
+		t.Fatal("stale completed profile was not queued for repair")
+	}
+}

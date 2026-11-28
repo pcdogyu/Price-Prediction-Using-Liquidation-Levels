@@ -312,11 +312,16 @@ func (s *Service) enqueueVolumeProfileBackfillPriority(ctx context.Context, symb
 	if err != nil {
 		return err
 	}
-	_, _, complete, err := s.store.VolumeProfileCursor(ctx, symbol, session.Start)
+	_, through, complete, err := s.store.VolumeProfileCursor(ctx, symbol, session.Start)
 	if err != nil {
 		return err
 	}
+	// A previously complete cursor may have stopped receiving trades while the
+	// symbol was not subscribed. A chart request must repair stale data too.
 	s.volumeMu.Lock()
+	if priority && complete && s.volumeContext != nil && (through.IsZero() || time.Since(through) > valueAreaProfileMaxAge) {
+		refreshCompleted = true
+	}
 	if s.volumeRequested == nil {
 		s.volumeRequested = make(map[string]struct{})
 	}
