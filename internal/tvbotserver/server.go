@@ -852,6 +852,8 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 		s.handleAnalysisIncome(w, r)
 	case path == "/analysis/open-positions":
 		s.handleAnalysisOpenPositions(w, r)
+	case path == "/analysis/record-columns":
+		s.handleAnalysisRecordColumns(w, r)
 	case path == "/analysis/records":
 		s.handleAnalysisRecords(w, r)
 	case path == "/analysis/fills":
@@ -895,6 +897,9 @@ func (s *Server) handleTVBot(w http.ResponseWriter, r *http.Request) {
 
 func requiresAdminEndpoint(path string, r *http.Request) bool {
 	if strings.HasPrefix(path, "/view/") {
+		return false
+	}
+	if path == "/analysis/record-columns" {
 		return false
 	}
 	if path == "/api-keys" || path == "/api-keys/test" {
@@ -1344,6 +1349,44 @@ func (s *Server) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET and POST are allowed")
 	}
+}
+
+func (s *Server) handleAnalysisRecordColumns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only PUT is allowed")
+		return
+	}
+	var request struct {
+		Columns []string `json:"columns"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", "invalid column order")
+		return
+	}
+	valid := make(map[string]bool, len(config.DefaultAnalysisRecordsColumns))
+	for _, id := range config.DefaultAnalysisRecordsColumns {
+		valid[id] = true
+	}
+	if len(request.Columns) != len(valid) {
+		writeError(w, http.StatusBadRequest, "invalid_columns", "column order must contain every column once")
+		return
+	}
+	for _, id := range request.Columns {
+		if !valid[id] {
+			writeError(w, http.StatusBadRequest, "invalid_columns", "column order contains unknown or duplicate columns")
+			return
+		}
+		delete(valid, id)
+	}
+	cfg, err := s.ConfigStore.UpdateSettings(func(c *config.Config) error {
+		c.UI.TableColumns.AnalysisRecords = append([]string(nil), request.Columns...)
+		return nil
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "config_save_failed", "unable to save column order")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"columns": cfg.UI.TableColumns.AnalysisRecords})
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -3258,7 +3301,11 @@ func applyConfigPatch(c *config.Config, patch configPatch) {
 			c.UI.MenuItems = *patch.UI.MenuItems
 		}
 		if patch.UI.TableColumns != nil {
+			previousAnalysisRecords := c.UI.TableColumns.AnalysisRecords
 			c.UI.TableColumns = *patch.UI.TableColumns
+			if patch.UI.TableColumns.AnalysisRecords == nil {
+				c.UI.TableColumns.AnalysisRecords = previousAnalysisRecords
+			}
 		}
 	}
 	if patch.Trading == nil {

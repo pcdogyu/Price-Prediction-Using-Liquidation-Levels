@@ -2086,3 +2086,45 @@ func TestBinanceSmallClosingRecordsPreserveLargeAndIncompleteData(t *testing.T) 
 		t.Fatalf("unexpected records: %+v", got)
 	}
 }
+
+func TestBinanceClosingRecordsMarginAndPositionAmount(t *testing.T) {
+	rows := []analysisTrade{
+		{InstID: "ETHUSDT", APIID: "a", TradeID: "1", Side: "BUY", PosSide: "long", FillTS: 1, FillSz: "1", FillPx: "100", FillPnl: "0", Leverage: 10},
+		{InstID: "ETHUSDT", APIID: "a", TradeID: "2", Side: "BUY", PosSide: "long", FillTS: 2, FillSz: "1", FillPx: "200", FillPnl: "0", Leverage: 20},
+		{InstID: "ETHUSDT", APIID: "a", TradeID: "3", Side: "SELL", PosSide: "long", FillTS: 3, FillSz: "1", FillPx: "110", FillPnl: "0.5"},
+		{InstID: "ETHUSDT", APIID: "a", TradeID: "4", Side: "SELL", PosSide: "long", FillTS: 4, FillSz: "1", FillPx: "210", FillPnl: "5"},
+	}
+	got := aggregateBinanceSmallClosingRecords(binanceAnalysisClosingRecords(rows))
+	if len(got) != 1 || got[0].Margin != "20" || got[0].PositionAmount != "300" {
+		t.Fatalf("unexpected margin/amount: %+v", got)
+	}
+	rows[0].Leverage = 0
+	got = aggregateBinanceSmallClosingRecords(binanceAnalysisClosingRecords(rows))
+	if len(got) != 1 || got[0].Margin != "" || got[0].PositionAmount != "300" {
+		t.Fatalf("unknown leverage must not be guessed: %+v", got)
+	}
+}
+
+func TestAnalysisRecordColumnConfigPreservedByOtherUpdates(t *testing.T) {
+	c := config.Config{}
+	c.UI.TableColumns.AnalysisRecords = []string{"fee", "time"}
+	applyConfigPatch(&c, configPatch{UI: &uiPatch{TableColumns: &config.TableColumnsConfig{Positions: []string{"symbol"}}}})
+	if len(c.UI.TableColumns.AnalysisRecords) != 2 || c.UI.TableColumns.AnalysisRecords[0] != "fee" {
+		t.Fatalf("lost analysis order: %+v", c.UI.TableColumns)
+	}
+}
+
+func TestAnalysisRecordColumnsRejectInvalidAndPersist(t *testing.T) {
+	srv := &Server{ConfigStore: config.NewStore("", config.Config{})}
+	valid := `{"columns":["fee","time","symbol","side","entry","exit","quantity","margin","position_amount","pnl"]}`
+	response := httptest.NewRecorder()
+	srv.handleAnalysisRecordColumns(response, httptest.NewRequest("PUT", "/tvbot/analysis/record-columns", strings.NewReader(valid)))
+	if response.Code != 200 || srv.ConfigStore.Get().UI.TableColumns.AnalysisRecords[0] != "fee" {
+		t.Fatalf("save failed: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	srv.handleAnalysisRecordColumns(response, httptest.NewRequest("PUT", "/tvbot/analysis/record-columns", strings.NewReader(`{"columns":["fee","fee"]}`)))
+	if response.Code != 400 || srv.ConfigStore.Get().UI.TableColumns.AnalysisRecords[0] != "fee" {
+		t.Fatalf("invalid input modified configuration: %d", response.Code)
+	}
+}

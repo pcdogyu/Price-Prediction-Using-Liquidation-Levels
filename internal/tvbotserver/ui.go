@@ -3415,7 +3415,21 @@ const tvbotHTML = `<!doctype html>
       { id: "turnover", title: "今日累计成交金额", colClass: "symbol-turnover-col", sortType: "number", defaultSort: "desc", cell: (row) => textTableCell(formatSymbolTurnover(symbolTurnover(row))), sortValue: (row) => symbolTurnover(row) }
     ];
 
+    const analysisRecordColumnDefs = [
+      { id: "time", title: "平仓时间（北京时间）", render: (row) => analysisTimeText(row.fill_time) },
+      { id: "symbol", title: "币对", render: (row) => row.inst_id || "-" },
+      { id: "side", title: "开仓方向", render: (row) => row.entry_side || "-" },
+      { id: "entry", title: "开仓价格", render: (row) => analysisAmountText(row.entry_px) },
+      { id: "exit", title: "平仓价格", render: (row) => analysisAmountText(row.fill_px) },
+      { id: "quantity", title: "成交数量", render: (row) => analysisAmountText(row.fill_sz) },
+      { id: "margin", title: "保证金（USDT）", render: (row) => analysisAmountText(row.margin) },
+      { id: "position_amount", title: "持仓金额（USDT）", render: (row) => analysisAmountText(row.position_amount) },
+      { id: "pnl", title: "已实现盈亏", render: (row) => analysisAmountText(row.fill_pnl) },
+      { id: "fee", title: "手续费", render: (row) => (row.fee || "-") + (row.fee_ccy ? " " + row.fee_ccy : "") }
+    ];
+
     function tableColumnDefs(tableID) {
+      if (tableID === "analysis_records") return analysisRecordColumnDefs;
       if (tableID === "pending_orders") return pendingOrderTableColumnDefs;
       if (tableID === "symbols") return symbolTableColumnDefs;
       return positionTableColumnDefs;
@@ -3535,11 +3549,13 @@ const tvbotHTML = `<!doctype html>
       return {
         positions: currentTableColumnOrder("positions"),
         pending_orders: currentTableColumnOrder("pending_orders"),
-        symbols: currentTableColumnOrder("symbols")
+        symbols: currentTableColumnOrder("symbols"),
+        analysis_records: currentTableColumnOrder("analysis_records")
       };
     }
 
     function renderTableByID(tableID) {
+      if (tableID === "analysis_records") { renderAnalysisTradeHistory(state.analysisError); return; }
       if (tableID === "pending_orders") {
         renderPendingOrders();
         return;
@@ -3553,6 +3569,12 @@ const tvbotHTML = `<!doctype html>
 
     async function saveTableColumnOrder(tableID, previousOrder) {
       try {
+        if (tableID === "analysis_records") {
+          const result = await api("/tvbot/analysis/record-columns", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ columns: currentTableColumnOrder(tableID) }) });
+          setCurrentTableColumnOrder(tableID, result.columns);
+          toast("栏目顺序已保存");
+          return;
+        }
         const patch = { ui: { table_columns: currentTableColumnsPatch() } };
         state.config = await api("/tvbot/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
         toast("栏目顺序已保存");
@@ -3625,7 +3647,7 @@ const tvbotHTML = `<!doctype html>
     }
 
     function initTableColumnDrag() {
-      ["position-head", "pending-order-head", "symbol-head"].forEach((id) => {
+      ["position-head", "pending-order-head", "symbol-head", "analysis-trade-head"].forEach((id) => {
         const head = $(id);
         if (!head) return;
         head.addEventListener("dragstart", handleTableColumnDragStart);
@@ -4982,6 +5004,7 @@ const tvbotHTML = `<!doctype html>
       renderTemplateCoinpairs();
       renderPositions();
       renderPendingOrders();
+      renderAnalysisTradeHistory(state.analysisError);
       updateMetrics();
     }
 
@@ -8584,11 +8607,12 @@ const tvbotHTML = `<!doctype html>
       const cols = $("analysis-trade-cols");
       if (cols) cols.innerHTML = "";
       const head = $("analysis-trade-head");
-      if (head) head.innerHTML = exchange === "binance" ? "<tr><th>平仓时间（北京时间）</th><th>币对</th><th>开仓方向</th><th>开仓价格</th><th>平仓价格</th><th>成交数量</th><th>已实现盈亏</th><th>手续费</th></tr>" : "<tr><th>成交时间（北京时间）</th><th>币对</th><th>成交编号</th><th>订单编号</th><th>买卖</th><th>持仓方向</th><th>成交价</th><th>成交数量</th><th>已实现盈亏</th><th>手续费</th></tr>";
+      const recordColumns = currentTableColumnDefs("analysis_records");
+      if (head) head.innerHTML = exchange === "binance" ? "<tr>" + recordColumns.map((col) => tableColumnHeaderHTML("analysis_records", col)).join("") + "</tr>" : "<tr><th>成交时间（北京时间）</th><th>币对</th><th>成交编号</th><th>订单编号</th><th>买卖</th><th>持仓方向</th><th>成交价</th><th>成交数量</th><th>已实现盈亏</th><th>手续费</th></tr>";
       if (!rowsEl) return;
       if (errorText || !state.analysisTrades) {
         const message = errorText || "正在加载逐笔成交记录…";
-        rowsEl.innerHTML = '<tr><td colspan="' + (exchange === "binance" ? 8 : 10) + '" class="muted">' + escapeHTML(message) + '</td></tr>';
+        rowsEl.innerHTML = '<tr><td colspan="' + (exchange === "binance" ? recordColumns.length : 10) + '" class="muted">' + escapeHTML(message) + '</td></tr>';
         if (status) status.textContent = message;
         if (pageInfo) pageInfo.textContent = "-";
         if (prev) prev.disabled = true;
@@ -8599,9 +8623,10 @@ const tvbotHTML = `<!doctype html>
       const rows = Array.isArray(packet.trades) ? packet.trades : [];
       const amount = (value) => value === null || value === undefined || String(value).trim() === "" ? "-" : analysisAmountText(value);
       rowsEl.innerHTML = rows.map((row) => {
-        const values = exchange === "binance" ? [analysisTimeText(row.fill_time), row.inst_id || "-", row.entry_side || "-", amount(row.entry_px), amount(row.fill_px), amount(row.fill_sz), amount(row.fill_pnl), (row.fee || "-") + (row.fee_ccy ? " " + row.fee_ccy : "")] : [analysisTimeText(row.fill_time), row.inst_id || "-", row.trade_id || "-", row.ord_id || "-", row.side || "-", row.pos_side || "-", amount(row.fill_px), amount(row.fill_sz), amount(row.fill_pnl), amount(row.fee) + (row.fee_ccy ? " " + row.fee_ccy : "")];
-        return "<tr>" + values.map((value, index) => '<td' + (index === (exchange === "binance" ? 6 : 8) ? ' class="' + escapeHTML(signedToneClass(row.fill_pnl)) + '"' : '') + '>' + escapeHTML(value) + '</td>').join("") + "</tr>";
-      }).join("") || '<tr><td colspan="' + (exchange === "binance" ? 8 : 10) + '" class="muted">暂无逐笔成交记录</td></tr>';
+        if (exchange === "binance") return "<tr>" + recordColumns.map((col) => '<td' + (col.id === "pnl" ? ' class="' + escapeHTML(signedToneClass(row.fill_pnl)) + '"' : '') + '>' + escapeHTML(col.render(row)) + '</td>').join("") + "</tr>";
+        const values = [analysisTimeText(row.fill_time), row.inst_id || "-", row.trade_id || "-", row.ord_id || "-", row.side || "-", row.pos_side || "-", amount(row.fill_px), amount(row.fill_sz), amount(row.fill_pnl), amount(row.fee) + (row.fee_ccy ? " " + row.fee_ccy : "")];
+        return "<tr>" + values.map((value, index) => '<td' + (index === 8 ? ' class="' + escapeHTML(signedToneClass(row.fill_pnl)) + '"' : '') + '>' + escapeHTML(value) + '</td>').join("") + "</tr>";
+      }).join("") || '<tr><td colspan="' + (exchange === "binance" ? recordColumns.length : 10) + '" class="muted">暂无逐笔成交记录</td></tr>';
       const total = Number(packet.total || 0);
       const pages = Math.max(1, Number(packet.total_pages || 1));
       state.analysisTradePage = Math.min(Math.max(1, Number(packet.page || 1)), pages);

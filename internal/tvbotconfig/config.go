@@ -217,10 +217,13 @@ type UIConfig struct {
 	PositionOpenModes map[string]string  `json:"position_open_modes,omitempty"`
 }
 
+var DefaultAnalysisRecordsColumns = []string{"time", "symbol", "side", "entry", "exit", "quantity", "margin", "position_amount", "pnl", "fee"}
+
 type TableColumnsConfig struct {
-	Positions     []string `json:"positions"`
-	PendingOrders []string `json:"pending_orders"`
-	Symbols       []string `json:"symbols"`
+	AnalysisRecords []string `json:"analysis_records"`
+	Positions       []string `json:"positions"`
+	PendingOrders   []string `json:"pending_orders"`
+	Symbols         []string `json:"symbols"`
 }
 
 type MenuItemConfig struct {
@@ -1004,17 +1007,19 @@ func hasVisibleMenuSettings(items []MenuItemConfig) bool {
 
 func defaultTableColumns() TableColumnsConfig {
 	return TableColumnsConfig{
-		Positions:     cloneStrings(DefaultPositionTableColumns),
-		PendingOrders: cloneStrings(DefaultPendingOrderTableColumns),
-		Symbols:       cloneStrings(DefaultSymbolTableColumns),
+		AnalysisRecords: cloneStrings(DefaultAnalysisRecordsColumns),
+		Positions:       cloneStrings(DefaultPositionTableColumns),
+		PendingOrders:   cloneStrings(DefaultPendingOrderTableColumns),
+		Symbols:         cloneStrings(DefaultSymbolTableColumns),
 	}
 }
 
 func normalizeTableColumns(columns TableColumnsConfig) TableColumnsConfig {
 	return TableColumnsConfig{
-		Positions:     normalizePositionColumnOrder(columns.Positions),
-		PendingOrders: normalizePendingOrderColumnOrder(columns.PendingOrders),
-		Symbols:       normalizeColumnOrder(columns.Symbols, DefaultSymbolTableColumns),
+		AnalysisRecords: normalizeColumnOrder(columns.AnalysisRecords, DefaultAnalysisRecordsColumns),
+		Positions:       normalizePositionColumnOrder(columns.Positions),
+		PendingOrders:   normalizePendingOrderColumnOrder(columns.PendingOrders),
+		Symbols:         normalizeColumnOrder(columns.Symbols, DefaultSymbolTableColumns),
 	}
 }
 

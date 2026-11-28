@@ -551,6 +551,7 @@ type analysisTrade struct {
 	Fee               string                    `json:"fee,omitempty"`
 	FeeCcy            string                    `json:"fee_ccy,omitempty"`
 	Margin            string                    `json:"margin"`
+	PositionAmount    string                    `json:"position_amount,omitempty"`
 	Leverage          int                       `json:"leverage"`
 	FundingFee        string                    `json:"funding_fee"`
 	NetPnL            string                    `json:"net_pnl"`
@@ -1259,7 +1260,10 @@ func (s *Server) handleAnalysisRecords(w http.ResponseWriter, r *http.Request) {
 // binanceAnalysisClosingRecords matches fills in chronological order before pagination.
 // Hidden zero-PnL fill fees are carried to the last visible close of a completed position.
 func binanceAnalysisClosingRecords(rows []analysisTrade) []analysisTrade {
-	type lot struct{ qty, price float64 }
+	type lot struct {
+		qty, price float64
+		leverage   int
+	}
 	type book struct {
 		lots  []lot
 		fees  map[string]float64
@@ -1311,7 +1315,8 @@ func binanceAnalysisClosingRecords(rows []analysisTrade) []analysisTrade {
 			}
 			row.closingCycle = b.cycle
 			row.EntrySide = side
-			var matched, value float64
+			var matched, value, margin float64
+			marginKnown := true
 			left := qty
 			if qtyOK && isClose {
 				for left > positionEntrySizeEpsilon && len(b.lots) > 0 {
@@ -1320,6 +1325,11 @@ func binanceAnalysisClosingRecords(rows []analysisTrade) []analysisTrade {
 					matched += n
 					matchedQty += n
 					value += n * l.price
+					if l.leverage > 0 {
+						margin += n * l.price / float64(l.leverage)
+					} else {
+						marginKnown = false
+					}
 					l.qty -= n
 					left -= n
 					if l.qty <= positionEntrySizeEpsilon {
@@ -1329,6 +1339,13 @@ func binanceAnalysisClosingRecords(rows []analysisTrade) []analysisTrade {
 			}
 			if matched > 0 {
 				row.EntryPx = trading.NormalizeFloat(value / matched)
+			}
+			row.Margin, row.PositionAmount = "", ""
+			if qtyOK && math.Abs(matched-qty) <= positionEntrySizeEpsilon {
+				row.PositionAmount = trading.NormalizeFloat(value)
+				if marginKnown {
+					row.Margin = trading.NormalizeFloat(margin)
+				}
 			}
 			if b.last >= 0 {
 				out[b.last].Fee, out[b.last].FeeCcy = "", ""
@@ -1366,13 +1383,13 @@ func binanceAnalysisClosingRecords(rows []analysisTrade) []analysisTrade {
 				next = &book{fees: map[string]float64{}, last: -1}
 				books[nextKey] = next
 			}
-			next.lots = append(next.lots, lot{qty - matchedQty, price})
+			next.lots = append(next.lots, lot{qty - matchedQty, price, row.Leverage})
 			if feeOK {
 				next.fees[feeCurrency] += fee * (qty - matchedQty) / qty
 			}
 		}
 		if !isClose && qtyOK && priceOK {
-			b.lots = append(b.lots, lot{qty, price})
+			b.lots = append(b.lots, lot{qty, price, row.Leverage})
 		}
 		if b.last >= 0 {
 			target := &out[b.last]
@@ -1426,7 +1443,8 @@ func aggregateBinanceSmallClosingRecords(rows []analysisTrade) []analysisTrade {
 		if len(members) < 2 {
 			continue
 		}
-		var qty, entryValue, exitValue, pnlTotal float64
+		var qty, entryValue, exitValue, pnlTotal, totalMargin, totalPositionAmount float64
+		marginComplete, amountComplete := true, true
 		entryComplete, exitComplete, valid := true, true, true
 		for _, i := range members {
 			size, sizeOK := parsePositiveFloat(rows[i].FillSz)
@@ -1437,6 +1455,16 @@ func aggregateBinanceSmallClosingRecords(rows []analysisTrade) []analysisTrade {
 			}
 			qty += size
 			pnlTotal += pnl
+			if v, ok := parsePositiveFloat(rows[i].Margin); ok {
+				totalMargin += v
+			} else {
+				marginComplete = false
+			}
+			if v, ok := parsePositiveFloat(rows[i].PositionAmount); ok {
+				totalPositionAmount += v
+			} else {
+				amountComplete = false
+			}
 			if price, ok := parsePositiveFloat(rows[i].EntryPx); ok {
 				entryValue += size * price
 			} else {
@@ -1453,6 +1481,13 @@ func aggregateBinanceSmallClosingRecords(rows []analysisTrade) []analysisTrade {
 		}
 		row := &rows[target]
 		row.FillSz = trading.NormalizeFloat(qty)
+		row.Margin, row.PositionAmount = "", ""
+		if marginComplete {
+			row.Margin = trading.NormalizeFloat(totalMargin)
+		}
+		if amountComplete {
+			row.PositionAmount = trading.NormalizeFloat(totalPositionAmount)
+		}
 		row.FillPnl = trading.NormalizeFloat(pnlTotal)
 		row.EntryPx = ""
 		if entryComplete {
