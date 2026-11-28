@@ -2058,3 +2058,31 @@ func TestBinanceAnalysisClosingRecords(t *testing.T) {
 		t.Fatalf("unexpected records: %+v", got)
 	}
 }
+
+func TestBinanceSmallClosingRecordsMergeWithinCycle(t *testing.T) {
+	rows := []analysisTrade{
+		{InstID: "BTCUSDT", APIID: "a", TradeID: "1", Side: "BUY", PosSide: "long", FillTS: 1, FillSz: "3", FillPx: "100", FillPnl: "0", Fee: "-0.3", FeeCcy: "USDT"},
+		{InstID: "BTCUSDT", APIID: "a", TradeID: "2", Side: "SELL", PosSide: "long", FillTS: 2, FillSz: "1", FillPx: "101", FillPnl: "0.3", Fee: "-0.1", FeeCcy: "USDT"},
+		{InstID: "BTCUSDT", APIID: "a", TradeID: "3", Side: "SELL", PosSide: "long", FillTS: 3, FillSz: "1", FillPx: "102", FillPnl: "-0.2", Fee: "-0.1", FeeCcy: "USDT"},
+		{InstID: "BTCUSDT", APIID: "a", TradeID: "4", Side: "SELL", PosSide: "long", FillTS: 4, FillSz: "1", FillPx: "103", FillPnl: "3", Fee: "-0.1", FeeCcy: "USDT"},
+		{InstID: "BTCUSDT", APIID: "a", TradeID: "5", Side: "BUY", PosSide: "long", FillTS: 5, FillSz: "1", FillPx: "200", FillPnl: "0"},
+		{InstID: "BTCUSDT", APIID: "a", TradeID: "6", Side: "SELL", PosSide: "long", FillTS: 6, FillSz: "1", FillPx: "201", FillPnl: "0.5"},
+	}
+	got := aggregateBinanceSmallClosingRecords(binanceAnalysisClosingRecords(rows))
+	if len(got) != 2 || got[0].FillPnl != "0.5" || got[1].FillPnl != "3.1" || got[1].FillSz != "3" || got[1].FillPx != "102" || got[1].EntryPx != "100" || got[1].Fee != "-0.6 USDT" {
+		t.Fatalf("unexpected records: %+v", got)
+	}
+}
+
+func TestBinanceSmallClosingRecordsPreserveLargeAndIncompleteData(t *testing.T) {
+	rows := []analysisTrade{
+		{closingCycle: 1, FillSz: "1", FillPx: "103", EntryPx: "", FillPnl: "2"},
+		{closingCycle: 1, FillSz: "2", FillPx: "102", EntryPx: "100", FillPnl: "-0.5"},
+		{closingCycle: 1, FillSz: "1", FillPx: "101", EntryPx: "100", FillPnl: "-2"},
+		{closingCycle: 2, FillSz: "1", FillPx: "101", EntryPx: "100", FillPnl: "0.2"},
+	}
+	got := aggregateBinanceSmallClosingRecords(rows)
+	if len(got) != 3 || got[0].FillPnl != "1.5" || got[0].EntryPx != "" || got[1].FillPnl != "-2" || got[2].FillPnl != "0.2" {
+		t.Fatalf("unexpected records: %+v", got)
+	}
+}

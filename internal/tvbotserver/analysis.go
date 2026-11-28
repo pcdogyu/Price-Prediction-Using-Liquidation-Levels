@@ -533,6 +533,7 @@ type analysisSymbolStats struct {
 }
 
 type analysisTrade struct {
+	closingCycle      int                       `json:"-"`
 	Exchange          string                    `json:"exchange"`
 	APIID             string                    `json:"api_id,omitempty"`
 	InstID            string                    `json:"inst_id"`
@@ -1227,6 +1228,9 @@ func (s *Server) handleAnalysisRecords(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, row)
 		}
 	}
+	if normalizeAnalysisExchange(r.URL.Query().Get("exchange")) == trading.ExchangeBinance {
+		filtered = aggregateBinanceSmallClosingRecords(filtered)
+	}
 	page, size := analysisPageQuery(r)
 	total := len(filtered)
 	pages := (total + size - 1) / size
@@ -1257,9 +1261,10 @@ func (s *Server) handleAnalysisRecords(w http.ResponseWriter, r *http.Request) {
 func binanceAnalysisClosingRecords(rows []analysisTrade) []analysisTrade {
 	type lot struct{ qty, price float64 }
 	type book struct {
-		lots []lot
-		fees map[string]float64
-		last int
+		lots  []lot
+		fees  map[string]float64
+		last  int
+		cycle int
 	}
 	ordered := append([]analysisTrade(nil), rows...)
 	sort.SliceStable(ordered, func(i, j int) bool {
@@ -1270,6 +1275,7 @@ func binanceAnalysisClosingRecords(rows []analysisTrade) []analysisTrade {
 	})
 	books := map[string]*book{}
 	out := make([]analysisTrade, 0, len(rows))
+	cycle := 0
 	for _, row := range ordered {
 		orderedFee := row
 		pnl, parsed := parseAnyFloat(row.FillPnl)
@@ -1299,6 +1305,11 @@ func binanceAnalysisClosingRecords(rows []analysisTrade) []analysisTrade {
 		}
 		isClose := side == closing
 		if visible {
+			if b.cycle == 0 {
+				cycle++
+				b.cycle = cycle
+			}
+			row.closingCycle = b.cycle
 			row.EntrySide = side
 			var matched, value float64
 			left := qty
@@ -1382,9 +1393,85 @@ func binanceAnalysisClosingRecords(rows []analysisTrade) []analysisTrade {
 		if isClose && len(b.lots) == 0 && b.last >= 0 {
 			b.fees = map[string]float64{}
 			b.last = -1
+			b.cycle = 0
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].FillTS > out[j].FillTS })
+	return out
+}
+
+// aggregateBinanceSmallClosingRecords merges small fills only within the same
+// position cycle and selected display period, keeping larger earlier closes separate.
+func aggregateBinanceSmallClosingRecords(rows []analysisTrade) []analysisTrade {
+	groups := map[int][]int{}
+	for i, row := range rows {
+		if row.closingCycle != 0 {
+			groups[row.closingCycle] = append(groups[row.closingCycle], i)
+		}
+	}
+	removed := make([]bool, len(rows))
+	for _, indices := range groups {
+		if len(indices) < 2 {
+			continue
+		}
+		// Rows are newest first. The newest close owns the cycle's accumulated fees.
+		target := indices[0]
+		members := []int{target}
+		for _, i := range indices[1:] {
+			pnl, ok := parseAnyFloat(rows[i].FillPnl)
+			if ok && math.Abs(pnl) < 1 {
+				members = append(members, i)
+			}
+		}
+		if len(members) < 2 {
+			continue
+		}
+		var qty, entryValue, exitValue, pnlTotal float64
+		entryComplete, exitComplete, valid := true, true, true
+		for _, i := range members {
+			size, sizeOK := parsePositiveFloat(rows[i].FillSz)
+			pnl, pnlOK := parseAnyFloat(rows[i].FillPnl)
+			if !sizeOK || !pnlOK {
+				valid = false
+				break
+			}
+			qty += size
+			pnlTotal += pnl
+			if price, ok := parsePositiveFloat(rows[i].EntryPx); ok {
+				entryValue += size * price
+			} else {
+				entryComplete = false
+			}
+			if price, ok := parsePositiveFloat(rows[i].FillPx); ok {
+				exitValue += size * price
+			} else {
+				exitComplete = false
+			}
+		}
+		if !valid {
+			continue
+		}
+		row := &rows[target]
+		row.FillSz = trading.NormalizeFloat(qty)
+		row.FillPnl = trading.NormalizeFloat(pnlTotal)
+		row.EntryPx = ""
+		if entryComplete {
+			row.EntryPx = trading.NormalizeFloat(entryValue / qty)
+		}
+		row.FillPx = ""
+		if exitComplete {
+			row.FillPx = trading.NormalizeFloat(exitValue / qty)
+		}
+		for _, i := range members[1:] {
+			removed[i] = true
+		}
+	}
+	out := make([]analysisTrade, 0, len(rows))
+	for i, row := range rows {
+		if !removed[i] {
+			out = append(out, row)
+		}
+	}
 	return out
 }
 

@@ -8606,7 +8606,7 @@ const tvbotHTML = `<!doctype html>
       const pages = Math.max(1, Number(packet.total_pages || 1));
       state.analysisTradePage = Math.min(Math.max(1, Number(packet.page || 1)), pages);
       const syncNote = packet.sync_state === "syncing" ? " · 正在同步" : packet.sync_state === "failed" ? " · 同步失败，显示本地记录" : "";
-      if (status) { status.textContent = "共 " + total + " 笔 · 盈亏为交易所已实现盈亏" + (exchange === "binance" ? "，归集的手续费计入最后平仓记录" : "，手续费单列") + syncNote; status.title = packet.sync_error || ""; }
+      if (status) { status.textContent = "共 " + total + " 笔 · 盈亏为交易所已实现盈亏" + (exchange === "binance" ? "，小额盈亏按持仓归并，手续费计入最后平仓记录" : "，手续费单列") + syncNote; status.title = packet.sync_error || ""; }
       if (pageInfo) pageInfo.textContent = total ? "第 " + state.analysisTradePage + " / " + pages + " 页" : "-";
       if (prev) prev.disabled = state.analysisTradePage <= 1;
       if (next) next.disabled = state.analysisTradePage >= pages;
