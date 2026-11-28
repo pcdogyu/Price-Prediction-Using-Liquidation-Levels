@@ -320,7 +320,27 @@ func normalizeVolumeSymbol(symbol string) string {
 // volume session for aggregate-trade synchronization. The queue is idempotent;
 // force only retries an incomplete or failed session.
 func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force bool) error {
-	return s.enqueueVolumeProfileBackfillPriority(ctx, symbol, force, force, true)
+	symbol = normalizeVolumeSymbol(symbol)
+	if err := s.enqueueVolumeProfileBackfillPriority(ctx, symbol, force, force, true); err != nil {
+		return err
+	}
+	// A requested profile needs live trades as soon as its replay is queued so
+	// the cursor can continue moving while historical pages are being fetched.
+	s.volumeMu.Lock()
+	if s.volumeRequested == nil {
+		s.volumeRequested = make(map[string]struct{})
+	}
+	if s.volumeStreamSymbols == nil {
+		s.volumeStreamSymbols = make(map[string]struct{})
+	}
+	s.volumeRequested[symbol] = struct{}{}
+	_, wasStreaming := s.volumeStreamSymbols[symbol]
+	s.volumeStreamSymbols[symbol] = struct{}{}
+	s.volumeMu.Unlock()
+	if !wasStreaming {
+		s.updateMarketCollectorAggregateSymbols()
+	}
+	return nil
 }
 
 // enqueueVolumeProfileBackfill requests an asynchronous current-session sync.

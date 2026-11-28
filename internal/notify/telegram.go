@@ -135,6 +135,8 @@ type Task struct {
 
 	enqueuedAt time.Time
 	sequence   uint64
+	serialPrev <-chan struct{}
+	serialDone chan struct{}
 }
 
 // Status summarizes the worker for the alert page.
@@ -176,7 +178,7 @@ type Dispatcher struct {
 	depth       int
 	sequence    uint64
 	pending     map[uint64]time.Time
-	serialLocks map[string]*sync.Mutex
+	serialTails map[string]chan struct{}
 
 	// Telegram requires both credentials, while a webhook only needs its
 	// endpoint. Keep the legacy constructor strict and expose a separate
@@ -215,7 +217,7 @@ func newDispatcher(sender Sender, settings Settings, capacity int, cooldown time
 		workers: workers, maxQueueAge: maxQueueAge,
 		queue: make(chan Task, capacity), priorityQueue: make(chan Task, capacity),
 		lastSend: map[string]time.Time{}, pending: map[uint64]time.Time{},
-		serialLocks: map[string]*sync.Mutex{}, requireChatID: requireChatID,
+		serialTails: map[string]chan struct{}{}, requireChatID: requireChatID,
 	}
 }
 
@@ -239,21 +241,20 @@ func (d *Dispatcher) worker(ctx context.Context) {
 			return
 		}
 		d.dequeue(task)
-		var serialLock *sync.Mutex
-		if task.SerialKey != "" {
-			serialLock = d.getSerialLock(task.SerialKey)
-			serialLock.Lock()
+		if task.serialPrev != nil {
+			select {
+			case <-task.serialPrev:
+			case <-ctx.Done():
+				d.finishSerialTask(task)
+				return
+			}
 		}
 		if d.expired(task) {
-			if serialLock != nil {
-				serialLock.Unlock()
-			}
+			d.finishSerialTask(task)
 			continue
 		}
 		d.deliver(ctx, task)
-		if serialLock != nil {
-			serialLock.Unlock()
-		}
+		d.finishSerialTask(task)
 	}
 }
 
@@ -265,23 +266,44 @@ func (d *Dispatcher) nextTask(ctx context.Context) (Task, bool) {
 	// tasks to make progress when there are no close requests.
 	select {
 	case task := <-d.priorityQueue:
-		return task, true
+		return d.assignSerialTurn(task), true
 	default:
 	}
 	select {
 	case <-ctx.Done():
 		return Task{}, false
 	case task := <-d.priorityQueue:
-		return task, true
+		return d.assignSerialTurn(task), true
 	default:
 	}
 	select {
 	case <-ctx.Done():
 		return Task{}, false
 	case task := <-d.priorityQueue:
-		return task, true
+		return d.assignSerialTurn(task), true
 	case task := <-d.queue:
-		return task, true
+		return d.assignSerialTurn(task), true
+	}
+}
+
+func (d *Dispatcher) assignSerialTurn(task Task) Task {
+	if task.SerialKey == "" {
+		return task
+	}
+	d.mu.Lock()
+	if d.serialTails == nil {
+		d.serialTails = make(map[string]chan struct{})
+	}
+	task.serialPrev = d.serialTails[task.SerialKey]
+	task.serialDone = make(chan struct{})
+	d.serialTails[task.SerialKey] = task.serialDone
+	d.mu.Unlock()
+	return task
+}
+
+func (d *Dispatcher) finishSerialTask(task Task) {
+	if task.serialDone != nil {
+		close(task.serialDone)
 	}
 }
 
@@ -504,17 +526,6 @@ func (d *Dispatcher) removeOldestPendingLocked() {
 	if oldest != 0 {
 		delete(d.pending, oldest)
 	}
-}
-
-func (d *Dispatcher) getSerialLock(key string) *sync.Mutex {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if lock := d.serialLocks[key]; lock != nil {
-		return lock
-	}
-	lock := &sync.Mutex{}
-	d.serialLocks[key] = lock
-	return lock
 }
 
 func (d *Dispatcher) expired(task Task) bool {
