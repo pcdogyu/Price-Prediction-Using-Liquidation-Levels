@@ -68,6 +68,7 @@ type Server struct {
 	// value_area_order_gate.go when this is nil.
 	valueAreaOpenConflictChecker func(context.Context, trading.Signal, config.Config) (bool, error)
 	positionEntryCache           *positionEntryFillCache
+	onMarketTurnoverScopeChanged func()
 }
 
 type UserCredentials struct {
@@ -115,6 +116,12 @@ func (s *Server) SetUnifiedAuth(user, admin func(http.ResponseWriter, *http.Requ
 
 func (s *Server) SetTopMenuProvider(provider func(*http.Request) []TopMenuItem) {
 	s.TopMenuProvider = provider
+}
+
+func (s *Server) SetMarketTurnoverScopeChangedHandler(handler func()) {
+	if s != nil {
+		s.onMarketTurnoverScopeChanged = handler
+	}
 }
 
 const (
@@ -1356,6 +1363,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_config", err.Error())
 			return
+		}
+		if previous.Trading.MarketTurnoverScope != cfg.Trading.MarketTurnoverScope && s.onMarketTurnoverScopeChanged != nil {
+			s.onMarketTurnoverScopeChanged()
 		}
 		if s.Orders != nil {
 			if previous.Trading.LossCooldown.Enabled && !cfg.Trading.LossCooldown.Enabled {

@@ -14,8 +14,8 @@ import (
 )
 
 // RefreshBackgroundCandidates ranks the application-configured Binance pairs
-// by public 24h quote volume and returns the base-50 plus protected Binance
-// positions/orders discovered from the tenant scopes.
+// for alerts and separately returns the bounded order-scope turnover set for
+// VAL/VAH history replay, plus protected Binance positions/orders.
 func (b *Bridge) RefreshBackgroundCandidates(ctx context.Context, configured []string) (domain.BackgroundSymbolSnapshot, error) {
 	if b == nil || b.Tenants == nil || b.Handler == nil {
 		return domain.BackgroundSymbolSnapshot{}, errors.New("TVBot tenant manager is unavailable")
@@ -32,8 +32,23 @@ func (b *Bridge) RefreshBackgroundCandidates(ctx context.Context, configured []s
 	if rankErr != nil {
 		return domain.BackgroundSymbolSnapshot{}, rankErr
 	}
+	scopes := make([]string, 0, len(records))
+	for _, record := range records {
+		scopes = append(scopes, record.Config.Trading.MarketTurnoverScope)
+	}
+	fallbackScope := tvbotconfig.DefaultMarketTurnoverScope
+	if b.ConfigStore != nil {
+		fallbackScope = b.ConfigStore.Get().Trading.MarketTurnoverScope
+	}
+	backfillRows, err := exchange.BinanceTopTurnoverUSDTPerpetuals(ctx, orderScopeBackfillRankLimit(scopes, fallbackScope))
+	if err != nil {
+		return domain.BackgroundSymbolSnapshot{}, err
+	}
 	now := time.Now().UTC()
 	snapshot := domain.BackgroundSymbolSnapshot{TenantCount: len(records), BaseCount: len(rows), RefreshedAt: now}
+	for _, row := range backfillRows {
+		snapshot.VolumeBackfillSymbols = append(snapshot.VolumeBackfillSymbols, row.Symbol)
+	}
 	baseSet := make(map[string]struct{}, len(rows))
 	for i, row := range rows {
 		baseSet[row.Symbol] = struct{}{}
@@ -63,6 +78,26 @@ func (b *Bridge) RefreshBackgroundCandidates(ctx context.Context, configured []s
 	}
 	appendProtectedCandidates(&snapshot, rows, baseSet, protected, now)
 	return snapshot, nil
+}
+
+func orderScopeBackfillRankLimit(scopes []string, fallbackScope string) int {
+	limit := 0
+	if len(scopes) == 0 {
+		scopes = []string{fallbackScope}
+	}
+	for _, scope := range scopes {
+		current := tvbotconfig.MarketTurnoverScopeLimit(scope)
+		if current <= 0 || current > app.VolumeBackfillCandidateLimitForProvider() {
+			current = app.VolumeBackfillCandidateLimitForProvider()
+		}
+		if current > limit {
+			limit = current
+		}
+	}
+	if limit <= 0 {
+		return app.VolumeBackfillCandidateLimitForProvider()
+	}
+	return limit
 }
 
 func appendProtectedCandidates(snapshot *domain.BackgroundSymbolSnapshot, rows []exchange.TopSymbol, baseSet, protected map[string]struct{}, at time.Time) {

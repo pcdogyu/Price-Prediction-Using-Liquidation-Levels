@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -9,12 +10,17 @@ import (
 )
 
 const BackgroundCandidateLimit = 50
+const VolumeBackfillCandidateLimit = 50
 
 const backgroundCandidateLimit = BackgroundCandidateLimit
 
 // BackgroundCandidateLimitForProvider keeps the provider package decoupled
 // from the Service's internal candidate state while sharing the fixed policy.
 func BackgroundCandidateLimitForProvider() int { return BackgroundCandidateLimit }
+
+// VolumeBackfillCandidateLimitForProvider bounds historical trade replay even
+// when a tenant allows orders across hundreds of turnover-ranked symbols.
+func VolumeBackfillCandidateLimitForProvider() int { return VolumeBackfillCandidateLimit }
 
 // BackgroundCandidateProvider builds the next candidate set from the
 // application-configured symbol universe. Implementations must not expose
@@ -32,6 +38,18 @@ func (s *Service) SetBackgroundCandidateProvider(provider BackgroundCandidatePro
 	s.candidateMu.Lock()
 	s.candidateProvider = provider
 	s.candidateMu.Unlock()
+}
+
+// RequestBackgroundCandidateRefresh refreshes order-scope ranks immediately
+// after a user changes the configured turnover limit.
+func (s *Service) RequestBackgroundCandidateRefresh() {
+	if s == nil || s.candidateRefreshWake == nil {
+		return
+	}
+	select {
+	case s.candidateRefreshWake <- struct{}{}:
+	default:
+	}
 }
 
 func (s *Service) loadBackgroundCandidateSnapshot(ctx context.Context) {
@@ -97,6 +115,20 @@ func validBackgroundCandidateSnapshot(snapshot domain.BackgroundSymbolSnapshot) 
 		}
 		seen[symbol] = struct{}{}
 	}
+	if len(snapshot.VolumeBackfillSymbols) > VolumeBackfillCandidateLimit {
+		return false
+	}
+	backfillSeen := make(map[string]struct{}, len(snapshot.VolumeBackfillSymbols))
+	for _, raw := range snapshot.VolumeBackfillSymbols {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		if symbol == "" || !strings.HasSuffix(symbol, "USDT") || symbol == "USDT" {
+			return false
+		}
+		if _, ok := backfillSeen[symbol]; ok {
+			return false
+		}
+		backfillSeen[symbol] = struct{}{}
+	}
 	return true
 }
 
@@ -106,10 +138,14 @@ func (s *Service) applyBackgroundCandidateSnapshot(snapshot domain.BackgroundSym
 	}
 	copySnapshot := snapshot
 	copySnapshot.Symbols = append([]domain.WatchSymbol(nil), snapshot.Symbols...)
+	copySnapshot.VolumeBackfillSymbols = append([]string(nil), snapshot.VolumeBackfillSymbols...)
 	copySnapshot.ExceptionSymbols = append([]string(nil), snapshot.ExceptionSymbols...)
 	for i := range copySnapshot.Symbols {
 		copySnapshot.Symbols[i].Symbol = strings.ToUpper(strings.TrimSpace(copySnapshot.Symbols[i].Symbol))
 		copySnapshot.Symbols[i].UpdatedAt = copySnapshot.RefreshedAt
+	}
+	for i, symbol := range copySnapshot.VolumeBackfillSymbols {
+		copySnapshot.VolumeBackfillSymbols[i] = strings.ToUpper(strings.TrimSpace(symbol))
 	}
 	s.candidateMu.Lock()
 	s.candidateSnapshot = copySnapshot
@@ -123,6 +159,9 @@ func (s *Service) applyBackgroundCandidateSnapshot(snapshot domain.BackgroundSym
 	if persist {
 		if err := s.store.SaveBackgroundSymbolSnapshot(context.Background(), copySnapshot); err != nil {
 			s.log.Warn("save background symbol snapshot failed", "error", err)
+		}
+		if len(copySnapshot.VolumeBackfillSymbols) > 0 {
+			s.enqueueRankedVolumeBackfills(copySnapshot.VolumeBackfillSymbols)
 		}
 	}
 	if updates != nil {
@@ -142,12 +181,47 @@ func (s *Service) applyBackgroundCandidateSnapshot(snapshot domain.BackgroundSym
 	// Keep the alert watch list live in the resident aggregate-trade feed. The
 	// collector changes subscriptions without rebuilding existing connections.
 	s.registerVolumeStreamSymbols(current)
+	s.registerVolumeSymbols(copySnapshot.VolumeBackfillSymbols)
 	s.updateMarketCollectorAggregateSymbols()
 	if s.alerts != nil {
 		rows := append([]domain.WatchSymbol(nil), copySnapshot.Symbols...)
 		s.alerts.applyWatch(rowsToEntries(rows), rows, copySnapshot.RefreshedAt, "")
 	}
 	s.log.Info("background symbols applied", "symbols", len(copySnapshot.Symbols), "base", copySnapshot.BaseCount, "exceptions", len(copySnapshot.ExceptionSymbols), "tenants", copySnapshot.TenantCount)
+}
+
+func (s *Service) enqueueRankedVolumeBackfills(symbols []string) {
+	if s == nil || len(symbols) == 0 {
+		return
+	}
+	s.volumeMu.Lock()
+	ctx := s.volumeContext
+	s.volumeMu.Unlock()
+	if ctx == nil {
+		return
+	}
+	go func() {
+		for _, symbol := range symbols {
+			for ctx.Err() == nil {
+				err := s.EnsureVolumeProfile(ctx, symbol, false)
+				if err == nil {
+					break
+				}
+				if !errors.Is(err, errVolumeBackfillQueueFull) {
+					if s.log != nil {
+						s.log.Warn("ranked volume profile backfill enqueue failed", "symbol", symbol, "error", err)
+					}
+					break
+				}
+				timer := time.NewTimer(time.Second)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+				case <-timer.C:
+				}
+			}
+		}
+	}()
 }
 
 // setBackgroundCandidateError preserves the active watch list while making a
@@ -197,6 +271,7 @@ func (s *Service) backgroundCandidateSnapshot() domain.BackgroundSymbolSnapshot 
 	defer s.candidateMu.RUnlock()
 	snapshot := s.candidateSnapshot
 	snapshot.Symbols = append([]domain.WatchSymbol(nil), snapshot.Symbols...)
+	snapshot.VolumeBackfillSymbols = append([]string(nil), snapshot.VolumeBackfillSymbols...)
 	snapshot.ExceptionSymbols = append([]string(nil), snapshot.ExceptionSymbols...)
 	return snapshot
 }
@@ -213,6 +288,9 @@ func (s *Service) backgroundCandidateRefreshLoop(ctx context.Context) {
 			timer.Stop()
 			return
 		case <-timer.C:
+			s.refreshBackgroundCandidates(ctx)
+		case <-s.candidateRefreshWake:
+			timer.Stop()
 			s.refreshBackgroundCandidates(ctx)
 		}
 	}

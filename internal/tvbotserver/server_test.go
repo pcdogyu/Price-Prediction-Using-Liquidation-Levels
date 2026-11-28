@@ -1155,6 +1155,8 @@ func TestTVBotConfigSavesOrderSettingsWithIncompleteLegacySymbol(t *testing.T) {
 
 func TestTVBotConfigSavesMarketTurnoverScopeAndRejectsInvalidValue(t *testing.T) {
 	srv := newTestServer(t)
+	changed := 0
+	srv.SetMarketTurnoverScopeChangedHandler(func() { changed++ })
 	for _, scope := range []string{"top5", "top10", "top20", "top50", "top100", "top200", "top500", "all"} {
 		req := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"market_turnover_scope":"`+scope+`"}}`)))
 		req.SetBasicAuth("admin", "Admin123")
@@ -1171,6 +1173,9 @@ func TestTVBotConfigSavesMarketTurnoverScopeAndRejectsInvalidValue(t *testing.T)
 			t.Fatalf("scope %s not persisted: response=%q store=%q", scope, cfg.Trading.MarketTurnoverScope, srv.ConfigStore.Get().Trading.MarketTurnoverScope)
 		}
 	}
+	if changed != 8 {
+		t.Fatalf("scope change notifications=%d, want 8", changed)
+	}
 
 	badReq := httptest.NewRequest(http.MethodPut, "/tvbot/config", bytes.NewReader([]byte(`{"trading":{"market_turnover_scope":"top75"}}`)))
 	badReq.SetBasicAuth("admin", "Admin123")
@@ -1178,6 +1183,9 @@ func TestTVBotConfigSavesMarketTurnoverScopeAndRejectsInvalidValue(t *testing.T)
 	srv.ServeHTTP(bad, badReq)
 	if bad.Code != http.StatusBadRequest || !bytes.Contains(bad.Body.Bytes(), []byte(`"error":"invalid_config"`)) {
 		t.Fatalf("invalid scope status=%d body=%s", bad.Code, bad.Body.String())
+	}
+	if changed != 8 {
+		t.Fatalf("invalid scope triggered refresh notification: %d", changed)
 	}
 }
 

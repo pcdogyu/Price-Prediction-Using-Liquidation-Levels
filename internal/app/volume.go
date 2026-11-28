@@ -393,6 +393,7 @@ func (s *Service) enqueueVolumeProfileBackfillPriority(ctx context.Context, symb
 		s.volumeMu.Lock()
 		delete(s.volumePending, symbol)
 		delete(s.volumePriorityPending, symbol)
+		delete(s.volumeBackfillRetryAt, symbol)
 		s.volumeMu.Unlock()
 		return errVolumeBackfillQueueFull
 	}
@@ -436,7 +437,8 @@ func (s *Service) volumeBootstrapSymbols() []string {
 func (s *Service) volumeProfileSymbols() []string {
 	seen := make(map[string]struct{})
 	result := make([]string, 0)
-	for _, group := range [][]string{s.volumeBootstrapSymbols(), s.backgroundSymbols()} {
+	rankedBackfillSymbols := s.backgroundCandidateSnapshot().VolumeBackfillSymbols
+	for _, group := range [][]string{s.volumeBootstrapSymbols(), s.backgroundSymbols(), rankedBackfillSymbols} {
 		for _, raw := range group {
 			symbol := normalizeVolumeSymbol(raw)
 			if symbol == "" {

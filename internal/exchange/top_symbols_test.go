@@ -102,6 +102,28 @@ func TestRankUSDTKeepsAlwaysWatch(t *testing.T) {
 	}
 }
 
+func TestRankTurnoverUSDTUsesOnlyEligibleRankedPairs(t *testing.T) {
+	at := time.Date(2026, 10, 14, 3, 0, 0, 0, time.UTC)
+	tradable := map[string]string{
+		"BTCUSDT": "BTC", "ETHUSDT": "ETH", "SOLUSDT": "SOL",
+		"USDCUSDT": "USDC", "PAXGUSDT": "PAXG", "XRPUSDT": "XRP",
+	}
+	tickers := []topSymbolTicker{
+		ticker("BTCUSDT", "100"), ticker("USDCUSDT", "90"),
+		ticker("PAXGUSDT", "80"), ticker("ETHUSDT", "70"),
+		ticker("SOLUSDT", "60"), ticker("XRPUSDT", "50"),
+	}
+	rows := rankTurnoverUSDT(tickers, tradable, 3, at)
+	if len(rows) != 3 {
+		t.Fatalf("ranked scope size=%d, want 3: %+v", len(rows), rows)
+	}
+	for i, want := range []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"} {
+		if rows[i].Symbol != want || rows[i].Rank != i+1 {
+			t.Fatalf("ranked scope=%+v, want rank %d %s", rows, i+1, want)
+		}
+	}
+}
+
 // TestTradableUSDTFilter documents which exchange info entries qualify, so a delivery
 // contract or a non-USDT quote never reaches the alert engine.
 func TestTradableUSDTFilter(t *testing.T) {

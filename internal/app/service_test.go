@@ -237,6 +237,60 @@ func TestBackgroundCandidateRefreshStartsImmediatelyAndPassesConfiguredUniverse(
 	}
 }
 
+func TestRequestBackgroundCandidateRefreshSignalsRefreshLoop(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "refresh-signal.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(config.Config{Symbols: []string{"BTCUSDT"}, ModelPath: filepath.Join(t.TempDir(), "model.json")}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.RequestBackgroundCandidateRefresh()
+	select {
+	case <-svc.candidateRefreshWake:
+	case <-time.After(time.Second):
+		t.Fatal("order-scope change did not wake the candidate refresh")
+	}
+}
+
+func TestRankedOrderScopeChangeQueuesCurrentRankedBackfills(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "ranked-backfill.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc := New(config.Config{Symbols: []string{"BTCUSDT"}, ModelPath: filepath.Join(t.TempDir(), "model.json")}, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.volumeContext = ctx
+	svc.volumeBackfillQueue = make(chan string, 4)
+	svc.volumePriorityQueue = make(chan string, 4)
+	svc.applyBackgroundCandidateSnapshot(domain.BackgroundSymbolSnapshot{
+		Symbols:               []domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1}},
+		VolumeBackfillSymbols: []string{"BTCUSDT", "ETHUSDT"},
+		BaseCount:             1,
+		RefreshedAt:           time.Now().UTC(),
+	}, false)
+	svc.applyBackgroundCandidateSnapshot(domain.BackgroundSymbolSnapshot{
+		Symbols:               []domain.WatchSymbol{{Symbol: "BTCUSDT", Rank: 1}},
+		VolumeBackfillSymbols: []string{"ETHUSDT", "BNBUSDT"},
+		BaseCount:             1,
+		RefreshedAt:           time.Now().UTC(),
+	}, true)
+	for _, want := range []string{"ETHUSDT", "BNBUSDT"} {
+		select {
+		case symbol := <-svc.volumePriorityQueue:
+			if symbol != want {
+				t.Fatalf("backfilled symbol=%q, want %s", symbol, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("ranked symbol %s was not queued for VAL/VAH backfill", want)
+		}
+	}
+	if len(svc.volumePriorityQueue) != 0 {
+		t.Fatalf("removed rank member was still queued: %d", len(svc.volumePriorityQueue))
+	}
+}
+
 func TestBackgroundCandidateRefreshFailureKeepsSnapshotAndExposesError(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

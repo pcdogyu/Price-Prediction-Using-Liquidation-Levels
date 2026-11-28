@@ -478,6 +478,27 @@ func TestFullVolumeQueueDoesNotDropOtherLiveSymbols(t *testing.T) {
 	}
 }
 
+func TestFullVolumeQueueCanRetryAfterCapacityReturns(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "queue-retry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := &Service{store: st, volumeContext: ctx, volumeBackfillQueue: make(chan string, 1)}
+	svc.volumeBackfillQueue <- "OTHERUSDT"
+	if err := svc.enqueueVolumeProfileBackfill(ctx, "BNBUSDT", false, false); !errors.Is(err, errVolumeBackfillQueueFull) {
+		t.Fatalf("full queue error=%v, want queue full", err)
+	}
+	<-svc.volumeBackfillQueue
+	if err := svc.enqueueVolumeProfileBackfill(ctx, "BNBUSDT", false, false); err != nil {
+		t.Fatalf("retry after queue capacity returned failed: %v", err)
+	}
+	if symbol := <-svc.volumeBackfillQueue; symbol != "BNBUSDT" {
+		t.Fatalf("queued symbol=%q, want BNBUSDT", symbol)
+	}
+}
+
 func TestPageRequestPromotesQueuedVolumeReplay(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "priority.db"))
 	if err != nil {

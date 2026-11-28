@@ -230,6 +230,61 @@ func BinanceTopUSDTPerpetuals(ctx context.Context, limit int) ([]TopSymbol, erro
 	return rows, nil
 }
 
+// BinanceTopTurnoverUSDTPerpetuals returns the actual turnover-ranked market
+// scope used to select order-eligible Binance symbols. Unlike the alert watch
+// ranking, it does not append BTC/ETH outside the requested limit and excludes
+// stablecoin and metal-base contracts from the order ranking.
+func BinanceTopTurnoverUSDTPerpetuals(ctx context.Context, limit int) ([]TopSymbol, error) {
+	if limit <= 0 {
+		return nil, errNoTopSymbols
+	}
+	info, err := cachedBinanceExchangeInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tickers, err := cachedBinanceTickers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := rankTurnoverUSDT(tickers, tradableUSDT(info), limit, time.Now())
+	if len(rows) == 0 {
+		return nil, errNoTopSymbols
+	}
+	return rows, nil
+}
+
+func rankTurnoverUSDT(tickers []topSymbolTicker, tradable map[string]string, limit int, at time.Time) []TopSymbol {
+	all := rankUSDT(tickers, tradable, 0, at)
+	rows := make([]TopSymbol, 0, len(all))
+	for _, row := range all {
+		if row.QuoteVolumeUSD <= 0 || excludedTurnoverRankingBase(row.BaseAsset, row.Symbol) {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	for i := range rows {
+		rows[i].Rank = i + 1
+		rows[i].RefreshedAt = at.UTC()
+	}
+	return rows
+}
+
+func excludedTurnoverRankingBase(base, symbol string) bool {
+	base = strings.ToUpper(strings.TrimSpace(base))
+	if base == "" {
+		base = strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(symbol)), "USDT")
+	}
+	switch base {
+	case "BUSD", "DAI", "FDUSD", "FRAX", "PYUSD", "RLUSD", "TUSD", "USD1", "USDC", "USDD", "USDE", "USDP", "USDS", "USDT", "PAXG":
+		return true
+	default:
+		return strings.HasPrefix(base, "XAU") || strings.HasPrefix(base, "XAG")
+	}
+}
+
 // BinanceTopConfiguredUSDTPerpetuals ranks only the supplied Binance USDT
 // perpetual symbols by the current public 24 hour quote volume. It shares the
 // exchange-info and ticker caches with the normal alert ranking, but never

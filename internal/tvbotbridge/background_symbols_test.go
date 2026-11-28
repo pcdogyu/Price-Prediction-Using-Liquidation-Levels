@@ -4,9 +4,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/app"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/domain"
 	"github.com/pcdogyu/price-prediction-liquidation-levels/internal/exchange"
+	tvbotconfig "github.com/pcdogyu/price-prediction-liquidation-levels/internal/tvbotconfig"
 )
+
+func TestOrderScopeBackfillRankLimitIsBoundedToFifty(t *testing.T) {
+	checks := []struct {
+		name      string
+		scopes    []string
+		fallback  string
+		wantLimit int
+	}{
+		{name: "small scope", scopes: []string{tvbotconfig.MarketTurnoverScopeTop5}, fallback: tvbotconfig.MarketTurnoverScopeTop100, wantLimit: 5},
+		{name: "largest tenant scope wins", scopes: []string{tvbotconfig.MarketTurnoverScopeTop10, tvbotconfig.MarketTurnoverScopeTop20}, fallback: tvbotconfig.MarketTurnoverScopeTop5, wantLimit: 20},
+		{name: "all is capped", scopes: []string{tvbotconfig.MarketTurnoverScopeAll}, fallback: tvbotconfig.MarketTurnoverScopeTop5, wantLimit: app.VolumeBackfillCandidateLimitForProvider()},
+		{name: "fallback scope", scopes: nil, fallback: tvbotconfig.MarketTurnoverScopeTop20, wantLimit: 20},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			if got := orderScopeBackfillRankLimit(check.scopes, check.fallback); got != check.wantLimit {
+				t.Fatalf("rank limit=%d, want %d", got, check.wantLimit)
+			}
+		})
+	}
+}
 
 func TestAppendProtectedCandidatesKeepsPositionAndOrderSymbols(t *testing.T) {
 	now := time.Now().UTC()

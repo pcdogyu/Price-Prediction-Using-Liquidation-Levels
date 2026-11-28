@@ -7,9 +7,10 @@ import "time"
 // ranked base set followed by protected exceptions such as open positions.
 // Only non-sensitive ranking metadata is persisted.
 type BackgroundSymbolSnapshot struct {
-	Symbols          []WatchSymbol `json:"symbols"`
-	TenantCount      int           `json:"tenant_count"`
-	BaseCount        int           `json:"base_count"`
-	ExceptionSymbols []string      `json:"exception_symbols,omitempty"`
-	RefreshedAt      time.Time     `json:"refreshed_at"`
+	Symbols               []WatchSymbol `json:"symbols"`
+	VolumeBackfillSymbols []string      `json:"volume_backfill_symbols,omitempty"`
+	TenantCount           int           `json:"tenant_count"`
+	BaseCount             int           `json:"base_count"`
+	ExceptionSymbols      []string      `json:"exception_symbols,omitempty"`
+	RefreshedAt           time.Time     `json:"refreshed_at"`
 }
