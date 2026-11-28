@@ -26,3 +26,16 @@ func TestArchiveSnapshotsDoNotUseFutureTrades(t *testing.T) {
 		t.Fatalf("first snapshot contains future trade: %#v", snapshots)
 	}
 }
+
+func TestNextVolumeArchiveNight(t *testing.T) {
+	china := time.FixedZone("Beijing", 8*60*60)
+	for _, tc := range []struct{ now, want time.Time }{
+		{time.Date(2026, 11, 28, 21, 59, 0, 0, china), time.Date(2026, 11, 28, 22, 0, 0, 0, china)},
+		{time.Date(2026, 11, 28, 22, 0, 0, 0, china), time.Date(2026, 11, 29, 22, 0, 0, 0, china)},
+		{time.Date(2026, 11, 28, 23, 0, 0, 0, china), time.Date(2026, 11, 29, 22, 0, 0, 0, china)},
+	} {
+		if got := nextVolumeArchiveNight(tc.now.UTC()); !got.Equal(tc.want) {
+			t.Fatalf("now=%s got=%s want=%s", tc.now, got, tc.want)
+		}
+	}
+}

@@ -437,3 +437,64 @@ func TestOnDemandVolumeBackfillGeneratesProfile(t *testing.T) {
 	}
 	t.Fatal("on-demand volume profile did not complete")
 }
+
+func TestUnmonitoredLiquidationDoesNotQueueVolumeReplay(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "unmonitored.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := &Service{store: st, candidates: []string{"BTCUSDT"}, volumeContext: context.Background(), volumeBackfillQueue: make(chan string, 2)}
+	profile, err := svc.currentVolumeProfile(context.Background(), "BNBUSDT")
+	if err != nil || profile.State != "unavailable" || len(svc.volumeBackfillQueue) != 0 || svc.volumeRequestedSymbol("BNBUSDT") {
+		t.Fatalf("profile=%+v err=%v queued=%d", profile, err, len(svc.volumeBackfillQueue))
+	}
+}
+
+func TestFullVolumeQueueDoesNotDropOtherLiveSymbols(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "full-queue.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC()
+	session, err := volumeprofile.SessionAt(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ApplyAggregateTrades(ctx, "ZZZUSDT", session.Start, []domain.AggregateTrade{{ID: 1, Symbol: "ZZZUSDT", Time: now.Add(-time.Second), Price: 100, Quantity: 1, PriceText: "100"}}, true); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{store: st, volumeContext: ctx, volumeRequested: map[string]struct{}{"AAAUSDT": {}, "ZZZUSDT": {}}, volumeBackfillQueue: make(chan string, 1)}
+	svc.volumeBackfillQueue <- "OTHERUSDT"
+	err = svc.applyLiveAggregateTrades(ctx, []domain.AggregateTrade{{ID: 1, Symbol: "AAAUSDT", Time: now, Price: 1, Quantity: 1}, {ID: 2, Symbol: "ZZZUSDT", Time: now, Price: 101, Quantity: 1, PriceText: "101"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _, complete, err := st.VolumeProfileCursor(ctx, "ZZZUSDT", session.Start)
+	if err != nil || id != 2 || !complete {
+		t.Fatalf("cursor=%d complete=%v err=%v", id, complete, err)
+	}
+}
+
+func TestPageRequestPromotesQueuedVolumeReplay(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "priority.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := &Service{store: st, volumeContext: context.Background(), volumeBackfillQueue: make(chan string, 2), volumePriorityQueue: make(chan string, 2)}
+	if err := svc.enqueueVolumeProfileBackfill(context.Background(), "BNBUSDT", false, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureVolumeProfile(context.Background(), "BNBUSDT", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureVolumeProfile(context.Background(), "BNBUSDT", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.volumePriorityQueue) != 1 || <-svc.volumePriorityQueue != "BNBUSDT" {
+		t.Fatal("page request did not promote exactly once")
+	}
+}

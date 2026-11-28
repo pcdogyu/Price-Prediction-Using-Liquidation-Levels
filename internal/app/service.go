@@ -103,6 +103,9 @@ type Service struct {
 	volumeBackfillError    map[string]string
 	volumeBackfillRetryAt  map[string]time.Time
 	volumeBackfillQueue    chan string
+	volumePriorityQueue    chan string
+	volumePriorityPending  map[string]struct{}
+	volumeActive           map[string]struct{}
 	localCandleMu          sync.Mutex
 	localCandles           map[string]domain.Candle
 	marketCollectorMu      sync.RWMutex
@@ -187,7 +190,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	if strings.TrimSpace(cfg.AlertTenantDataPath) == "" && strings.TrimSpace(cfg.DatabasePath) != "" {
 		cfg.AlertTenantDataPath = filepath.Join(filepath.Dir(cfg.DatabasePath), "alert-tenants")
 	}
-	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, marketHistorySnapshots: make(map[string]marketHistorySnapshotEntry), marketHistoryBuilds: make(map[string]*marketHistorySnapshotBuild), marketSyncWake: make(chan struct{}, 1), marketSyncStates: make(map[string]marketSyncState), marketSyncGate: make(chan struct{}, 1), backfillGate: make(chan struct{}, 1), volumeLiveReady: make(chan struct{}), volumeRequested: make(map[string]struct{}), volumeStreamSymbols: make(map[string]struct{}), volumePending: make(map[string]struct{}), volumeBackfillError: make(map[string]string), volumeBackfillQueue: make(chan string, 128), localCandles: make(map[string]domain.Candle), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
+	s := &Service{cfg: cfg, store: st, clients: []exchange.Client{exchange.NewBinance()}, cg: coinglass.New(cfg.CoinGlassDebugURL, cfg.CoinGlassCaptureDir), health: exchange.NewHealthRegistry(), log: log, maps: map[string]engine.MapResult{}, predictions: map[string]domain.Prediction{}, subs: map[chan domain.Prediction]struct{}{}, liquidationSubs: map[chan domain.LiquidationEvent]struct{}{}, priceSubs: map[chan domain.PriceTick]struct{}{}, latestPrices: map[string]domain.PriceTick{}, lastPriceBroadcast: map[string]int64{}, klineCache: map[string]klineCacheEntry{}, alertCandleRepairAt: map[string]time.Time{}, marketCache: map[string]marketCacheEntry{}, marketHistorySnapshots: make(map[string]marketHistorySnapshotEntry), marketHistoryBuilds: make(map[string]*marketHistorySnapshotBuild), marketSyncWake: make(chan struct{}, 1), marketSyncStates: make(map[string]marketSyncState), marketSyncGate: make(chan struct{}, 1), backfillGate: make(chan struct{}, 1), volumeLiveReady: make(chan struct{}), volumeRequested: make(map[string]struct{}), volumeStreamSymbols: make(map[string]struct{}), volumePending: make(map[string]struct{}), volumeBackfillError: make(map[string]string), volumeBackfillQueue: make(chan string, 128), volumePriorityQueue: make(chan string, 128), volumePriorityPending: make(map[string]struct{}), localCandles: make(map[string]domain.Candle), alertTenants: make(map[string]*alertRuntime), candidateUpdates: make(chan []string, 1)}
 	s.dashboard = newDashboardState()
 	s.alerts = s.newAlertRuntime()
 	return s

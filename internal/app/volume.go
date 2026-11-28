@@ -17,6 +17,8 @@ var fetchAggregateTrades = exchange.BinanceAggregateTrades
 
 const volumeProfileBackfillRetryDelay = 30 * time.Second
 
+var errVolumeBackfillQueueFull = errors.New("volume profile backfill queue is full")
+
 func (s *Service) startVolumeProfiles(ctx context.Context) {
 	bootstrapSymbols := s.volumeBootstrapSymbols()
 	s.volumeMu.Lock()
@@ -88,11 +90,13 @@ func (s *Service) volumeProfileLoop(ctx context.Context) {
 	}
 	s.volumeMu.Unlock()
 	close(s.volumeLiveReady)
-	// Do not hold the live/on-demand path behind another startup backfill job.
-	// The shared gate still serializes this bootstrap work with on-demand
-	// sessions and other historical jobs, while the stream and queue are ready
-	// immediately after service startup.
-	go s.syncVolumeSymbols(ctx, bootstrapSymbols)
+	// Bootstrap shares the resumable queue so page requests can run between
+	// slices instead of waiting for two entire high-volume sessions.
+	for _, symbol := range bootstrapSymbols {
+		if err := s.enqueueVolumeProfileBackfill(ctx, symbol, false, false); err != nil && s.log != nil {
+			s.log.Warn("aggregate trade bootstrap enqueue failed", "symbol", symbol, "error", err)
+		}
+	}
 
 	flush := time.NewTicker(500 * time.Millisecond)
 	defer flush.Stop()
@@ -141,13 +145,48 @@ func (s *Service) volumeBackfillLoop(ctx context.Context) {
 	case <-s.volumeLiveReady:
 	}
 	for {
+		var symbol string
 		select {
 		case <-ctx.Done():
 			return
-		case symbol := <-s.volumeBackfillQueue:
-			err := s.syncVolumeSessionExclusive(ctx, symbol, time.Now().UTC())
+		case symbol = <-s.volumePriorityQueue:
+		default:
+			select {
+			case <-ctx.Done():
+				return
+			case symbol = <-s.volumePriorityQueue:
+			case symbol = <-s.volumeBackfillQueue:
+			}
+		}
+		s.volumeMu.Lock()
+		_, pending := s.volumePending[symbol]
+		delete(s.volumePriorityPending, symbol)
+		if pending {
+			if s.volumeActive == nil {
+				s.volumeActive = make(map[string]struct{})
+			}
+			s.volumeActive[symbol] = struct{}{}
+		}
+		s.volumeMu.Unlock()
+		if !pending {
+			continue
+		}
+		{
+			workCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			err := s.syncVolumeSessionExclusive(workCtx, symbol, time.Now().UTC())
+			timedOut := errors.Is(workCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
+			cancel()
 			s.volumeMu.Lock()
 			delete(s.volumePending, symbol)
+			delete(s.volumeActive, symbol)
+			if timedOut {
+				delete(s.volumeBackfillRetryAt, symbol)
+				s.volumeMu.Unlock()
+				if err := s.enqueueVolumeProfileBackfill(ctx, symbol, false, true); err != nil && ctx.Err() == nil && s.log != nil {
+					s.log.Warn("aggregate trade replay could not be rescheduled", "symbol", symbol, "error", err)
+				}
+				continue
+			}
 			if err != nil {
 				if s.volumeBackfillRetryAt == nil {
 					s.volumeBackfillRetryAt = make(map[string]time.Time)
@@ -250,7 +289,7 @@ func normalizeVolumeSymbol(symbol string) string {
 // volume session for aggregate-trade synchronization. The queue is idempotent;
 // force only retries an incomplete or failed session.
 func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force bool) error {
-	return s.enqueueVolumeProfileBackfill(ctx, symbol, force, force)
+	return s.enqueueVolumeProfileBackfillPriority(ctx, symbol, force, force, true)
 }
 
 // enqueueVolumeProfileBackfill requests an asynchronous current-session sync.
@@ -258,6 +297,10 @@ func (s *Service) EnsureVolumeProfile(ctx context.Context, symbol string, force 
 // the cursor was previously marked complete. bypassRetry is reserved for an
 // explicit force request and the worker's immediate incomplete-session retry.
 func (s *Service) enqueueVolumeProfileBackfill(ctx context.Context, symbol string, refreshCompleted, bypassRetry bool) error {
+	return s.enqueueVolumeProfileBackfillPriority(ctx, symbol, refreshCompleted, bypassRetry, false)
+}
+
+func (s *Service) enqueueVolumeProfileBackfillPriority(ctx context.Context, symbol string, refreshCompleted, bypassRetry, priority bool) error {
 	symbol = normalizeVolumeSymbol(symbol)
 	if symbol == "" {
 		return fmt.Errorf("symbol must be a Binance USDT perpetual")
@@ -296,6 +339,19 @@ func (s *Service) enqueueVolumeProfileBackfill(ctx context.Context, symbol strin
 		return errors.New("volume profile backfill worker unavailable")
 	}
 	if _, pending := s.volumePending[symbol]; pending {
+		_, active := s.volumeActive[symbol]
+		if priority && !active && s.volumePriorityQueue != nil {
+			if s.volumePriorityPending == nil {
+				s.volumePriorityPending = make(map[string]struct{})
+			}
+			if _, promoted := s.volumePriorityPending[symbol]; !promoted {
+				select {
+				case s.volumePriorityQueue <- symbol:
+					s.volumePriorityPending[symbol] = struct{}{}
+				default:
+				}
+			}
+		}
 		s.volumeMu.Unlock()
 		return nil
 	}
@@ -310,6 +366,13 @@ func (s *Service) enqueueVolumeProfileBackfill(ctx context.Context, symbol strin
 	}
 	s.volumeBackfillRetryAt[symbol] = time.Now().Add(volumeProfileBackfillRetryDelay)
 	queue := s.volumeBackfillQueue
+	if priority && s.volumePriorityQueue != nil {
+		queue = s.volumePriorityQueue
+		if s.volumePriorityPending == nil {
+			s.volumePriorityPending = make(map[string]struct{})
+		}
+		s.volumePriorityPending[symbol] = struct{}{}
+	}
 	s.volumeMu.Unlock()
 	select {
 	case queue <- symbol:
@@ -317,14 +380,16 @@ func (s *Service) enqueueVolumeProfileBackfill(ctx context.Context, symbol strin
 	case <-ctx.Done():
 		s.volumeMu.Lock()
 		delete(s.volumePending, symbol)
+		delete(s.volumePriorityPending, symbol)
 		delete(s.volumeBackfillRetryAt, symbol)
 		s.volumeMu.Unlock()
 		return ctx.Err()
 	default:
 		s.volumeMu.Lock()
 		delete(s.volumePending, symbol)
+		delete(s.volumePriorityPending, symbol)
 		s.volumeMu.Unlock()
-		return errors.New("volume profile backfill queue is full")
+		return errVolumeBackfillQueueFull
 	}
 }
 
@@ -423,7 +488,7 @@ func (s *Service) applyLiveAggregateTrades(ctx context.Context, trades []domain.
 			if err = s.store.SetVolumeProfileComplete(ctx, key.symbol, sessions[key].Start, false); err != nil {
 				return err
 			}
-			if err = s.EnsureVolumeProfile(ctx, key.symbol, false); err != nil {
+			if err = s.enqueueVolumeProfileBackfill(ctx, key.symbol, false, false); err != nil && !errors.Is(err, errVolumeBackfillQueueFull) {
 				return err
 			}
 			// Historical replay runs on the backfill worker. Keeping this live
@@ -672,6 +737,11 @@ func (s *Service) currentVolumeProfile(ctx context.Context, symbol string) (doma
 	s.volumeProfileCacheMu.Unlock()
 
 	profile, err := s.VolumeProfile(ctx, symbol)
+	// Liquidation events can cover the whole exchange. Do not register every
+	// such symbol for expensive replay unless it is monitored or requested.
+	if err == nil && !s.backgroundSymbol(symbol) && !s.volumeRequestedSymbol(symbol) {
+		return profile, nil
+	}
 	if err == nil && profile.State == "ok" && !volumeProfileFreshAt(profile, now) {
 		profile.State = "stale"
 	}

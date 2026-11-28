@@ -31,17 +31,35 @@ func (s *Service) volumeArchiveLoop(ctx context.Context) {
 		return
 	case <-s.volumeLiveReady:
 	}
-	s.importVolumeArchives(ctx)
+	// Start both clocks before the initial scan, so a long scan does not lose
+	// the scheduled evening run. Ticker events coalesce while a scan is active.
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
+	nightly := time.NewTimer(time.Until(nextVolumeArchiveNight(time.Now())))
+	defer nightly.Stop()
+	s.importVolumeArchives(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			s.importVolumeArchives(ctx)
+		case <-nightly.C:
+			s.importVolumeArchives(ctx)
+			nightly.Reset(time.Until(nextVolumeArchiveNight(time.Now())))
 		}
 	}
+}
+
+// nextVolumeArchiveNight schedules an additional daily scan at 22:00 Beijing.
+func nextVolumeArchiveNight(now time.Time) time.Time {
+	china := time.FixedZone("CST", 8*60*60)
+	local := now.In(china)
+	next := time.Date(local.Year(), local.Month(), local.Day(), 22, 0, 0, 0, china)
+	if !next.After(now) {
+		next = next.AddDate(0, 0, 1)
+	}
+	return next
 }
 
 func (s *Service) importVolumeArchives(ctx context.Context) {
